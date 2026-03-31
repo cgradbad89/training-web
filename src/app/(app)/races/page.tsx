@@ -384,8 +384,11 @@ function RaceModal({ editing, activities, onSave, onClose, saving }: RaceModalPr
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="bg-card rounded-2xl shadow-xl w-full max-w-[520px] flex flex-col max-h-[90vh]">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 overflow-hidden"
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div className="relative z-10 bg-card rounded-2xl shadow-xl w-full max-w-[520px] flex flex-col max-h-[90vh]">
         {/* Header */}
         <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-border shrink-0">
           <h3 className="font-bold text-textPrimary text-lg">
@@ -588,8 +591,11 @@ function ConfirmDelete({
   saving: boolean;
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="bg-card rounded-2xl shadow-xl w-full max-w-sm p-6">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 overflow-hidden"
+      onClick={(e) => e.target === e.currentTarget && onCancel()}
+    >
+      <div className="relative z-10 bg-card rounded-2xl shadow-xl w-full max-w-sm p-6">
         <h3 className="font-bold text-textPrimary mb-2">Delete Race?</h3>
         <p className="text-sm text-textSecondary">
           Delete{" "}
@@ -659,6 +665,12 @@ export default function RacesPage() {
     loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
+
+  useEffect(() => {
+    const isOpen = modalOpen || !!deletingRace;
+    document.body.style.overflow = isOpen ? "hidden" : "";
+    return () => { document.body.style.overflow = ""; };
+  }, [modalOpen, deletingRace]);
 
   async function loadAll() {
     if (!user) return;

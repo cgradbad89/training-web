@@ -6,7 +6,6 @@ import {
   setDoc,
   deleteDoc,
   updateDoc,
-  writeBatch,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { COLLECTIONS } from "@/lib/firestore";
@@ -83,26 +82,6 @@ export async function saveManualAssignments(
 ): Promise<void> {
   const ref = doc(db, COLLECTIONS.shoeAssignments(uid), "manual");
   await setDoc(ref, assignments, { merge: true });
-}
-
-/**
- * Batch-write multiple activity→shoe assignments.
- * Uses writeBatch for atomicity. Each write is a merge so unrelated
- * entries in the manual doc are not overwritten.
- */
-export async function batchAssignShoe(
-  uid: string,
-  activityIds: number[],
-  shoeId: string
-): Promise<void> {
-  const ref = doc(db, COLLECTIONS.shoeAssignments(uid), "manual");
-  const batch = writeBatch(db);
-  const payload: Record<string, string> = {};
-  for (const id of activityIds) {
-    payload[String(id)] = shoeId;
-  }
-  batch.set(ref, payload, { merge: true });
-  await batch.commit();
 }
 
 // ─── Assignments ──────────────────────────────────────────────────────────────

@@ -61,9 +61,13 @@ export function isSameWeek(a: Date, b: Date): boolean {
   return weekStart(a).getTime() === weekStart(b).getTime();
 }
 
-/** Normalize a date to the Monday of its week (ISO string) */
+/** Normalize a date to the Monday of its week (ISO string, local date) */
 export function normalizeToMonday(date: Date): string {
-  return weekStart(date).toISOString().split("T")[0];
+  const d = weekStart(date);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 /**

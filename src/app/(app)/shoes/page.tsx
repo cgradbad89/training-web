@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import Link from "next/link";
-import { Pencil, Trash2, Plus, X, Footprints, AlertCircle } from "lucide-react";
+import { Pencil, Trash2, Plus, X, Footprints } from "lucide-react";
 
 import { PageHeader } from "@/components/layout/PageHeader";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
@@ -16,7 +16,6 @@ import {
   deleteShoe,
   fetchManualShoeAssignmentsMap,
   saveManualAssignments,
-  batchAssignShoe,
 } from "@/services/shoes";
 import { isRun } from "@/utils/activityTypes";
 import { formatPace } from "@/utils/pace";
@@ -25,14 +24,6 @@ import {
   type RunningShoe,
   type ShoeAutoAssignRule,
 } from "@/types/shoe";
-
-// ─── Constants ────────────────────────────────────────────────────────────────
-
-const KNOWN_GEAR_IDS: Record<string, { hint: string }> = {
-  g29090468: { hint: "Detected in your run history" },
-  g29090478: { hint: "Nike Flyknit (50 mi offset)" },
-  g29489263: { hint: "Brooks Ghost 16" },
-};
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -98,7 +89,6 @@ function newShoeDefaults(): Omit<RunningShoe, "id" | "addedAt"> {
     brand: "",
     model: "",
     colorway: "",
-    stravaGearId: "",
     purchaseDate: "",
     startMileageOffset: 0,
     retirementMileageTarget: undefined,
@@ -205,11 +195,6 @@ function ShoeCard({ shoe, activities, assignments, onEdit }: ShoeCardProps) {
               {[shoe.brand, shoe.model].filter(Boolean).join(" ")}
             </p>
           )}
-          {shoe.stravaGearId && (
-            <span className="inline-block mt-1 text-xs bg-surface border border-border text-textSecondary px-2 py-0.5 rounded-full">
-              Strava: {shoe.stravaGearId}
-            </span>
-          )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <span
@@ -278,10 +263,10 @@ function Modal({
 }) {
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 overflow-hidden"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
-      <div className="bg-card rounded-2xl shadow-xl border border-border w-full max-w-[480px] max-h-[90vh] overflow-y-auto">
+      <div className="relative z-10 bg-card rounded-2xl shadow-xl border border-border w-full max-w-[480px] max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between px-5 py-4 border-b border-border">
           <h2 className="text-base font-semibold text-textPrimary">{title}</h2>
           <button
@@ -304,7 +289,6 @@ interface ShoeFormState {
   name: string;
   brand: string;
   model: string;
-  stravaGearId: string;
   purchaseDate: string;
   startMileageOffset: string;
   retirementMileageTarget: string;
@@ -314,8 +298,6 @@ interface ShoeFormState {
 
 interface AddEditShoeModalProps {
   shoe: RunningShoe | null; // null = new shoe
-  activities: StravaActivity[];
-  existingShoes: RunningShoe[];
   onSave: (shoe: RunningShoe, isNew: boolean) => Promise<void>;
   onDelete: (shoe: RunningShoe) => void;
   onClose: () => void;
@@ -323,8 +305,6 @@ interface AddEditShoeModalProps {
 
 function AddEditShoeModal({
   shoe,
-  activities,
-  existingShoes,
   onSave,
   onDelete,
   onClose,
@@ -335,7 +315,6 @@ function AddEditShoeModal({
     name: shoe?.name ?? "",
     brand: shoe?.brand ?? "",
     model: shoe?.model ?? "",
-    stravaGearId: shoe?.stravaGearId ?? "",
     purchaseDate: shoe?.purchaseDate ?? "",
     startMileageOffset: String(shoe?.startMileageOffset ?? 0),
     retirementMileageTarget: shoe?.retirementMileageTarget != null
@@ -347,18 +326,6 @@ function AddEditShoeModal({
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-
-  // Detect unlinked gear IDs from activity history
-  const unlinkedGearIds = useMemo(() => {
-    const linked = new Set(existingShoes.map((s) => s.stravaGearId).filter(Boolean));
-    const found = new Set<string>();
-    for (const a of activities) {
-      if (a.gear_id && !linked.has(a.gear_id) && KNOWN_GEAR_IDS[a.gear_id]) {
-        found.add(a.gear_id);
-      }
-    }
-    return Array.from(found);
-  }, [activities, existingShoes]);
 
   function set(field: keyof ShoeFormState, value: string | boolean) {
     setForm((f) => ({ ...f, [field]: value }));
@@ -378,7 +345,6 @@ function AddEditShoeModal({
         name: form.name.trim(),
         brand: form.brand.trim(),
         model: form.model.trim(),
-        stravaGearId: form.stravaGearId.trim() || undefined,
         purchaseDate: form.purchaseDate || undefined,
         startMileageOffset: parseFloat(form.startMileageOffset) || 0,
         retirementMileageTarget: form.retirementMileageTarget
@@ -406,29 +372,6 @@ function AddEditShoeModal({
   return (
     <Modal title={isNew ? "Add Shoe" : "Edit Shoe"} onClose={onClose}>
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-        {/* Unlinked gear ID hint — only on new shoe */}
-        {isNew && unlinkedGearIds.length > 0 && (
-          <div className="flex items-start gap-2 p-3 bg-primary/5 border border-primary/20 rounded-xl text-xs text-textSecondary">
-            <AlertCircle size={14} className="text-primary shrink-0 mt-0.5" />
-            <div>
-              <span>Detected unlinked Strava gear: </span>
-              {unlinkedGearIds.map((gid) => (
-                <button
-                  key={gid}
-                  type="button"
-                  onClick={() => set("stravaGearId", gid)}
-                  className="font-mono text-primary hover:underline mr-1"
-                >
-                  {gid}
-                </button>
-              ))}
-              <span className="text-textSecondary">
-                {unlinkedGearIds.map((g) => KNOWN_GEAR_IDS[g]?.hint).filter(Boolean).join(", ")}
-              </span>
-            </div>
-          </div>
-        )}
-
         {/* Name */}
         <div>
           <label className="block text-xs font-semibold text-textSecondary mb-1">
@@ -514,23 +457,6 @@ function AddEditShoeModal({
           </div>
         </div>
 
-        {/* Strava Gear ID */}
-        <div>
-          <label className="block text-xs font-semibold text-textSecondary mb-1">
-            Strava Gear ID
-          </label>
-          <input
-            type="text"
-            value={form.stravaGearId}
-            onChange={(e) => set("stravaGearId", e.target.value)}
-            placeholder="e.g. g29090478"
-            className="w-full border border-border rounded-lg px-3 py-2 text-sm font-mono text-textPrimary bg-card focus:outline-none focus:ring-2 focus:ring-primary"
-          />
-          <p className="text-xs text-textSecondary mt-1">
-            Found in Strava gear settings. Used for backfill matching.
-          </p>
-        </div>
-
         {/* Notes */}
         <div>
           <label className="block text-xs font-semibold text-textSecondary mb-1">Notes</label>
@@ -595,65 +521,6 @@ function AddEditShoeModal({
           </div>
         </div>
       </form>
-    </Modal>
-  );
-}
-
-// ─── Backfill Modal ───────────────────────────────────────────────────────────
-
-interface BackfillModalProps {
-  shoe: RunningShoe;
-  unassignedMatches: StravaActivity[];
-  onConfirm: () => Promise<void>;
-  onSkip: () => void;
-}
-
-function BackfillModal({ shoe, unassignedMatches, onConfirm, onSkip }: BackfillModalProps) {
-  const [loading, setLoading] = useState(false);
-
-  async function handleConfirm() {
-    setLoading(true);
-    try {
-      await onConfirm();
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  return (
-    <Modal title="Apply to Past Runs?" onClose={onSkip}>
-      <div className="flex flex-col gap-4">
-        <p className="text-sm text-textPrimary">
-          <span className="font-semibold">{shoe.name}</span> has Strava gear ID{" "}
-          <span className="font-mono text-xs bg-surface px-1.5 py-0.5 rounded border border-border">
-            {shoe.stravaGearId}
-          </span>
-          .{" "}
-          <span className="font-semibold text-primary">
-            {unassignedMatches.length} run
-            {unassignedMatches.length !== 1 ? "s" : ""}
-          </span>{" "}
-          in your history have this gear ID and no manual assignment.
-        </p>
-        <p className="text-sm text-textSecondary">
-          Assign them to <span className="font-medium text-textPrimary">{shoe.name}</span> now?
-        </p>
-        <div className="flex gap-2 justify-end pt-2 border-t border-border">
-          <button
-            onClick={onSkip}
-            className="px-4 py-2 text-sm text-textSecondary border border-border rounded-lg hover:bg-surface transition-colors"
-          >
-            Skip
-          </button>
-          <button
-            onClick={handleConfirm}
-            disabled={loading}
-            className="px-4 py-2 text-sm font-semibold text-white bg-primary rounded-lg hover:bg-primary/90 disabled:opacity-50 transition-colors"
-          >
-            {loading ? "Assigning…" : `Assign ${unassignedMatches.length} Run${unassignedMatches.length !== 1 ? "s" : ""}`}
-          </button>
-        </div>
-      </div>
     </Modal>
   );
 }
@@ -1018,9 +885,17 @@ export default function ShoesPage() {
 
   // Modal state
   const [editingShoe, setEditingShoe] = useState<RunningShoe | null | "new">(null);
-  const [backfillShoe, setBackfillShoe] = useState<RunningShoe | null>(null);
   const [editingRule, setEditingRule] = useState<{ rule: ShoeAutoAssignRule | null; shoe: RunningShoe | null } | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<RunningShoe | null>(null);
+
+  useEffect(() => {
+    const isOpen =
+      editingShoe !== null ||
+      editingRule !== null ||
+      !!deleteConfirm;
+    document.body.style.overflow = isOpen ? "hidden" : "";
+    return () => { document.body.style.overflow = ""; };
+  }, [editingShoe, editingRule, deleteConfirm]);
 
   const loadAll = useCallback(async () => {
     if (!uid) return;
@@ -1048,24 +923,7 @@ export default function ShoesPage() {
     if (!uid) return;
 
     if (isNew) {
-      const id = await createShoe(uid, shoe);
-      const created = { ...shoe, id };
-
-      // Check if backfill needed
-      if (created.stravaGearId) {
-        const matches = activities.filter(
-          (a) =>
-            isRun(a.type) &&
-            a.gear_id === created.stravaGearId &&
-            !assignments[String(a.id)]
-        );
-        if (matches.length > 0) {
-          setEditingShoe(null);
-          await loadAll(); // refresh so backfill modal has fresh assignment state
-          setBackfillShoe(created);
-          return;
-        }
-      }
+      await createShoe(uid, shoe);
     } else {
       await updateShoe(uid, shoe.id, shoe);
     }
@@ -1090,20 +948,6 @@ export default function ShoesPage() {
     await deleteShoe(uid, shoe.id);
     setDeleteConfirm(null);
     setEditingShoe(null);
-    await loadAll();
-  }
-
-  // ── Backfill confirm ──────────────────────────────────────────────────────
-  async function handleBackfillConfirm() {
-    if (!uid || !backfillShoe || !backfillShoe.stravaGearId) return;
-    const matches = activities.filter(
-      (a) =>
-        isRun(a.type) &&
-        a.gear_id === backfillShoe.stravaGearId &&
-        !assignments[String(a.id)]
-    );
-    await batchAssignShoe(uid, matches.map((a) => a.id), backfillShoe.id);
-    setBackfillShoe(null);
     await loadAll();
   }
 
@@ -1231,8 +1075,6 @@ export default function ShoesPage() {
       {editingShoe !== null && (
         <AddEditShoeModal
           shoe={editingShoe === "new" ? null : editingShoe}
-          activities={activities}
-          existingShoes={shoes}
           onSave={handleSaveShoe}
           onDelete={(s) => { setEditingShoe(null); setDeleteConfirm(s); }}
           onClose={() => setEditingShoe(null)}
@@ -1265,20 +1107,6 @@ export default function ShoesPage() {
             </div>
           </div>
         </Modal>
-      )}
-
-      {backfillShoe && (
-        <BackfillModal
-          shoe={backfillShoe}
-          unassignedMatches={activities.filter(
-            (a) =>
-              isRun(a.type) &&
-              a.gear_id === backfillShoe.stravaGearId &&
-              !assignments[String(a.id)]
-          )}
-          onConfirm={handleBackfillConfirm}
-          onSkip={() => setBackfillShoe(null)}
-        />
       )}
 
       {editingRule !== null && (

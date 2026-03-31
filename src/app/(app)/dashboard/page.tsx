@@ -39,6 +39,7 @@ import {
   weekStart as getWeekStart,
   weekEnd as getWeekEnd,
   formatShortDate,
+  isSameWeek,
 } from "@/utils/dates";
 import { isRun, isWorkout } from "@/utils/activityTypes";
 import { type StravaActivity, type ActivityType } from "@/types/activity";
@@ -188,39 +189,31 @@ function WeeklyStatsBar({ activities, weekStart, weekEnd, plannedMiles }: Weekly
   );
 }
 
-// ─── Recent Runs ──────────────────────────────────────────────────────────────
+// ─── This Week's Runs ─────────────────────────────────────────────────────────
 
-interface RecentRunsCardProps {
+interface ThisWeekRunsCardProps {
   activities: StravaActivity[];
+  weekStart: Date;
 }
 
-function RecentRunsCard({ activities }: RecentRunsCardProps) {
+function ThisWeekRunsCard({ activities, weekStart }: ThisWeekRunsCardProps) {
   const runs = useMemo(
     () =>
-      activities
-        .filter((a) => isRun(a.type))
-        .slice(0, 5),
-    [activities]
+      activities.filter(
+        (a) => isRun(a.type) && isSameWeek(getActivityLocalDate(a), weekStart)
+      ),
+    [activities, weekStart]
   );
 
   return (
-    <Card>
-      <CardTitle>Recent Runs</CardTitle>
+    <Card className="overflow-hidden">
+      <CardTitle>This Week&apos;s Runs</CardTitle>
 
       {runs.length === 0 ? (
-        <EmptyState title="No runs yet" description="Your runs will appear here once synced." />
+        <EmptyState title="No runs this week yet" />
       ) : (
         <>
-          {/* Header row */}
-          <div className="grid grid-cols-[90px_1fr_60px_70px_60px_64px] gap-x-3 mb-2 px-1">
-            {["Date", "Name", "Dist", "Pace", "HR", "Eff"].map((h) => (
-              <span key={h} className="text-xs font-semibold uppercase tracking-widest text-textSecondary">
-                {h}
-              </span>
-            ))}
-          </div>
-
-          <div className="divide-y divide-border">
+          <div className="flex flex-col gap-0.5">
             {runs.map((run) => {
               const hasHR = run.avg_heartrate !== null && run.avg_speed_mps > 0;
               const rawScore = hasHR
@@ -235,23 +228,29 @@ function RecentRunsCard({ activities }: RecentRunsCardProps) {
                 effLevel === "good" ? "good" : effLevel === "ok" ? "ok" : effLevel === "low" ? "low" : "neutral";
 
               const localDate = getActivityLocalDate(run);
-              const name =
-                run.name.length > 24 ? run.name.slice(0, 24) + "…" : run.name;
+              const dayAbbrev = localDate
+                .toLocaleDateString("en-US", { weekday: "short" })
+                .toUpperCase();
+              const dateStr = localDate.toLocaleDateString("en-US", {
+                month: "short",
+                day: "numeric",
+              });
 
               return (
                 <div
                   key={run.id}
-                  className="grid grid-cols-[90px_1fr_60px_70px_60px_64px] gap-x-3 items-center py-2.5 px-1 hover:bg-surface rounded-lg transition-colors"
+                  className="flex items-center justify-between py-2 px-1 hover:bg-surface rounded-lg transition-colors"
                 >
-                  <span className="text-xs text-textSecondary">{formatShortDate(localDate)}</span>
-                  <span className="text-sm text-textPrimary truncate">{name}</span>
-                  <span className="text-sm text-textPrimary tabular-nums">
+                  <span className="text-xs text-textSecondary w-20 shrink-0">
+                    {dayAbbrev} {dateStr}
+                  </span>
+                  <span className="text-sm font-semibold text-textPrimary tabular-nums">
                     {formatMiles(run.distance_miles)} mi
                   </span>
                   <span className="text-sm text-textPrimary tabular-nums">
                     {run.pace_min_per_mile} /mi
                   </span>
-                  <span className="text-sm text-textPrimary tabular-nums">
+                  <span className="text-sm text-textSecondary tabular-nums">
                     {run.avg_heartrate ? `${Math.round(run.avg_heartrate)} bpm` : "—"}
                   </span>
                   <div>
@@ -303,7 +302,7 @@ function WorkoutSummaryCard({ activities, weekStart, weekEnd }: WorkoutSummaryCa
   );
 
   return (
-    <Card>
+    <Card className="overflow-hidden">
       <CardTitle>This Week&apos;s Workouts</CardTitle>
 
       {workouts.length === 0 ? (
@@ -706,7 +705,6 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
         {/* Left column (3/5) */}
         <div className="lg:col-span-3 flex flex-col gap-5">
-          <RecentRunsCard activities={activities} />
           <WorkoutSummaryCard
             activities={activities}
             weekStart={selectedWeekStart}
@@ -721,6 +719,10 @@ export default function DashboardPage() {
             activities={activities}
             weekStart={selectedWeekStart}
             weekEnd={selectedWeekEnd}
+          />
+          <ThisWeekRunsCard
+            activities={activities}
+            weekStart={selectedWeekStart}
           />
           <RaceGoalCard activeRace={activeRace} />
           <TrainingLoadCard activities={activities} />

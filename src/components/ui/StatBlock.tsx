@@ -14,7 +14,7 @@ export function StatBlock({ label, value, unit, sublabel, className = "" }: Stat
     <div className={`flex flex-col gap-0.5 ${className}`}>
       <span className="text-xs text-gray-500 uppercase tracking-wide">{label}</span>
       <div className="flex items-baseline gap-1">
-        <span className="text-2xl font-bold tabular-nums">{value}</span>
+        <span className="text-2xl font-bold tabular-nums text-textPrimary">{value}</span>
         {unit && <span className="text-sm text-gray-500">{unit}</span>}
       </div>
       {sublabel && <span className="text-xs text-gray-400">{sublabel}</span>}

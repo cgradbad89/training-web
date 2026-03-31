@@ -4,7 +4,6 @@ export interface RunningShoe {
   brand: string;
   model: string;
   colorway?: string;
-  stravaGearId?: string;       // Strava gear_id, e.g. "g29090478"
   purchaseDate?: string;       // ISO date string
   startMileageOffset: number;
   retirementMileageTarget?: number;

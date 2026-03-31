@@ -41,7 +41,11 @@ function getLocalDate(a: StravaActivity): Date {
 }
 
 function weekKey(date: Date): string {
-  return getWeekStart(date).toISOString().split("T")[0];
+  const d = getWeekStart(date);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 /** Returns "Mon", "Tue", etc for a given weekday offset (0=Mon) */
@@ -342,7 +346,7 @@ function RunRow({ run, shoeName }: RunRowProps) {
       </div>
 
       {/* Col 6: Heart Rate — hidden on mobile */}
-      <div className="hidden lg:table-cell w-16 shrink-0 text-sm text-textPrimary tabular-nums text-right">
+      <div className="hidden lg:table-cell w-16 shrink-0 text-sm text-textSecondary tabular-nums text-right">
         {run.avg_heartrate ? `${Math.round(run.avg_heartrate)} bpm` : "—"}
       </div>
 

@@ -451,6 +451,7 @@ export default function PlansPage() {
   const [selectedWeekIndex, setSelectedWeekIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [mobileView, setMobileView] = useState<"list" | "detail">("list");
 
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [addingInWeek, setAddingInWeek] = useState<number | null>(null);
@@ -676,7 +677,7 @@ export default function PlansPage() {
   return (
     <div className="flex h-[calc(100vh-4rem)] overflow-hidden">
       {/* ── Left Panel: Plan List ────────────────────────────────────────── */}
-      <div className="w-64 shrink-0 border-r border-border bg-card flex flex-col">
+      <div className={`${mobileView === "detail" ? "hidden lg:flex" : "flex"} w-full lg:w-64 shrink-0 border-r border-border bg-card flex-col`}>
         <div className="p-4 border-b border-border flex items-center justify-between">
           <h2 className="font-semibold text-textPrimary">Plans</h2>
           <button
@@ -699,6 +700,7 @@ export default function PlansPage() {
               onClick={() => {
                 setSelectedPlanId(plan.id);
                 setSelectedWeekIndex(currentWeekIndex(plan));
+                setMobileView("detail");
               }}
               className={`w-full text-left px-4 py-3 flex items-center gap-2 transition-colors ${
                 selectedPlanId === plan.id
@@ -728,9 +730,19 @@ export default function PlansPage() {
       </div>
 
       {/* ── Right Panel ─────────────────────────────────────────────────── */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className={`${mobileView === "list" ? "hidden lg:flex" : "flex"} flex-1 flex-col overflow-hidden`}>
         {selectedPlan ? (
           <>
+            {/* Back button — mobile only, above plan header */}
+            <div className="lg:hidden px-6 pt-4 pb-0 bg-card border-b border-transparent">
+              <button
+                onClick={() => setMobileView("list")}
+                className="text-sm text-primary mb-4 flex items-center gap-1"
+              >
+                ← Back to Plans
+              </button>
+            </div>
+
             {/* Plan header */}
             <div className="px-6 py-4 border-b border-border bg-card flex items-start gap-4">
               <div className="flex-1 min-w-0">
