@@ -343,14 +343,14 @@ function AddEditShoeModal({
     try {
       const data: Omit<RunningShoe, "id" | "addedAt"> = {
         name: form.name.trim(),
-        brand: form.brand.trim(),
-        model: form.model.trim(),
+        brand: form.brand.trim() || '',
+        model: form.model.trim() || '',
         purchaseDate: form.purchaseDate || undefined,
         startMileageOffset: parseFloat(form.startMileageOffset) || 0,
         retirementMileageTarget: form.retirementMileageTarget
-          ? parseFloat(form.retirementMileageTarget)
+          ? Number(form.retirementMileageTarget)
           : undefined,
-        notes: form.notes.trim() || undefined,
+        notes: form.notes.trim() || '',
         isRetired: form.isRetired,
         autoAssignRules: shoe?.autoAssignRules ?? [],
       };

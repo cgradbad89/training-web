@@ -12,10 +12,14 @@ import { COLLECTIONS } from "@/lib/firestore";
 import { type RunningShoe, type ShoeAssignment, type ShoeAutoAssignmentRule } from "@/types";
 import { toDate } from "@/utils/dates";
 
+function stripUndefined<T extends object>(obj: T): T {
+  return JSON.parse(JSON.stringify(obj)) as T;
+}
+
 // ─── Shoes ────────────────────────────────────────────────────────────────────
 
 export async function fetchShoes(uid: string): Promise<RunningShoe[]> {
-  const snap = await getDocs(collection(db, COLLECTIONS.runningShoes(uid)));
+  const snap = await getDocs(collection(db, `users/${uid}/shoes`));
   return snap.docs.map((d) => {
     const data = d.data() as Record<string, unknown>;
     return {
@@ -39,7 +43,7 @@ export async function createShoe(
     id,
     addedAt: new Date().toISOString(),
   };
-  await setDoc(doc(db, COLLECTIONS.runningShoes(uid), id), shoe);
+  await setDoc(doc(db, `users/${uid}/shoes`, id), stripUndefined(shoe));
   return id;
 }
 
@@ -48,15 +52,15 @@ export async function updateShoe(
   shoeId: string,
   data: Partial<RunningShoe>
 ): Promise<void> {
-  await updateDoc(doc(db, COLLECTIONS.runningShoes(uid), shoeId), data as Record<string, unknown>);
+  await updateDoc(doc(db, `users/${uid}/shoes`, shoeId), stripUndefined(data) as Record<string, unknown>);
 }
 
 export async function saveShoe(uid: string, shoe: RunningShoe): Promise<void> {
-  await setDoc(doc(db, COLLECTIONS.runningShoes(uid), shoe.id), shoe);
+  await setDoc(doc(db, `users/${uid}/shoes`, shoe.id), shoe);
 }
 
 export async function deleteShoe(uid: string, shoeId: string): Promise<void> {
-  await deleteDoc(doc(db, COLLECTIONS.runningShoes(uid), shoeId));
+  await deleteDoc(doc(db, `users/${uid}/shoes`, shoeId));
 }
 
 // ─── Manual assignments doc ───────────────────────────────────────────────────
@@ -81,7 +85,7 @@ export async function saveManualAssignments(
   assignments: Record<string, string | null>
 ): Promise<void> {
   const ref = doc(db, COLLECTIONS.shoeAssignments(uid), "manual");
-  await setDoc(ref, assignments, { merge: true });
+  await setDoc(ref, stripUndefined(assignments), { merge: true });
 }
 
 // ─── Assignments ──────────────────────────────────────────────────────────────

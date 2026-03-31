@@ -53,89 +53,112 @@ function activityDate(a: StravaActivity): string {
   return a.start_date_local.split("T")[0];
 }
 
-function isOTF(name: string): boolean {
-  return /orange theory|orangetheory|\botf\b/i.test(name);
-}
-function isTreadmill(name: string): boolean {
-  return /treadmill|tread|\btm\b/i.test(name);
+type MatchQuality = "full" | "partial";
+interface PlanMatch {
+  activity: StravaActivity;
+  quality: MatchQuality;
 }
 
 /**
- * 4-pass plan vs actual matching.
- * Returns a map: entryId → StravaActivity | null
+ * 4-pass plan vs actual matching (no type matching; per-week used-set).
+ * Returns a map: entryId → PlanMatch | null
+ *
+ * Pass 1: exact day + distance within tolerance → "full"
+ * Pass 2: ±1 day  + distance within tolerance → "full"
+ * Pass 3: exact day, any distance             → "partial"
+ * Pass 4: ±1 day,  any distance               → "partial"
  */
 function matchPlanToActual(
   plan: RunningPlan,
   activities: StravaActivity[]
-): Map<string, StravaActivity | null> {
+): Map<string, PlanMatch | null> {
   const runs = activities.filter(
     (a) => a.type === "Run" || a.type === "TrailRun"
   );
-  const result = new Map<string, StravaActivity | null>();
-  const used = new Set<number>();
-  const allEntries = plan.weeks
-    .flatMap((w) => w.entries)
-    .filter((e) => e.runType !== "rest");
+  const result = new Map<string, PlanMatch | null>();
 
-  function entryRunType(e: PlannedRunEntry): string {
-    return e.runType ?? "outdoor";
-  }
-  function actRunType(a: StravaActivity): string {
-    if (isOTF(a.name)) return "otf";
-    if (isTreadmill(a.name)) return "treadmill";
-    if (a.distance_miles > 7) return "longRun";
-    return "outdoor";
-  }
-  function sameType(e: PlannedRunEntry, a: StravaActivity): boolean {
-    return entryRunType(e) === actRunType(a);
-  }
-  function fullDist(e: PlannedRunEntry, a: StravaActivity): boolean {
-    return Math.abs(a.distance_miles - e.distanceMiles) <= 0.5;
-  }
-  function partialDist(e: PlannedRunEntry, a: StravaActivity): boolean {
-    return Math.abs(a.distance_miles - e.distanceMiles) <= 1.5;
-  }
   function dateOf(e: PlannedRunEntry): string {
     return toISODate(plannedDate(plan, e));
   }
+  function withinTolerance(e: PlannedRunEntry, a: StravaActivity): boolean {
+    return (
+      Math.abs(a.distance_miles - e.distanceMiles) <=
+      Math.max(0.5, e.distanceMiles * 0.3)
+    );
+  }
+  function withinOneDay(aDate: string, eDate: string): boolean {
+    return (
+      Math.abs(
+        (new Date(aDate).getTime() - new Date(eDate).getTime()) / 86400000
+      ) <= 1
+    );
+  }
 
-  function tryMatch(
-    entries: PlannedRunEntry[],
-    passRuns: StravaActivity[],
-    exactDay: boolean,
-    fullDistance: boolean
-  ) {
+  for (const week of plan.weeks) {
+    const entries = week.entries.filter((e) => e.runType !== "rest");
+    const used = new Set<number>();
+
+    // Pass 1: exact day, distance within tolerance → "full"
     for (const e of entries) {
       if (result.has(e.id)) continue;
       const eDate = dateOf(e);
-      for (const a of passRuns) {
+      for (const a of runs) {
         if (used.has(a.id)) continue;
-        const aDate = activityDate(a);
-        const dayMatch = exactDay
-          ? aDate === eDate
-          : Math.abs(
-              (new Date(aDate).getTime() - new Date(eDate).getTime()) /
-                86400000
-            ) <= 1;
-        if (!dayMatch) continue;
-        if (!sameType(e, a)) continue;
-        if (fullDistance ? fullDist(e, a) : partialDist(e, a)) {
-          result.set(e.id, a);
+        if (activityDate(a) !== eDate) continue;
+        if (withinTolerance(e, a)) {
+          result.set(e.id, { activity: a, quality: "full" });
           used.add(a.id);
           break;
         }
       }
     }
+
+    // Pass 2: ±1 day, distance within tolerance → "full"
+    for (const e of entries) {
+      if (result.has(e.id)) continue;
+      const eDate = dateOf(e);
+      for (const a of runs) {
+        if (used.has(a.id)) continue;
+        if (!withinOneDay(activityDate(a), eDate)) continue;
+        if (withinTolerance(e, a)) {
+          result.set(e.id, { activity: a, quality: "full" });
+          used.add(a.id);
+          break;
+        }
+      }
+    }
+
+    // Pass 3: exact day, any distance → "partial"
+    for (const e of entries) {
+      if (result.has(e.id)) continue;
+      const eDate = dateOf(e);
+      for (const a of runs) {
+        if (used.has(a.id)) continue;
+        if (activityDate(a) !== eDate) continue;
+        result.set(e.id, { activity: a, quality: "partial" });
+        used.add(a.id);
+        break;
+      }
+    }
+
+    // Pass 4: ±1 day, any distance → "partial"
+    for (const e of entries) {
+      if (result.has(e.id)) continue;
+      const eDate = dateOf(e);
+      for (const a of runs) {
+        if (used.has(a.id)) continue;
+        if (!withinOneDay(activityDate(a), eDate)) continue;
+        result.set(e.id, { activity: a, quality: "partial" });
+        used.add(a.id);
+        break;
+      }
+    }
+
+    for (const e of entries) {
+      if (!result.has(e.id)) result.set(e.id, null);
+    }
   }
 
-  tryMatch(allEntries, runs, true, true);
-  tryMatch(allEntries, runs, false, true);
-  tryMatch(allEntries, runs, true, false);
-  tryMatch(allEntries, runs, false, false);
-
-  for (const e of allEntries) {
-    if (!result.has(e.id)) result.set(e.id, null);
-  }
   return result;
 }
 
@@ -170,7 +193,7 @@ function RunTypeBadge({ type }: { type: PlanRunType }) {
 interface EntryRowProps {
   entry: PlannedRunEntry;
   plan: RunningPlan;
-  match: StravaActivity | null | undefined;
+  match: PlanMatch | null | undefined;
   onEdit: (entry: PlannedRunEntry) => void;
   onDelete: (entryId: string) => void;
   readonly: boolean;
@@ -192,11 +215,17 @@ function EntryRow({
 
   let statusIcon: React.ReactNode = null;
   if (!isRest) {
-    if (match) {
+    if (match?.quality === "full") {
+      // Pass 1 or 2 — green ✓ Met
       statusIcon = <CheckCircle className="w-4 h-4 text-success shrink-0" />;
+    } else if (match?.quality === "partial") {
+      // Pass 3 or 4 — yellow ~ Partial
+      statusIcon = <Check className="w-4 h-4 text-warning shrink-0" />;
     } else if (isPast) {
-      statusIcon = <AlertCircle className="w-4 h-4 text-warning shrink-0" />;
+      // No match + past — red ✗ Missed
+      statusIcon = <AlertCircle className="w-4 h-4 text-danger shrink-0" />;
     } else {
+      // No match + future — gray ○ Upcoming
       statusIcon = <Circle className="w-4 h-4 text-border shrink-0" />;
     }
   }
@@ -227,10 +256,10 @@ function EntryRow({
       </span>
       {match && (
         <span
-          className="text-xs text-success truncate max-w-[140px]"
-          title={match.name}
+          className={`text-xs truncate max-w-[140px] ${match.quality === "full" ? "text-success" : "text-warning"}`}
+          title={match.activity.name}
         >
-          ✓ {match.distance_miles.toFixed(1)} mi · {match.pace_min_per_mile}/mi
+          {match.quality === "full" ? "✓" : "~"} {match.activity.distance_miles.toFixed(1)} mi · {match.activity.pace_min_per_mile}/mi
         </span>
       )}
       {!readonly && (
@@ -374,14 +403,14 @@ function WeekSummaryBar({
   matchMap,
 }: {
   week: PlanWeek;
-  matchMap: Map<string, StravaActivity | null>;
+  matchMap: Map<string, PlanMatch | null>;
 }) {
   const runEntries = week.entries.filter((e) => e.runType !== "rest");
   const completedEntries = runEntries.filter((e) => matchMap.get(e.id));
   const plannedMiles = runEntries.reduce((s, e) => s + e.distanceMiles, 0);
   const actualMiles = completedEntries.reduce((s, e) => {
-    const a = matchMap.get(e.id);
-    return s + (a ? a.distance_miles : 0);
+    const m = matchMap.get(e.id);
+    return s + (m ? m.activity.distance_miles : 0);
   }, 0);
   const pct = plannedMiles > 0 ? Math.min(actualMiles / plannedMiles, 1) : 0;
 
@@ -468,7 +497,7 @@ export default function PlansPage() {
   const selectedPlan = plans.find((p) => p.id === selectedPlanId) ?? null;
   const matchMap = selectedPlan
     ? matchPlanToActual(selectedPlan, activities)
-    : new Map<string, StravaActivity | null>();
+    : new Map<string, PlanMatch | null>();
 
   // ── Load ──────────────────────────────────────────────────────────────────
 
