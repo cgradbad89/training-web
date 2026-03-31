@@ -4,35 +4,59 @@ import {
   getDocs,
   setDoc,
   deleteDoc,
-  updateDoc,
+  writeBatch,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { COLLECTIONS } from "@/lib/firestore";
-import { type HalfMarathonRace } from "@/types";
+import { type Race } from "@/types";
 
-export async function fetchRaces(uid: string): Promise<HalfMarathonRace[]> {
+export async function fetchRaces(uid: string): Promise<Race[]> {
   const snap = await getDocs(collection(db, COLLECTIONS.halfMarathonRaces(uid)));
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() } as HalfMarathonRace));
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() } as Race));
 }
 
-export async function saveRace(uid: string, race: HalfMarathonRace): Promise<void> {
-  await setDoc(doc(db, COLLECTIONS.halfMarathonRaces(uid), race.id), race);
+export async function createRace(
+  uid: string,
+  data: Omit<Race, "id" | "createdAt">
+): Promise<string> {
+  const id = crypto.randomUUID();
+  const race: Race = { ...data, id, createdAt: new Date().toISOString() };
+  await setDoc(doc(db, COLLECTIONS.halfMarathonRaces(uid), id), race);
+  return id;
+}
+
+export async function updateRace(
+  uid: string,
+  raceId: string,
+  data: Partial<Omit<Race, "id" | "createdAt">>
+): Promise<void> {
+  await setDoc(
+    doc(db, COLLECTIONS.halfMarathonRaces(uid), raceId),
+    data,
+    { merge: true }
+  );
 }
 
 export async function deleteRace(uid: string, raceId: string): Promise<void> {
   await deleteDoc(doc(db, COLLECTIONS.halfMarathonRaces(uid), raceId));
 }
 
-export async function setActiveRace(
-  uid: string,
-  raceId: string,
-  allRaces: HalfMarathonRace[]
-): Promise<void> {
-  await Promise.all(
-    allRaces.map((r) =>
-      updateDoc(doc(db, COLLECTIONS.halfMarathonRaces(uid), r.id), {
-        isActive: r.id === raceId,
-      })
-    )
-  );
+/**
+ * Atomically sets one race as active and all others as inactive.
+ * Fetches all races internally so callers don't need to supply the list.
+ */
+export async function setActiveRace(uid: string, raceId: string): Promise<void> {
+  const races = await fetchRaces(uid);
+  const batch = writeBatch(db);
+  for (const r of races) {
+    batch.update(doc(db, COLLECTIONS.halfMarathonRaces(uid), r.id), {
+      isActive: r.id === raceId,
+    });
+  }
+  await batch.commit();
+}
+
+/** Legacy full-save helper — kept for backward compat */
+export async function saveRace(uid: string, race: Race): Promise<void> {
+  await setDoc(doc(db, COLLECTIONS.halfMarathonRaces(uid), race.id), race);
 }

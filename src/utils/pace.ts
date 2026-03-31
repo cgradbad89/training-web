@@ -43,3 +43,18 @@ export function formatMiles(miles: number): string {
 export function halfMarathonFinishTime(paceSecPerMile: number): number {
   return paceSecPerMile * 13.109;
 }
+
+/**
+ * Parse a pace string in "M:SS" or "MM:SS" format into seconds per mile.
+ * Returns null if the string is invalid.
+ */
+export function parsePaceString(pace: string): number | null {
+  const trimmed = pace.trim();
+  const match = trimmed.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const minutes = parseInt(match[1], 10);
+  const seconds = parseInt(match[2], 10);
+  if (seconds >= 60) return null;
+  const total = minutes * 60 + seconds;
+  return total > 0 ? total : null;
+}

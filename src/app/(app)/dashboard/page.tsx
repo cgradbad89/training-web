@@ -508,8 +508,8 @@ function RaceGoalCard({ activeRace }: RaceGoalCardProps) {
     );
   }
 
-  const goalTimeSec = activeRace.targetPaceSecPerMile * HALF_MARATHON_MILES;
-  const days = daysUntil(activeRace.date);
+  const goalTimeSec = (activeRace.targetPaceSecondsPerMile ?? 0) * HALF_MARATHON_MILES;
+  const days = daysUntil(activeRace.raceDate);
 
   return (
     <Card>
@@ -517,7 +517,7 @@ function RaceGoalCard({ activeRace }: RaceGoalCardProps) {
 
       <p className="text-lg font-semibold text-textPrimary mb-1">{activeRace.name}</p>
       <div className="flex items-center gap-2 mb-1">
-        <p className="text-xs text-textSecondary">{formatRaceDate(activeRace.date)}</p>
+        <p className="text-xs text-textSecondary">{formatRaceDate(activeRace.raceDate)}</p>
         {days > 0 && (
           <span className="text-xs text-textSecondary">({days} days)</span>
         )}
@@ -533,7 +533,7 @@ function RaceGoalCard({ activeRace }: RaceGoalCardProps) {
         <div className="flex flex-col gap-0.5">
           <span className="text-xs text-textSecondary">Target Pace</span>
           <span className="text-2xl font-bold text-textPrimary tabular-nums">
-            {formatPace(activeRace.targetPaceSecPerMile)}
+            {formatPace(activeRace.targetPaceSecondsPerMile ?? 0)}
             <span className="text-sm font-normal text-textSecondary"> /mi</span>
           </span>
         </div>
