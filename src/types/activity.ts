@@ -8,7 +8,18 @@ export type ActivityType =
   | "Workout"
   | "Yoga"
   | "Hike"
+  | "Pilates"
+  | "Kayaking"
   | "Other";
+
+export const RUN_TYPES: ActivityType[] = ["Run"];
+export const WORKOUT_TYPES: ActivityType[] = [
+  "WeightTraining",
+  "Workout",
+  "Yoga",
+  "Ride",
+  "Pilates",
+];
 
 export interface StravaActivity {
   id: number;

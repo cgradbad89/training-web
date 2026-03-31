@@ -26,6 +26,8 @@ export function activityTypeLabel(type: ActivityType): string {
     Workout: "Workout",
     Yoga: "Yoga",
     Hike: "Hike",
+    Pilates: "Pilates",
+    Kayaking: "Kayaking",
     Other: "Other",
   };
   return labels[type] ?? type;

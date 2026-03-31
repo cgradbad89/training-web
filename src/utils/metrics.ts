@@ -49,16 +49,20 @@ export function efficiencyDisplayScore(speedMps: number, avgHR: number): number 
 
 export type EfficiencyLevel = "good" | "ok" | "low";
 
+/**
+ * rawScore = (speed_mps / avgHR) * 1000
+ * Expected range ~14–20. This is the pre-normalized value, NOT the 1–10 display scale.
+ */
 const EFFICIENCY_THRESHOLDS: Record<DistanceBucket, { good: number; ok: number }> = {
-  short:  { good: 7, ok: 5 },
-  medium: { good: 6, ok: 4 },
-  long:   { good: 5, ok: 3 },
+  short:  { good: 18.5, ok: 17.0 },
+  medium: { good: 17.5, ok: 16.0 },
+  long:   { good: 16.5, ok: 15.0 },
 };
 
-export function efficiencyLevel(score: number, bucket: DistanceBucket): EfficiencyLevel {
+export function efficiencyLevel(rawScore: number, bucket: DistanceBucket): EfficiencyLevel {
   const t = EFFICIENCY_THRESHOLDS[bucket];
-  if (score >= t.good) return "good";
-  if (score >= t.ok) return "ok";
+  if (rawScore >= t.good) return "good";
+  if (rawScore >= t.ok) return "ok";
   return "low";
 }
 

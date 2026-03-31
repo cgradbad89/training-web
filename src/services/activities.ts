@@ -4,30 +4,30 @@
  * Firestore collection: stravaActivities
  * Doc ID: Strava activity ID (number, stored as string)
  *
- * Schema (mirrors iOS StravaRow / StravaModels.swift):
- *   id              number
- *   name            string
- *   type            string (ActivityType)
- *   sport_type      string
- *   start_date      string  (ISO 8601 UTC)
- *   start_date_local string (ISO 8601 local)
- *   timezone        string
- *   distance        number  (meters)
- *   moving_time     number  (seconds)
- *   elapsed_time    number  (seconds)
- *   total_elevation_gain number (meters)
- *   average_speed   number  (m/s)
- *   max_speed       number  (m/s)
- *   average_heartrate number | null
- *   kudos_count     number
- *   external_id     string
- *   gear_id         string | null
- *   calories        number
+ * Schema (actual Firestore field names):
+ *   id                number
+ *   name              string
+ *   type              string (ActivityType)
+ *   sport_type        string
+ *   start_date        string  (ISO 8601 UTC)
+ *   start_date_local  string  (ISO 8601 local)
+ *   timezone          string
+ *   distance_m        number  (meters)
+ *   moving_time_s     number  (seconds)
+ *   elapsed_time_s    number  (seconds)
+ *   total_elev_gain_m number  (meters)
+ *   avg_speed_mps     number  (m/s)
+ *   max_speed_mps     number  (m/s)
+ *   avg_heartrate     number | null
+ *   kudos_count       number
+ *   external_id       string
+ *   gear_id           string | null
+ *   calories          number
  *   -- pre-computed by iOS sync client (optional):
  *   pace_min_per_mile string
  *   pace_sec_per_mile number
- *   distance_miles  number
- *   efficiencyScore number
+ *   distance_miles    number
+ *   efficiencyScore   number
  */
 
 import {
@@ -47,8 +47,8 @@ import { type StravaActivity } from "@/types";
 import { metersToMiles, mpsToSecPerMile, formatPace } from "@/utils";
 
 function docToActivity(id: string, data: Record<string, unknown>): StravaActivity {
-  const distanceM = (data.distance as number) ?? 0;
-  const speedMps = (data.average_speed as number) ?? 0;
+  const distanceM = (data.distance_m as number) ?? 0;
+  const speedMps = (data.avg_speed_mps as number) ?? 0;
   const secPerMile = data.pace_sec_per_mile
     ? (data.pace_sec_per_mile as number)
     : mpsToSecPerMile(speedMps);
@@ -62,12 +62,12 @@ function docToActivity(id: string, data: Record<string, unknown>): StravaActivit
     timezone: (data.timezone as string) ?? "",
     distance_m: distanceM,
     distance_miles: (data.distance_miles as number) ?? metersToMiles(distanceM),
-    moving_time_s: (data.moving_time as number) ?? 0,
-    elapsed_time_s: (data.elapsed_time as number) ?? 0,
+    moving_time_s: (data.moving_time_s as number) ?? 0,
+    elapsed_time_s: (data.elapsed_time_s as number) ?? 0,
     avg_speed_mps: speedMps,
-    max_speed_mps: (data.max_speed as number) ?? 0,
-    avg_heartrate: (data.average_heartrate as number | null) ?? null,
-    total_elev_gain_m: (data.total_elevation_gain as number) ?? 0,
+    max_speed_mps: (data.max_speed_mps as number) ?? 0,
+    avg_heartrate: (data.avg_heartrate as number | null) ?? null,
+    total_elev_gain_m: (data.total_elev_gain_m as number) ?? 0,
     kudos_count: (data.kudos_count as number) ?? 0,
     external_id: (data.external_id as string) ?? "",
     gear_id: (data.gear_id as string | null) ?? null,
