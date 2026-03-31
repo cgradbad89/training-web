@@ -54,3 +54,39 @@ export function inferRunType(name: string): string {
   if (lower.includes("race")) return "Race";
   return "Run";
 }
+
+// ─── Run display tag (used in run list UI) ────────────────────────────────────
+
+export type RunTag = "otf" | "treadmill" | "longRun" | "outdoor";
+
+export const RUN_TAG_STYLES: Record<RunTag, string> = {
+  otf:       "bg-orange-100 text-orange-700",
+  treadmill: "bg-blue-100 text-blue-700",
+  longRun:   "bg-purple-100 text-purple-700",
+  outdoor:   "bg-green-100 text-green-700",
+};
+
+export const RUN_TAG_LABELS: Record<RunTag, string> = {
+  otf:       "OTF",
+  treadmill: "Treadmill",
+  longRun:   "Long Run",
+  outdoor:   "Outdoor",
+};
+
+/**
+ * Classify a run into a display tag for the run list UI.
+ * Mirrors iOS inferRunType distance logic: long run threshold is > 7 miles.
+ */
+export function classifyRun(name: string, distanceMiles: number): RunTag {
+  const lower = name.toLowerCase();
+  if (
+    lower.includes("orange theory") ||
+    lower.includes("orangetheory") ||
+    lower.includes(" otf")
+  ) {
+    return "otf";
+  }
+  if (lower.includes("treadmill")) return "treadmill";
+  if (distanceMiles > 7) return "longRun";
+  return "outdoor";
+}

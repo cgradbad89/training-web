@@ -23,8 +23,14 @@ import {
 } from "@/utils/metrics";
 import { formatPace, formatDuration, formatMiles } from "@/utils/pace";
 import { weekStart as getWeekStart, formatShortDate } from "@/utils/dates";
-import { isRun } from "@/utils/activityTypes";
-import { inferRunType } from "@/utils/activityTypes";
+import {
+  isRun,
+  inferRunType,
+  classifyRun,
+  RUN_TAG_STYLES,
+  RUN_TAG_LABELS,
+  type RunTag,
+} from "@/utils/activityTypes";
 import { type StravaActivity } from "@/types/activity";
 import { type RunningShoe } from "@/types/shoe";
 
@@ -41,32 +47,6 @@ function weekKey(date: Date): string {
 /** Returns "Mon", "Tue", etc for a given weekday offset (0=Mon) */
 const DAY_ABBREVS = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
 
-/** Classify a run name into a display tag */
-type RunTag = "otf" | "treadmill" | "longRun" | "outdoor";
-
-function classifyRun(name: string, distanceMiles: number): RunTag {
-  const lower = name.toLowerCase();
-  if (lower.includes("orange theory") || lower.includes("orangetheory") || lower.includes(" otf")) {
-    return "otf";
-  }
-  if (lower.includes("treadmill")) return "treadmill";
-  if (distanceMiles >= 10) return "longRun";
-  return "outdoor";
-}
-
-const TAG_STYLES: Record<RunTag, string> = {
-  otf:       "bg-orange-100 text-orange-700",
-  treadmill: "bg-blue-100 text-blue-700",
-  longRun:   "bg-purple-100 text-purple-700",
-  outdoor:   "bg-green-100 text-green-700",
-};
-
-const TAG_LABELS: Record<RunTag, string> = {
-  otf:       "OTF",
-  treadmill: "Treadmill",
-  longRun:   "Long Run",
-  outdoor:   "Outdoor",
-};
 
 function getPaceDisplay(a: StravaActivity): string {
   if (a.pace_min_per_mile && /^\d+:\d{2}$/.test(a.pace_min_per_mile)) {
@@ -341,8 +321,8 @@ function RunRow({ run, shoeName }: RunRowProps) {
         <span className="text-sm font-medium text-textPrimary truncate max-w-[180px]">
           {run.name}
         </span>
-        <span className={`self-start text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${TAG_STYLES[tag]}`}>
-          {TAG_LABELS[tag]}
+        <span className={`self-start text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${RUN_TAG_STYLES[tag]}`}>
+          {RUN_TAG_LABELS[tag]}
         </span>
       </div>
 
