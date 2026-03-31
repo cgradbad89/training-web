@@ -32,10 +32,5 @@ export interface ShoeAssignment {
   shoeId: string | null; // null = explicit "no shoe"
 }
 
-/** Legacy subcollection-based auto-assignment rule (scaffolded — use ShoeAutoAssignRule instead) */
-export interface ShoeAutoAssignmentRule {
-  id: string;
-  shoeId: string;
-  matchActivityType?: string;  // e.g. "Run"
-  matchGearId?: string;        // Strava gear_id
-}
+/** @deprecated Use ShoeAutoAssignRule instead */
+export type ShoeAutoAssignmentRule = ShoeAutoAssignRule;

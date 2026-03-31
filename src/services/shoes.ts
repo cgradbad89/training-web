@@ -11,12 +11,23 @@ import {
 import { db } from "@/lib/firebase";
 import { COLLECTIONS } from "@/lib/firestore";
 import { type RunningShoe, type ShoeAssignment, type ShoeAutoAssignmentRule } from "@/types";
+import { toDate } from "@/utils/dates";
 
 // ─── Shoes ────────────────────────────────────────────────────────────────────
 
 export async function fetchShoes(uid: string): Promise<RunningShoe[]> {
   const snap = await getDocs(collection(db, COLLECTIONS.runningShoes(uid)));
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() } as RunningShoe));
+  return snap.docs.map((d) => {
+    const data = d.data() as Record<string, unknown>;
+    return {
+      ...data,
+      id: d.id,
+      purchaseDate: data.purchaseDate
+        ? toDate(data.purchaseDate).toISOString().split("T")[0]
+        : undefined,
+      addedAt: toDate(data.addedAt).toISOString(),
+    } as RunningShoe;
+  });
 }
 
 export async function createShoe(

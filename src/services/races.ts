@@ -9,10 +9,19 @@ import {
 import { db } from "@/lib/firebase";
 import { COLLECTIONS } from "@/lib/firestore";
 import { type Race } from "@/types";
+import { toDate } from "@/utils/dates";
 
 export async function fetchRaces(uid: string): Promise<Race[]> {
   const snap = await getDocs(collection(db, COLLECTIONS.halfMarathonRaces(uid)));
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() } as Race));
+  return snap.docs.map((d) => {
+    const data = d.data() as Record<string, unknown>;
+    return {
+      ...data,
+      id: d.id,
+      raceDate: toDate(data.raceDate).toISOString().split("T")[0],
+      createdAt: toDate(data.createdAt).toISOString(),
+    } as Race;
+  });
 }
 
 export async function createRace(
