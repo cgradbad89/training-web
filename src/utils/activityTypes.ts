@@ -1,4 +1,4 @@
-import { type ActivityType } from "@/types";
+import { type ActivityType, RUN_TYPES, WORKOUT_TYPES } from "@/types";
 
 /** Activity types treated as runs for metric computations */
 export const RUN_LIKE_TYPES: ActivityType[] = ["Run", "TrailRun"];
@@ -12,6 +12,16 @@ export function isRunLike(type: ActivityType): boolean {
 
 export function isRunSection(type: ActivityType): boolean {
   return RUN_SECTION_TYPES.includes(type);
+}
+
+/** True if this activity counts as a Run for weekly stats (RUN_TYPES = ["Run"]) */
+export function isRun(type: ActivityType): boolean {
+  return (RUN_TYPES as ActivityType[]).includes(type);
+}
+
+/** True if this activity counts as a Workout for weekly stats */
+export function isWorkout(type: ActivityType): boolean {
+  return (WORKOUT_TYPES as ActivityType[]).includes(type);
 }
 
 /** Human-readable label for an activity type */
