@@ -4,21 +4,38 @@ export interface RunningShoe {
   brand: string;
   model: string;
   colorway?: string;
+  stravaGearId?: string;       // Strava gear_id, e.g. "g29090478"
+  purchaseDate?: string;       // ISO date string
   startMileageOffset: number;
   retirementMileageTarget?: number;
   notes?: string;
   isRetired: boolean;
-  addedAt: string; // ISO date string
+  addedAt: string;             // ISO date string
+  autoAssignRules?: ShoeAutoAssignRule[];
 }
 
+/** Inline rule stored as an array on the RunningShoe document */
+export interface ShoeAutoAssignRule {
+  id: string;
+  shoeId: string;              // redundant when stored inline, required for aggregated views
+  isEnabled: boolean;
+  scope: "any" | "outdoor" | "treadmill";
+  minDistance?: number;        // miles
+  maxDistance?: number;        // miles
+  startDate?: string;          // ISO date string
+  endDate?: string;            // ISO date string
+}
+
+/** Legacy per-document assignment (one Firestore doc per activity) */
 export interface ShoeAssignment {
   activityId: number;
   shoeId: string | null; // null = explicit "no shoe"
 }
 
+/** Legacy subcollection-based auto-assignment rule (scaffolded — use ShoeAutoAssignRule instead) */
 export interface ShoeAutoAssignmentRule {
   id: string;
   shoeId: string;
-  matchActivityType?: string; // e.g. "Run"
-  matchGearId?: string;       // Strava gear_id
+  matchActivityType?: string;  // e.g. "Run"
+  matchGearId?: string;        // Strava gear_id
 }
