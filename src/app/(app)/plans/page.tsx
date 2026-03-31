@@ -18,6 +18,7 @@ import {
   type PlanRunType,
   type StravaActivity,
 } from "@/types";
+import { useRouter } from "next/navigation";
 import {
   CheckCircle,
   Circle,
@@ -27,7 +28,6 @@ import {
   Trash2,
   Copy,
   Check,
-  X,
   AlertCircle,
 } from "lucide-react";
 
@@ -221,155 +221,6 @@ function RunTypeBadge({ type }: { type: PlanRunType }) {
   );
 }
 
-// ─── Inline Day Editor ────────────────────────────────────────────────────────
-
-interface InlineDayEditorProps {
-  initial: Partial<PlannedRunEntry>;
-  weekday: number; // fixed, 1–7
-  weekIndex: number;
-  onSave: (entry: PlannedRunEntry) => void;
-  onCancel: () => void;
-}
-
-function InlineDayEditor({
-  initial,
-  weekday,
-  weekIndex,
-  onSave,
-  onCancel,
-}: InlineDayEditorProps) {
-  const initRunType =
-    initial.runType && initial.runType !== "rest"
-      ? initial.runType
-      : "outdoor";
-
-  const [runType, setRunType] = useState<PlanRunType>(initRunType);
-  const [description, setDescription] = useState(initial.description ?? "");
-  const [distanceMiles, setDistanceMiles] = useState(
-    initial.distanceMiles != null ? String(initial.distanceMiles) : ""
-  );
-  const [paceTarget, setPaceTarget] = useState(initial.paceTarget ?? "");
-  const [targetHeartRate, setTargetHeartRate] = useState(
-    initial.targetHeartRate != null ? String(initial.targetHeartRate) : ""
-  );
-  const [notes, setNotes] = useState(initial.notes ?? "");
-
-  const RUN_TYPES: { value: PlanRunType; label: string }[] = [
-    { value: "outdoor", label: "Outdoor" },
-    { value: "treadmill", label: "Treadmill" },
-    { value: "otf", label: "OTF" },
-    { value: "longRun", label: "Long Run" },
-  ];
-
-  function handleSave() {
-    const dist = parseFloat(distanceMiles);
-    if (isNaN(dist) || dist <= 0) return;
-    const hr = targetHeartRate ? parseInt(targetHeartRate, 10) : null;
-    onSave({
-      id: initial.id ?? crypto.randomUUID(),
-      weekIndex,
-      weekday,
-      dayOfWeek: weekday - 1,
-      distanceMiles: dist,
-      runType,
-      paceTarget: paceTarget.trim() || undefined,
-      description: description.trim() || undefined,
-      notes: notes.trim() || undefined,
-      targetHeartRate: hr,
-    });
-  }
-
-  return (
-    <div className="p-3 rounded-xl border border-primary/30 bg-primary/5 mt-1 mb-1">
-      {/* Run type segmented buttons */}
-      <div className="flex rounded-lg border border-border overflow-hidden mb-3">
-        {RUN_TYPES.map(({ value, label }) => (
-          <button
-            key={value}
-            type="button"
-            onClick={() => setRunType(value)}
-            className={`flex-1 py-1.5 text-xs font-semibold transition-colors ${
-              runType === value
-                ? "bg-primary text-white"
-                : "text-textSecondary hover:bg-surface"
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {/* Fields row */}
-      <div className="flex flex-wrap gap-2 items-center mb-2">
-        <input
-          type="text"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder="e.g. Easy effort"
-          className="flex-1 min-w-[140px] text-sm border border-border rounded-lg px-2 py-1.5 bg-card text-textPrimary"
-        />
-        <div className="flex items-center gap-1">
-          <input
-            type="number"
-            value={distanceMiles}
-            onChange={(e) => setDistanceMiles(e.target.value)}
-            placeholder="Dist"
-            step="0.1"
-            min="0"
-            className="w-20 text-sm border border-border rounded-lg px-2 py-1.5 bg-card text-textPrimary"
-          />
-          <span className="text-sm text-textSecondary">mi</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <input
-            type="text"
-            value={paceTarget}
-            onChange={(e) => setPaceTarget(e.target.value)}
-            placeholder="M:SS"
-            className="w-20 text-sm border border-border rounded-lg px-2 py-1.5 bg-card text-textPrimary"
-          />
-          <span className="text-sm text-textSecondary">/mi</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <input
-            type="number"
-            value={targetHeartRate}
-            onChange={(e) => setTargetHeartRate(e.target.value)}
-            placeholder="HR"
-            min="0"
-            max="250"
-            className="w-16 text-sm border border-border rounded-lg px-2 py-1.5 bg-card text-textPrimary"
-          />
-          <span className="text-sm text-textSecondary">bpm</span>
-        </div>
-        <input
-          type="text"
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-          placeholder="Notes (optional)"
-          className="flex-1 min-w-[120px] text-sm border border-border rounded-lg px-2 py-1.5 bg-card text-textPrimary"
-        />
-      </div>
-
-      {/* Action row */}
-      <div className="flex justify-end gap-2">
-        <button
-          onClick={onCancel}
-          className="flex items-center gap-1 px-3 py-1.5 text-xs text-textSecondary border border-border rounded-lg hover:bg-surface transition-colors"
-        >
-          <X className="w-3 h-3" /> Cancel
-        </button>
-        <button
-          onClick={handleSave}
-          className="flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-white bg-primary rounded-lg hover:bg-primary/90 transition-colors"
-        >
-          <Check className="w-3 h-3" /> Save
-        </button>
-      </div>
-    </div>
-  );
-}
-
 // ─── Week Summary Bar ─────────────────────────────────────────────────────────
 
 function WeekSummaryBar({
@@ -456,6 +307,7 @@ function Modal({
 
 export default function PlansPage() {
   const { user } = useAuth();
+  const router = useRouter();
   const [plans, setPlans] = useState<RunningPlan[]>([]);
   const [activities, setActivities] = useState<StravaActivity[]>([]);
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
@@ -463,9 +315,6 @@ export default function PlansPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [mobileView, setMobileView] = useState<"list" | "detail">("list");
-
-  // editingDay: weekday (1–7) that has the inline editor open, null if none
-  const [editingDay, setEditingDay] = useState<number | null>(null);
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showRenameModal, setShowRenameModal] = useState(false);
@@ -481,9 +330,6 @@ export default function PlansPage() {
   const matchMap = selectedPlan
     ? matchPlanToActual(selectedPlan, activities)
     : new Map<string, PlanMatch | null>();
-
-  // All plans are fully editable — isBuiltInDefault no longer locks editing
-  const isReadonly = false;
 
   // ── Load ──────────────────────────────────────────────────────────────────
 
@@ -625,40 +471,6 @@ export default function PlansPage() {
     }
   }
 
-  // ── Entry-level actions ───────────────────────────────────────────────────
-
-  async function saveEntryEdit(updated: PlannedRunEntry) {
-    if (!user || !selectedPlan) return;
-    const newWeeks = selectedPlan.weeks.map((w) => {
-      if (w.weekNumber !== selectedWeekIndex + 1) return w;
-      const exists = w.entries.find((e) => e.id === updated.id);
-      return {
-        ...w,
-        entries: exists
-          ? w.entries.map((e) => (e.id === updated.id ? updated : e))
-          : [...w.entries, updated].sort((a, b) => a.weekday - b.weekday),
-      };
-    });
-    const newPlan = { ...selectedPlan, weeks: newWeeks };
-    await updatePlan(user.uid, newPlan);
-    setPlans((prev) =>
-      prev.map((p) => (p.id === newPlan.id ? newPlan : p))
-    );
-    setEditingDay(null);
-  }
-
-  async function handleDeleteEntry(entryId: string) {
-    if (!user || !selectedPlan) return;
-    const newWeeks = selectedPlan.weeks.map((w) => ({
-      ...w,
-      entries: w.entries.filter((e) => e.id !== entryId),
-    }));
-    const newPlan = { ...selectedPlan, weeks: newWeeks };
-    await updatePlan(user.uid, newPlan);
-    setPlans((prev) =>
-      prev.map((p) => (p.id === newPlan.id ? newPlan : p))
-    );
-  }
 
   // ── Derived ───────────────────────────────────────────────────────────────
 
@@ -726,7 +538,6 @@ export default function PlansPage() {
               onClick={() => {
                 setSelectedPlanId(plan.id);
                 setSelectedWeekIndex(currentWeekIndex(plan));
-                setEditingDay(null);
                 setMobileView("detail");
               }}
               className={`w-full text-left px-4 py-3 flex items-center gap-2 transition-colors ${
@@ -808,6 +619,13 @@ export default function PlansPage() {
                   </button>
                 )}
                 <button
+                  onClick={() => router.push(`/plans/${selectedPlan.id}/edit`)}
+                  disabled={saving}
+                  className="text-sm px-3 py-1.5 rounded-lg border border-border text-textPrimary font-medium hover:bg-surface disabled:opacity-50"
+                >
+                  Edit Plan
+                </button>
+                <button
                   onClick={handleDuplicate}
                   disabled={saving}
                   title="Duplicate plan"
@@ -851,7 +669,6 @@ export default function PlansPage() {
                     key={idx}
                     onClick={() => {
                       setSelectedWeekIndex(idx);
-                      setEditingDay(null);
                     }}
                     className={`shrink-0 snap-start px-4 py-3 flex flex-col items-center border-b-2 transition-colors ${
                       isSelected
@@ -902,7 +719,6 @@ export default function PlansPage() {
                       const entry = weekEntries.find(
                         (e) => e.weekday === weekday && e.runType !== "rest"
                       );
-                      const isEditing = editingDay === weekday;
                       const match = entry ? matchMap.get(entry.id) : undefined;
                       const date = dayDate(selectedPlan, selectedWeekIndex, weekday);
                       const today = new Date();
@@ -933,8 +749,8 @@ export default function PlansPage() {
                           key={weekday}
                           className={weekday < 7 ? "border-b border-border" : ""}
                         >
-                          {/* Day row */}
-                          <div className="flex items-center gap-3 py-3 px-3 hover:bg-surface/50 group min-h-[52px]">
+                          {/* Day row — read-only display */}
+                          <div className="flex items-center gap-3 py-3 px-3 hover:bg-surface/50 min-h-[52px]">
                             {/* Left: day abbrev + date */}
                             <div className="w-14 shrink-0">
                               <div className="text-xs font-bold text-textSecondary">
@@ -945,29 +761,13 @@ export default function PlansPage() {
                               </div>
                             </div>
 
-                            {isEditing ? (
-                              // Editing state — show placeholder
-                              <>
-                                <div className="w-4 shrink-0" />
-                                <span className="text-sm text-textSecondary italic flex-1">
-                                  {entry ? "Editing…" : "Adding run…"}
-                                </span>
-                              </>
-                            ) : !entry ? (
+                            {!entry ? (
                               // Rest state
                               <>
                                 <div className="w-4 shrink-0" />
                                 <span className="text-sm text-textSecondary italic flex-1">
                                   Rest
                                 </span>
-                                {!isReadonly && (
-                                  <button
-                                    onClick={() => setEditingDay(weekday)}
-                                    className="text-xs text-primary hover:text-primary/80 opacity-0 group-hover:opacity-100 transition-opacity"
-                                  >
-                                    + Add Run
-                                  </button>
-                                )}
                               </>
                             ) : (
                               // Entry display state
@@ -1011,41 +811,17 @@ export default function PlansPage() {
                                       {match.quality === "full" ? "✓" : "~"}{" "}
                                       {match.activity.distance_miles.toFixed(1)} mi ·{" "}
                                       {match.activity.pace_min_per_mile}/mi
+                                      {match.activity.avg_heartrate != null && (
+                                        <span className="text-xs text-textSecondary ml-1">
+                                          · {Math.round(match.activity.avg_heartrate)} bpm
+                                        </span>
+                                      )}
                                     </span>
                                   )}
                                 </div>
-                                {!isReadonly && (
-                                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                                    <button
-                                      onClick={() => setEditingDay(weekday)}
-                                      className="p-1 rounded hover:bg-border text-textSecondary hover:text-textPrimary"
-                                    >
-                                      <Pencil className="w-3.5 h-3.5" />
-                                    </button>
-                                    <button
-                                      onClick={() => handleDeleteEntry(entry.id)}
-                                      className="p-1 rounded hover:bg-red-100 text-textSecondary hover:text-danger"
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </button>
-                                  </div>
-                                )}
                               </>
                             )}
                           </div>
-
-                          {/* Inline editor (expands below the row) */}
-                          {isEditing && (
-                            <div className="px-3 pb-3">
-                              <InlineDayEditor
-                                initial={entry ?? {}}
-                                weekday={weekday}
-                                weekIndex={selectedWeekIndex}
-                                onSave={(e) => saveEntryEdit(e)}
-                                onCancel={() => setEditingDay(null)}
-                              />
-                            </div>
-                          )}
                         </div>
                       );
                     })}

@@ -1066,6 +1066,7 @@ function RunsPanel({
                         <div className="text-xs text-textSecondary mt-0.5">
                           {run.distance_miles.toFixed(1)} mi
                           {run.pace_min_per_mile ? ` · ${run.pace_min_per_mile}/mi` : ""}
+                          {run.avg_heartrate != null ? ` · ${Math.round(run.avg_heartrate)} bpm` : ""}
                         </div>
                       </div>
                       <button

@@ -352,14 +352,14 @@ function RunRow({
         {getPaceDisplay(run)}
       </div>
 
-      {/* Col 5: Duration — hidden on mobile */}
-      <div className="hidden lg:block w-16 shrink-0 text-sm text-textSecondary tabular-nums text-right">
-        {formatDuration(run.moving_time_s)}
+      {/* Col 5: Heart Rate — always visible */}
+      <div className="w-16 shrink-0 text-sm text-textSecondary tabular-nums text-right">
+        {run.avg_heartrate ? `${Math.round(run.avg_heartrate)} bpm` : "—"}
       </div>
 
-      {/* Col 6: Heart Rate — hidden on mobile */}
+      {/* Col 6: Duration — hidden on mobile */}
       <div className="hidden lg:block w-16 shrink-0 text-sm text-textSecondary tabular-nums text-right">
-        {run.avg_heartrate ? `${Math.round(run.avg_heartrate)} bpm` : "—"}
+        {formatDuration(run.moving_time_s)}
       </div>
 
       {/* Col 7: Elevation — hidden on mobile */}

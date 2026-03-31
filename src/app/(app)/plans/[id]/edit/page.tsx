@@ -1,0 +1,673 @@
+"use client";
+
+import { useEffect, useState, useRef } from "react";
+import { useRouter, useParams } from "next/navigation";
+import { ChevronDown, ChevronUp, Pencil, X, Check, Plus } from "lucide-react";
+
+import { useAuth } from "@/hooks/useAuth";
+import { fetchPlans, updatePlan } from "@/services/plans";
+import { fetchActivities } from "@/services/activities";
+import {
+  type RunningPlan,
+  type PlannedRunEntry,
+  type PlanWeek,
+  type PlanRunType,
+} from "@/types/plan";
+import { type StravaActivity } from "@/types/activity";
+import { formatPace, parsePaceString } from "@/utils/pace";
+import { matchWeekRuns, type WeekMatchResult } from "@/utils/planMatching";
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const RUN_TYPE_STYLES: Record<
+  PlanRunType,
+  { bg: string; text: string; label: string }
+> = {
+  outdoor:   { bg: "bg-green-100",  text: "text-green-700",  label: "Outdoor"   },
+  treadmill: { bg: "bg-blue-100",   text: "text-blue-700",   label: "Treadmill" },
+  otf:       { bg: "bg-orange-100", text: "text-orange-700", label: "OTF"       },
+  longRun:   { bg: "bg-purple-100", text: "text-purple-700", label: "Long Run"  },
+  rest:      { bg: "bg-gray-100",   text: "text-gray-400",   label: "Rest"      },
+};
+
+const DAY_ABBREVS = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
+
+const RUN_TYPES_OPTIONS: { value: PlanRunType; label: string }[] = [
+  { value: "outdoor",   label: "Outdoor"   },
+  { value: "treadmill", label: "Treadmill" },
+  { value: "otf",       label: "OTF"       },
+  { value: "longRun",   label: "Long Run"  },
+];
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function toISODate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function dayDate(plan: RunningPlan, weekIndex: number, weekday: number): Date {
+  const [year, month, day] = plan.startDate.split("-").map(Number);
+  const start = new Date(year, month - 1, day);
+  const offset = weekIndex * 7 + (weekday - 1);
+  const d = new Date(start);
+  d.setDate(start.getDate() + offset);
+  return d;
+}
+
+function weekDateRange(plan: RunningPlan, weekIdx: number): string {
+  const start = new Date(plan.startDate + "T00:00:00");
+  start.setDate(start.getDate() + weekIdx * 7);
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  const fmt = (d: Date) =>
+    d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return `${fmt(start)} – ${fmt(end)}`;
+}
+
+function weekPlannedMiles(week: PlanWeek): number {
+  return week.entries
+    .filter((e) => e.runType !== "rest")
+    .reduce((s, e) => s + e.distanceMiles, 0);
+}
+
+function currentWeekIndex(plan: RunningPlan): number {
+  const start = new Date(plan.startDate + "T00:00:00");
+  const today = new Date();
+  const diff = Math.floor(
+    (today.getTime() - start.getTime()) / (7 * 24 * 3600 * 1000)
+  );
+  return Math.max(0, Math.min(diff, plan.weeks.length - 1));
+}
+
+// ─── RunTypeBadge ─────────────────────────────────────────────────────────────
+
+function RunTypeBadge({ type }: { type: PlanRunType }) {
+  const s = RUN_TYPE_STYLES[type];
+  return (
+    <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${s.bg} ${s.text}`}>
+      {s.label}
+    </span>
+  );
+}
+
+// ─── WeekStatusBadge ──────────────────────────────────────────────────────────
+
+function WeekStatusBadge({ result }: { result: WeekMatchResult }) {
+  if (result.status === "upcoming") return null;
+
+  const { status, planned, actual } = result;
+  const label = `${actual.toFixed(1)} / ${planned.toFixed(1)} mi`;
+
+  const cls =
+    status === "met"
+      ? "bg-green-100 text-green-700"
+      : status === "partial"
+      ? "bg-yellow-100 text-yellow-700"
+      : "bg-gray-100 text-gray-500";
+
+  return (
+    <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${cls}`}>
+      {label}
+    </span>
+  );
+}
+
+// ─── Entry Form ───────────────────────────────────────────────────────────────
+
+interface EntryFormProps {
+  initial: Partial<PlannedRunEntry>;
+  weekday: number;
+  weekIndex: number;
+  onSave: (entry: PlannedRunEntry) => void;
+  onCancel: () => void;
+}
+
+function EntryForm({ initial, weekday, weekIndex, onSave, onCancel }: EntryFormProps) {
+  const initRunType =
+    initial.runType && initial.runType !== "rest" ? initial.runType : "outdoor";
+
+  const [runType, setRunType] = useState<PlanRunType>(initRunType);
+  const [description, setDescription] = useState(initial.description ?? "");
+  const [distanceMiles, setDistanceMiles] = useState(
+    initial.distanceMiles != null ? String(initial.distanceMiles) : ""
+  );
+  const [paceInput, setPaceInput] = useState(initial.paceTarget ?? "");
+  const [targetHeartRate, setTargetHeartRate] = useState(
+    initial.targetHeartRate != null ? String(initial.targetHeartRate) : ""
+  );
+  const [notes, setNotes] = useState(initial.notes ?? "");
+
+  function handleSave() {
+    const dist = parseFloat(distanceMiles);
+    if (isNaN(dist) || dist <= 0) return;
+    const hr = targetHeartRate ? parseInt(targetHeartRate, 10) : null;
+
+    // Parse pace — store raw input as paceTarget (display string like "9:30")
+    const parsedPace = parsePaceString(paceInput.trim());
+    const paceTarget = parsedPace
+      ? formatPace(parsedPace)
+      : paceInput.trim() || undefined;
+
+    onSave({
+      id: initial.id ?? crypto.randomUUID(),
+      weekIndex,
+      weekday,
+      dayOfWeek: weekday - 1,
+      distanceMiles: dist,
+      runType,
+      paceTarget,
+      description: description.trim() || undefined,
+      notes: notes.trim() || undefined,
+      targetHeartRate: hr,
+    });
+  }
+
+  return (
+    <div className="bg-surface rounded-xl p-4 mx-4 mb-2 border border-border">
+      {/* Run type segmented */}
+      <div className="flex rounded-lg border border-border overflow-hidden mb-3">
+        {RUN_TYPES_OPTIONS.map(({ value, label }) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => setRunType(value)}
+            className={`flex-1 py-1.5 text-xs font-semibold transition-colors ${
+              runType === value
+                ? "bg-primary text-white"
+                : "text-textSecondary hover:bg-surface"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* Fields — 2-col on desktop */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-3">
+        <div className="md:col-span-2">
+          <input
+            type="text"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="e.g. Easy effort with strides"
+            className="w-full text-sm border border-border rounded-lg px-2 py-1.5 bg-card text-textPrimary"
+          />
+        </div>
+        <div className="flex items-center gap-1">
+          <input
+            type="number"
+            value={distanceMiles}
+            onChange={(e) => setDistanceMiles(e.target.value)}
+            placeholder="Distance"
+            step="0.1"
+            min="0"
+            className="flex-1 text-sm border border-border rounded-lg px-2 py-1.5 bg-card text-textPrimary"
+          />
+          <span className="text-sm text-textSecondary shrink-0">mi</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <input
+            type="text"
+            value={paceInput}
+            onChange={(e) => setPaceInput(e.target.value)}
+            placeholder="M:SS"
+            className="flex-1 text-sm border border-border rounded-lg px-2 py-1.5 bg-card text-textPrimary"
+          />
+          <span className="text-sm text-textSecondary shrink-0">/mi</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <input
+            type="number"
+            value={targetHeartRate}
+            onChange={(e) => setTargetHeartRate(e.target.value)}
+            placeholder="HR"
+            min="0"
+            max="250"
+            className="flex-1 text-sm border border-border rounded-lg px-2 py-1.5 bg-card text-textPrimary"
+          />
+          <span className="text-sm text-textSecondary shrink-0">bpm</span>
+        </div>
+        <div>
+          <input
+            type="text"
+            value={notes}
+            onChange={(e) => setNotes(e.target.value.slice(0, 200))}
+            placeholder="Notes (optional)"
+            className="w-full text-sm border border-border rounded-lg px-2 py-1.5 bg-card text-textPrimary"
+          />
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div className="flex justify-end gap-2">
+        <button
+          onClick={onCancel}
+          className="flex items-center gap-1 px-3 py-1.5 text-xs text-textSecondary border border-border rounded-lg hover:bg-surface transition-colors"
+        >
+          <X className="w-3 h-3" /> Cancel
+        </button>
+        <button
+          onClick={handleSave}
+          className="flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-white bg-primary rounded-lg hover:bg-primary/90 transition-colors"
+        >
+          <Check className="w-3 h-3" /> Save Entry
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── WeekAccordion ────────────────────────────────────────────────────────────
+
+interface WeekAccordionProps {
+  plan: RunningPlan;
+  weekIndex: number;
+  isExpanded: boolean;
+  onToggle: () => void;
+  activities: StravaActivity[];
+  onUpdateWeek: (weekIndex: number, entries: PlannedRunEntry[]) => void;
+}
+
+function WeekAccordion({
+  plan,
+  weekIndex,
+  isExpanded,
+  onToggle,
+  activities,
+  onUpdateWeek,
+}: WeekAccordionProps) {
+  const week = plan.weeks[weekIndex];
+  const [editingDay, setEditingDay] = useState<number | null>(null);
+
+  const matchResult = matchWeekRuns(plan, weekIndex, activities);
+  const plannedMiles = weekPlannedMiles(week);
+  const dateRange = weekDateRange(plan, weekIndex);
+
+  const entries = [...(week.entries ?? [])].sort((a, b) => a.weekday - b.weekday);
+
+  function saveEntry(updated: PlannedRunEntry) {
+    const exists = entries.find((e) => e.id === updated.id);
+    const newEntries = exists
+      ? entries.map((e) => (e.id === updated.id ? updated : e))
+      : [...entries, updated].sort((a, b) => a.weekday - b.weekday);
+    onUpdateWeek(weekIndex, newEntries);
+    setEditingDay(null);
+  }
+
+  function deleteEntry(entryId: string) {
+    onUpdateWeek(weekIndex, entries.filter((e) => e.id !== entryId));
+  }
+
+  return (
+    <div className="rounded-xl border border-border overflow-hidden mb-3">
+      {/* Accordion header */}
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-surface/50 transition-colors text-left"
+      >
+        <div className="flex-1">
+          <span className="text-sm font-semibold text-textPrimary">
+            Week {week.weekNumber}
+          </span>
+          <span className="ml-2 text-xs text-textSecondary">{dateRange}</span>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-xs font-semibold text-textPrimary tabular-nums">
+            {plannedMiles.toFixed(1)} mi
+          </span>
+          <WeekStatusBadge result={matchResult} />
+          {isExpanded ? (
+            <ChevronUp className="w-4 h-4 text-textSecondary" />
+          ) : (
+            <ChevronDown className="w-4 h-4 text-textSecondary" />
+          )}
+        </div>
+      </button>
+
+      {/* Accordion body */}
+      {isExpanded && (
+        <div className="border-t border-border">
+          {[1, 2, 3, 4, 5, 6, 7].map((weekday) => {
+            const entry = entries.find(
+              (e) => e.weekday === weekday && e.runType !== "rest"
+            );
+            const isEditing = editingDay === weekday;
+            const date = dayDate(plan, weekIndex, weekday);
+            const dateLabel = date.toLocaleDateString("en-US", {
+              month: "short",
+              day: "numeric",
+            });
+
+            return (
+              <div
+                key={weekday}
+                className={weekday < 7 ? "border-b border-border" : ""}
+              >
+                {/* Day row */}
+                <div className="flex items-center gap-3 py-3 px-4 hover:bg-surface/30 group min-h-[52px]">
+                  {/* Left: day + date */}
+                  <div className="w-14 shrink-0">
+                    <div className="text-xs font-bold text-textSecondary">
+                      {DAY_ABBREVS[weekday - 1]}
+                    </div>
+                    <div className="text-xs text-textSecondary">{dateLabel}</div>
+                  </div>
+
+                  {isEditing ? (
+                    <>
+                      <div className="flex-1" />
+                      <span className="text-sm text-textSecondary italic">
+                        {entry ? "Editing…" : "Adding run…"}
+                      </span>
+                    </>
+                  ) : !entry ? (
+                    // Rest day
+                    <>
+                      <span className="text-sm text-textSecondary italic flex-1">
+                        Rest
+                      </span>
+                      <button
+                        onClick={() => setEditingDay(weekday)}
+                        className="text-xs text-primary hover:text-primary/80 opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        <Plus className="w-3.5 h-3.5 inline mr-0.5" />
+                        Add Run
+                      </button>
+                    </>
+                  ) : (
+                    // Planned entry
+                    <>
+                      <div className="flex-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 min-w-0">
+                        {entry.runType && entry.runType !== "rest" && (
+                          <RunTypeBadge type={entry.runType} />
+                        )}
+                        {entry.description && (
+                          <span className="text-sm text-textSecondary">
+                            {entry.description}
+                          </span>
+                        )}
+                        <span className="text-sm font-semibold text-textPrimary tabular-nums">
+                          {entry.distanceMiles.toFixed(1)} mi
+                        </span>
+                        {entry.paceTarget && (
+                          <span className="text-sm text-textSecondary">
+                            @ {entry.paceTarget}/mi
+                          </span>
+                        )}
+                        {entry.targetHeartRate && (
+                          <span className="text-xs text-textSecondary">
+                            HR: {entry.targetHeartRate} bpm
+                          </span>
+                        )}
+                        {entry.notes && (
+                          <span className="text-xs text-textSecondary italic">
+                            {entry.notes}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                        <button
+                          onClick={() => setEditingDay(weekday)}
+                          className="p-1 rounded hover:bg-border text-textSecondary hover:text-textPrimary"
+                          title="Edit entry"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => deleteEntry(entry.id)}
+                          className="p-1 rounded hover:bg-red-100 text-textSecondary hover:text-danger"
+                          title="Delete entry"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {/* Inline entry form */}
+                {isEditing && (
+                  <div className="pb-2">
+                    <EntryForm
+                      initial={entry ?? {}}
+                      weekday={weekday}
+                      weekIndex={weekIndex}
+                      onSave={saveEntry}
+                      onCancel={() => setEditingDay(null)}
+                    />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
+export default function PlanEditPage() {
+  const { user } = useAuth();
+  const router = useRouter();
+  const params = useParams();
+  const planId = typeof params.id === "string" ? params.id : null;
+
+  const [plan, setPlan] = useState<RunningPlan | null>(null);
+  const [activities, setActivities] = useState<StravaActivity[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [savedFlash, setSavedFlash] = useState(false);
+  const [notFound, setNotFound] = useState(false);
+
+  // Inline name editing
+  const [editingName, setEditingName] = useState(false);
+  const [nameInput, setNameInput] = useState("");
+  const nameRef = useRef<HTMLInputElement>(null);
+
+  // Accordion state — current week expanded by default
+  const [expandedWeeks, setExpandedWeeks] = useState<Set<number>>(new Set());
+
+  useEffect(() => {
+    if (!user || !planId) return;
+    setLoading(true);
+    Promise.all([
+      fetchPlans(user.uid),
+      fetchActivities({ limitCount: 500 }),
+    ])
+      .then(([plans, acts]) => {
+        const found = plans.find((p) => p.id === planId);
+        if (!found) {
+          setNotFound(true);
+          return;
+        }
+        setPlan(found);
+        setNameInput(found.name);
+        setActivities(acts);
+        // Expand current week by default
+        const idx = currentWeekIndex(found);
+        setExpandedWeeks(new Set([idx]));
+      })
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, [user, planId]);
+
+  function toggleWeek(idx: number) {
+    setExpandedWeeks((prev) => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
+      return next;
+    });
+  }
+
+  async function handleNameBlur() {
+    if (!user || !plan) return;
+    const trimmed = nameInput.trim();
+    if (!trimmed || trimmed === plan.name) {
+      setNameInput(plan.name);
+      setEditingName(false);
+      return;
+    }
+    const updated = { ...plan, name: trimmed };
+    setPlan(updated);
+    setEditingName(false);
+    try {
+      await updatePlan(user.uid, updated);
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  async function handleUpdateWeek(weekIndex: number, entries: PlannedRunEntry[]) {
+    if (!user || !plan) return;
+    const newWeeks = plan.weeks.map((w, i) =>
+      i === weekIndex ? { ...w, entries } : w
+    );
+    const updated = { ...plan, weeks: newWeeks };
+    setPlan(updated);
+    try {
+      await updatePlan(user.uid, updated);
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  async function handleSaveAll() {
+    if (!user || !plan || saving) return;
+    setSaving(true);
+    try {
+      await updatePlan(user.uid, plan);
+      setSavedFlash(true);
+      setTimeout(() => setSavedFlash(false), 2000);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // ── Render ────────────────────────────────────────────────────────────────
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (notFound || !plan) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 gap-4">
+        <p className="text-textSecondary">Plan not found.</p>
+        <button
+          onClick={() => router.push("/plans")}
+          className="text-sm text-primary hover:underline"
+        >
+          ← Back to Plans
+        </button>
+      </div>
+    );
+  }
+
+  const endDate = new Date(plan.startDate + "T00:00:00");
+  endDate.setDate(endDate.getDate() + plan.weeks.length * 7 - 1);
+  const fmtDate = (d: Date) =>
+    d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+
+  return (
+    <div className="flex flex-col min-h-screen bg-background">
+      {/* Sticky header */}
+      <div className="sticky top-0 z-20 bg-card border-b border-border">
+        <div className="flex items-center gap-4 px-4 py-3 max-w-4xl mx-auto w-full">
+          {/* Back */}
+          <button
+            onClick={() => router.back()}
+            className="text-sm text-textSecondary hover:text-textPrimary flex items-center gap-1 shrink-0"
+          >
+            ← Back to Plans
+          </button>
+
+          {/* Plan name (inline edit) */}
+          <div className="flex-1 flex items-center justify-center min-w-0">
+            {editingName ? (
+              <input
+                ref={nameRef}
+                value={nameInput}
+                onChange={(e) => setNameInput(e.target.value)}
+                onBlur={handleNameBlur}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") nameRef.current?.blur();
+                  if (e.key === "Escape") {
+                    setNameInput(plan.name);
+                    setEditingName(false);
+                  }
+                }}
+                className="text-sm font-semibold text-textPrimary bg-transparent border-b border-primary outline-none text-center w-full max-w-xs"
+                autoFocus
+              />
+            ) : (
+              <button
+                onClick={() => setEditingName(true)}
+                className="text-sm font-semibold text-textPrimary hover:text-primary truncate"
+                title="Click to rename"
+              >
+                {plan.name}
+              </button>
+            )}
+          </div>
+
+          {/* Save All */}
+          <button
+            onClick={handleSaveAll}
+            disabled={saving}
+            className="text-sm font-semibold text-primary hover:text-primary/80 shrink-0 disabled:opacity-50"
+          >
+            {savedFlash ? "Saved ✓" : saving ? "Saving…" : "Save All"}
+          </button>
+        </div>
+      </div>
+
+      {/* Metadata bar */}
+      <div className="border-b border-border bg-card/50">
+        <div className="flex items-center gap-4 px-4 py-2 max-w-4xl mx-auto w-full text-xs text-textSecondary flex-wrap">
+          <span>{fmtDate(new Date(plan.startDate + "T00:00:00"))}</span>
+          <span className="text-border">·</span>
+          <span>{fmtDate(endDate)}</span>
+          <span className="text-border">·</span>
+          <span>{plan.weeks.length} week{plan.weeks.length !== 1 ? "s" : ""}</span>
+          <span className="text-border">·</span>
+          <span
+            className={`font-medium px-2 py-0.5 rounded-full ${
+              plan.isActive
+                ? "bg-success/10 text-success"
+                : "bg-gray-100 text-gray-500"
+            }`}
+          >
+            {plan.isActive ? "Active" : "Inactive"}
+          </span>
+        </div>
+      </div>
+
+      {/* Week accordions */}
+      <div className="flex-1 p-4 max-w-4xl mx-auto w-full">
+        {plan.weeks.map((_, idx) => (
+          <WeekAccordion
+            key={idx}
+            plan={plan}
+            weekIndex={idx}
+            isExpanded={expandedWeeks.has(idx)}
+            onToggle={() => toggleWeek(idx)}
+            activities={activities}
+            onUpdateWeek={handleUpdateWeek}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
