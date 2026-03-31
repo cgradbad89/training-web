@@ -1,14 +1,15 @@
 "use client";
 
-import React, { useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { Activity } from "lucide-react";
 import { useAuth } from "@/hooks";
 import { signInWithGoogle } from "@/lib/auth";
-import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 
 export default function LoginPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
+  const [signingIn, setSigningIn] = useState(false);
 
   useEffect(() => {
     if (!loading && user) {
@@ -17,53 +18,58 @@ export default function LoginPage() {
   }, [user, loading, router]);
 
   async function handleSignIn() {
+    setSigningIn(true);
     try {
       await signInWithGoogle();
+      router.push("/dashboard");
     } catch (err) {
       console.error("Sign-in failed:", err);
+      setSigningIn(false);
     }
   }
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <LoadingSpinner size="lg" />
-      </div>
+      <div className="flex items-center justify-center min-h-screen bg-surface" />
     );
   }
 
   return (
-    <div className="flex items-center justify-center min-h-screen bg-gray-50">
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-10 flex flex-col items-center gap-6 w-full max-w-sm">
-        <div className="text-center">
-          <h1 className="text-2xl font-bold text-gray-900">Training Dashboard</h1>
-          <p className="text-sm text-gray-500 mt-1">Sign in to view your training data</p>
-        </div>
+    <div className="flex items-center justify-center min-h-screen bg-surface">
+      <div className="bg-card rounded-2xl shadow-sm border border-border p-10 max-w-sm w-full mx-auto flex flex-col items-center">
+        {/* Icon */}
+        <Activity size={48} className="text-primary" />
 
+        {/* App name */}
+        <h1 className="text-2xl font-bold text-textPrimary mt-4 text-center">
+          Training
+        </h1>
+
+        {/* Tagline */}
+        <p className="text-sm text-textSecondary mt-2 text-center">
+          Your runs, plans, and races — all in one place
+        </p>
+
+        {/* Google sign-in button */}
         <button
           onClick={handleSignIn}
-          className="w-full flex items-center justify-center gap-3 px-4 py-3 border border-gray-300 rounded-xl text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors"
+          disabled={signingIn}
+          className="mt-8 w-full bg-white border border-border shadow-sm rounded-xl py-3 flex items-center justify-center gap-3 text-sm font-medium text-textPrimary hover:bg-surface transition-colors disabled:opacity-60"
         >
-          <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
-            <path
-              fill="#4285F4"
-              d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.875 2.684-6.615Z"
-            />
-            <path
-              fill="#34A853"
-              d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.258c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18Z"
-            />
-            <path
-              fill="#FBBC05"
-              d="M3.964 10.707A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.707V4.961H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.039l3.007-2.332Z"
-            />
-            <path
-              fill="#EA4335"
-              d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.96L3.964 7.293C4.672 5.163 6.656 3.58 9 3.58Z"
-            />
+          <svg width="20" height="20" viewBox="0 0 48 48" aria-hidden="true">
+            <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+            <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+            <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+            <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+            <path fill="none" d="M0 0h48v48H0z"/>
           </svg>
-          Continue with Google
+          {signingIn ? "Signing in…" : "Continue with Google"}
         </button>
+
+        {/* Bottom note */}
+        <p className="mt-6 text-xs text-textSecondary text-center">
+          Connected to Strava · Synced via Firebase
+        </p>
       </div>
     </div>
   );

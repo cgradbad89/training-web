@@ -160,7 +160,7 @@ function WeeklyStatsBar({ activities, weekStart, weekEnd, plannedMiles }: Weekly
 
   return (
     <Card>
-      <div className="grid grid-cols-3 gap-4 sm:grid-cols-6">
+      <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
         <StatItem
           label="Planned Miles"
           value={

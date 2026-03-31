@@ -1185,7 +1185,7 @@ export default function ShoesPage() {
       ) : (
         <>
           {activeShoes.length > 0 && (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-6">
               {activeShoes.map((shoe) => (
                 <ShoeCard
                   key={shoe.id}
@@ -1201,7 +1201,7 @@ export default function ShoesPage() {
           {retiredShoes.length > 0 && (
             <>
               <p className="text-sm text-textSecondary mb-4 mt-2">Retired Shoes</p>
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-6 opacity-70">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-6 opacity-70">
                 {retiredShoes.map((shoe) => (
                   <ShoeCard
                     key={shoe.id}

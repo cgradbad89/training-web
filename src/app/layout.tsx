@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Training Dashboard",
-  description: "Personal running and workout training dashboard",
+  title: "Training",
+  description: "Personal running and workout tracker",
 };
 
 export default function RootLayout({

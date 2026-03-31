@@ -337,17 +337,17 @@ function RunRow({ run, shoeName }: RunRowProps) {
       </div>
 
       {/* Col 5: Duration — hidden on mobile */}
-      <div className="hidden md:block w-16 shrink-0 text-sm text-textSecondary tabular-nums text-right">
+      <div className="hidden lg:table-cell w-16 shrink-0 text-sm text-textSecondary tabular-nums text-right">
         {formatDuration(run.moving_time_s)}
       </div>
 
       {/* Col 6: Heart Rate — hidden on mobile */}
-      <div className="hidden md:block w-16 shrink-0 text-sm text-textPrimary tabular-nums text-right">
+      <div className="hidden lg:table-cell w-16 shrink-0 text-sm text-textPrimary tabular-nums text-right">
         {run.avg_heartrate ? `${Math.round(run.avg_heartrate)} bpm` : "—"}
       </div>
 
       {/* Col 7: Elevation — hidden on mobile */}
-      <div className="hidden md:block w-14 shrink-0 text-sm text-textSecondary tabular-nums text-right">
+      <div className="hidden lg:table-cell w-14 shrink-0 text-sm text-textSecondary tabular-nums text-right">
         {run.total_elev_gain_m > 0 ? `${Math.round(run.total_elev_gain_m)}m` : "—"}
       </div>
 
@@ -362,7 +362,7 @@ function RunRow({ run, shoeName }: RunRowProps) {
 
       {/* Col 9: Shoe — hidden on mobile */}
       {shoeName !== undefined && (
-        <div className="hidden md:flex items-center gap-1 w-28 shrink-0 text-xs text-textSecondary truncate">
+        <div className="hidden lg:table-cell items-center gap-1 w-28 shrink-0 text-xs text-textSecondary truncate">
           {shoeName ? (
             <>
               <Footprints size={11} className="shrink-0 text-textSecondary" />
@@ -565,19 +565,19 @@ export default function RunsPage() {
             <div className="w-20 shrink-0 text-xs font-semibold uppercase tracking-widest text-textSecondary text-right">
               Pace
             </div>
-            <div className="hidden md:block w-16 shrink-0 text-xs font-semibold uppercase tracking-widest text-textSecondary text-right">
+            <div className="hidden lg:table-cell w-16 shrink-0 text-xs font-semibold uppercase tracking-widest text-textSecondary text-right">
               Time
             </div>
-            <div className="hidden md:block w-16 shrink-0 text-xs font-semibold uppercase tracking-widest text-textSecondary text-right">
+            <div className="hidden lg:table-cell w-16 shrink-0 text-xs font-semibold uppercase tracking-widest text-textSecondary text-right">
               HR
             </div>
-            <div className="hidden md:block w-14 shrink-0 text-xs font-semibold uppercase tracking-widest text-textSecondary text-right">
+            <div className="hidden lg:table-cell w-14 shrink-0 text-xs font-semibold uppercase tracking-widest text-textSecondary text-right">
               Elev
             </div>
             <div className="shrink-0 w-14 text-xs font-semibold uppercase tracking-widest text-textSecondary text-right">
               Eff
             </div>
-            <div className="hidden md:block w-28 shrink-0 text-xs font-semibold uppercase tracking-widest text-textSecondary">
+            <div className="hidden lg:table-cell w-28 shrink-0 text-xs font-semibold uppercase tracking-widest text-textSecondary">
               Shoe
             </div>
           </div>
