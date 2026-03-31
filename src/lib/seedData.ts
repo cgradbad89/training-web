@@ -15,8 +15,8 @@ function entry(
     dayOfWeek: weekday - 1,
     distanceMiles,
     runType,
-    paceTarget,
-    description,
+    ...(paceTarget !== undefined ? { paceTarget } : {}),
+    ...(description !== undefined ? { description } : {}),
   };
 }
 
