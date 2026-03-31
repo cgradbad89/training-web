@@ -35,12 +35,21 @@ import {
 
 /** Compute the calendar date of a plan entry */
 function plannedDate(plan: RunningPlan, entry: PlannedRunEntry): Date {
-  // Parse date parts directly to avoid UTC offset issues in US timezones
   const [year, month, day] = plan.startDate.split("-").map(Number);
-  const start = new Date(year, month - 1, day); // local time
+  const start = new Date(year, month - 1, day);
   const daysOffset = entry.weekIndex * 7 + (entry.weekday - 1);
   const d = new Date(start);
   d.setDate(start.getDate() + daysOffset);
+  return d;
+}
+
+/** Compute the calendar date of a specific weekday in a specific week */
+function dayDate(plan: RunningPlan, weekIndex: number, weekday: number): Date {
+  const [year, month, day] = plan.startDate.split("-").map(Number);
+  const start = new Date(year, month - 1, day);
+  const offset = weekIndex * 7 + (weekday - 1);
+  const d = new Date(start);
+  d.setDate(start.getDate() + offset);
   return d;
 }
 
@@ -55,6 +64,29 @@ function activityDate(a: StravaActivity): string {
   return a.start_date_local.split("T")[0];
 }
 
+/** Return ISO date string for next Monday from today */
+function nextMonday(): string {
+  const today = new Date();
+  const day = today.getDay(); // 0=Sun, 1=Mon, ...
+  const daysUntilMonday = day === 0 ? 1 : day === 1 ? 7 : 8 - day;
+  const next = new Date(today);
+  next.setDate(today.getDate() + daysUntilMonday);
+  const y = next.getFullYear();
+  const m = String(next.getMonth() + 1).padStart(2, "0");
+  const d = String(next.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+/** Return ISO date string for start + n weeks - 1 day (the Sunday of that week) */
+function endDateForWeeks(startIso: string, weeks: number): string {
+  const d = new Date(startIso + "T00:00:00");
+  d.setDate(d.getDate() + weeks * 7 - 1);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 type MatchQuality = "full" | "partial";
 interface PlanMatch {
   activity: StravaActivity;
@@ -64,11 +96,6 @@ interface PlanMatch {
 /**
  * 4-pass plan vs actual matching (no type matching; per-week used-set).
  * Returns a map: entryId → PlanMatch | null
- *
- * Pass 1: exact day + distance within tolerance → "full"
- * Pass 2: ±1 day  + distance within tolerance → "full"
- * Pass 3: exact day, any distance             → "partial"
- * Pass 4: ±1 day,  any distance               → "partial"
  */
 function matchPlanToActual(
   plan: RunningPlan,
@@ -177,6 +204,8 @@ const RUN_TYPE_STYLES: Record<
   rest:      { bg: "bg-gray-100",   text: "text-gray-400",   label: "Rest"      },
 };
 
+const DAY_ABBREVS = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
+
 const WEEKDAY_LABELS = ["", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -192,206 +221,149 @@ function RunTypeBadge({ type }: { type: PlanRunType }) {
   );
 }
 
-interface EntryRowProps {
-  entry: PlannedRunEntry;
-  plan: RunningPlan;
-  match: PlanMatch | null | undefined;
-  onEdit: (entry: PlannedRunEntry) => void;
-  onDelete: (entryId: string) => void;
-  readonly: boolean;
-}
+// ─── Inline Day Editor ────────────────────────────────────────────────────────
 
-function EntryRow({
-  entry,
-  plan,
-  match,
-  onEdit,
-  onDelete,
-  readonly,
-}: EntryRowProps) {
-  const isRest = entry.runType === "rest";
-  const date = plannedDate(plan, entry);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const isPast = date < today;
-
-  let statusIcon: React.ReactNode = null;
-  if (!isRest) {
-    if (match?.quality === "full") {
-      // Pass 1 or 2 — green ✓ Met
-      statusIcon = <CheckCircle className="w-4 h-4 text-success shrink-0" />;
-    } else if (match?.quality === "partial") {
-      // Pass 3 or 4 — yellow ~ Partial
-      statusIcon = <Check className="w-4 h-4 text-warning shrink-0" />;
-    } else if (isPast) {
-      // No match + past — red ✗ Missed
-      statusIcon = <AlertCircle className="w-4 h-4 text-danger shrink-0" />;
-    } else {
-      // No match + future — gray ○ Upcoming
-      statusIcon = <Circle className="w-4 h-4 text-border shrink-0" />;
-    }
-  }
-
-  return (
-    <div className="flex items-center gap-3 py-2.5 px-3 rounded-lg hover:bg-surface group">
-      <span className="w-8 text-xs font-medium text-textSecondary shrink-0">
-        {WEEKDAY_LABELS[entry.weekday]}
-      </span>
-      <div className="w-4 shrink-0">{statusIcon}</div>
-      <div className="w-24 shrink-0">
-        {entry.runType && <RunTypeBadge type={entry.runType} />}
-      </div>
-      <span
-        className={`w-16 text-sm ${
-          isRest
-            ? "text-textSecondary italic"
-            : "text-textPrimary font-medium"
-        }`}
-      >
-        {isRest ? "Rest" : `${entry.distanceMiles} mi`}
-      </span>
-      <span className="w-16 text-sm text-textSecondary">
-        {entry.paceTarget ? `${entry.paceTarget}/mi` : "—"}
-      </span>
-      <span className="flex-1 text-sm text-textSecondary truncate">
-        {entry.description ?? ""}
-      </span>
-      {match && (
-        <span
-          className={`text-xs truncate max-w-[140px] ${match.quality === "full" ? "text-success" : "text-warning"}`}
-          title={match.activity.name}
-        >
-          {match.quality === "full" ? "✓" : "~"} {match.activity.distance_miles.toFixed(1)} mi · {match.activity.pace_min_per_mile}/mi
-        </span>
-      )}
-      {!readonly && (
-        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-          <button
-            onClick={() => onEdit(entry)}
-            className="p-1 rounded hover:bg-border text-textSecondary hover:text-textPrimary"
-          >
-            <Pencil className="w-3.5 h-3.5" />
-          </button>
-          <button
-            onClick={() => onDelete(entry.id)}
-            className="p-1 rounded hover:bg-red-100 text-textSecondary hover:text-danger"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-interface InlineEntryEditorProps {
+interface InlineDayEditorProps {
   initial: Partial<PlannedRunEntry>;
+  weekday: number; // fixed, 1–7
   weekIndex: number;
   onSave: (entry: PlannedRunEntry) => void;
   onCancel: () => void;
 }
 
-function InlineEntryEditor({
+function InlineDayEditor({
   initial,
+  weekday,
   weekIndex,
   onSave,
   onCancel,
-}: InlineEntryEditorProps) {
-  const [weekday, setWeekday] = useState(initial.weekday ?? 1);
+}: InlineDayEditorProps) {
+  const initRunType =
+    initial.runType && initial.runType !== "rest"
+      ? initial.runType
+      : "outdoor";
+
+  const [runType, setRunType] = useState<PlanRunType>(initRunType);
+  const [description, setDescription] = useState(initial.description ?? "");
   const [distanceMiles, setDistanceMiles] = useState(
-    String(initial.distanceMiles ?? "")
-  );
-  const [runType, setRunType] = useState<PlanRunType>(
-    initial.runType ?? "outdoor"
+    initial.distanceMiles != null ? String(initial.distanceMiles) : ""
   );
   const [paceTarget, setPaceTarget] = useState(initial.paceTarget ?? "");
-  const [description, setDescription] = useState(initial.description ?? "");
+  const [targetHeartRate, setTargetHeartRate] = useState(
+    initial.targetHeartRate != null ? String(initial.targetHeartRate) : ""
+  );
+  const [notes, setNotes] = useState(initial.notes ?? "");
+
+  const RUN_TYPES: { value: PlanRunType; label: string }[] = [
+    { value: "outdoor", label: "Outdoor" },
+    { value: "treadmill", label: "Treadmill" },
+    { value: "otf", label: "OTF" },
+    { value: "longRun", label: "Long Run" },
+  ];
 
   function handleSave() {
     const dist = parseFloat(distanceMiles);
-    if (isNaN(dist) && runType !== "rest") return;
+    if (isNaN(dist) || dist <= 0) return;
+    const hr = targetHeartRate ? parseInt(targetHeartRate, 10) : null;
     onSave({
       id: initial.id ?? crypto.randomUUID(),
       weekIndex,
       weekday,
       dayOfWeek: weekday - 1,
-      distanceMiles: runType === "rest" ? 0 : dist,
+      distanceMiles: dist,
       runType,
-      paceTarget: paceTarget || undefined,
-      description: description || undefined,
+      paceTarget: paceTarget.trim() || undefined,
+      description: description.trim() || undefined,
+      notes: notes.trim() || undefined,
+      targetHeartRate: hr,
     });
   }
 
   return (
-    <div className="mx-3 my-2 p-3 rounded-xl border border-primary/30 bg-primary/5">
-      <div className="flex flex-wrap gap-2 items-center">
-        <select
-          value={weekday}
-          onChange={(e) => setWeekday(Number(e.target.value))}
-          className="text-sm border border-border rounded-lg px-2 py-1.5 bg-card text-textPrimary"
-        >
-          {[1, 2, 3, 4, 5, 6, 7].map((d) => (
-            <option key={d} value={d}>
-              {WEEKDAY_LABELS[d]}
-            </option>
-          ))}
-        </select>
+    <div className="p-3 rounded-xl border border-primary/30 bg-primary/5 mt-1 mb-1">
+      {/* Run type segmented buttons */}
+      <div className="flex rounded-lg border border-border overflow-hidden mb-3">
+        {RUN_TYPES.map(({ value, label }) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => setRunType(value)}
+            className={`flex-1 py-1.5 text-xs font-semibold transition-colors ${
+              runType === value
+                ? "bg-primary text-white"
+                : "text-textSecondary hover:bg-surface"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
 
-        <select
-          value={runType}
-          onChange={(e) => setRunType(e.target.value as PlanRunType)}
-          className="text-sm border border-border rounded-lg px-2 py-1.5 bg-card text-textPrimary"
-        >
-          {(
-            ["outdoor", "treadmill", "otf", "longRun", "rest"] as PlanRunType[]
-          ).map((t) => (
-            <option key={t} value={t}>
-              {RUN_TYPE_STYLES[t].label}
-            </option>
-          ))}
-        </select>
-
-        {runType !== "rest" && (
-          <input
-            type="number"
-            value={distanceMiles}
-            onChange={(e) => setDistanceMiles(e.target.value)}
-            placeholder="Miles"
-            step="0.1"
-            min="0"
-            className="w-24 text-sm border border-border rounded-lg px-2 py-1.5 bg-card text-textPrimary"
-          />
-        )}
-
-        {runType !== "rest" && runType !== "otf" && (
-          <input
-            type="text"
-            value={paceTarget}
-            onChange={(e) => setPaceTarget(e.target.value)}
-            placeholder="Pace (10:30)"
-            className="w-28 text-sm border border-border rounded-lg px-2 py-1.5 bg-card text-textPrimary"
-          />
-        )}
-
+      {/* Fields row */}
+      <div className="flex flex-wrap gap-2 items-center mb-2">
         <input
           type="text"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
-          placeholder="Note (optional)"
+          placeholder="e.g. Easy effort"
+          className="flex-1 min-w-[140px] text-sm border border-border rounded-lg px-2 py-1.5 bg-card text-textPrimary"
+        />
+        <div className="flex items-center gap-1">
+          <input
+            type="number"
+            value={distanceMiles}
+            onChange={(e) => setDistanceMiles(e.target.value)}
+            placeholder="Dist"
+            step="0.1"
+            min="0"
+            className="w-20 text-sm border border-border rounded-lg px-2 py-1.5 bg-card text-textPrimary"
+          />
+          <span className="text-sm text-textSecondary">mi</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <input
+            type="text"
+            value={paceTarget}
+            onChange={(e) => setPaceTarget(e.target.value)}
+            placeholder="M:SS"
+            className="w-20 text-sm border border-border rounded-lg px-2 py-1.5 bg-card text-textPrimary"
+          />
+          <span className="text-sm text-textSecondary">/mi</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <input
+            type="number"
+            value={targetHeartRate}
+            onChange={(e) => setTargetHeartRate(e.target.value)}
+            placeholder="HR"
+            min="0"
+            max="250"
+            className="w-16 text-sm border border-border rounded-lg px-2 py-1.5 bg-card text-textPrimary"
+          />
+          <span className="text-sm text-textSecondary">bpm</span>
+        </div>
+        <input
+          type="text"
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          placeholder="Notes (optional)"
           className="flex-1 min-w-[120px] text-sm border border-border rounded-lg px-2 py-1.5 bg-card text-textPrimary"
         />
+      </div>
 
-        <button
-          onClick={handleSave}
-          className="flex items-center gap-1 px-3 py-1.5 bg-primary text-white text-sm font-medium rounded-lg hover:bg-primary/90"
-        >
-          <Check className="w-3.5 h-3.5" /> Save
-        </button>
+      {/* Action row */}
+      <div className="flex justify-end gap-2">
         <button
           onClick={onCancel}
-          className="flex items-center gap-1 px-3 py-1.5 bg-surface border border-border text-textSecondary text-sm rounded-lg hover:bg-border"
+          className="flex items-center gap-1 px-3 py-1.5 text-xs text-textSecondary border border-border rounded-lg hover:bg-surface transition-colors"
         >
-          <X className="w-3.5 h-3.5" /> Cancel
+          <X className="w-3 h-3" /> Cancel
+        </button>
+        <button
+          onClick={handleSave}
+          className="flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-white bg-primary rounded-lg hover:bg-primary/90 transition-colors"
+        >
+          <Check className="w-3 h-3" /> Save
         </button>
       </div>
     </div>
@@ -492,8 +464,8 @@ export default function PlansPage() {
   const [saving, setSaving] = useState(false);
   const [mobileView, setMobileView] = useState<"list" | "detail">("list");
 
-  const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
-  const [addingInWeek, setAddingInWeek] = useState<number | null>(null);
+  // editingDay: weekday (1–7) that has the inline editor open, null if none
+  const [editingDay, setEditingDay] = useState<number | null>(null);
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showRenameModal, setShowRenameModal] = useState(false);
@@ -501,6 +473,7 @@ export default function PlansPage() {
 
   const [nameInput, setNameInput] = useState("");
   const [startDateInput, setStartDateInput] = useState("");
+  const [endDateInput, setEndDateInput] = useState("");
 
   const weekTabsRef = useRef<HTMLDivElement>(null);
 
@@ -508,6 +481,9 @@ export default function PlansPage() {
   const matchMap = selectedPlan
     ? matchPlanToActual(selectedPlan, activities)
     : new Map<string, PlanMatch | null>();
+
+  // All plans are fully editable — isBuiltInDefault no longer locks editing
+  const isReadonly = false;
 
   // ── Load ──────────────────────────────────────────────────────────────────
 
@@ -570,14 +546,22 @@ export default function PlansPage() {
   }
 
   async function handleCreate() {
-    if (!user || !nameInput.trim() || !startDateInput) return;
+    if (!user || !nameInput.trim() || !startDateInput || !endDateInput) return;
+    const numWeeks = Math.max(
+      1,
+      Math.ceil(
+        (new Date(endDateInput + "T00:00:00").getTime() -
+          new Date(startDateInput + "T00:00:00").getTime()) /
+          (7 * 86400000)
+      )
+    );
     setSaving(true);
     try {
       const plan = await createPlan(user.uid, {
         name: nameInput.trim(),
         startDate: startDateInput,
         isActive: false,
-        weeks: Array.from({ length: 12 }, (_, i) => ({
+        weeks: Array.from({ length: numWeeks }, (_, i) => ({
           weekNumber: i + 1,
           entries: [],
         })),
@@ -585,9 +569,11 @@ export default function PlansPage() {
       setPlans((prev) => [...prev, plan]);
       setSelectedPlanId(plan.id);
       setSelectedWeekIndex(0);
+      setMobileView("detail");
       setShowCreateModal(false);
       setNameInput("");
       setStartDateInput("");
+      setEndDateInput("");
     } finally {
       setSaving(false);
     }
@@ -658,8 +644,7 @@ export default function PlansPage() {
     setPlans((prev) =>
       prev.map((p) => (p.id === newPlan.id ? newPlan : p))
     );
-    setEditingEntryId(null);
-    setAddingInWeek(null);
+    setEditingDay(null);
   }
 
   async function handleDeleteEntry(entryId: string) {
@@ -701,6 +686,14 @@ export default function PlansPage() {
     return { completed, total: runEntries.length, totalMiles };
   }
 
+  function openCreateModal() {
+    const nm = nextMonday();
+    setNameInput("");
+    setStartDateInput(nm);
+    setEndDateInput(endDateForWeeks(nm, 13));
+    setShowCreateModal(true);
+  }
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   if (loading) {
@@ -711,8 +704,6 @@ export default function PlansPage() {
     );
   }
 
-  const isReadonly = selectedPlan?.isBuiltInDefault === true;
-
   return (
     <div className="flex h-[calc(100vh-4rem)] overflow-hidden">
       {/* ── Left Panel: Plan List ────────────────────────────────────────── */}
@@ -720,11 +711,7 @@ export default function PlansPage() {
         <div className="p-4 border-b border-border flex items-center justify-between">
           <h2 className="font-semibold text-textPrimary">Plans</h2>
           <button
-            onClick={() => {
-              setNameInput("");
-              setStartDateInput("");
-              setShowCreateModal(true);
-            }}
+            onClick={openCreateModal}
             className="p-1.5 rounded-lg hover:bg-surface text-textSecondary hover:text-primary"
             title="New plan"
           >
@@ -739,6 +726,7 @@ export default function PlansPage() {
               onClick={() => {
                 setSelectedPlanId(plan.id);
                 setSelectedWeekIndex(currentWeekIndex(plan));
+                setEditingDay(null);
                 setMobileView("detail");
               }}
               className={`w-full text-left px-4 py-3 flex items-center gap-2 transition-colors ${
@@ -772,7 +760,7 @@ export default function PlansPage() {
       <div className={`${mobileView === "list" ? "hidden lg:flex" : "flex"} flex-1 flex-col overflow-hidden`}>
         {selectedPlan ? (
           <>
-            {/* Back button — mobile only, above plan header */}
+            {/* Back button — mobile only */}
             <div className="lg:hidden px-6 pt-4 pb-0 bg-card border-b border-transparent">
               <button
                 onClick={() => setMobileView("list")}
@@ -792,11 +780,6 @@ export default function PlansPage() {
                   {selectedPlan.isActive && (
                     <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-success/10 text-success">
                       Active
-                    </span>
-                  )}
-                  {isReadonly && (
-                    <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-warning/10 text-warning">
-                      Template
                     </span>
                   )}
                 </div>
@@ -832,29 +815,25 @@ export default function PlansPage() {
                 >
                   <Copy className="w-4 h-4" />
                 </button>
-                {!isReadonly && (
-                  <>
-                    <button
-                      onClick={() => {
-                        setNameInput(selectedPlan.name);
-                        setShowRenameModal(true);
-                      }}
-                      disabled={saving}
-                      title="Rename plan"
-                      className="p-1.5 rounded-lg hover:bg-surface text-textSecondary hover:text-textPrimary disabled:opacity-50"
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => setConfirmDelete(true)}
-                      disabled={saving}
-                      title="Delete plan"
-                      className="p-1.5 rounded-lg hover:bg-red-50 text-textSecondary hover:text-danger disabled:opacity-50"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </>
-                )}
+                <button
+                  onClick={() => {
+                    setNameInput(selectedPlan.name);
+                    setShowRenameModal(true);
+                  }}
+                  disabled={saving}
+                  title="Rename plan"
+                  className="p-1.5 rounded-lg hover:bg-surface text-textSecondary hover:text-textPrimary disabled:opacity-50"
+                >
+                  <Pencil className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => setConfirmDelete(true)}
+                  disabled={saving}
+                  title="Delete plan"
+                  className="p-1.5 rounded-lg hover:bg-red-50 text-textSecondary hover:text-danger disabled:opacity-50"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
               </div>
             </div>
 
@@ -870,7 +849,10 @@ export default function PlansPage() {
                 return (
                   <button
                     key={idx}
-                    onClick={() => setSelectedWeekIndex(idx)}
+                    onClick={() => {
+                      setSelectedWeekIndex(idx);
+                      setEditingDay(null);
+                    }}
                     className={`shrink-0 snap-start px-4 py-3 flex flex-col items-center border-b-2 transition-colors ${
                       isSelected
                         ? "border-primary text-primary"
@@ -912,83 +894,164 @@ export default function PlansPage() {
                         {weekDateRange(selectedPlan, selectedWeekIndex)}
                       </p>
                     </div>
-                    {!isReadonly && (
-                      <button
-                        onClick={() => {
-                          setAddingInWeek(selectedWeekIndex);
-                          setEditingEntryId(null);
-                        }}
-                        className="flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 font-medium"
-                      >
-                        <Plus className="w-4 h-4" />
-                        Add run
-                      </button>
-                    )}
                   </div>
 
-                  {/* Column header */}
-                  <div className="flex items-center gap-3 px-3 mb-1">
-                    <span className="w-8 text-xs text-textSecondary">Day</span>
-                    <span className="w-4" />
-                    <span className="w-24 text-xs text-textSecondary">
-                      Type
-                    </span>
-                    <span className="w-16 text-xs text-textSecondary">
-                      Dist
-                    </span>
-                    <span className="w-16 text-xs text-textSecondary">
-                      Pace
-                    </span>
-                    <span className="flex-1 text-xs text-textSecondary">
-                      Note
-                    </span>
-                    <span className="text-xs text-textSecondary">Actual</span>
+                  {/* 7-day table */}
+                  <div className="rounded-xl border border-border overflow-hidden">
+                    {[1, 2, 3, 4, 5, 6, 7].map((weekday) => {
+                      const entry = weekEntries.find(
+                        (e) => e.weekday === weekday && e.runType !== "rest"
+                      );
+                      const isEditing = editingDay === weekday;
+                      const match = entry ? matchMap.get(entry.id) : undefined;
+                      const date = dayDate(selectedPlan, selectedWeekIndex, weekday);
+                      const today = new Date();
+                      today.setHours(0, 0, 0, 0);
+                      const isPast = date < today;
+
+                      // Status icon for this entry
+                      let statusIcon: React.ReactNode = null;
+                      if (entry) {
+                        if (match?.quality === "full") {
+                          statusIcon = <CheckCircle className="w-4 h-4 text-success shrink-0" />;
+                        } else if (match?.quality === "partial") {
+                          statusIcon = <Check className="w-4 h-4 text-warning shrink-0" />;
+                        } else if (isPast) {
+                          statusIcon = <AlertCircle className="w-4 h-4 text-danger shrink-0" />;
+                        } else {
+                          statusIcon = <Circle className="w-4 h-4 text-border shrink-0" />;
+                        }
+                      }
+
+                      const dateLabel = date.toLocaleDateString("en-US", {
+                        month: "short",
+                        day: "numeric",
+                      });
+
+                      return (
+                        <div
+                          key={weekday}
+                          className={weekday < 7 ? "border-b border-border" : ""}
+                        >
+                          {/* Day row */}
+                          <div className="flex items-center gap-3 py-3 px-3 hover:bg-surface/50 group min-h-[52px]">
+                            {/* Left: day abbrev + date */}
+                            <div className="w-14 shrink-0">
+                              <div className="text-xs font-bold text-textSecondary">
+                                {DAY_ABBREVS[weekday - 1]}
+                              </div>
+                              <div className="text-xs text-textSecondary">
+                                {dateLabel}
+                              </div>
+                            </div>
+
+                            {isEditing ? (
+                              // Editing state — show placeholder
+                              <>
+                                <div className="w-4 shrink-0" />
+                                <span className="text-sm text-textSecondary italic flex-1">
+                                  {entry ? "Editing…" : "Adding run…"}
+                                </span>
+                              </>
+                            ) : !entry ? (
+                              // Rest state
+                              <>
+                                <div className="w-4 shrink-0" />
+                                <span className="text-sm text-textSecondary italic flex-1">
+                                  Rest
+                                </span>
+                                {!isReadonly && (
+                                  <button
+                                    onClick={() => setEditingDay(weekday)}
+                                    className="text-xs text-primary hover:text-primary/80 opacity-0 group-hover:opacity-100 transition-opacity"
+                                  >
+                                    + Add Run
+                                  </button>
+                                )}
+                              </>
+                            ) : (
+                              // Entry display state
+                              <>
+                                <div className="w-4 shrink-0">{statusIcon}</div>
+                                <div className="flex-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 min-w-0">
+                                  {entry.runType && entry.runType !== "rest" && (
+                                    <RunTypeBadge type={entry.runType} />
+                                  )}
+                                  {entry.description && (
+                                    <span className="text-sm text-textSecondary">
+                                      {entry.description}
+                                    </span>
+                                  )}
+                                  <span className="text-sm font-semibold text-textPrimary tabular-nums">
+                                    {entry.distanceMiles.toFixed(1)} mi
+                                  </span>
+                                  {entry.paceTarget && (
+                                    <span className="text-sm text-textSecondary">
+                                      @ {entry.paceTarget}/mi
+                                    </span>
+                                  )}
+                                  {entry.targetHeartRate && (
+                                    <span className="text-xs text-textSecondary">
+                                      HR: {entry.targetHeartRate} bpm
+                                    </span>
+                                  )}
+                                  {entry.notes && (
+                                    <span className="text-xs text-textSecondary italic">
+                                      {entry.notes}
+                                    </span>
+                                  )}
+                                  {match && (
+                                    <span
+                                      className={`text-xs ${
+                                        match.quality === "full"
+                                          ? "text-success"
+                                          : "text-warning"
+                                      }`}
+                                    >
+                                      {match.quality === "full" ? "✓" : "~"}{" "}
+                                      {match.activity.distance_miles.toFixed(1)} mi ·{" "}
+                                      {match.activity.pace_min_per_mile}/mi
+                                    </span>
+                                  )}
+                                </div>
+                                {!isReadonly && (
+                                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                                    <button
+                                      onClick={() => setEditingDay(weekday)}
+                                      className="p-1 rounded hover:bg-border text-textSecondary hover:text-textPrimary"
+                                    >
+                                      <Pencil className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeleteEntry(entry.id)}
+                                      className="p-1 rounded hover:bg-red-100 text-textSecondary hover:text-danger"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                )}
+                              </>
+                            )}
+                          </div>
+
+                          {/* Inline editor (expands below the row) */}
+                          {isEditing && (
+                            <div className="px-3 pb-3">
+                              <InlineDayEditor
+                                initial={entry ?? {}}
+                                weekday={weekday}
+                                weekIndex={selectedWeekIndex}
+                                onSave={(e) => saveEntryEdit(e)}
+                                onCancel={() => setEditingDay(null)}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
 
-                  {/* Entry rows */}
-                  <div className="space-y-0.5">
-                    {weekEntries.length === 0 &&
-                      addingInWeek !== selectedWeekIndex && (
-                        <p className="text-sm text-textSecondary px-3 py-4">
-                          No runs planned for this week.
-                        </p>
-                      )}
-                    {weekEntries.map((entry) => (
-                      <div key={entry.id}>
-                        {editingEntryId === entry.id ? (
-                          <InlineEntryEditor
-                            initial={entry}
-                            weekIndex={selectedWeekIndex}
-                            onSave={saveEntryEdit}
-                            onCancel={() => setEditingEntryId(null)}
-                          />
-                        ) : (
-                          <EntryRow
-                            entry={entry}
-                            plan={selectedPlan}
-                            match={matchMap.get(entry.id)}
-                            onEdit={(e) => {
-                              setEditingEntryId(e.id);
-                              setAddingInWeek(null);
-                            }}
-                            onDelete={handleDeleteEntry}
-                            readonly={isReadonly}
-                          />
-                        )}
-                      </div>
-                    ))}
-
-                    {addingInWeek === selectedWeekIndex && (
-                      <InlineEntryEditor
-                        initial={{ weekday: 1 }}
-                        weekIndex={selectedWeekIndex}
-                        onSave={saveEntryEdit}
-                        onCancel={() => setAddingInWeek(null)}
-                      />
-                    )}
-                  </div>
-
-                  {weekEntries.length > 0 && (
+                  {weekEntries.filter((e) => e.runType !== "rest").length > 0 && (
                     <WeekSummaryBar
                       week={currentWeek}
                       matchMap={matchMap}
@@ -1005,11 +1068,7 @@ export default function PlansPage() {
                 No training plan selected.
               </p>
               <button
-                onClick={() => {
-                  setNameInput("");
-                  setStartDateInput("");
-                  setShowCreateModal(true);
-                }}
+                onClick={openCreateModal}
                 className="px-4 py-2 bg-primary text-white text-sm font-medium rounded-xl hover:bg-primary/90"
               >
                 Create a plan
@@ -1021,41 +1080,75 @@ export default function PlansPage() {
 
       {/* ── Modals ─────────────────────────────────────────────────────── */}
 
-      {showCreateModal && (
-        <Modal
-          title="New Training Plan"
-          onClose={() => setShowCreateModal(false)}
-          onSave={handleCreate}
-          saveLabel="Create"
-        >
-          <div className="space-y-3">
-            <div>
-              <label className="text-sm font-medium text-textPrimary block mb-1">
-                Plan Name
-              </label>
-              <input
-                type="text"
-                value={nameInput}
-                onChange={(e) => setNameInput(e.target.value)}
-                placeholder="e.g. Fall Marathon 2026"
-                className="w-full border border-border rounded-xl px-3 py-2 text-sm bg-card text-textPrimary"
-                autoFocus
-              />
+      {showCreateModal && (() => {
+        const startD = startDateInput
+          ? new Date(startDateInput + "T00:00:00")
+          : null;
+        const endD = endDateInput
+          ? new Date(endDateInput + "T00:00:00")
+          : null;
+        const numWeeks =
+          startD && endD && endD > startD
+            ? Math.ceil(
+                (endD.getTime() - startD.getTime()) / (7 * 86400000)
+              )
+            : null;
+        const fmtDate = (d: Date) =>
+          d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+
+        return (
+          <Modal
+            title="New Training Plan"
+            onClose={() => setShowCreateModal(false)}
+            onSave={handleCreate}
+            saveLabel="Create"
+          >
+            <div className="space-y-3">
+              <div>
+                <label className="text-sm font-medium text-textPrimary block mb-1">
+                  Plan Name <span className="text-danger">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={nameInput}
+                  onChange={(e) => setNameInput(e.target.value)}
+                  placeholder="e.g. Fall Marathon 2026"
+                  className="w-full border border-border rounded-xl px-3 py-2 text-sm bg-card text-textPrimary focus:outline-none focus:ring-2 focus:ring-primary"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium text-textPrimary block mb-1">
+                  Start Date <span className="text-danger">*</span>
+                </label>
+                <input
+                  type="date"
+                  value={startDateInput}
+                  onChange={(e) => setStartDateInput(e.target.value)}
+                  className="w-full border border-border rounded-xl px-3 py-2 text-sm bg-card text-textPrimary focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium text-textPrimary block mb-1">
+                  End Date <span className="text-danger">*</span>
+                </label>
+                <input
+                  type="date"
+                  value={endDateInput}
+                  onChange={(e) => setEndDateInput(e.target.value)}
+                  className="w-full border border-border rounded-xl px-3 py-2 text-sm bg-card text-textPrimary focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+                {numWeeks !== null && startD && endD && (
+                  <p className="text-xs text-textSecondary mt-1">
+                    {numWeeks} week{numWeeks !== 1 ? "s" : ""} (
+                    {fmtDate(startD)} – {fmtDate(endD)})
+                  </p>
+                )}
+              </div>
             </div>
-            <div>
-              <label className="text-sm font-medium text-textPrimary block mb-1">
-                Start Date (Monday)
-              </label>
-              <input
-                type="date"
-                value={startDateInput}
-                onChange={(e) => setStartDateInput(e.target.value)}
-                className="w-full border border-border rounded-xl px-3 py-2 text-sm bg-card text-textPrimary"
-              />
-            </div>
-          </div>
-        </Modal>
-      )}
+          </Modal>
+        );
+      })()}
 
       {showRenameModal && (
         <Modal

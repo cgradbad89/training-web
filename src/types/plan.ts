@@ -10,6 +10,7 @@ export interface PlannedRunEntry {
   runType?: PlanRunType;
   description?: string;
   notes?: string;
+  targetHeartRate?: number | null;
   workoutType?: "easy" | "tempo" | "long" | "race" | "rest" | "cross";
 }
 

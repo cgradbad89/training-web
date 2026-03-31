@@ -7,14 +7,18 @@ import React, {
   useRef,
   useCallback,
 } from "react";
-import { ChevronLeft, ChevronRight, Footprints } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 
 import { MetricBadge } from "@/components/ui/MetricBadge";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useAuth } from "@/hooks/useAuth";
 import { fetchActivities } from "@/services/activities";
-import { fetchShoes, fetchManualShoeAssignmentsMap } from "@/services/shoes";
+import {
+  fetchShoes,
+  fetchManualShoeAssignmentsMap,
+  saveManualAssignments,
+} from "@/services/shoes";
 
 import {
   efficiencyDisplayScore,
@@ -25,7 +29,6 @@ import { formatPace, formatDuration, formatMiles } from "@/utils/pace";
 import { weekStart as getWeekStart, formatShortDate } from "@/utils/dates";
 import {
   isRun,
-  inferRunType,
   classifyRun,
   RUN_TAG_STYLES,
   RUN_TAG_LABELS,
@@ -48,7 +51,7 @@ function weekKey(date: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-/** Returns "Mon", "Tue", etc for a given weekday offset (0=Mon) */
+/** Returns "MON", "TUE", etc for a given weekday offset (0=Mon) */
 const DAY_ABBREVS = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
 
 
@@ -74,17 +77,14 @@ interface MiniCalendarProps {
 function MiniCalendar({ year, runs, onDayClick }: MiniCalendarProps) {
   const today = new Date();
   const [month, setMonth] = useState<number>(() => {
-    // Default to current month if it's in the selected year, else December
     return today.getFullYear() === year ? today.getMonth() : 11;
   });
 
-  // Sync month when year changes
   useEffect(() => {
     setMonth(today.getFullYear() === year ? today.getMonth() : 11);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [year]);
 
-  // Build a map: "YYYY-MM-DD" → total miles
   const runsByDay = useMemo(() => {
     const map: Record<string, number> = {};
     for (const r of runs) {
@@ -95,9 +95,8 @@ function MiniCalendar({ year, runs, onDayClick }: MiniCalendarProps) {
     return map;
   }, [runs]);
 
-  // Calendar grid: first day of month, Mon-start
   const firstDay = new Date(year, month, 1);
-  const startOffset = (firstDay.getDay() + 6) % 7; // Mon=0
+  const startOffset = (firstDay.getDay() + 6) % 7;
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const totalCells = Math.ceil((startOffset + daysInMonth) / 7) * 7;
 
@@ -120,7 +119,6 @@ function MiniCalendar({ year, runs, onDayClick }: MiniCalendarProps) {
 
   return (
     <div>
-      {/* Month nav */}
       <div className="flex items-center justify-between mb-2">
         <button
           onClick={prevMonth}
@@ -141,7 +139,6 @@ function MiniCalendar({ year, runs, onDayClick }: MiniCalendarProps) {
         </button>
       </div>
 
-      {/* Day headers */}
       <div className="grid grid-cols-7 mb-1">
         {["M", "T", "W", "T", "F", "S", "S"].map((d, i) => (
           <div key={i} className="text-center text-[10px] font-semibold text-textSecondary py-0.5">
@@ -150,7 +147,6 @@ function MiniCalendar({ year, runs, onDayClick }: MiniCalendarProps) {
         ))}
       </div>
 
-      {/* Day cells */}
       <div className="grid grid-cols-7 gap-y-0.5">
         {Array.from({ length: totalCells }).map((_, i) => {
           const dayNum = i - startOffset + 1;
@@ -282,10 +278,21 @@ function YearStats({ runs }: YearStatsProps) {
 
 interface RunRowProps {
   run: StravaActivity;
-  shoeName: string | null;
+  shoes: RunningShoe[];
+  assignedShoeId: string | null;
+  isDropdownOpen: boolean;
+  onToggleDropdown: () => void;
+  onAssign: (shoeId: string | null) => void;
 }
 
-function RunRow({ run, shoeName }: RunRowProps) {
+function RunRow({
+  run,
+  shoes,
+  assignedShoeId,
+  isDropdownOpen,
+  onToggleDropdown,
+  onAssign,
+}: RunRowProps) {
   const localDate = getLocalDate(run);
   const dayAbbrev = DAY_ABBREVS[(localDate.getDay() + 6) % 7];
   const dayNum = localDate.getDate();
@@ -311,6 +318,11 @@ function RunRow({ run, shoeName }: RunRowProps) {
     hasHR && displayScore > 0 && isFinite(displayScore)
       ? displayScore.toFixed(1)
       : "—";
+
+  const assignedShoe = shoes.find((s) => s.id === assignedShoeId) ?? null;
+  const shoeName = assignedShoe
+    ? assignedShoe.name || `${assignedShoe.brand} ${assignedShoe.model}`.trim()
+    : null;
 
   return (
     <div className="flex items-center gap-3 py-3 px-4 hover:bg-surface rounded-xl transition-colors group">
@@ -341,17 +353,17 @@ function RunRow({ run, shoeName }: RunRowProps) {
       </div>
 
       {/* Col 5: Duration — hidden on mobile */}
-      <div className="hidden lg:table-cell w-16 shrink-0 text-sm text-textSecondary tabular-nums text-right">
+      <div className="hidden lg:block w-16 shrink-0 text-sm text-textSecondary tabular-nums text-right">
         {formatDuration(run.moving_time_s)}
       </div>
 
       {/* Col 6: Heart Rate — hidden on mobile */}
-      <div className="hidden lg:table-cell w-16 shrink-0 text-sm text-textSecondary tabular-nums text-right">
+      <div className="hidden lg:block w-16 shrink-0 text-sm text-textSecondary tabular-nums text-right">
         {run.avg_heartrate ? `${Math.round(run.avg_heartrate)} bpm` : "—"}
       </div>
 
       {/* Col 7: Elevation — hidden on mobile */}
-      <div className="hidden lg:table-cell w-14 shrink-0 text-sm text-textSecondary tabular-nums text-right">
+      <div className="hidden lg:block w-14 shrink-0 text-sm text-textSecondary tabular-nums text-right">
         {run.total_elev_gain_m > 0 ? `${Math.round(run.total_elev_gain_m)}m` : "—"}
       </div>
 
@@ -364,17 +376,63 @@ function RunRow({ run, shoeName }: RunRowProps) {
         />
       </div>
 
-      {/* Col 9: Shoe — hidden on mobile */}
-      {shoeName !== undefined && (
-        <div className="hidden lg:table-cell items-center gap-1 w-28 shrink-0 text-xs text-textSecondary truncate">
-          {shoeName ? (
-            <>
-              <Footprints size={11} className="shrink-0 text-textSecondary" />
-              <span className="truncate">{shoeName}</span>
-            </>
-          ) : null}
-        </div>
-      )}
+      {/* Col 9: Shoe — always visible, rightmost */}
+      <div className="relative shrink-0 w-28" data-shoe-dropdown="true">
+        {shoeName ? (
+          <button
+            onClick={onToggleDropdown}
+            data-shoe-dropdown="true"
+            className="text-xs bg-success/10 text-success px-2 py-0.5 rounded-full hover:bg-success/20 transition-colors"
+          >
+            {shoeName}
+          </button>
+        ) : (
+          <button
+            onClick={onToggleDropdown}
+            data-shoe-dropdown="true"
+            className="text-xs text-textSecondary hover:text-primary cursor-pointer transition-colors"
+          >
+            — assign
+          </button>
+        )}
+
+        {isDropdownOpen && shoes.length > 0 && (
+          <div
+            data-shoe-dropdown="true"
+            className="absolute right-0 top-full mt-1 bg-card border border-border rounded-xl shadow-lg z-50 min-w-[160px] py-1"
+          >
+            {shoes.map((shoe) => {
+              const name = shoe.name || `${shoe.brand} ${shoe.model}`.trim();
+              return (
+                <button
+                  key={shoe.id}
+                  onClick={() => onAssign(shoe.id)}
+                  data-shoe-dropdown="true"
+                  className={`w-full text-left px-4 py-2 text-sm hover:bg-surface cursor-pointer transition-colors ${
+                    assignedShoeId === shoe.id
+                      ? "font-semibold text-primary"
+                      : "text-textPrimary"
+                  }`}
+                >
+                  {name}
+                </button>
+              );
+            })}
+            <div className="border-t border-border my-1" />
+            <button
+              onClick={() => onAssign(null)}
+              data-shoe-dropdown="true"
+              className={`w-full text-left px-4 py-2 text-sm hover:bg-surface cursor-pointer transition-colors ${
+                !assignedShoeId
+                  ? "font-semibold text-primary"
+                  : "text-textSecondary"
+              }`}
+            >
+              Unassigned
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -384,12 +442,24 @@ function RunRow({ run, shoeName }: RunRowProps) {
 interface WeekGroupProps {
   wKey: string;
   runs: StravaActivity[];
-  shoeMap: Record<string, string>;
   manualAssignments: Record<string, string | null>;
   innerRef: (el: HTMLDivElement | null) => void;
+  shoes: RunningShoe[];
+  openDropdown: number | null;
+  setOpenDropdown: (id: number | null) => void;
+  onAssign: (activityId: number, shoeId: string | null) => void;
 }
 
-function WeekGroup({ wKey, runs, shoeMap, manualAssignments, innerRef }: WeekGroupProps) {
+function WeekGroup({
+  wKey,
+  runs,
+  manualAssignments,
+  innerRef,
+  shoes,
+  openDropdown,
+  setOpenDropdown,
+  onAssign,
+}: WeekGroupProps) {
   const wStart = new Date(wKey + "T00:00:00");
   const weekLabel = wStart.toLocaleDateString("en-US", { month: "short", day: "numeric" });
   const totalMiles = runs.reduce((s, r) => s + r.distance_miles, 0);
@@ -409,8 +479,19 @@ function WeekGroup({ wKey, runs, shoeMap, manualAssignments, innerRef }: WeekGro
       {/* Run rows */}
       {runs.map((run) => {
         const assignedShoeId = manualAssignments[String(run.id)] ?? null;
-        const shoeName = assignedShoeId ? (shoeMap[assignedShoeId] ?? null) : null;
-        return <RunRow key={run.id} run={run} shoeName={shoeName} />;
+        return (
+          <RunRow
+            key={run.id}
+            run={run}
+            shoes={shoes}
+            assignedShoeId={assignedShoeId}
+            isDropdownOpen={openDropdown === run.id}
+            onToggleDropdown={() =>
+              setOpenDropdown(openDropdown === run.id ? null : run.id)
+            }
+            onAssign={(shoeId) => onAssign(run.id, shoeId)}
+          />
+        );
       })}
     </div>
   );
@@ -426,11 +507,23 @@ export default function RunsPage() {
   const [shoes, setShoes] = useState<RunningShoe[]>([]);
   const [manualAssignments, setManualAssignments] = useState<Record<string, string | null>>({});
   const [loading, setLoading] = useState(true);
+  const [openDropdown, setOpenDropdown] = useState<number | null>(null);
 
   const currentYear = new Date().getFullYear();
   const [selectedYear, setSelectedYear] = useState<number>(currentYear);
 
   const weekRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (!(e.target as Element).closest("[data-shoe-dropdown]")) {
+        setOpenDropdown(null);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
 
   useEffect(() => {
     if (!uid) return;
@@ -448,6 +541,27 @@ export default function RunsPage() {
       .catch(console.error)
       .finally(() => setLoading(false));
   }, [uid]);
+
+  // Active (non-retired) shoes for dropdown
+  const activeShoes = useMemo(
+    () => shoes.filter((s) => !s.isRetired),
+    [shoes]
+  );
+
+  const handleAssign = useCallback(
+    async (activityId: number, shoeId: string | null) => {
+      if (!uid) return;
+      // Optimistic update
+      setManualAssignments((prev) => ({ ...prev, [String(activityId)]: shoeId }));
+      setOpenDropdown(null);
+      try {
+        await saveManualAssignments(uid, { [String(activityId)]: shoeId });
+      } catch (err) {
+        console.error(err);
+      }
+    },
+    [uid]
+  );
 
   // Available years derived from data
   const availableYears = useMemo(() => {
@@ -472,22 +586,11 @@ export default function RunsPage() {
       if (!map[k]) map[k] = [];
       map[k].push(run);
     }
-    // Sort within each week ascending (oldest first in week)
     for (const k of Object.keys(map)) {
       map[k].sort((a, b) => getLocalDate(a).getTime() - getLocalDate(b).getTime());
     }
-    // Sort weeks descending
     return Object.entries(map).sort(([a], [b]) => b.localeCompare(a));
   }, [filteredRuns]);
-
-  // Shoe lookup map: id → display name
-  const shoeMap = useMemo(() => {
-    const m: Record<string, string> = {};
-    for (const s of shoes) {
-      m[s.id] = s.name || `${s.brand} ${s.model}`.trim();
-    }
-    return m;
-  }, [shoes]);
 
   const scrollToWeek = useCallback((wk: string) => {
     weekRefs.current[wk]?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -569,19 +672,19 @@ export default function RunsPage() {
             <div className="w-20 shrink-0 text-xs font-semibold uppercase tracking-widest text-textSecondary text-right">
               Pace
             </div>
-            <div className="hidden lg:table-cell w-16 shrink-0 text-xs font-semibold uppercase tracking-widest text-textSecondary text-right">
+            <div className="hidden lg:block w-16 shrink-0 text-xs font-semibold uppercase tracking-widest text-textSecondary text-right">
               Time
             </div>
-            <div className="hidden lg:table-cell w-16 shrink-0 text-xs font-semibold uppercase tracking-widest text-textSecondary text-right">
+            <div className="hidden lg:block w-16 shrink-0 text-xs font-semibold uppercase tracking-widest text-textSecondary text-right">
               HR
             </div>
-            <div className="hidden lg:table-cell w-14 shrink-0 text-xs font-semibold uppercase tracking-widest text-textSecondary text-right">
+            <div className="hidden lg:block w-14 shrink-0 text-xs font-semibold uppercase tracking-widest text-textSecondary text-right">
               Elev
             </div>
             <div className="shrink-0 w-14 text-xs font-semibold uppercase tracking-widest text-textSecondary text-right">
               Eff
             </div>
-            <div className="hidden lg:table-cell w-28 shrink-0 text-xs font-semibold uppercase tracking-widest text-textSecondary">
+            <div className="w-28 shrink-0 text-xs font-semibold uppercase tracking-widest text-textSecondary">
               Shoe
             </div>
           </div>
@@ -605,8 +708,11 @@ export default function RunsPage() {
               key={wk}
               wKey={wk}
               runs={runs}
-              shoeMap={shoeMap}
               manualAssignments={manualAssignments}
+              shoes={activeShoes}
+              openDropdown={openDropdown}
+              setOpenDropdown={setOpenDropdown}
+              onAssign={handleAssign}
               innerRef={(el) => {
                 weekRefs.current[wk] = el;
               }}

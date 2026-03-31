@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useCallback } from "react";
-import Link from "next/link";
 import { Pencil, Trash2, Plus, X, Footprints } from "lucide-react";
 
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -19,6 +18,7 @@ import {
 } from "@/services/shoes";
 import { isRun } from "@/utils/activityTypes";
 import { formatPace } from "@/utils/pace";
+import { formatShortDate } from "@/utils/dates";
 import { type StravaActivity } from "@/types/activity";
 import {
   type RunningShoe,
@@ -163,9 +163,10 @@ interface ShoeCardProps {
   activities: StravaActivity[];
   assignments: Record<string, string | null>;
   onEdit: (shoe: RunningShoe) => void;
+  onManageRuns: (shoe: RunningShoe) => void;
 }
 
-function ShoeCard({ shoe, activities, assignments, onEdit }: ShoeCardProps) {
+function ShoeCard({ shoe, activities, assignments, onEdit, onManageRuns }: ShoeCardProps) {
   const assigned = shoeAssignedRuns(shoe, activities, assignments);
   const miles = totalMileage(shoe, activities, assignments);
 
@@ -240,12 +241,12 @@ function ShoeCard({ shoe, activities, assignments, onEdit }: ShoeCardProps) {
       </div>
 
       {/* Footer */}
-      <Link
-        href={`/runs?shoe=${shoe.id}`}
-        className="text-xs text-primary hover:underline"
+      <button
+        onClick={() => onManageRuns(shoe)}
+        className="text-xs font-medium text-primary hover:text-primary/80 transition-colors text-left"
       >
-        View assigned runs →
-      </Link>
+        Manage Runs →
+      </button>
     </div>
   );
 }
@@ -302,7 +303,7 @@ interface ShoeFormState {
 }
 
 interface AddEditShoeModalProps {
-  shoe: RunningShoe | null; // null = new shoe
+  shoe: RunningShoe | null;
   onSave: (shoe: RunningShoe, isNew: boolean) => Promise<void>;
   onDelete: (shoe: RunningShoe) => void;
   onClose: () => void;
@@ -361,7 +362,7 @@ function AddEditShoeModal({
 
       const full: RunningShoe = shoe
         ? { ...shoe, ...data }
-        : { ...data, id: "", addedAt: "" }; // id/addedAt filled by createShoe
+        : { ...data, id: "", addedAt: "" };
 
       await onSave(full, isNew);
     } catch (err) {
@@ -533,7 +534,7 @@ interface RuleFormState {
 
 interface AddEditRuleModalProps {
   rule: ShoeAutoAssignRule | null;
-  targetShoe: RunningShoe | null; // pre-selected shoe when editing
+  targetShoe: RunningShoe | null;
   activeShoes: RunningShoe[];
   onSave: (rule: ShoeAutoAssignRule) => Promise<void>;
   onClose: () => void;
@@ -758,7 +759,6 @@ function AutoAssignRulesSection({
   onDeleteRule,
   onToggleRule,
 }: AutoAssignRulesSectionProps) {
-  // TODO: support drag-to-reorder for rule priority
   const allRules: AggregatedRule[] = shoes.flatMap((shoe) =>
     (shoe.autoAssignRules ?? []).map((rule) => ({ rule, shoe }))
   );
@@ -855,6 +855,240 @@ function AutoAssignRulesSection({
   );
 }
 
+// ─── Runs Slide-Over Panel ────────────────────────────────────────────────────
+
+interface RunsPanelProps {
+  shoe: RunningShoe;
+  activities: StravaActivity[];
+  assignments: Record<string, string | null>;
+  onClose: () => void;
+  onAssignmentChange: (activityId: string, shoeId: string | null) => Promise<void>;
+}
+
+function RunsPanel({
+  shoe,
+  activities,
+  assignments,
+  onClose,
+  onAssignmentChange,
+}: RunsPanelProps) {
+  const [isVisible, setIsVisible] = useState(false);
+  const [showPicker, setShowPicker] = useState(false);
+  const [search, setSearch] = useState("");
+
+  // Animate in on mount
+  useEffect(() => {
+    const t = setTimeout(() => setIsVisible(true), 10);
+    return () => clearTimeout(t);
+  }, []);
+
+  const runs = useMemo(
+    () => activities.filter((a) => isRun(a.type)),
+    [activities]
+  );
+
+  const assignedRuns = useMemo(
+    () =>
+      runs
+        .filter((r) => assignments[String(r.id)] === shoe.id)
+        .sort(
+          (a, b) =>
+            new Date(b.start_date_local).getTime() -
+            new Date(a.start_date_local).getTime()
+        ),
+    [runs, assignments, shoe.id]
+  );
+
+  const miles = totalMileage(shoe, activities, assignments);
+
+  // Picker: show runs not assigned to any other shoe + runs assigned to this shoe
+  const pickerRuns = useMemo(() => {
+    const base = runs.filter((r) => {
+      const a = assignments[String(r.id)];
+      return a == null || a === shoe.id;
+    });
+    const q = search.trim().toLowerCase();
+    const filtered = q
+      ? base.filter(
+          (r) =>
+            r.name.toLowerCase().includes(q) ||
+            r.start_date_local.includes(search.trim())
+        )
+      : base;
+    return [...filtered].sort(
+      (a, b) =>
+        new Date(b.start_date_local).getTime() -
+        new Date(a.start_date_local).getTime()
+    );
+  }, [runs, assignments, shoe.id, search]);
+
+  return (
+    <>
+      {/* Overlay */}
+      <div
+        className="fixed inset-0 bg-black/40 z-40"
+        onClick={onClose}
+      />
+
+      {/* Slide-over panel */}
+      <div
+        className={`fixed right-0 top-0 h-full w-full max-w-md bg-card shadow-xl z-50 flex flex-col transition-transform duration-300 ${
+          isVisible ? "translate-x-0" : "translate-x-full"
+        }`}
+      >
+        {/* Sticky header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-card sticky top-0 z-10">
+          <button
+            onClick={onClose}
+            className="text-sm text-textSecondary hover:text-textPrimary flex items-center gap-1 transition-colors"
+          >
+            ← Close
+          </button>
+          <h2 className="text-sm font-semibold text-textPrimary truncate mx-2 flex-1 text-center">
+            {shoe.name}
+          </h2>
+          <span className="text-sm font-semibold text-textPrimary tabular-nums shrink-0">
+            {miles.toFixed(1)} mi
+          </span>
+        </div>
+
+        {/* Scrollable body */}
+        <div className="flex-1 overflow-y-auto p-4">
+          {showPicker ? (
+            <>
+              {/* Picker header */}
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold text-textPrimary">Add Runs</h3>
+                <button
+                  onClick={() => {
+                    setShowPicker(false);
+                    setSearch("");
+                  }}
+                  className="text-sm font-semibold text-primary"
+                >
+                  Done
+                </button>
+              </div>
+
+              {/* Search bar */}
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search by name or date…"
+                className="w-full border border-border rounded-xl px-3 py-2 text-sm bg-card text-textPrimary mb-3 focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+
+              {/* Picker run list */}
+              {pickerRuns.length === 0 ? (
+                <p className="text-sm text-textSecondary text-center py-8">No runs found.</p>
+              ) : (
+                <div className="flex flex-col">
+                  {pickerRuns.map((run) => {
+                    const isChecked = assignments[String(run.id)] === shoe.id;
+                    return (
+                      <label
+                        key={run.id}
+                        className="flex items-center gap-3 py-2.5 px-3 rounded-xl hover:bg-surface cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={async (e) => {
+                            await onAssignmentChange(
+                              String(run.id),
+                              e.target.checked ? shoe.id : null
+                            );
+                          }}
+                          className="w-4 h-4 accent-primary shrink-0"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs text-textSecondary shrink-0">
+                              {formatShortDate(new Date(run.start_date_local))}
+                            </span>
+                            <span className="text-sm font-medium text-textPrimary truncate">
+                              {run.name}
+                            </span>
+                          </div>
+                          <div className="text-xs text-textSecondary mt-0.5">
+                            {run.distance_miles.toFixed(1)} mi
+                            {run.pace_min_per_mile ? ` · ${run.pace_min_per_mile}/mi` : ""}
+                          </div>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              {/* Section 1: Mileage bar */}
+              <div className="mb-4">
+                <MileageBar miles={miles} target={shoe.retirementMileageTarget} />
+              </div>
+
+              {/* Section 2: Add Runs button */}
+              <button
+                onClick={() => setShowPicker(true)}
+                className="w-full flex items-center justify-center gap-2 py-2.5 border-2 border-dashed border-border rounded-xl text-sm font-medium text-textSecondary hover:border-primary hover:text-primary transition-colors mb-5"
+              >
+                <Plus size={14} />
+                Add Runs
+              </button>
+
+              {/* Section 3: Assigned runs list */}
+              <h3 className="text-xs font-semibold uppercase tracking-widest text-textSecondary mb-2">
+                Assigned Runs
+              </h3>
+
+              {assignedRuns.length === 0 ? (
+                <p className="text-sm text-textSecondary italic text-center py-6">
+                  No runs assigned yet. Use &apos;Add Runs&apos; to assign.
+                </p>
+              ) : (
+                <div className="flex flex-col gap-1">
+                  {assignedRuns.map((run) => (
+                    <div
+                      key={run.id}
+                      className="flex items-center gap-3 py-2.5 px-3 rounded-xl hover:bg-surface group"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs text-textSecondary shrink-0">
+                            {formatShortDate(new Date(run.start_date_local))}
+                          </span>
+                          <span className="text-sm font-medium text-textPrimary truncate">
+                            {run.name}
+                          </span>
+                        </div>
+                        <div className="text-xs text-textSecondary mt-0.5">
+                          {run.distance_miles.toFixed(1)} mi
+                          {run.pace_min_per_mile ? ` · ${run.pace_min_per_mile}/mi` : ""}
+                        </div>
+                      </div>
+                      <button
+                        onClick={async () => {
+                          await onAssignmentChange(String(run.id), null);
+                        }}
+                        className="p-1.5 rounded-lg text-textSecondary hover:text-danger hover:bg-surface opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                        aria-label="Remove assignment"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function ShoesPage() {
@@ -871,14 +1105,18 @@ export default function ShoesPage() {
   const [editingRule, setEditingRule] = useState<{ rule: ShoeAutoAssignRule | null; shoe: RunningShoe | null } | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<RunningShoe | null>(null);
 
+  // Slide-over panel state
+  const [runsPanel, setRunsPanel] = useState<RunningShoe | null>(null);
+
   useEffect(() => {
     const isOpen =
       editingShoe !== null ||
       editingRule !== null ||
-      !!deleteConfirm;
+      !!deleteConfirm ||
+      !!runsPanel;
     document.body.style.overflow = isOpen ? "hidden" : "";
     return () => { document.body.style.overflow = ""; };
-  }, [editingShoe, editingRule, deleteConfirm]);
+  }, [editingShoe, editingRule, deleteConfirm, runsPanel]);
 
   const loadAll = useCallback(async () => {
     if (!uid) return;
@@ -901,6 +1139,17 @@ export default function ShoesPage() {
   const activeShoes = shoes.filter((s) => !s.isRetired);
   const retiredShoes = shoes.filter((s) => s.isRetired);
 
+  // ── Assignment change handler (used by RunsPanel) ────────────────────────
+  async function handlePanelAssignmentChange(
+    activityId: string,
+    shoeId: string | null
+  ) {
+    if (!uid) return;
+    // Optimistic update
+    setAssignments((prev) => ({ ...prev, [activityId]: shoeId }));
+    await saveManualAssignments(uid, { [activityId]: shoeId });
+  }
+
   // ── Shoe save handler ────────────────────────────────────────────────────
   async function handleSaveShoe(shoe: RunningShoe, isNew: boolean) {
     if (!uid) return;
@@ -919,7 +1168,6 @@ export default function ShoesPage() {
   async function handleDeleteShoe(shoe: RunningShoe) {
     if (!uid) return;
 
-    // Clear all manual assignments pointing to this shoe
     const cleared: Record<string, null> = {};
     for (const [actId, shoeId] of Object.entries(assignments)) {
       if (shoeId === shoe.id) cleared[actId] = null;
@@ -1020,6 +1268,7 @@ export default function ShoesPage() {
                   activities={activities}
                   assignments={assignments}
                   onEdit={(s) => setEditingShoe(s)}
+                  onManageRuns={(s) => setRunsPanel(s)}
                 />
               ))}
             </div>
@@ -1036,6 +1285,7 @@ export default function ShoesPage() {
                     activities={activities}
                     assignments={assignments}
                     onEdit={(s) => setEditingShoe(s)}
+                    onManageRuns={(s) => setRunsPanel(s)}
                   />
                 ))}
               </div>
@@ -1099,6 +1349,17 @@ export default function ShoesPage() {
           activeShoes={activeShoes}
           onSave={handleSaveRule}
           onClose={() => setEditingRule(null)}
+        />
+      )}
+
+      {/* Runs slide-over panel */}
+      {runsPanel && (
+        <RunsPanel
+          shoe={runsPanel}
+          activities={activities}
+          assignments={assignments}
+          onClose={() => setRunsPanel(null)}
+          onAssignmentChange={handlePanelAssignmentChange}
         />
       )}
     </div>
