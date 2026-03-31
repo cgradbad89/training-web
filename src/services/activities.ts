@@ -45,6 +45,7 @@ import { db } from "@/lib/firebase";
 import { COLLECTIONS } from "@/lib/firestore";
 import { type StravaActivity } from "@/types";
 import { metersToMiles, mpsToSecPerMile, formatPace } from "@/utils";
+import { toDate } from "@/utils/dates";
 
 function docToActivity(id: string, data: Record<string, unknown>): StravaActivity {
   const distanceM = (data.distance_m as number) ?? 0;
@@ -57,8 +58,8 @@ function docToActivity(id: string, data: Record<string, unknown>): StravaActivit
     id: (data.id as number) ?? parseInt(id, 10),
     name: (data.name as string) ?? "",
     type: (data.type as StravaActivity["type"]) ?? "Other",
-    start_date: (data.start_date as string) ?? "",
-    start_date_local: (data.start_date_local as string) ?? "",
+    start_date: toDate(data.start_date).toISOString(),
+    start_date_local: toDate(data.start_date_local).toISOString(),
     timezone: (data.timezone as string) ?? "",
     distance_m: distanceM,
     distance_miles: (data.distance_miles as number) ?? metersToMiles(distanceM),

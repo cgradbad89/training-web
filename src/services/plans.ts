@@ -8,6 +8,7 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { type RunningPlan } from "@/types";
+import { toDate } from "@/utils/dates";
 
 function stripUndefined<T extends object>(obj: T): T {
   return JSON.parse(JSON.stringify(obj)) as T;
@@ -17,7 +18,15 @@ const plansPath = (uid: string) => `users/${uid}/plans`;
 
 export async function fetchPlans(uid: string): Promise<RunningPlan[]> {
   const snap = await getDocs(collection(db, plansPath(uid)));
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() } as RunningPlan));
+  return snap.docs.map((d) => {
+    const data = d.data();
+    return {
+      ...data,
+      id: d.id,
+      startDate: toDate(data.startDate).toISOString().split("T")[0],
+      createdAt: toDate(data.createdAt).toISOString(),
+    } as RunningPlan;
+  });
 }
 
 export async function savePlan(uid: string, plan: RunningPlan): Promise<void> {

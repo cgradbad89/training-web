@@ -65,3 +65,20 @@ export function isSameWeek(a: Date, b: Date): boolean {
 export function normalizeToMonday(date: Date): string {
   return weekStart(date).toISOString().split("T")[0];
 }
+
+/**
+ * Safely converts a Firestore Timestamp, Date, or ISO string to a JS Date.
+ * Firestore Timestamp objects have a .toDate() method.
+ * Use this everywhere instead of new Date(someFirestoreField).
+ */
+export function toDate(value: unknown): Date {
+  if (!value) return new Date(0);
+  // Firestore Timestamp
+  if (typeof value === "object" && value !== null && "toDate" in value) {
+    return (value as { toDate: () => Date }).toDate();
+  }
+  // Already a Date
+  if (value instanceof Date) return value;
+  // ISO string or number
+  return new Date(value as string | number);
+}
