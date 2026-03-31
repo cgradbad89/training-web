@@ -2,10 +2,10 @@ import {
   collection,
   doc,
   getDocs,
+  getDoc,
   setDoc,
   deleteDoc,
   updateDoc,
-  serverTimestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { COLLECTIONS } from "@/lib/firestore";
@@ -24,6 +24,19 @@ export async function saveShoe(uid: string, shoe: RunningShoe): Promise<void> {
 
 export async function deleteShoe(uid: string, shoeId: string): Promise<void> {
   await deleteDoc(doc(db, COLLECTIONS.runningShoes(uid), shoeId));
+}
+
+// ─── Manual assignments doc ───────────────────────────────────────────────────
+// The "manual" document stores a flat map: { [activityId: string]: shoeId | null }
+// This mirrors the iOS RunningShoeAssignmentStore pattern.
+
+export async function fetchManualShoeAssignmentsMap(
+  uid: string
+): Promise<Record<string, string | null>> {
+  const ref = doc(db, COLLECTIONS.shoeAssignments(uid), "manual");
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return {};
+  return snap.data() as Record<string, string | null>;
 }
 
 // ─── Assignments ──────────────────────────────────────────────────────────────
