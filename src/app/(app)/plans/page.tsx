@@ -35,7 +35,9 @@ import {
 
 /** Compute the calendar date of a plan entry */
 function plannedDate(plan: RunningPlan, entry: PlannedRunEntry): Date {
-  const start = new Date(plan.startDate + "T00:00:00");
+  // Parse date parts directly to avoid UTC offset issues in US timezones
+  const [year, month, day] = plan.startDate.split("-").map(Number);
+  const start = new Date(year, month - 1, day); // local time
   const daysOffset = entry.weekIndex * 7 + (entry.weekday - 1);
   const d = new Date(start);
   d.setDate(start.getDate() + daysOffset);
@@ -446,25 +448,33 @@ function WeekSummaryBar({
 function Modal({
   title,
   onClose,
+  onSave,
+  saveLabel = "Save",
   children,
 }: {
   title: string;
   onClose: () => void;
+  onSave?: () => void;
+  saveLabel?: string;
   children: React.ReactNode;
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="bg-card rounded-2xl shadow-xl w-full max-w-sm p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="font-bold text-textPrimary">{title}</h3>
-          <button
-            onClick={onClose}
-            className="p-1 rounded-lg hover:bg-surface text-textSecondary"
-          >
-            <X className="w-4 h-4" />
+      <div className="bg-card rounded-2xl shadow-xl w-full max-w-sm max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between p-4 border-b border-border sticky top-0 bg-card z-10">
+          <button onClick={onClose} className="text-sm text-textSecondary">
+            Cancel
           </button>
+          <h3 className="text-sm font-semibold text-textPrimary">{title}</h3>
+          {onSave ? (
+            <button onClick={onSave} className="text-sm font-semibold text-primary">
+              {saveLabel}
+            </button>
+          ) : (
+            <div className="w-12" />
+          )}
         </div>
-        {children}
+        <div className="overflow-y-auto flex-1 p-5">{children}</div>
       </div>
     </div>
   );
@@ -1012,7 +1022,12 @@ export default function PlansPage() {
       {/* ── Modals ─────────────────────────────────────────────────────── */}
 
       {showCreateModal && (
-        <Modal title="New Training Plan" onClose={() => setShowCreateModal(false)}>
+        <Modal
+          title="New Training Plan"
+          onClose={() => setShowCreateModal(false)}
+          onSave={handleCreate}
+          saveLabel="Create"
+        >
           <div className="space-y-3">
             <div>
               <label className="text-sm font-medium text-textPrimary block mb-1">
@@ -1039,26 +1054,15 @@ export default function PlansPage() {
               />
             </div>
           </div>
-          <div className="flex justify-end gap-2 mt-5">
-            <button
-              onClick={() => setShowCreateModal(false)}
-              className="px-4 py-2 rounded-xl border border-border text-sm text-textSecondary hover:bg-surface"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleCreate}
-              disabled={!nameInput.trim() || !startDateInput || saving}
-              className="px-4 py-2 rounded-xl bg-primary text-white text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
-            >
-              Create
-            </button>
-          </div>
         </Modal>
       )}
 
       {showRenameModal && (
-        <Modal title="Rename Plan" onClose={() => setShowRenameModal(false)}>
+        <Modal
+          title="Rename Plan"
+          onClose={() => setShowRenameModal(false)}
+          onSave={handleRename}
+        >
           <input
             type="text"
             value={nameInput}
@@ -1066,21 +1070,6 @@ export default function PlansPage() {
             className="w-full border border-border rounded-xl px-3 py-2 text-sm bg-card text-textPrimary"
             autoFocus
           />
-          <div className="flex justify-end gap-2 mt-5">
-            <button
-              onClick={() => setShowRenameModal(false)}
-              className="px-4 py-2 rounded-xl border border-border text-sm text-textSecondary hover:bg-surface"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleRename}
-              disabled={!nameInput.trim() || saving}
-              className="px-4 py-2 rounded-xl bg-primary text-white text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
-            >
-              Save
-            </button>
-          </div>
         </Modal>
       )}
 
@@ -1088,27 +1077,14 @@ export default function PlansPage() {
         <Modal
           title="Delete Plan?"
           onClose={() => setConfirmDelete(false)}
+          onSave={handleDelete}
+          saveLabel="Delete"
         >
           <p className="text-sm text-textSecondary">
             Are you sure you want to delete{" "}
             <strong className="text-textPrimary">{selectedPlan?.name}</strong>?
             This cannot be undone.
           </p>
-          <div className="flex justify-end gap-2 mt-5">
-            <button
-              onClick={() => setConfirmDelete(false)}
-              className="px-4 py-2 rounded-xl border border-border text-sm text-textSecondary hover:bg-surface"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleDelete}
-              disabled={saving}
-              className="px-4 py-2 rounded-xl bg-danger text-white text-sm font-medium hover:bg-danger/90 disabled:opacity-50"
-            >
-              Delete
-            </button>
-          </div>
         </Modal>
       )}
     </div>

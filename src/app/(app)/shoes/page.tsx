@@ -255,10 +255,12 @@ function ShoeCard({ shoe, activities, assignments, onEdit }: ShoeCardProps) {
 function Modal({
   title,
   onClose,
+  onSave,
   children,
 }: {
   title: string;
   onClose: () => void;
+  onSave?: () => void;
   children: React.ReactNode;
 }) {
   return (
@@ -266,18 +268,21 @@ function Modal({
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 overflow-hidden"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
-      <div className="relative z-10 bg-card rounded-2xl shadow-xl border border-border w-full max-w-[480px] max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
-          <h2 className="text-base font-semibold text-textPrimary">{title}</h2>
-          <button
-            onClick={onClose}
-            aria-label="Close"
-            className="p-1.5 rounded-lg hover:bg-surface text-textSecondary transition-colors"
-          >
-            <X size={16} />
+      <div className="relative z-10 bg-card rounded-2xl shadow-xl border border-border w-full max-w-[480px] flex flex-col max-h-[90vh]">
+        <div className="flex items-center justify-between p-4 border-b border-border sticky top-0 bg-card z-10">
+          <button onClick={onClose} className="text-sm text-textSecondary">
+            Cancel
           </button>
+          <h2 className="text-sm font-semibold text-textPrimary">{title}</h2>
+          {onSave ? (
+            <button onClick={onSave} className="text-sm font-semibold text-primary">
+              Save
+            </button>
+          ) : (
+            <div className="w-12" />
+          )}
         </div>
-        <div className="p-5">{children}</div>
+        <div className="overflow-y-auto flex-1 p-5">{children}</div>
       </div>
     </div>
   );
@@ -331,8 +336,7 @@ function AddEditShoeModal({
     setForm((f) => ({ ...f, [field]: value }));
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  async function doSave() {
     setError("");
     if (!form.name.trim()) {
       setError("Shoe name is required.");
@@ -367,10 +371,15 @@ function AddEditShoeModal({
     }
   }
 
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    await doSave();
+  }
+
   const notesLen = form.notes.length;
 
   return (
-    <Modal title={isNew ? "Add Shoe" : "Edit Shoe"} onClose={onClose}>
+    <Modal title={isNew ? "Add Shoe" : "Edit Shoe"} onClose={onClose} onSave={doSave}>
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         {/* Name */}
         <div>
@@ -503,22 +512,7 @@ function AddEditShoeModal({
           ) : (
             <div />
           )}
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 text-sm text-textSecondary border border-border rounded-lg hover:bg-surface transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="px-4 py-2 text-sm font-semibold text-white bg-primary rounded-lg hover:bg-primary/90 disabled:opacity-50 transition-colors"
-            >
-              {saving ? "Saving…" : "Save"}
-            </button>
-          </div>
+          <div className="hidden" />
         </div>
       </form>
     </Modal>
@@ -571,8 +565,7 @@ function AddEditRuleModal({
     setForm((f) => ({ ...f, [field]: value }));
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  async function doSave() {
     setError("");
 
     if (!form.shoeId) { setError("Shoe is required."); return; }
@@ -605,6 +598,11 @@ function AddEditRuleModal({
     }
   }
 
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    await doSave();
+  }
+
   const SCOPES: { value: RuleFormState["scope"]; label: string }[] = [
     { value: "any", label: "All Runs" },
     { value: "outdoor", label: "Outdoor Only" },
@@ -612,7 +610,7 @@ function AddEditRuleModal({
   ];
 
   return (
-    <Modal title={isNew ? "Add Rule" : "Edit Rule"} onClose={onClose}>
+    <Modal title={isNew ? "Add Rule" : "Edit Rule"} onClose={onClose} onSave={doSave}>
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         {/* Shoe */}
         <div>
@@ -730,22 +728,7 @@ function AddEditRuleModal({
 
         {error && <p className="text-sm text-danger">{error}</p>}
 
-        <div className="flex gap-2 justify-end pt-2 border-t border-border">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 text-sm text-textSecondary border border-border rounded-lg hover:bg-surface transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={saving}
-            className="px-4 py-2 text-sm font-semibold text-white bg-primary rounded-lg hover:bg-primary/90 disabled:opacity-50 transition-colors"
-          >
-            {saving ? "Saving…" : "Save Rule"}
-          </button>
-        </div>
+        <div className="hidden" />
       </form>
     </Modal>
   );

@@ -80,7 +80,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <HubBanner />
         <div className="flex flex-1 overflow-hidden">
           <SideNav />
-          <main className="flex-1 overflow-y-auto p-6 pb-20 lg:pb-6">{children}</main>
+          <main className="flex-1 overflow-y-auto bg-surface p-6 pb-20 lg:pb-6">{children}</main>
         </div>
         <BottomTabBar />
       </div>

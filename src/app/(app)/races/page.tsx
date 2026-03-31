@@ -390,15 +390,19 @@ function RaceModal({ editing, activities, onSave, onClose, saving }: RaceModalPr
     >
       <div className="relative z-10 bg-card rounded-2xl shadow-xl w-full max-w-[520px] flex flex-col max-h-[90vh]">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-border shrink-0">
-          <h3 className="font-bold text-textPrimary text-lg">
+        <div className="flex items-center justify-between p-4 border-b border-border sticky top-0 bg-card z-10 shrink-0">
+          <button onClick={onClose} className="text-sm text-textSecondary">
+            Cancel
+          </button>
+          <h2 className="text-sm font-semibold text-textPrimary">
             {editing ? "Edit Race" : "Add Race"}
-          </h3>
+          </h2>
           <button
-            onClick={onClose}
-            className="p-1.5 rounded-lg hover:bg-surface text-textSecondary"
+            onClick={handleSubmit}
+            disabled={!valid() || saving}
+            className="text-sm font-semibold text-primary disabled:opacity-50"
           >
-            <X className="w-4 h-4" />
+            Save
           </button>
         </div>
 
@@ -555,23 +559,8 @@ function RaceModal({ editing, activities, onSave, onClose, saving }: RaceModalPr
           </div>
         </div>
 
-        {/* Footer */}
-        <div className="flex justify-end gap-2 px-6 py-4 border-t border-border shrink-0">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 rounded-xl border border-border text-sm text-textSecondary hover:bg-surface"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSubmit}
-            disabled={!valid() || saving}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-primary text-white text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
-          >
-            <Check className="w-4 h-4" />
-            {editing ? "Save Changes" : "Add Race"}
-          </button>
-        </div>
+        {/* Footer — hidden; actions moved to sticky header */}
+        <div className="hidden" />
       </div>
     </div>
   );
