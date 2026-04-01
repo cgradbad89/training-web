@@ -16,16 +16,13 @@ import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { StatBlock } from "@/components/ui/StatBlock";
-import { fetchActivities } from "@/services/activities";
+import { useAuth } from "@/hooks/useAuth";
+import { fetchHealthWorkouts } from "@/services/healthWorkouts";
 import { formatDuration } from "@/utils/pace";
 import { weekStart } from "@/utils/dates";
-import { WORKOUT_TYPES, type ActivityType, type StravaActivity } from "@/types/activity";
+import { type HealthWorkout } from "@/types/healthWorkout";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-
-// Assumption: Kayaking is included alongside WORKOUT_TYPES because the Cardio
-// tab definition explicitly lists it; WORKOUT_TYPES itself does not include it.
-const PAGE_TYPES: ActivityType[] = [...WORKOUT_TYPES, "Kayaking"];
 
 type TabKey = "all" | "strength" | "mind-body" | "cardio" | "other";
 
@@ -39,75 +36,87 @@ const TABS: { key: TabKey; label: string }[] = [
 
 // ─── Classifiers ──────────────────────────────────────────────────────────────
 
-function isMindAndBody(type: ActivityType, name: string): boolean {
+function isStrength(w: HealthWorkout): boolean {
+  const dt = w.displayType.toLowerCase();
+  const at = w.activityType.toLowerCase();
   return (
-    type === "Yoga" ||
-    type === "Pilates" ||
-    (type === "Workout" && /pilates|yoga/i.test(name))
+    dt === "weighttraining" ||
+    dt === "strength training" ||
+    at.includes("strengthtraining") ||
+    at.includes("functionalstrengthtraining") ||
+    at.includes("coretraining")
   );
 }
 
-function matchesTab(tab: TabKey, w: StravaActivity): boolean {
+function isMindBody(w: HealthWorkout): boolean {
+  const dt = w.displayType.toLowerCase();
+  const at = w.activityType.toLowerCase();
+  return (
+    dt === "yoga" || at.includes("yoga") ||
+    dt === "pilates" || at.includes("pilates") ||
+    dt === "mindandcooldown" || at.includes("mindandcooldown")
+  );
+}
+
+function isCardio(w: HealthWorkout): boolean {
+  const dt = w.displayType.toLowerCase();
+  const at = w.activityType.toLowerCase();
+  return (
+    dt === "ride" || dt === "cycling" || at.includes("cycling") ||
+    dt === "kayaking" || at.includes("paddlesports") ||
+    dt === "rowing" || at.includes("rowing")
+  );
+}
+
+function matchesTab(tab: TabKey, w: HealthWorkout): boolean {
   switch (tab) {
-    case "all":
-      return true;
-    case "strength":
-      return w.type === "WeightTraining";
-    case "mind-body":
-      return isMindAndBody(w.type, w.name);
-    case "cardio":
-      return w.type === "Ride" || w.type === "Kayaking";
-    case "other":
-      return w.type === "Workout" && !isMindAndBody(w.type, w.name);
+    case "all":       return true;
+    case "strength":  return isStrength(w);
+    case "mind-body": return isMindBody(w);
+    case "cardio":    return isCardio(w);
+    case "other":     return !isStrength(w) && !isMindBody(w) && !isCardio(w);
   }
 }
 
 type IconComponent = React.ComponentType<LucideProps>;
 
-function getIcon(type: ActivityType, name: string): IconComponent {
-  switch (type) {
-    case "WeightTraining": return Dumbbell;
-    case "Yoga":           return Wind;
-    case "Pilates":        return Flower2;
-    case "Ride":           return Bike;
-    case "Kayaking":       return Waves;
-    case "Workout":
-      if (/pilates/i.test(name))       return Flower2;
-      if (/hiit|circuit/i.test(name))  return Zap;
-      if (/yoga/i.test(name))          return Wind;
-      return Activity;
-    default:
-      return Activity;
-  }
+function getIcon(w: HealthWorkout): IconComponent {
+  const dt = w.displayType.toLowerCase();
+  const at = w.activityType.toLowerCase();
+  if (isStrength(w)) return Dumbbell;
+  if (dt === "yoga" || at.includes("yoga")) return Wind;
+  if (dt === "pilates" || at.includes("pilates")) return Flower2;
+  if (dt === "ride" || dt === "cycling" || at.includes("cycling")) return Bike;
+  if (dt === "kayaking" || at.includes("paddlesports")) return Waves;
+  if (/hiit|circuit/i.test(w.displayType)) return Zap;
+  return Activity;
 }
 
-function getTypeBadge(type: ActivityType, name: string): { label: string; cls: string } {
-  switch (type) {
-    case "WeightTraining":
-      return { label: "Strength", cls: "bg-blue-100 text-blue-700" };
-    case "Yoga":
-      return { label: "Yoga", cls: "bg-purple-100 text-purple-700" };
-    case "Pilates":
-      return { label: "Pilates", cls: "bg-pink-100 text-pink-700" };
-    case "Ride":
-      return { label: "Ride", cls: "bg-green-100 text-green-700" };
-    case "Kayaking":
-      return { label: "Kayaking", cls: "bg-cyan-100 text-cyan-700" };
-    case "Workout":
-      if (/hiit|circuit/i.test(name)) return { label: "HIIT",    cls: "bg-orange-100 text-orange-700" };
-      if (/pilates/i.test(name))      return { label: "Pilates", cls: "bg-pink-100 text-pink-700" };
-      return { label: "Workout", cls: "bg-gray-100 text-gray-700" };
-    default:
-      return { label: "Workout", cls: "bg-gray-100 text-gray-700" };
+function getTypeBadge(w: HealthWorkout): { label: string; cls: string } {
+  if (isStrength(w))  return { label: "Strength", cls: "bg-blue-100 text-blue-700" };
+  if (isMindBody(w)) {
+    const dt = w.displayType.toLowerCase();
+    if (dt === "yoga" || w.activityType.toLowerCase().includes("yoga"))
+      return { label: "Yoga",    cls: "bg-purple-100 text-purple-700" };
+    return { label: "Pilates", cls: "bg-pink-100 text-pink-700" };
   }
+  if (isCardio(w)) {
+    const dt = w.displayType.toLowerCase();
+    if (dt === "kayaking" || w.activityType.toLowerCase().includes("paddlesports"))
+      return { label: "Kayaking", cls: "bg-cyan-100 text-cyan-700" };
+    return { label: "Ride", cls: "bg-green-100 text-green-700" };
+  }
+  if (/hiit|circuit/i.test(w.displayType))
+    return { label: "HIIT",    cls: "bg-orange-100 text-orange-700" };
+  return { label: w.displayType || "Workout", cls: "bg-gray-100 text-gray-700" };
 }
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
 
 const DAY_ABBREVS = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
 
-function getLocalDate(a: StravaActivity): Date {
-  return new Date(a.start_date_local || a.start_date);
+function getLocalDate(w: HealthWorkout): Date {
+  return w.startDate;
 }
 
 function weekKey(date: Date): string {
@@ -129,13 +138,13 @@ function weeksElapsed(year: number): number {
 
 // ─── Year Summary Stats ───────────────────────────────────────────────────────
 
-function YearSummary({ workouts, year }: { workouts: StravaActivity[]; year: number }) {
+function YearSummary({ workouts, year }: { workouts: HealthWorkout[]; year: number }) {
   const elapsed = weeksElapsed(year);
   const count = workouts.length;
 
   const avgDurationSec =
     count > 0
-      ? workouts.reduce((s, w) => s + w.moving_time_s, 0) / count
+      ? workouts.reduce((s, w) => s + w.durationSeconds, 0) / count
       : 0;
 
   const calorieWorkouts = workouts.filter((w) => w.calories > 0);
@@ -146,13 +155,8 @@ function YearSummary({ workouts, year }: { workouts: StravaActivity[]; year: num
         )
       : null;
 
-  const strengthCount = workouts.filter(
-    (w) => w.type === "WeightTraining" || w.type === "Ride"
-  ).length;
-
-  const mindBodyCount = workouts.filter((w) =>
-    isMindAndBody(w.type, w.name)
-  ).length;
+  const strengthCount = workouts.filter((w) => isStrength(w) || isCardio(w)).length;
+  const mindBodyCount = workouts.filter((w) => isMindBody(w)).length;
 
   return (
     <div className="bg-card rounded-2xl border border-border p-5 flex flex-col gap-5">
@@ -240,13 +244,13 @@ function YearSelect({
 
 // ─── Workout Row ──────────────────────────────────────────────────────────────
 
-function WorkoutRow({ workout }: { workout: StravaActivity }) {
+function WorkoutRow({ workout }: { workout: HealthWorkout }) {
   const localDate = getLocalDate(workout);
   const dayAbbrev = DAY_ABBREVS[(localDate.getDay() + 6) % 7];
   const dayNum = localDate.getDate();
 
-  const Icon = getIcon(workout.type, workout.name);
-  const badge = getTypeBadge(workout.type, workout.name);
+  const Icon = getIcon(workout);
+  const badge = getTypeBadge(workout);
 
   return (
     <div className="flex items-center gap-3 py-3 px-4 hover:bg-surface rounded-lg transition-colors">
@@ -259,7 +263,7 @@ function WorkoutRow({ workout }: { workout: StravaActivity }) {
       {/* Col 2: Icon + Name */}
       <div className="flex items-center gap-2 flex-1 min-w-0">
         <Icon size={16} className="text-textSecondary shrink-0" />
-        <span className="text-sm font-medium truncate max-w-[200px]">{workout.name}</span>
+        <span className="text-sm font-medium truncate max-w-[200px]">{workout.displayType}</span>
       </div>
 
       {/* Col 3: Type Badge */}
@@ -269,7 +273,7 @@ function WorkoutRow({ workout }: { workout: StravaActivity }) {
 
       {/* Col 4: Duration */}
       <div className="w-16 shrink-0 text-sm font-semibold tabular-nums text-right">
-        {formatDuration(workout.moving_time_s)}
+        {formatDuration(workout.durationSeconds)}
       </div>
 
       {/* Col 5: Calories — hidden on mobile */}
@@ -281,7 +285,7 @@ function WorkoutRow({ workout }: { workout: StravaActivity }) {
 
       {/* Col 6: Heart Rate — hidden on mobile */}
       <div className="hidden md:block w-20 shrink-0 text-sm text-textSecondary tabular-nums text-right">
-        {workout.avg_heartrate ? `${Math.round(workout.avg_heartrate)} bpm` : "—"}
+        {workout.avgHeartRate ? `${Math.round(workout.avgHeartRate)} bpm` : "—"}
       </div>
     </div>
   );
@@ -294,11 +298,11 @@ function WorkoutWeekGroup({
   workouts,
 }: {
   wKey: string;
-  workouts: StravaActivity[];
+  workouts: HealthWorkout[];
 }) {
   const wStart = new Date(wKey + "T00:00:00");
   const weekLabel = wStart.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  const totalSecs = workouts.reduce((s, w) => s + w.moving_time_s, 0);
+  const totalSecs = workouts.reduce((s, w) => s + w.durationSeconds, 0);
 
   return (
     <div className="mb-6">
@@ -312,7 +316,7 @@ function WorkoutWeekGroup({
         </span>
       </div>
       {workouts.map((w) => (
-        <WorkoutRow key={w.id} workout={w} />
+        <WorkoutRow key={w.workoutId} workout={w} />
       ))}
     </div>
   );
@@ -321,7 +325,10 @@ function WorkoutWeekGroup({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function WorkoutsPage() {
-  const [allWorkouts, setAllWorkouts] = useState<StravaActivity[]>([]);
+  const { user } = useAuth();
+  const uid = user?.uid ?? null;
+
+  const [allWorkouts, setAllWorkouts] = useState<HealthWorkout[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<TabKey>("all");
 
@@ -329,14 +336,15 @@ export default function WorkoutsPage() {
   const [selectedYear, setSelectedYear] = useState<number>(currentYear);
 
   useEffect(() => {
+    if (!uid) return;
     setLoading(true);
-    fetchActivities({ limitCount: 500 })
-      .then((acts) => {
-        setAllWorkouts(acts.filter((a) => PAGE_TYPES.includes(a.type)));
+    fetchHealthWorkouts(uid, { limitCount: 500 })
+      .then((wkts) => {
+        setAllWorkouts(wkts.filter((w) => !w.isRunLike));
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, []);
+  }, [uid]);
 
   const availableYears = useMemo(() => {
     const years = Array.from(
@@ -357,7 +365,7 @@ export default function WorkoutsPage() {
   );
 
   const groupedWeeks = useMemo(() => {
-    const map: Record<string, StravaActivity[]> = {};
+    const map: Record<string, HealthWorkout[]> = {};
     for (const w of filteredWorkouts) {
       const k = weekKey(getLocalDate(w));
       if (!map[k]) map[k] = [];

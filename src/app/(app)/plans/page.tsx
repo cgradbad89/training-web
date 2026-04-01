@@ -9,15 +9,15 @@ import {
   deletePlan,
   setActivePlan,
 } from "@/services/plans";
-import { fetchActivities } from "@/services/activities";
+import { fetchHealthWorkouts } from "@/services/healthWorkouts";
 import { DEFAULT_HALF_MARATHON_PLAN } from "@/lib/seedData";
 import {
   type RunningPlan,
   type PlannedRunEntry,
   type PlanWeek,
   type PlanRunType,
-  type StravaActivity,
 } from "@/types";
+import { type HealthWorkout } from "@/types/healthWorkout";
 import { useRouter } from "next/navigation";
 import {
   CheckCircle,
@@ -60,8 +60,8 @@ function toISODate(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-function activityDate(a: StravaActivity): string {
-  return a.start_date_local.split("T")[0];
+function activityDate(a: HealthWorkout): string {
+  return a.startDate.toISOString().split("T")[0];
 }
 
 /** Return ISO date string for next Monday from today */
@@ -89,7 +89,7 @@ function endDateForWeeks(startIso: string, weeks: number): string {
 
 type MatchQuality = "full" | "partial";
 interface PlanMatch {
-  activity: StravaActivity;
+  activity: HealthWorkout;
   quality: MatchQuality;
 }
 
@@ -99,19 +99,17 @@ interface PlanMatch {
  */
 function matchPlanToActual(
   plan: RunningPlan,
-  activities: StravaActivity[]
+  workouts: HealthWorkout[]
 ): Map<string, PlanMatch | null> {
-  const runs = activities.filter(
-    (a) => a.type === "Run" || a.type === "TrailRun"
-  );
+  const runs = workouts.filter((w) => w.isRunLike);
   const result = new Map<string, PlanMatch | null>();
 
   function dateOf(e: PlannedRunEntry): string {
     return toISODate(plannedDate(plan, e));
   }
-  function withinTolerance(e: PlannedRunEntry, a: StravaActivity): boolean {
+  function withinTolerance(e: PlannedRunEntry, a: HealthWorkout): boolean {
     return (
-      Math.abs(a.distance_miles - e.distanceMiles) <=
+      Math.abs(a.distanceMiles - e.distanceMiles) <=
       Math.max(0.5, e.distanceMiles * 0.3)
     );
   }
@@ -125,18 +123,18 @@ function matchPlanToActual(
 
   for (const week of plan.weeks) {
     const entries = week.entries.filter((e) => e.runType !== "rest");
-    const used = new Set<number>();
+    const used = new Set<string>();
 
     // Pass 1: exact day, distance within tolerance → "full"
     for (const e of entries) {
       if (result.has(e.id)) continue;
       const eDate = dateOf(e);
       for (const a of runs) {
-        if (used.has(a.id)) continue;
+        if (used.has(a.workoutId)) continue;
         if (activityDate(a) !== eDate) continue;
         if (withinTolerance(e, a)) {
           result.set(e.id, { activity: a, quality: "full" });
-          used.add(a.id);
+          used.add(a.workoutId);
           break;
         }
       }
@@ -147,11 +145,11 @@ function matchPlanToActual(
       if (result.has(e.id)) continue;
       const eDate = dateOf(e);
       for (const a of runs) {
-        if (used.has(a.id)) continue;
+        if (used.has(a.workoutId)) continue;
         if (!withinOneDay(activityDate(a), eDate)) continue;
         if (withinTolerance(e, a)) {
           result.set(e.id, { activity: a, quality: "full" });
-          used.add(a.id);
+          used.add(a.workoutId);
           break;
         }
       }
@@ -162,10 +160,10 @@ function matchPlanToActual(
       if (result.has(e.id)) continue;
       const eDate = dateOf(e);
       for (const a of runs) {
-        if (used.has(a.id)) continue;
+        if (used.has(a.workoutId)) continue;
         if (activityDate(a) !== eDate) continue;
         result.set(e.id, { activity: a, quality: "partial" });
-        used.add(a.id);
+        used.add(a.workoutId);
         break;
       }
     }
@@ -175,10 +173,10 @@ function matchPlanToActual(
       if (result.has(e.id)) continue;
       const eDate = dateOf(e);
       for (const a of runs) {
-        if (used.has(a.id)) continue;
+        if (used.has(a.workoutId)) continue;
         if (!withinOneDay(activityDate(a), eDate)) continue;
         result.set(e.id, { activity: a, quality: "partial" });
-        used.add(a.id);
+        used.add(a.workoutId);
         break;
       }
     }
@@ -235,7 +233,7 @@ function WeekSummaryBar({
   const plannedMiles = runEntries.reduce((s, e) => s + e.distanceMiles, 0);
   const actualMiles = completedEntries.reduce((s, e) => {
     const m = matchMap.get(e.id);
-    return s + (m ? m.activity.distance_miles : 0);
+    return s + (m ? m.activity.distanceMiles : 0);
   }, 0);
   const pct = plannedMiles > 0 ? Math.min(actualMiles / plannedMiles, 1) : 0;
 
@@ -309,7 +307,7 @@ export default function PlansPage() {
   const { user } = useAuth();
   const router = useRouter();
   const [plans, setPlans] = useState<RunningPlan[]>([]);
-  const [activities, setActivities] = useState<StravaActivity[]>([]);
+  const [activities, setActivities] = useState<HealthWorkout[]>([]);
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [selectedWeekIndex, setSelectedWeekIndex] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -345,7 +343,7 @@ export default function PlansPage() {
     try {
       const [loadedPlans, loadedActivities] = await Promise.all([
         fetchPlans(user.uid),
-        fetchActivities(),
+        fetchHealthWorkouts(user.uid),
       ]);
 
       let finalPlans = loadedPlans;
@@ -809,11 +807,13 @@ export default function PlansPage() {
                                       }`}
                                     >
                                       {match.quality === "full" ? "✓" : "~"}{" "}
-                                      {match.activity.distance_miles.toFixed(1)} mi ·{" "}
-                                      {match.activity.pace_min_per_mile}/mi
-                                      {match.activity.avg_heartrate != null && (
+                                      {match.activity.distanceMiles.toFixed(1)} mi ·{" "}
+                                      {match.activity.avgPaceSecPerMile
+                                        ? `${Math.floor(match.activity.avgPaceSecPerMile / 60)}:${String(Math.round(match.activity.avgPaceSecPerMile % 60)).padStart(2, "0")}/mi`
+                                        : "—"}
+                                      {match.activity.avgHeartRate != null && (
                                         <span className="text-xs text-textSecondary ml-1">
-                                          · {Math.round(match.activity.avg_heartrate)} bpm
+                                          · {Math.round(match.activity.avgHeartRate)} bpm
                                         </span>
                                       )}
                                     </span>

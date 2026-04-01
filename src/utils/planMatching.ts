@@ -1,10 +1,10 @@
 import { type RunningPlan, type PlannedRunEntry } from "@/types/plan";
-import { type StravaActivity } from "@/types/activity";
+import { type HealthWorkout } from "@/types/healthWorkout";
 
 export type MatchQuality = "full" | "partial";
 
 export interface PlanMatch {
-  activity: StravaActivity;
+  activity: HealthWorkout;
   quality: MatchQuality;
 }
 
@@ -32,13 +32,13 @@ function plannedEntryDate(plan: RunningPlan, entry: PlannedRunEntry): Date {
   return d;
 }
 
-function activityDate(a: StravaActivity): string {
-  return a.start_date_local.split("T")[0];
+function workoutDate(w: HealthWorkout): string {
+  return w.startDate.toISOString().split("T")[0];
 }
 
-function withinTolerance(e: PlannedRunEntry, a: StravaActivity): boolean {
+function withinTolerance(e: PlannedRunEntry, w: HealthWorkout): boolean {
   return (
-    Math.abs(a.distance_miles - e.distanceMiles) <=
+    Math.abs(w.distanceMiles - e.distanceMiles) <=
     Math.max(0.5, e.distanceMiles * 0.3)
   );
 }
@@ -57,27 +57,25 @@ function withinOneDay(aDate: string, eDate: string): boolean {
  */
 export function matchPlanToActual(
   plan: RunningPlan,
-  activities: StravaActivity[]
+  workouts: HealthWorkout[]
 ): Map<string, PlanMatch | null> {
-  const runs = activities.filter(
-    (a) => a.type === "Run" || a.type === "TrailRun"
-  );
+  const runs = workouts.filter((w) => w.isRunLike);
   const result = new Map<string, PlanMatch | null>();
 
   for (const week of plan.weeks) {
     const entries = week.entries.filter((e) => e.runType !== "rest");
-    const used = new Set<number>();
+    const used = new Set<string>();
 
     // Pass 1: exact day, distance within tolerance → "full"
     for (const e of entries) {
       if (result.has(e.id)) continue;
       const eDate = toISODate(plannedEntryDate(plan, e));
-      for (const a of runs) {
-        if (used.has(a.id)) continue;
-        if (activityDate(a) !== eDate) continue;
-        if (withinTolerance(e, a)) {
-          result.set(e.id, { activity: a, quality: "full" });
-          used.add(a.id);
+      for (const w of runs) {
+        if (used.has(w.workoutId)) continue;
+        if (workoutDate(w) !== eDate) continue;
+        if (withinTolerance(e, w)) {
+          result.set(e.id, { activity: w, quality: "full" });
+          used.add(w.workoutId);
           break;
         }
       }
@@ -87,12 +85,12 @@ export function matchPlanToActual(
     for (const e of entries) {
       if (result.has(e.id)) continue;
       const eDate = toISODate(plannedEntryDate(plan, e));
-      for (const a of runs) {
-        if (used.has(a.id)) continue;
-        if (!withinOneDay(activityDate(a), eDate)) continue;
-        if (withinTolerance(e, a)) {
-          result.set(e.id, { activity: a, quality: "full" });
-          used.add(a.id);
+      for (const w of runs) {
+        if (used.has(w.workoutId)) continue;
+        if (!withinOneDay(workoutDate(w), eDate)) continue;
+        if (withinTolerance(e, w)) {
+          result.set(e.id, { activity: w, quality: "full" });
+          used.add(w.workoutId);
           break;
         }
       }
@@ -102,11 +100,11 @@ export function matchPlanToActual(
     for (const e of entries) {
       if (result.has(e.id)) continue;
       const eDate = toISODate(plannedEntryDate(plan, e));
-      for (const a of runs) {
-        if (used.has(a.id)) continue;
-        if (activityDate(a) !== eDate) continue;
-        result.set(e.id, { activity: a, quality: "partial" });
-        used.add(a.id);
+      for (const w of runs) {
+        if (used.has(w.workoutId)) continue;
+        if (workoutDate(w) !== eDate) continue;
+        result.set(e.id, { activity: w, quality: "partial" });
+        used.add(w.workoutId);
         break;
       }
     }
@@ -115,11 +113,11 @@ export function matchPlanToActual(
     for (const e of entries) {
       if (result.has(e.id)) continue;
       const eDate = toISODate(plannedEntryDate(plan, e));
-      for (const a of runs) {
-        if (used.has(a.id)) continue;
-        if (!withinOneDay(activityDate(a), eDate)) continue;
-        result.set(e.id, { activity: a, quality: "partial" });
-        used.add(a.id);
+      for (const w of runs) {
+        if (used.has(w.workoutId)) continue;
+        if (!withinOneDay(workoutDate(w), eDate)) continue;
+        result.set(e.id, { activity: w, quality: "partial" });
+        used.add(w.workoutId);
         break;
       }
     }
@@ -138,18 +136,18 @@ export function matchPlanToActual(
 export function matchWeekRuns(
   plan: RunningPlan,
   weekIndex: number,
-  activities: StravaActivity[]
+  workouts: HealthWorkout[]
 ): WeekMatchResult {
   const week = plan.weeks[weekIndex];
   if (!week) return { planned: 0, actual: 0, status: "upcoming" };
 
-  const matchMap = matchPlanToActual(plan, activities);
+  const matchMap = matchPlanToActual(plan, workouts);
   const runEntries = week.entries.filter((e) => e.runType !== "rest");
 
   const planned = runEntries.reduce((s, e) => s + e.distanceMiles, 0);
   const actual = runEntries.reduce((s, e) => {
     const m = matchMap.get(e.id);
-    return s + (m ? m.activity.distance_miles : 0);
+    return s + (m ? m.activity.distanceMiles : 0);
   }, 0);
 
   // Determine status

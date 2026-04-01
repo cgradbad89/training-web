@@ -9,15 +9,15 @@ import {
   deleteRace,
   setActiveRace,
 } from "@/services/races";
-import { fetchActivities } from "@/services/activities";
+import { fetchHealthWorkouts } from "@/services/healthWorkouts";
 import { PageHeader } from "@/components/layout/PageHeader";
 import {
   type Race,
   type RaceDistance,
   RACE_DISTANCE_MILES,
   RACE_DISTANCE_LABELS,
-  type StravaActivity,
 } from "@/types";
+import { type HealthWorkout } from "@/types/healthWorkout";
 import {
   formatPace,
   formatDuration,
@@ -68,24 +68,27 @@ function formatRaceDate(dateStr: string): string {
   });
 }
 
-function formatActivityOption(a: StravaActivity): string {
-  const date = new Date(a.start_date_local).toLocaleDateString("en-US", {
+function formatActivityOption(a: HealthWorkout): string {
+  const date = a.startDate.toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
   });
-  return `${date} · ${a.distance_miles.toFixed(1)} mi · ${a.pace_min_per_mile}/mi`;
+  const pace = a.avgPaceSecPerMile
+    ? `${Math.floor(a.avgPaceSecPerMile / 60)}:${String(Math.round(a.avgPaceSecPerMile % 60)).padStart(2, "0")}/mi`
+    : "—";
+  return `${date} · ${a.distanceMiles.toFixed(1)} mi · ${pace}`;
 }
 
-/** Activities within ±30 days of the race date */
+/** Workouts within ±30 days of the race date */
 function nearbyRuns(
-  activities: StravaActivity[],
+  activities: HealthWorkout[],
   raceDateStr: string
-): StravaActivity[] {
+): HealthWorkout[] {
   const raceMs = new Date(raceDateStr + "T00:00:00").getTime();
   const window = 30 * 86400000;
   return activities.filter((a) => {
-    if (a.type !== "Run" && a.type !== "TrailRun") return false;
-    const diff = Math.abs(new Date(a.start_date_local).getTime() - raceMs);
+    if (!a.isRunLike) return false;
+    const diff = Math.abs(a.startDate.getTime() - raceMs);
     return diff <= window;
   });
 }
@@ -122,7 +125,7 @@ function EmptyState({ message }: { message: string }) {
 
 interface RaceCardProps {
   race: Race;
-  linkedActivity?: StravaActivity;
+  linkedActivity?: HealthWorkout;
   isPast: boolean;
   onEdit: (race: Race) => void;
   onDelete: (race: Race) => void;
@@ -226,8 +229,10 @@ function RaceCard({
               <Link className="w-3.5 h-3.5 text-primary" />
               <span className="text-primary font-medium">Linked run</span>
               <span>
-                {linkedActivity.distance_miles.toFixed(1)} mi ·{" "}
-                {linkedActivity.pace_min_per_mile}/mi
+                {linkedActivity.distanceMiles.toFixed(1)} mi ·{" "}
+                {linkedActivity.avgPaceSecPerMile
+                  ? `${Math.floor(linkedActivity.avgPaceSecPerMile / 60)}:${String(Math.round(linkedActivity.avgPaceSecPerMile % 60)).padStart(2, "0")}/mi`
+                  : "—"}
               </span>
             </div>
           )}
@@ -325,7 +330,7 @@ function raceToForm(race: Race): ModalFormState {
 
 interface RaceModalProps {
   editing: Race | null;
-  activities: StravaActivity[];
+  activities: HealthWorkout[];
   onSave: (data: Omit<Race, "id" | "createdAt">, setGoal: boolean) => Promise<void>;
   onClose: () => void;
   saving: boolean;
@@ -490,8 +495,8 @@ function RaceModal({ editing, activities, onSave, onClose, saving }: RaceModalPr
             )}
           </Field>
 
-          {/* Link Strava Run */}
-          <Field label="Link Strava Run">
+          {/* Link Workout */}
+          <Field label="Link Workout">
             <select
               value={form.linkedStravaActivityId}
               onChange={(e) => set("linkedStravaActivityId", e.target.value)}
@@ -500,7 +505,7 @@ function RaceModal({ editing, activities, onSave, onClose, saving }: RaceModalPr
             >
               <option value="">None</option>
               {nearbyActivities.map((a) => (
-                <option key={a.id} value={String(a.id)}>
+                <option key={a.workoutId} value={a.workoutId}>
                   {formatActivityOption(a)}
                 </option>
               ))}
@@ -641,7 +646,7 @@ function Field({
 export default function RacesPage() {
   const { user } = useAuth();
   const [races, setRaces] = useState<Race[]>([]);
-  const [activities, setActivities] = useState<StravaActivity[]>([]);
+  const [activities, setActivities] = useState<HealthWorkout[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -667,7 +672,7 @@ export default function RacesPage() {
     try {
       const [loadedRaces, loadedActivities] = await Promise.all([
         fetchRaces(user.uid),
-        fetchActivities({ limitCount: 200 }),
+        fetchHealthWorkouts(user.uid, { limitCount: 200 }),
       ]);
       setRaces(loadedRaces);
       setActivities(loadedActivities);
@@ -693,10 +698,10 @@ export default function RacesPage() {
         new Date(b.raceDate).getTime() - new Date(a.raceDate).getTime()
     );
 
-  function linkedActivity(race: Race): StravaActivity | undefined {
+  function linkedActivity(race: Race): HealthWorkout | undefined {
     if (!race.linkedStravaActivityId) return undefined;
     return activities.find(
-      (a) => String(a.id) === race.linkedStravaActivityId
+      (a) => a.workoutId === race.linkedStravaActivityId
     );
   }
 

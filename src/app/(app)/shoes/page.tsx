@@ -7,7 +7,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useAuth } from "@/hooks/useAuth";
-import { fetchActivities } from "@/services/activities";
+import { fetchHealthWorkouts } from "@/services/healthWorkouts";
 import {
   fetchShoes,
   createShoe,
@@ -16,10 +16,9 @@ import {
   fetchManualShoeAssignmentsMap,
   saveManualAssignments,
 } from "@/services/shoes";
-import { isRun } from "@/utils/activityTypes";
 import { formatPace } from "@/utils/pace";
 import { formatShortDate } from "@/utils/dates";
-import { type StravaActivity } from "@/types/activity";
+import { type HealthWorkout } from "@/types/healthWorkout";
 import {
   type RunningShoe,
   type ShoeAutoAssignRule,
@@ -29,21 +28,21 @@ import {
 
 function shoeAssignedRuns(
   shoe: RunningShoe,
-  activities: StravaActivity[],
+  activities: HealthWorkout[],
   assignments: Record<string, string | null>
-): StravaActivity[] {
+): HealthWorkout[] {
   return activities.filter(
-    (a) => isRun(a.type) && assignments[String(a.id)] === shoe.id
+    (a) => a.isRunLike && assignments[a.workoutId] === shoe.id
   );
 }
 
 function totalMileage(
   shoe: RunningShoe,
-  activities: StravaActivity[],
+  activities: HealthWorkout[],
   assignments: Record<string, string | null>
 ): number {
   const runs = shoeAssignedRuns(shoe, activities, assignments);
-  return shoe.startMileageOffset + runs.reduce((s, r) => s + r.distance_miles, 0);
+  return shoe.startMileageOffset + runs.reduce((s, r) => s + r.distanceMiles, 0);
 }
 
 function mileageBarColor(pct: number): string {
@@ -160,7 +159,7 @@ function MileageBar({ miles, target }: MileageBarProps) {
 
 interface ShoeCardProps {
   shoe: RunningShoe;
-  activities: StravaActivity[];
+  activities: HealthWorkout[];
   assignments: Record<string, string | null>;
   onEdit: (shoe: RunningShoe) => void;
   onManageRuns: (shoe: RunningShoe) => void;
@@ -170,8 +169,8 @@ function ShoeCard({ shoe, activities, assignments, onEdit, onManageRuns }: ShoeC
   const assigned = shoeAssignedRuns(shoe, activities, assignments);
   const miles = totalMileage(shoe, activities, assignments);
 
-  const totalTime = assigned.reduce((s, r) => s + r.moving_time_s, 0);
-  const totalDist = assigned.reduce((s, r) => s + r.distance_miles, 0);
+  const totalTime = assigned.reduce((s, r) => s + r.durationSeconds, 0);
+  const totalDist = assigned.reduce((s, r) => s + r.distanceMiles, 0);
   const avgPaceSec = totalDist > 0 ? totalTime / totalDist : 0;
 
   const purchaseDateDisplay = shoe.purchaseDate
@@ -859,7 +858,7 @@ function AutoAssignRulesSection({
 
 interface RunsPanelProps {
   shoe: RunningShoe;
-  activities: StravaActivity[];
+  activities: HealthWorkout[];
   assignments: Record<string, string | null>;
   onClose: () => void;
   onAssignmentChange: (activityId: string, shoeId: string | null) => Promise<void>;
@@ -883,19 +882,15 @@ function RunsPanel({
   }, []);
 
   const runs = useMemo(
-    () => activities.filter((a) => isRun(a.type)),
+    () => activities.filter((a) => a.isRunLike),
     [activities]
   );
 
   const assignedRuns = useMemo(
     () =>
       runs
-        .filter((r) => assignments[String(r.id)] === shoe.id)
-        .sort(
-          (a, b) =>
-            new Date(b.start_date_local).getTime() -
-            new Date(a.start_date_local).getTime()
-        ),
+        .filter((r) => assignments[r.workoutId] === shoe.id)
+        .sort((a, b) => b.startDate.getTime() - a.startDate.getTime()),
     [runs, assignments, shoe.id]
   );
 
@@ -904,21 +899,15 @@ function RunsPanel({
   // Picker: show runs not assigned to any other shoe + runs assigned to this shoe
   const pickerRuns = useMemo(() => {
     const base = runs.filter((r) => {
-      const a = assignments[String(r.id)];
+      const a = assignments[r.workoutId];
       return a == null || a === shoe.id;
     });
     const q = search.trim().toLowerCase();
     const filtered = q
-      ? base.filter(
-          (r) =>
-            r.name.toLowerCase().includes(q) ||
-            r.start_date_local.includes(search.trim())
-        )
+      ? base.filter((r) => r.displayType.toLowerCase().includes(q))
       : base;
     return [...filtered].sort(
-      (a, b) =>
-        new Date(b.start_date_local).getTime() -
-        new Date(a.start_date_local).getTime()
+      (a, b) => b.startDate.getTime() - a.startDate.getTime()
     );
   }, [runs, assignments, shoe.id, search]);
 
@@ -985,10 +974,10 @@ function RunsPanel({
               ) : (
                 <div className="flex flex-col">
                   {pickerRuns.map((run) => {
-                    const isChecked = assignments[String(run.id)] === shoe.id;
+                    const isChecked = assignments[run.workoutId] === shoe.id;
                     return (
                       <label
-                        key={run.id}
+                        key={run.workoutId}
                         className="flex items-center gap-3 py-2.5 px-3 rounded-xl hover:bg-surface cursor-pointer"
                       >
                         <input
@@ -996,7 +985,7 @@ function RunsPanel({
                           checked={isChecked}
                           onChange={async (e) => {
                             await onAssignmentChange(
-                              String(run.id),
+                              run.workoutId,
                               e.target.checked ? shoe.id : null
                             );
                           }}
@@ -1005,15 +994,17 @@ function RunsPanel({
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className="text-xs text-textSecondary shrink-0">
-                              {formatShortDate(new Date(run.start_date_local))}
+                              {formatShortDate(run.startDate)}
                             </span>
                             <span className="text-sm font-medium text-textPrimary truncate">
-                              {run.name}
+                              {run.displayType}
                             </span>
                           </div>
                           <div className="text-xs text-textSecondary mt-0.5">
-                            {run.distance_miles.toFixed(1)} mi
-                            {run.pace_min_per_mile ? ` · ${run.pace_min_per_mile}/mi` : ""}
+                            {run.distanceMiles.toFixed(1)} mi
+                            {run.avgPaceSecPerMile
+                              ? ` · ${Math.floor(run.avgPaceSecPerMile / 60)}:${String(Math.round(run.avgPaceSecPerMile % 60)).padStart(2, "0")}/mi`
+                              : ""}
                           </div>
                         </div>
                       </label>
@@ -1051,27 +1042,29 @@ function RunsPanel({
                 <div className="flex flex-col gap-1">
                   {assignedRuns.map((run) => (
                     <div
-                      key={run.id}
+                      key={run.workoutId}
                       className="flex items-center gap-3 py-2.5 px-3 rounded-xl hover:bg-surface group"
                     >
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-xs text-textSecondary shrink-0">
-                            {formatShortDate(new Date(run.start_date_local))}
+                            {formatShortDate(run.startDate)}
                           </span>
                           <span className="text-sm font-medium text-textPrimary truncate">
-                            {run.name}
+                            {run.displayType}
                           </span>
                         </div>
                         <div className="text-xs text-textSecondary mt-0.5">
-                          {run.distance_miles.toFixed(1)} mi
-                          {run.pace_min_per_mile ? ` · ${run.pace_min_per_mile}/mi` : ""}
-                          {run.avg_heartrate != null ? ` · ${Math.round(run.avg_heartrate)} bpm` : ""}
+                          {run.distanceMiles.toFixed(1)} mi
+                          {run.avgPaceSecPerMile
+                            ? ` · ${Math.floor(run.avgPaceSecPerMile / 60)}:${String(Math.round(run.avgPaceSecPerMile % 60)).padStart(2, "0")}/mi`
+                            : ""}
+                          {run.avgHeartRate != null ? ` · ${Math.round(run.avgHeartRate)} bpm` : ""}
                         </div>
                       </div>
                       <button
                         onClick={async () => {
-                          await onAssignmentChange(String(run.id), null);
+                          await onAssignmentChange(run.workoutId, null);
                         }}
                         className="p-1.5 rounded-lg text-textSecondary hover:text-danger hover:bg-surface opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
                         aria-label="Remove assignment"
@@ -1097,7 +1090,7 @@ export default function ShoesPage() {
   const uid = user?.uid ?? null;
 
   const [shoes, setShoes] = useState<RunningShoe[]>([]);
-  const [activities, setActivities] = useState<StravaActivity[]>([]);
+  const [activities, setActivities] = useState<HealthWorkout[]>([]);
   const [assignments, setAssignments] = useState<Record<string, string | null>>({});
   const [loading, setLoading] = useState(true);
 
@@ -1123,7 +1116,7 @@ export default function ShoesPage() {
     if (!uid) return;
     const [fetchedShoes, fetchedActs, fetchedAssign] = await Promise.all([
       fetchShoes(uid),
-      fetchActivities({ limitCount: 500 }),
+      fetchHealthWorkouts(uid, { limitCount: 500 }),
       fetchManualShoeAssignmentsMap(uid),
     ]);
     setShoes(fetchedShoes);

@@ -13,7 +13,7 @@ import { MetricBadge } from "@/components/ui/MetricBadge";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useAuth } from "@/hooks/useAuth";
-import { fetchActivities } from "@/services/activities";
+import { fetchHealthWorkouts } from "@/services/healthWorkouts";
 import {
   fetchShoes,
   fetchManualShoeAssignmentsMap,
@@ -26,21 +26,20 @@ import {
   distanceBucket,
 } from "@/utils/metrics";
 import { formatPace, formatDuration, formatMiles } from "@/utils/pace";
-import { weekStart as getWeekStart, formatShortDate } from "@/utils/dates";
+import { weekStart as getWeekStart } from "@/utils/dates";
 import {
-  isRun,
   classifyRun,
   RUN_TAG_STYLES,
   RUN_TAG_LABELS,
   type RunTag,
 } from "@/utils/activityTypes";
-import { type StravaActivity } from "@/types/activity";
+import { type HealthWorkout } from "@/types/healthWorkout";
 import { type RunningShoe } from "@/types/shoe";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function getLocalDate(a: StravaActivity): Date {
-  return new Date(a.start_date_local || a.start_date);
+function getLocalDate(w: HealthWorkout): Date {
+  return w.startDate;
 }
 
 function weekKey(date: Date): string {
@@ -51,17 +50,14 @@ function weekKey(date: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-/** Returns "MON", "TUE", etc for a given weekday offset (0=Mon) */
 const DAY_ABBREVS = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
 
-
-function getPaceDisplay(a: StravaActivity): string {
-  if (a.pace_min_per_mile && /^\d+:\d{2}$/.test(a.pace_min_per_mile)) {
-    return `${a.pace_min_per_mile} /mi`;
+function getPaceDisplay(w: HealthWorkout): string {
+  if (w.avgPaceSecPerMile && w.avgPaceSecPerMile > 0) {
+    return `${formatPace(w.avgPaceSecPerMile)} /mi`;
   }
-  if (a.pace_sec_per_mile > 0) return `${formatPace(a.pace_sec_per_mile)} /mi`;
-  if (a.moving_time_s > 0 && a.distance_miles > 0) {
-    return `${formatPace(a.moving_time_s / a.distance_miles)} /mi`;
+  if (w.durationSeconds > 0 && w.distanceMiles > 0) {
+    return `${formatPace(w.durationSeconds / w.distanceMiles)} /mi`;
   }
   return "—";
 }
@@ -70,7 +66,7 @@ function getPaceDisplay(a: StravaActivity): string {
 
 interface MiniCalendarProps {
   year: number;
-  runs: StravaActivity[];
+  runs: HealthWorkout[];
   onDayClick: (wKey: string) => void;
 }
 
@@ -90,7 +86,7 @@ function MiniCalendar({ year, runs, onDayClick }: MiniCalendarProps) {
     for (const r of runs) {
       const d = getLocalDate(r);
       const key = d.toISOString().split("T")[0];
-      map[key] = (map[key] ?? 0) + r.distance_miles;
+      map[key] = (map[key] ?? 0) + r.distanceMiles;
     }
     return map;
   }, [runs]);
@@ -245,14 +241,14 @@ function YearSelector({ years, selected, onChange }: YearSelectorProps) {
 // ─── Year Stats ───────────────────────────────────────────────────────────────
 
 interface YearStatsProps {
-  runs: StravaActivity[];
+  runs: HealthWorkout[];
 }
 
 function YearStats({ runs }: YearStatsProps) {
   const count = runs.length;
-  const totalMiles = runs.reduce((s, r) => s + r.distance_miles, 0);
+  const totalMiles = runs.reduce((s, r) => s + r.distanceMiles, 0);
   const avgMiPerRun = count > 0 ? totalMiles / count : 0;
-  const totalTime = runs.reduce((s, r) => s + r.moving_time_s, 0);
+  const totalTime = runs.reduce((s, r) => s + r.durationSeconds, 0);
   const avgPaceSec = totalMiles > 0 ? totalTime / totalMiles : 0;
 
   return (
@@ -277,7 +273,7 @@ function YearStats({ runs }: YearStatsProps) {
 // ─── Run Row ──────────────────────────────────────────────────────────────────
 
 interface RunRowProps {
-  run: StravaActivity;
+  run: HealthWorkout;
   shoes: RunningShoe[];
   assignedShoeId: string | null;
   isDropdownOpen: boolean;
@@ -297,17 +293,17 @@ function RunRow({
   const dayAbbrev = DAY_ABBREVS[(localDate.getDay() + 6) % 7];
   const dayNum = localDate.getDate();
 
-  const tag = classifyRun(run.name, run.distance_miles);
+  const tag = classifyRun(run.displayType, run.distanceMiles);
 
-  const hasHR = run.avg_heartrate !== null && run.avg_speed_mps > 0;
+  const hasHR = run.avgHeartRate !== null && (run.avgSpeedMPS ?? 0) > 0;
   let displayScore = 0;
   let effBadgeLevel: "good" | "ok" | "low" | "neutral" = "neutral";
 
-  if (hasHR && run.avg_heartrate) {
+  if (hasHR && run.avgHeartRate) {
     try {
-      const rawScore = (run.avg_speed_mps / run.avg_heartrate) * 1000;
-      displayScore = efficiencyDisplayScore(run.avg_speed_mps, run.avg_heartrate);
-      const level = efficiencyLevel(rawScore, distanceBucket(run.distance_miles));
+      const rawScore = ((run.avgSpeedMPS ?? 0) / run.avgHeartRate) * 1000;
+      displayScore = efficiencyDisplayScore(run.avgSpeedMPS ?? 0, run.avgHeartRate);
+      const level = efficiencyLevel(rawScore, distanceBucket(run.distanceMiles));
       effBadgeLevel = level === "good" ? "good" : level === "ok" ? "ok" : "low";
     } catch {
       // guard against unexpected NaN
@@ -335,7 +331,7 @@ function RunRow({
       {/* Col 2: Run info */}
       <div className="flex flex-col min-w-0 flex-1 gap-0.5">
         <span className="text-sm font-medium text-textPrimary truncate max-w-[180px]">
-          {run.name}
+          {run.displayType}
         </span>
         <span className={`self-start text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${RUN_TAG_STYLES[tag]}`}>
           {RUN_TAG_LABELS[tag]}
@@ -344,7 +340,7 @@ function RunRow({
 
       {/* Col 3: Distance */}
       <div className="w-16 shrink-0 text-sm font-semibold text-textPrimary tabular-nums text-right">
-        {formatMiles(run.distance_miles)} mi
+        {formatMiles(run.distanceMiles)} mi
       </div>
 
       {/* Col 4: Pace */}
@@ -352,22 +348,17 @@ function RunRow({
         {getPaceDisplay(run)}
       </div>
 
-      {/* Col 5: Heart Rate — always visible */}
+      {/* Col 5: Heart Rate */}
       <div className="w-16 shrink-0 text-sm text-textSecondary tabular-nums text-right">
-        {run.avg_heartrate ? `${Math.round(run.avg_heartrate)} bpm` : "—"}
+        {run.avgHeartRate ? `${Math.round(run.avgHeartRate)} bpm` : "—"}
       </div>
 
       {/* Col 6: Duration — hidden on mobile */}
       <div className="hidden lg:block w-16 shrink-0 text-sm text-textSecondary tabular-nums text-right">
-        {formatDuration(run.moving_time_s)}
+        {formatDuration(run.durationSeconds)}
       </div>
 
-      {/* Col 7: Elevation — hidden on mobile */}
-      <div className="hidden lg:block w-14 shrink-0 text-sm text-textSecondary tabular-nums text-right">
-        {run.total_elev_gain_m > 0 ? `${Math.round(run.total_elev_gain_m)}m` : "—"}
-      </div>
-
-      {/* Col 8: Efficiency */}
+      {/* Col 7: Efficiency */}
       <div className="shrink-0">
         <MetricBadge
           label="Eff"
@@ -376,7 +367,7 @@ function RunRow({
         />
       </div>
 
-      {/* Col 9: Shoe — always visible, rightmost */}
+      {/* Col 8: Shoe */}
       <div className="relative shrink-0 w-28" data-shoe-dropdown="true">
         {shoeName ? (
           <button
@@ -441,13 +432,13 @@ function RunRow({
 
 interface WeekGroupProps {
   wKey: string;
-  runs: StravaActivity[];
+  runs: HealthWorkout[];
   manualAssignments: Record<string, string | null>;
   innerRef: (el: HTMLDivElement | null) => void;
   shoes: RunningShoe[];
-  openDropdown: number | null;
-  setOpenDropdown: (id: number | null) => void;
-  onAssign: (activityId: number, shoeId: string | null) => void;
+  openDropdown: string | null;
+  setOpenDropdown: (id: string | null) => void;
+  onAssign: (workoutId: string, shoeId: string | null) => void;
 }
 
 function WeekGroup({
@@ -462,11 +453,10 @@ function WeekGroup({
 }: WeekGroupProps) {
   const wStart = new Date(wKey + "T00:00:00");
   const weekLabel = wStart.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  const totalMiles = runs.reduce((s, r) => s + r.distance_miles, 0);
+  const totalMiles = runs.reduce((s, r) => s + r.distanceMiles, 0);
 
   return (
     <div ref={innerRef} className="mb-6">
-      {/* Week header */}
       <div className="flex items-center justify-between border-b border-border pb-1.5 mb-1">
         <span className="text-sm font-semibold text-textSecondary">
           Week of {weekLabel}
@@ -476,20 +466,19 @@ function WeekGroup({
         </span>
       </div>
 
-      {/* Run rows */}
       {runs.map((run) => {
-        const assignedShoeId = manualAssignments[String(run.id)] ?? null;
+        const assignedShoeId = manualAssignments[run.workoutId] ?? null;
         return (
           <RunRow
-            key={run.id}
+            key={run.workoutId}
             run={run}
             shoes={shoes}
             assignedShoeId={assignedShoeId}
-            isDropdownOpen={openDropdown === run.id}
+            isDropdownOpen={openDropdown === run.workoutId}
             onToggleDropdown={() =>
-              setOpenDropdown(openDropdown === run.id ? null : run.id)
+              setOpenDropdown(openDropdown === run.workoutId ? null : run.workoutId)
             }
-            onAssign={(shoeId) => onAssign(run.id, shoeId)}
+            onAssign={(shoeId) => onAssign(run.workoutId, shoeId)}
           />
         );
       })}
@@ -503,18 +492,17 @@ export default function RunsPage() {
   const { user } = useAuth();
   const uid = user?.uid ?? null;
 
-  const [allRuns, setAllRuns] = useState<StravaActivity[]>([]);
+  const [allRuns, setAllRuns] = useState<HealthWorkout[]>([]);
   const [shoes, setShoes] = useState<RunningShoe[]>([]);
   const [manualAssignments, setManualAssignments] = useState<Record<string, string | null>>({});
   const [loading, setLoading] = useState(true);
-  const [openDropdown, setOpenDropdown] = useState<number | null>(null);
+  const [openDropdown, setOpenDropdown] = useState<string | null>(null);
 
   const currentYear = new Date().getFullYear();
   const [selectedYear, setSelectedYear] = useState<number>(currentYear);
 
   const weekRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
-  // Close dropdown on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (!(e.target as Element).closest("[data-shoe-dropdown]")) {
@@ -529,12 +517,12 @@ export default function RunsPage() {
     if (!uid) return;
     setLoading(true);
     Promise.all([
-      fetchActivities({ limitCount: 500 }),
+      fetchHealthWorkouts(uid, { limitCount: 500 }),
       fetchShoes(uid),
       fetchManualShoeAssignmentsMap(uid),
     ])
-      .then(([acts, fetchedShoes, assignments]) => {
-        setAllRuns(acts.filter((a) => isRun(a.type)));
+      .then(([wkts, fetchedShoes, assignments]) => {
+        setAllRuns(wkts.filter((w) => w.isRunLike));
         setShoes(fetchedShoes);
         setManualAssignments(assignments);
       })
@@ -542,20 +530,18 @@ export default function RunsPage() {
       .finally(() => setLoading(false));
   }, [uid]);
 
-  // Active (non-retired) shoes for dropdown
   const activeShoes = useMemo(
     () => shoes.filter((s) => !s.isRetired),
     [shoes]
   );
 
   const handleAssign = useCallback(
-    async (activityId: number, shoeId: string | null) => {
+    async (workoutId: string, shoeId: string | null) => {
       if (!uid) return;
-      // Optimistic update
-      setManualAssignments((prev) => ({ ...prev, [String(activityId)]: shoeId }));
+      setManualAssignments((prev) => ({ ...prev, [workoutId]: shoeId }));
       setOpenDropdown(null);
       try {
-        await saveManualAssignments(uid, { [String(activityId)]: shoeId });
+        await saveManualAssignments(uid, { [workoutId]: shoeId });
       } catch (err) {
         console.error(err);
       }
@@ -563,7 +549,6 @@ export default function RunsPage() {
     [uid]
   );
 
-  // Available years derived from data
   const availableYears = useMemo(() => {
     const years = Array.from(
       new Set(allRuns.map((r) => getLocalDate(r).getFullYear()))
@@ -572,15 +557,13 @@ export default function RunsPage() {
     return years;
   }, [allRuns, currentYear]);
 
-  // Runs for the selected year
   const filteredRuns = useMemo(
     () => allRuns.filter((r) => getLocalDate(r).getFullYear() === selectedYear),
     [allRuns, selectedYear]
   );
 
-  // Group by week, sorted descending
   const groupedWeeks = useMemo(() => {
-    const map: Record<string, StravaActivity[]> = {};
+    const map: Record<string, HealthWorkout[]> = {};
     for (const run of filteredRuns) {
       const k = weekKey(getLocalDate(run));
       if (!map[k]) map[k] = [];
@@ -604,7 +587,7 @@ export default function RunsPage() {
     );
   }
 
-  const totalYearMiles = filteredRuns.reduce((s, r) => s + r.distance_miles, 0);
+  const totalYearMiles = filteredRuns.reduce((s, r) => s + r.distanceMiles, 0);
 
   return (
     <div className="flex flex-col lg:flex-row gap-6 p-4 lg:p-6 min-h-full">
@@ -678,9 +661,6 @@ export default function RunsPage() {
             <div className="hidden lg:block w-16 shrink-0 text-xs font-semibold uppercase tracking-widest text-textSecondary text-right">
               HR
             </div>
-            <div className="hidden lg:block w-14 shrink-0 text-xs font-semibold uppercase tracking-widest text-textSecondary text-right">
-              Elev
-            </div>
             <div className="shrink-0 w-14 text-xs font-semibold uppercase tracking-widest text-textSecondary text-right">
               Eff
             </div>
@@ -696,7 +676,7 @@ export default function RunsPage() {
             {allRuns.length === 0 ? (
               <EmptyState
                 title="No runs synced"
-                description="Connect Strava to see your runs here."
+                description="Sync workouts from the iOS app to see your runs here."
               />
             ) : (
               <EmptyState title={`No runs recorded in ${selectedYear}`} />

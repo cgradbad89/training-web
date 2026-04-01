@@ -6,14 +6,14 @@ import { ChevronDown, ChevronUp, Pencil, X, Check, Plus } from "lucide-react";
 
 import { useAuth } from "@/hooks/useAuth";
 import { fetchPlans, updatePlan } from "@/services/plans";
-import { fetchActivities } from "@/services/activities";
+import { fetchHealthWorkouts } from "@/services/healthWorkouts";
 import {
   type RunningPlan,
   type PlannedRunEntry,
   type PlanWeek,
   type PlanRunType,
 } from "@/types/plan";
-import { type StravaActivity } from "@/types/activity";
+import { type HealthWorkout } from "@/types/healthWorkout";
 import { formatPace, parsePaceString } from "@/utils/pace";
 import { matchWeekRuns, type WeekMatchResult } from "@/utils/planMatching";
 
@@ -267,7 +267,7 @@ interface WeekAccordionProps {
   weekIndex: number;
   isExpanded: boolean;
   onToggle: () => void;
-  activities: StravaActivity[];
+  activities: HealthWorkout[];
   onUpdateWeek: (weekIndex: number, entries: PlannedRunEntry[]) => void;
 }
 
@@ -458,7 +458,7 @@ export default function PlanEditPage() {
   const planId = typeof params.id === "string" ? params.id : null;
 
   const [plan, setPlan] = useState<RunningPlan | null>(null);
-  const [activities, setActivities] = useState<StravaActivity[]>([]);
+  const [activities, setActivities] = useState<HealthWorkout[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
@@ -477,7 +477,7 @@ export default function PlanEditPage() {
     setLoading(true);
     Promise.all([
       fetchPlans(user.uid),
-      fetchActivities({ limitCount: 500 }),
+      fetchHealthWorkouts(user.uid, { limitCount: 500 }),
     ])
       .then(([plans, acts]) => {
         const found = plans.find((p) => p.id === planId);
