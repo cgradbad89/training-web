@@ -8,7 +8,6 @@ import {
   Bike,
   Zap,
   Activity,
-  Waves,
   type LucideProps,
 } from "lucide-react";
 
@@ -24,57 +23,32 @@ import { type HealthWorkout } from "@/types/healthWorkout";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-type TabKey = "all" | "strength" | "mind-body" | "cardio" | "other";
+type TabKey = "all" | "active" | "mind-body";
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: "all",       label: "All"         },
-  { key: "strength",  label: "Strength"    },
+  { key: "active",    label: "Active"      },
   { key: "mind-body", label: "Mind & Body" },
-  { key: "cardio",    label: "Cardio"      },
-  { key: "other",     label: "Other"       },
 ];
 
 // ─── Classifiers ──────────────────────────────────────────────────────────────
 
-function isStrength(w: HealthWorkout): boolean {
-  const dt = w.displayType.toLowerCase();
-  const at = w.activityType.toLowerCase();
-  return (
-    dt === "weighttraining" ||
-    dt === "strength training" ||
-    at.includes("strengthtraining") ||
-    at.includes("functionalstrengthtraining") ||
-    at.includes("coretraining")
-  );
-}
-
 function isMindBody(w: HealthWorkout): boolean {
+  const at = w.activityType;
   const dt = w.displayType.toLowerCase();
-  const at = w.activityType.toLowerCase();
   return (
-    dt === "yoga" || at.includes("yoga") ||
-    dt === "pilates" || at.includes("pilates") ||
-    dt === "mindandcooldown" || at.includes("mindandcooldown")
-  );
-}
-
-function isCardio(w: HealthWorkout): boolean {
-  const dt = w.displayType.toLowerCase();
-  const at = w.activityType.toLowerCase();
-  return (
-    dt === "ride" || dt === "cycling" || at.includes("cycling") ||
-    dt === "kayaking" || at.includes("paddlesports") ||
-    dt === "rowing" || at.includes("rowing")
+    at === "yoga" ||
+    at === "pilates" ||
+    dt.includes("yoga") ||
+    dt.includes("pilates")
   );
 }
 
 function matchesTab(tab: TabKey, w: HealthWorkout): boolean {
   switch (tab) {
     case "all":       return true;
-    case "strength":  return isStrength(w);
+    case "active":    return !isMindBody(w);
     case "mind-body": return isMindBody(w);
-    case "cardio":    return isCardio(w);
-    case "other":     return !isStrength(w) && !isMindBody(w) && !isCardio(w);
   }
 }
 
@@ -82,33 +56,49 @@ type IconComponent = React.ComponentType<LucideProps>;
 
 function getIcon(w: HealthWorkout): IconComponent {
   const dt = w.displayType.toLowerCase();
-  const at = w.activityType.toLowerCase();
-  if (isStrength(w)) return Dumbbell;
-  if (dt === "yoga" || at.includes("yoga")) return Wind;
-  if (dt === "pilates" || at.includes("pilates")) return Flower2;
-  if (dt === "ride" || dt === "cycling" || at.includes("cycling")) return Bike;
-  if (dt === "kayaking" || at.includes("paddlesports")) return Waves;
-  if (/hiit|circuit/i.test(w.displayType)) return Zap;
-  return Activity;
+  switch (w.activityType) {
+    case "traditional_strength_training":
+    case "functional_strength_training":
+      return Dumbbell;
+    case "high_intensity_interval_training":
+    case "cross_training":
+      return Zap;
+    case "yoga":
+      return Wind;
+    case "pilates":
+      return Flower2;
+    case "cycling":
+      return Bike;
+    default:
+      if (dt.includes("yoga"))    return Wind;
+      if (dt.includes("pilates")) return Flower2;
+      return Activity;
+  }
 }
 
 function getTypeBadge(w: HealthWorkout): { label: string; cls: string } {
-  if (isStrength(w))  return { label: "Strength", cls: "bg-blue-100 text-blue-700" };
-  if (isMindBody(w)) {
-    const dt = w.displayType.toLowerCase();
-    if (dt === "yoga" || w.activityType.toLowerCase().includes("yoga"))
-      return { label: "Yoga",    cls: "bg-purple-100 text-purple-700" };
-    return { label: "Pilates", cls: "bg-pink-100 text-pink-700" };
+  const dt = w.displayType.toLowerCase();
+  switch (w.activityType) {
+    case "traditional_strength_training":
+    case "functional_strength_training":
+      return { label: "Strength",    cls: "bg-blue-100 text-blue-700" };
+    case "high_intensity_interval_training":
+      return { label: "HIIT",        cls: "bg-orange-100 text-orange-700" };
+    case "cross_training":
+      return { label: "Cross Train", cls: "bg-indigo-100 text-indigo-700" };
+    case "yoga":
+      return { label: "Yoga",        cls: "bg-purple-100 text-purple-700" };
+    case "pilates":
+      return { label: "Pilates",     cls: "bg-pink-100 text-pink-700" };
+    case "cycling":
+      return { label: "Ride",        cls: "bg-green-100 text-green-700" };
+    case "mixed_cardio":
+      return { label: "Cardio",      cls: "bg-teal-100 text-teal-700" };
+    default:
+      if (dt.includes("yoga"))    return { label: "Yoga",    cls: "bg-purple-100 text-purple-700" };
+      if (dt.includes("pilates")) return { label: "Pilates", cls: "bg-pink-100 text-pink-700" };
+      return { label: w.displayType || "Workout", cls: "bg-gray-100 text-gray-700" };
   }
-  if (isCardio(w)) {
-    const dt = w.displayType.toLowerCase();
-    if (dt === "kayaking" || w.activityType.toLowerCase().includes("paddlesports"))
-      return { label: "Kayaking", cls: "bg-cyan-100 text-cyan-700" };
-    return { label: "Ride", cls: "bg-green-100 text-green-700" };
-  }
-  if (/hiit|circuit/i.test(w.displayType))
-    return { label: "HIIT",    cls: "bg-orange-100 text-orange-700" };
-  return { label: w.displayType || "Workout", cls: "bg-gray-100 text-gray-700" };
 }
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
@@ -155,7 +145,7 @@ function YearSummary({ workouts, year }: { workouts: HealthWorkout[]; year: numb
         )
       : null;
 
-  const strengthCount = workouts.filter((w) => isStrength(w) || isCardio(w)).length;
+  const activeCount = workouts.filter((w) => !isMindBody(w)).length;
   const mindBodyCount = workouts.filter((w) => isMindBody(w)).length;
 
   return (
@@ -173,10 +163,10 @@ function YearSummary({ workouts, year }: { workouts: HealthWorkout[]; year: numb
         />
       </div>
       <div className="grid grid-cols-4 gap-4">
-        <StatBlock label="Strength Sessions" value={strengthCount} />
+        <StatBlock label="Active Sessions" value={activeCount} />
         <StatBlock
-          label="Strength Avg/Wk"
-          value={(strengthCount / elapsed).toFixed(1)}
+          label="Active Avg/Wk"
+          value={(activeCount / elapsed).toFixed(1)}
         />
         <StatBlock label="Mind & Body" value={mindBodyCount} />
         <StatBlock
@@ -279,7 +269,7 @@ function WorkoutRow({ workout }: { workout: HealthWorkout }) {
       {/* Col 5: Calories — hidden on mobile */}
       <div className="hidden md:block w-20 shrink-0 text-sm text-textSecondary tabular-nums text-right">
         {workout.calories > 0
-          ? `${workout.calories.toLocaleString()} kcal`
+          ? `${Math.round(workout.calories).toLocaleString()} kcal`
           : "—"}
       </div>
 

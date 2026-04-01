@@ -181,7 +181,7 @@ function WeeklyStatsBar({ workouts, weekStart, weekEnd, plannedMiles }: WeeklySt
         <StatItem label="Workouts" value={nonRunWorkouts.length} />
         <StatItem
           label="Calories"
-          value={`${totalCalories.toLocaleString()} kcal`}
+          value={`${Math.round(totalCalories).toLocaleString()} kcal`}
         />
       </div>
     </Card>
@@ -330,7 +330,7 @@ function WorkoutSummaryCard({ workouts, weekStart, weekEnd }: WorkoutSummaryCard
                   {w.calories > 0 && (
                     <>
                       <span className="text-border">·</span>
-                      <span>{w.calories.toLocaleString()} kcal</span>
+                      <span>{Math.round(w.calories).toLocaleString()} kcal</span>
                     </>
                   )}
                 </div>
