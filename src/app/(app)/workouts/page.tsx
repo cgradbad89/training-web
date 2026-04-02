@@ -22,6 +22,7 @@ import { type WorkoutOverride } from "@/types/workoutOverride";
 import { formatDuration } from "@/utils/pace";
 import { weekStart } from "@/utils/dates";
 import { type HealthWorkout } from "@/types/healthWorkout";
+import { WorkoutDetailModal } from "@/components/WorkoutDetailModal";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -236,7 +237,7 @@ function YearSelect({
 
 // ─── Workout Row ──────────────────────────────────────────────────────────────
 
-function WorkoutRow({ workout }: { workout: HealthWorkout }) {
+function WorkoutRow({ workout, onClick }: { workout: HealthWorkout; onClick: () => void }) {
   const localDate = getLocalDate(workout);
   const dayAbbrev = DAY_ABBREVS[(localDate.getDay() + 6) % 7];
   const dayNum = localDate.getDate();
@@ -245,7 +246,7 @@ function WorkoutRow({ workout }: { workout: HealthWorkout }) {
   const badge = getTypeBadge(workout);
 
   return (
-    <div className="flex items-center gap-3 py-3 px-4 hover:bg-surface rounded-lg transition-colors">
+    <div onClick={onClick} className="flex items-center gap-3 py-3 px-4 hover:bg-surface rounded-lg transition-colors cursor-pointer">
       {/* Col 1: Date */}
       <div className="flex flex-col items-center w-11 shrink-0 select-none">
         <span className="text-xs text-textSecondary leading-none">{dayAbbrev}</span>
@@ -288,9 +289,11 @@ function WorkoutRow({ workout }: { workout: HealthWorkout }) {
 function WorkoutWeekGroup({
   wKey,
   workouts,
+  onSelect,
 }: {
   wKey: string;
   workouts: HealthWorkout[];
+  onSelect: (w: HealthWorkout) => void;
 }) {
   const wStart = new Date(wKey + "T00:00:00");
   const weekLabel = wStart.toLocaleDateString("en-US", { month: "short", day: "numeric" });
@@ -308,7 +311,7 @@ function WorkoutWeekGroup({
         </span>
       </div>
       {workouts.map((w) => (
-        <WorkoutRow key={w.workoutId} workout={w} />
+        <WorkoutRow key={w.workoutId} workout={w} onClick={() => onSelect(w)} />
       ))}
     </div>
   );
@@ -323,7 +326,13 @@ export default function WorkoutsPage() {
   const [allWorkouts, setAllWorkouts] = useState<HealthWorkout[]>([]);
   const [overrides, setOverrides] = useState<Record<string, WorkoutOverride>>({});
   const [loading, setLoading] = useState(true);
+  const [selectedWorkout, setSelectedWorkout] = useState<HealthWorkout | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>("all");
+
+  useEffect(() => {
+    document.body.style.overflow = selectedWorkout ? "hidden" : "";
+    return () => { document.body.style.overflow = ""; };
+  }, [selectedWorkout]);
 
   const currentYear = new Date().getFullYear();
   const [selectedYear, setSelectedYear] = useState<number>(currentYear);
@@ -423,9 +432,41 @@ export default function WorkoutsPage() {
       ) : (
         <div>
           {groupedWeeks.map(([wk, workouts]) => (
-            <WorkoutWeekGroup key={wk} wKey={wk} workouts={workouts} />
+            <WorkoutWeekGroup key={wk} wKey={wk} workouts={workouts} onSelect={setSelectedWorkout} />
           ))}
         </div>
+      )}
+
+      {selectedWorkout && uid && (
+        <WorkoutDetailModal
+          workout={selectedWorkout}
+          override={overrides[selectedWorkout.workoutId] ?? null}
+          userId={uid}
+          onClose={() => setSelectedWorkout(null)}
+          onExcludeChange={(workoutId, excluded) => {
+            setOverrides((prev) => ({
+              ...prev,
+              [workoutId]: {
+                ...prev[workoutId],
+                workoutId,
+                userId: uid,
+                isExcluded: excluded,
+                excludedAt: excluded ? new Date().toISOString() : null,
+                excludedReason: null,
+                distanceMilesOverride: null,
+                durationSecondsOverride: null,
+                runTypeOverride: null,
+                updatedAt: new Date().toISOString(),
+              },
+            }));
+            if (excluded) {
+              setAllWorkouts((prev) =>
+                prev.filter((w) => w.workoutId !== workoutId)
+              );
+              setSelectedWorkout(null);
+            }
+          }}
+        />
       )}
     </div>
   );
