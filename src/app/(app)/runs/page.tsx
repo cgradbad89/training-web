@@ -343,7 +343,7 @@ function RunRow({
             {run.displayType}
           </span>
           {isDuplicate && (
-            <span className="text-warning" title="Possible duplicate">
+            <span className="text-warning" title="Possible duplicate — click to view and exclude if needed">
               <AlertTriangle size={12} />
             </span>
           )}
@@ -605,29 +605,47 @@ export default function RunsPage() {
     [visibleRuns, selectedYear]
   );
 
-  // Detect potential duplicates: runs within 30 min with duration within 20%
+  // Detect potential duplicates: only flag when at least one is OTF/HIIT
+  // Uses all visible runs (not year-filtered) so same-day pairs always detected
   const duplicateIds = useMemo(() => {
-    const ids = new Set<string>();
-    const sorted = [...filteredRuns].sort(
-      (a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime()
-    );
-    for (let i = 0; i < sorted.length - 1; i++) {
-      const a = sorted[i];
-      const b = sorted[i + 1];
-      const timeDiff = Math.abs(
-        new Date(b.startDate).getTime() - new Date(a.startDate).getTime()
+    function isOtfOrHiit(a: HealthWorkout): boolean {
+      const name = a.displayType.toLowerCase();
+      const type = a.activityType.toLowerCase();
+      return (
+        name.includes("orange") ||
+        name.includes("otf") ||
+        type === "high_intensity_interval_training" ||
+        type.includes("hiit")
       );
-      if (timeDiff <= 30 * 60 * 1000) {
-        const durRatio = Math.min(a.durationSeconds, b.durationSeconds) /
-          Math.max(a.durationSeconds, b.durationSeconds);
-        if (durRatio >= 0.8) {
-          ids.add(a.workoutId);
-          ids.add(b.workoutId);
-        }
+    }
+
+    const ids = new Set<string>();
+    for (let i = 0; i < visibleRuns.length; i++) {
+      for (let j = i + 1; j < visibleRuns.length; j++) {
+        const a = visibleRuns[i];
+        const b = visibleRuns[j];
+
+        // At least one must be OTF or HIIT
+        if (!isOtfOrHiit(a) && !isOtfOrHiit(b)) continue;
+
+        // Must be within 60 minutes of each other
+        const timeA = new Date(a.startDate).getTime();
+        const timeB = new Date(b.startDate).getTime();
+        const diffMinutes = Math.abs(timeA - timeB) / 60000;
+        if (diffMinutes > 60) continue;
+
+        // Duration within 30% of each other
+        const durA = a.durationSeconds;
+        const durB = b.durationSeconds;
+        const durRatio = Math.min(durA, durB) / Math.max(durA, durB);
+        if (durRatio < 0.3) continue;
+
+        ids.add(a.workoutId);
+        ids.add(b.workoutId);
       }
     }
     return ids;
-  }, [filteredRuns]);
+  }, [visibleRuns]);
 
   const groupedWeeks = useMemo(() => {
     const map: Record<string, HealthWorkout[]> = {};
