@@ -21,6 +21,7 @@ import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useAuth } from "@/hooks/useAuth";
 import { fetchHealthWorkouts } from "@/services/healthWorkouts";
+import { prefetchRoutes } from "@/utils/routeCache";
 import { fetchPlans } from "@/services/plans";
 import { fetchRaces } from "@/services/races";
 
@@ -663,6 +664,22 @@ export default function DashboardPage() {
         setWorkouts(wkts);
         setActivePlan(plans.find((p) => p.isActive) ?? null);
         setActiveRace(races.find((r) => r.isActive) ?? null);
+
+        // Background prefetch — most recent 20 runs with routes
+        setTimeout(() => {
+          const recentWithRoutes = wkts
+            .filter((a) => a.isRunLike && a.hasRoute)
+            .sort(
+              (a, b) =>
+                new Date(b.startDate).getTime() -
+                new Date(a.startDate).getTime()
+            )
+            .slice(0, 20)
+            .map((a) => a.workoutId);
+          if (recentWithRoutes.length > 0 && uid) {
+            prefetchRoutes(uid, recentWithRoutes).catch(() => {});
+          }
+        }, 1000);
       })
       .catch(console.error)
       .finally(() => setLoading(false));

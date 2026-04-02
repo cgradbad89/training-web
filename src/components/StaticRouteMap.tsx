@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { fetchRoutePoints } from "@/services/routes";
+import { getRoutePoints, isRouteCached } from "@/utils/routeCache";
 
 interface StaticRouteMapProps {
   uid: string;
@@ -19,7 +19,7 @@ export function StaticRouteMap({
   const containerRef = useRef<HTMLDivElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mapRef = useRef<any>(null);
-  const [visible, setVisible] = useState(false);
+  const [visible, setVisible] = useState(() => isRouteCached(workoutId));
   const [status, setStatus] = useState<
     "idle" | "loading" | "loaded" | "error"
   >("idle");
@@ -45,7 +45,7 @@ export function StaticRouteMap({
 
     async function init() {
       try {
-        const points = await fetchRoutePoints(uid, workoutId);
+        const points = await getRoutePoints(uid, workoutId);
         if (cancelled) return;
 
         if (points.length < 2) {

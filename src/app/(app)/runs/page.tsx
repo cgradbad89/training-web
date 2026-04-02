@@ -37,6 +37,7 @@ import {
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { type RunningShoe } from "@/types/shoe";
 import { evaluateAutoAssignRules } from "@/utils/shoeAutoAssign";
+import { prefetchRoutes } from "@/utils/routeCache";
 import { fetchAllOverrides, excludeWorkout } from "@/services/workoutOverrides";
 import { ExcludedItemsModal } from "@/components/ExcludedItemsModal";
 import { type WorkoutOverride, applyOverride } from "@/types/workoutOverride";
@@ -602,6 +603,22 @@ export default function RunsPage() {
         setOverrides(fetchedOverrides);
         const autoAssigned = evaluateAutoAssignRules(runs, fetchedShoes, assignments);
         setManualAssignments({ ...autoAssigned, ...assignments });
+
+        // Background prefetch — most recent 20 runs with routes
+        setTimeout(() => {
+          const recentWithRoutes = runs
+            .filter((a) => a.hasRoute)
+            .sort(
+              (a, b) =>
+                new Date(b.startDate).getTime() -
+                new Date(a.startDate).getTime()
+            )
+            .slice(0, 20)
+            .map((a) => a.workoutId);
+          if (recentWithRoutes.length > 0 && uid) {
+            prefetchRoutes(uid, recentWithRoutes).catch(() => {});
+          }
+        }, 500);
       })
       .catch(console.error)
       .finally(() => setLoading(false));
