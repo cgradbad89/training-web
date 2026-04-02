@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { getRoutePoints, isRouteCached } from "@/utils/routeCache";
+import { type RoutePoint } from "@/services/routes";
 
 interface StaticRouteMapProps {
   uid: string;
@@ -18,15 +19,11 @@ function StaticRouteMapInner({
   onClick,
 }: StaticRouteMapProps) {
   const wrapperRef = useRef<HTMLDivElement>(null);
-  const mapDivRef = useRef<HTMLDivElement>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const mapRef = useRef<any>(null);
   const [visible, setVisible] = useState(() => isRouteCached(workoutId));
-  const [status, setStatus] = useState<
-    "idle" | "loading" | "loaded" | "error"
-  >("idle");
+  const [points, setPoints] = useState<RoutePoint[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  // IntersectionObserver on outer wrapper
+  // IntersectionObserver — lazy load when scrolled into view
   useEffect(() => {
     if (visible) return;
     const observer = new IntersectionObserver(
@@ -39,154 +36,179 @@ function StaticRouteMapInner({
     return () => observer.disconnect();
   }, [visible]);
 
-  // Initialize Leaflet when visible
+  // Fetch route points when visible
   useEffect(() => {
-    if (!visible || status !== "idle") return;
-    if (!mapDivRef.current) return;
-
-    setStatus("loading");
+    if (!visible) return;
     let cancelled = false;
-
-    async function init() {
-      try {
-        const points = await getRoutePoints(uid, workoutId);
-        if (cancelled || !mapDivRef.current) return;
-
-        if (points.length < 2) {
-          setStatus("error");
-          return;
+    getRoutePoints(uid, workoutId)
+      .then((pts) => {
+        if (!cancelled) {
+          setPoints(pts);
+          setLoading(false);
         }
-
-        // Wait for browser paint so mapDivRef has real dimensions
-        await new Promise((r) => requestAnimationFrame(r));
-        await new Promise((r) => requestAnimationFrame(r));
-        if (cancelled || !mapDivRef.current) return;
-
-        // Destroy previous map instance if any
-        if (mapRef.current) {
-          mapRef.current.remove();
-          mapRef.current = null;
-        }
-
-        const L = (await import("leaflet")).default;
-        if (cancelled || !mapDivRef.current) return;
-
-        const latlngs: [number, number][] = points.map((p) => [p.lat, p.lng]);
-
-        const map = L.map(mapDivRef.current, {
-          zoomControl: false,
-          attributionControl: false,
-          dragging: false,
-          scrollWheelZoom: false,
-          doubleClickZoom: false,
-          touchZoom: false,
-          keyboard: false,
-          boxZoom: false,
-        });
-
-        mapRef.current = map;
-
-        L.tileLayer(
-          "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-          { maxZoom: 18, crossOrigin: true }
-        ).addTo(map);
-
-        const polyline = L.polyline(latlngs, {
-          color: "#007AFF",
-          weight: 3,
-          opacity: 0.9,
-        }).addTo(map);
-
-        L.circleMarker(latlngs[0], {
-          radius: 5,
-          fillColor: "#34C759",
-          color: "#fff",
-          weight: 2,
-          fillOpacity: 1,
-        }).addTo(map);
-
-        L.circleMarker(latlngs[latlngs.length - 1], {
-          radius: 5,
-          fillColor: "#FF3B30",
-          color: "#fff",
-          weight: 2,
-          fillOpacity: 1,
-        }).addTo(map);
-
-        map.fitBounds(polyline.getBounds(), { padding: [12, 12] });
-
-        // Force Leaflet to recalculate size
-        setTimeout(() => {
-          if (mapRef.current && !cancelled) {
-            mapRef.current.invalidateSize();
-          }
-        }, 100);
-
-        setStatus("loaded");
-      } catch (err) {
-        console.error("[StaticRouteMap] init error:", err);
-        if (!cancelled) setStatus("error");
-      }
-    }
-
-    init();
+      })
+      .catch(() => {
+        if (!cancelled) setLoading(false);
+      });
     return () => {
       cancelled = true;
     };
-  }, [visible, uid, workoutId, status]);
+  }, [visible, uid, workoutId]);
 
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (mapRef.current) {
-        mapRef.current.remove();
-        mapRef.current = null;
-      }
-    };
-  }, []);
+  // Build SVG polyline from points
+  function buildSVG(pts: RoutePoint[]) {
+    if (pts.length < 2) return null;
+
+    const lats = pts.map((p) => p.lat);
+    const lngs = pts.map((p) => p.lng);
+    const minLat = Math.min(...lats);
+    const maxLat = Math.max(...lats);
+    const minLng = Math.min(...lngs);
+    const maxLng = Math.max(...lngs);
+
+    const W = 400;
+    const H = 300;
+    const PAD = 24;
+
+    const scaleX = (lng: number) =>
+      PAD + ((lng - minLng) / (maxLng - minLng || 1)) * (W - PAD * 2);
+    const scaleY = (lat: number) =>
+      PAD +
+      (1 - (lat - minLat) / (maxLat - minLat || 1)) * (H - PAD * 2);
+
+    // Downsample to max 300 points
+    const step = Math.max(1, Math.floor(pts.length / 300));
+    const sampled = pts.filter((_, i) => i % step === 0);
+
+    const polyline = sampled
+      .map(
+        (p) =>
+          `${scaleX(p.lng).toFixed(1)},${scaleY(p.lat).toFixed(1)}`
+      )
+      .join(" ");
+
+    const start = sampled[0];
+    const end = sampled[sampled.length - 1];
+
+    return { W, H, polyline, start, end, scaleX, scaleY };
+  }
+
+  const svg = !loading && points.length >= 2 ? buildSVG(points) : null;
 
   return (
     <div
       ref={wrapperRef}
       onClick={onClick}
       className={`relative overflow-hidden cursor-pointer ${className ?? ""}`}
+      style={{ backgroundColor: "#f0f4f8" }}
     >
-      {/* Dedicated Leaflet mount target */}
-      <div
-        ref={mapDivRef}
-        className="absolute inset-0"
-        style={{ zIndex: 0 }}
-      />
+      {/* Loading state */}
+      {loading && visible && (
+        <div className="absolute inset-0 flex items-center justify-center bg-gray-100 animate-pulse" />
+      )}
 
-      {/* Loading overlay */}
-      {(status === "idle" || status === "loading") && (
-        <div className="absolute inset-0 flex items-center justify-center bg-gray-100 z-10 pointer-events-none">
-          {status === "loading" && (
-            <div className="w-5 h-5 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
-          )}
+      {/* Not yet visible placeholder */}
+      {!visible && (
+        <div
+          className="absolute inset-0"
+          style={{ backgroundColor: "#f0f4f8" }}
+        />
+      )}
+
+      {/* No route data */}
+      {!loading && points.length < 2 && (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <span className="text-xs text-gray-400">No route data</span>
         </div>
       )}
 
-      {/* Error state */}
-      {status === "error" && (
-        <div className="absolute inset-0 flex items-center justify-center bg-gray-100 z-10 pointer-events-none">
-          <span className="text-xs text-gray-400">No route data</span>
-        </div>
+      {/* SVG route */}
+      {svg && (
+        <svg
+          viewBox={`0 0 ${svg.W} ${svg.H}`}
+          className="w-full h-full"
+          preserveAspectRatio="xMidYMid meet"
+          style={{ display: "block" }}
+        >
+          <rect
+            x="0"
+            y="0"
+            width={svg.W}
+            height={svg.H}
+            fill="#f0f4f8"
+          />
+
+          {/* Subtle grid */}
+          {[1, 2, 3, 4].map((i) => (
+            <line
+              key={`h${i}`}
+              x1="0"
+              y1={(svg.H * i) / 5}
+              x2={svg.W}
+              y2={(svg.H * i) / 5}
+              stroke="#dde3ea"
+              strokeWidth="0.8"
+            />
+          ))}
+          {[1, 2, 3, 4].map((i) => (
+            <line
+              key={`v${i}`}
+              x1={(svg.W * i) / 5}
+              y1="0"
+              x2={(svg.W * i) / 5}
+              y2={svg.H}
+              stroke="#dde3ea"
+              strokeWidth="0.8"
+            />
+          ))}
+
+          {/* Route shadow for depth */}
+          <polyline
+            points={svg.polyline}
+            fill="none"
+            stroke="#007AFF"
+            strokeOpacity="0.2"
+            strokeWidth="8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+
+          {/* Main route line */}
+          <polyline
+            points={svg.polyline}
+            fill="none"
+            stroke="#007AFF"
+            strokeWidth="3.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+
+          {/* Start dot — green */}
+          <circle
+            cx={svg.scaleX(svg.start.lng)}
+            cy={svg.scaleY(svg.start.lat)}
+            r="7"
+            fill="#34C759"
+            stroke="white"
+            strokeWidth="2.5"
+          />
+
+          {/* End dot — red */}
+          <circle
+            cx={svg.scaleX(svg.end.lng)}
+            cy={svg.scaleY(svg.end.lat)}
+            r="7"
+            fill="#FF3B30"
+            stroke="white"
+            strokeWidth="2.5"
+          />
+        </svg>
       )}
     </div>
   );
 }
 
-// Re-export as dynamic component with SSR disabled.
-// Leaflet requires window/document and causes silent hangs during SSR.
 export const StaticRouteMap = dynamic(
   () => Promise.resolve(StaticRouteMapInner),
-  {
-    ssr: false,
-    loading: () => (
-      <div className="w-full h-full flex items-center justify-center bg-gray-100">
-        <div className="w-5 h-5 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
-      </div>
-    ),
-  }
+  { ssr: false }
 );
