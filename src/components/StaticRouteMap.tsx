@@ -47,7 +47,8 @@ export function StaticRouteMap({
     return (
       <div
         ref={containerRef}
-        className={`bg-surface animate-pulse ${className}`}
+        className={`animate-pulse ${className}`}
+        style={{ backgroundColor: "#e8e8e8" }}
       />
     );
   }
@@ -98,7 +99,8 @@ export function StaticRouteMap({
   return (
     <div
       ref={containerRef}
-      className={`bg-[#f0f0f0] dark:bg-[#1a1a1a] cursor-pointer hover:opacity-90 transition-opacity ${className}`}
+      className={`relative overflow-hidden cursor-pointer hover:opacity-90 transition-opacity ${className}`}
+      style={{ backgroundColor: "#e8e8e8" }}
       onClick={onClick}
     >
       <svg
@@ -106,6 +108,30 @@ export function StaticRouteMap({
         className="w-full h-full"
         preserveAspectRatio="xMidYMid meet"
       >
+        <rect x="0" y="0" width={svgW} height={svgH} fill="#e8e8e8" />
+        {/* Subtle grid for map context */}
+        {[1, 2, 3, 4].map((i) => (
+          <line
+            key={`h${i}`}
+            x1="0"
+            y1={(svgH * i) / 5}
+            x2={svgW}
+            y2={(svgH * i) / 5}
+            stroke="#d0d0d0"
+            strokeWidth="0.5"
+          />
+        ))}
+        {[1, 2, 3, 4].map((i) => (
+          <line
+            key={`v${i}`}
+            x1={(svgW * i) / 5}
+            y1="0"
+            x2={(svgW * i) / 5}
+            y2={svgH}
+            stroke="#d0d0d0"
+            strokeWidth="0.5"
+          />
+        ))}
         <polyline
           points={polyline}
           fill="none"
