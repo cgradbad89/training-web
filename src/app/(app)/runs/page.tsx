@@ -254,47 +254,40 @@ function MiniCalendar({ year, runs, onDayClick }: MiniCalendarProps) {
   );
 }
 
-// ─── Year Selector ────────────────────────────────────────────────────────────
+// ─── Year Navigator ───────────────────────────────────────────────────────────
 
-interface YearSelectorProps {
+function YearNavigator({
+  years,
+  selected,
+  onChange,
+}: {
   years: number[];
   selected: number;
   onChange: (y: number) => void;
-}
-
-function YearSelector({ years, selected, onChange }: YearSelectorProps) {
-  if (years.length <= 4) {
-    return (
-      <div className="flex rounded-lg border border-border overflow-hidden">
-        {years.map((y) => (
-          <button
-            key={y}
-            onClick={() => onChange(y)}
-            className={`flex-1 py-1.5 text-xs font-semibold transition-colors
-              ${y === selected
-                ? "bg-primary text-white"
-                : "text-textSecondary hover:bg-surface"
-              }`}
-          >
-            {y}
-          </button>
-        ))}
-      </div>
-    );
-  }
-
+}) {
+  const idx = years.indexOf(selected);
   return (
-    <select
-      value={selected}
-      onChange={(e) => onChange(Number(e.target.value))}
-      className="w-full border border-border rounded-lg px-3 py-1.5 text-sm text-textPrimary bg-card focus:outline-none focus:ring-2 focus:ring-primary"
-    >
-      {years.map((y) => (
-        <option key={y} value={y}>
-          {y}
-        </option>
-      ))}
-    </select>
+    <div className="flex items-center gap-1">
+      <button
+        onClick={() => { if (idx > 0) onChange(years[idx - 1]); }}
+        disabled={idx <= 0}
+        className="p-1.5 rounded-lg hover:bg-surface text-textSecondary disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        aria-label="Previous year"
+      >
+        <ChevronLeft className="w-4 h-4" />
+      </button>
+      <span className="text-sm font-bold text-textPrimary w-12 text-center">
+        {selected}
+      </span>
+      <button
+        onClick={() => { if (idx < years.length - 1) onChange(years[idx + 1]); }}
+        disabled={idx >= years.length - 1}
+        className="p-1.5 rounded-lg hover:bg-surface text-textSecondary disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        aria-label="Next year"
+      >
+        <ChevronRight className="w-4 h-4" />
+      </button>
+    </div>
   );
 }
 
@@ -674,10 +667,16 @@ export default function RunsPage() {
     [duplicatePairs]
   );
 
-  // Suggestion banner state — dismissed pairs (session only)
-  const [dismissedPairIds, setDismissedPairIds] = useState<Set<string>>(
-    new Set()
-  );
+  // Suggestion banner state — persisted to localStorage
+  const [dismissedPairIds, setDismissedPairIds] = useState<Set<string>>(() => {
+    if (typeof window === "undefined") return new Set();
+    try {
+      const stored = localStorage.getItem("dismissedDuplicatePairs");
+      return stored ? new Set(JSON.parse(stored) as string[]) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
   const suggestionPairs = useMemo(
     () =>
       duplicatePairs.filter(
@@ -724,7 +723,7 @@ export default function RunsPage() {
           <p className="text-xs font-semibold uppercase tracking-widest text-textSecondary">
             Year
           </p>
-          <YearSelector
+          <YearNavigator
             years={availableYears}
             selected={selectedYear}
             onChange={setSelectedYear}
@@ -802,9 +801,16 @@ export default function RunsPage() {
                   }));
                 }}
                 onDismiss={() => {
-                  setDismissedPairIds(
-                    (prev) => new Set([...prev, pair.otfWorkoutId])
-                  );
+                  setDismissedPairIds((prev) => {
+                    const updated = new Set([...prev, pair.otfWorkoutId]);
+                    try {
+                      localStorage.setItem(
+                        "dismissedDuplicatePairs",
+                        JSON.stringify([...updated])
+                      );
+                    } catch { /* ignore */ }
+                    return updated;
+                  });
                 }}
               />
             ))}

@@ -10,6 +10,8 @@ import {
   Activity,
   EyeOff,
   AlertTriangle,
+  ChevronLeft,
+  ChevronRight,
   type LucideProps,
 } from "lucide-react";
 
@@ -213,9 +215,9 @@ function TabStrip({
   );
 }
 
-// ─── Year Selector ────────────────────────────────────────────────────────────
+// ─── Year Navigator ───────────────────────────────────────────────────────────
 
-function YearSelect({
+function YearNavigator({
   years,
   selected,
   onChange,
@@ -224,18 +226,29 @@ function YearSelect({
   selected: number;
   onChange: (y: number) => void;
 }) {
+  const idx = years.indexOf(selected);
   return (
-    <select
-      value={selected}
-      onChange={(e) => onChange(Number(e.target.value))}
-      className="border border-border rounded-lg px-3 py-1.5 text-sm bg-card text-textPrimary focus:outline-none focus:ring-2 focus:ring-primary"
-    >
-      {years.map((y) => (
-        <option key={y} value={y}>
-          {y}
-        </option>
-      ))}
-    </select>
+    <div className="flex items-center gap-1">
+      <button
+        onClick={() => { if (idx > 0) onChange(years[idx - 1]); }}
+        disabled={idx <= 0}
+        className="p-1.5 rounded-lg hover:bg-surface text-textSecondary disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        aria-label="Previous year"
+      >
+        <ChevronLeft className="w-4 h-4" />
+      </button>
+      <span className="text-sm font-bold text-textPrimary w-12 text-center">
+        {selected}
+      </span>
+      <button
+        onClick={() => { if (idx < years.length - 1) onChange(years[idx + 1]); }}
+        disabled={idx >= years.length - 1}
+        className="p-1.5 rounded-lg hover:bg-surface text-textSecondary disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        aria-label="Next year"
+      >
+        <ChevronRight className="w-4 h-4" />
+      </button>
+    </div>
   );
 }
 
@@ -385,7 +398,15 @@ export default function WorkoutsPage() {
   const [selectedWorkout, setSelectedWorkout] = useState<HealthWorkout | null>(null);
   const [showExcludedModal, setShowExcludedModal] = useState(false);
   const [activeTab, setActiveTab] = useState<TabKey>("all");
-  const [dismissedPairIds, setDismissedPairIds] = useState<Set<string>>(new Set());
+  const [dismissedPairIds, setDismissedPairIds] = useState<Set<string>>(() => {
+    if (typeof window === "undefined") return new Set();
+    try {
+      const stored = localStorage.getItem("dismissedDuplicatePairs");
+      return stored ? new Set(JSON.parse(stored) as string[]) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
 
   const duplicatePairs = useMemo(
     () => detectDuplicatePairs(allWorkouts),
@@ -479,7 +500,7 @@ export default function WorkoutsPage() {
       <PageHeader
         title="Workout History"
         action={
-          <YearSelect
+          <YearNavigator
             years={availableYears}
             selected={selectedYear}
             onChange={setSelectedYear}
@@ -519,9 +540,16 @@ export default function WorkoutsPage() {
                 );
               }}
               onDismiss={() =>
-                setDismissedPairIds(
-                  (prev) => new Set([...prev, pair.otfWorkoutId])
-                )
+                setDismissedPairIds((prev) => {
+                  const updated = new Set([...prev, pair.otfWorkoutId]);
+                  try {
+                    localStorage.setItem(
+                      "dismissedDuplicatePairs",
+                      JSON.stringify([...updated])
+                    );
+                  } catch { /* ignore */ }
+                  return updated;
+                })
               }
             />
           ))}
