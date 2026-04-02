@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import "leaflet/dist/leaflet.css";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {

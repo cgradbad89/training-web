@@ -55,9 +55,17 @@ export function StaticRouteMap({
 
         // Dynamic import — SSR safe
         const L = (await import("leaflet")).default;
-        await import("leaflet/dist/leaflet.css");
-
         if (cancelled || !containerRef.current) return;
+
+        // Ensure container has dimensions before Leaflet init
+        await new Promise((r) => setTimeout(r, 50));
+        if (cancelled || !containerRef.current) return;
+
+        const rect = containerRef.current.getBoundingClientRect();
+        if (rect.height === 0) {
+          containerRef.current.style.minHeight = "192px";
+          await new Promise((r) => setTimeout(r, 50));
+        }
 
         // Destroy existing map if any
         if (mapRef.current) {
@@ -93,7 +101,6 @@ export function StaticRouteMap({
           opacity: 0.9,
         }).addTo(map);
 
-        // Start dot — green
         L.circleMarker(latlngs[0], {
           radius: 5,
           fillColor: "#34C759",
@@ -102,7 +109,6 @@ export function StaticRouteMap({
           fillOpacity: 1,
         }).addTo(map);
 
-        // End dot — red
         L.circleMarker(latlngs[latlngs.length - 1], {
           radius: 5,
           fillColor: "#FF3B30",
@@ -112,6 +118,7 @@ export function StaticRouteMap({
         }).addTo(map);
 
         map.fitBounds(polyline.getBounds(), { padding: [12, 12] });
+        map.invalidateSize();
 
         setStatus("loaded");
       } catch {
