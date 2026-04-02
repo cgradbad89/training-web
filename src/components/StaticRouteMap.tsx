@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import { getRoutePoints, isRouteCached } from "@/utils/routeCache";
 
 interface StaticRouteMapProps {
@@ -10,7 +11,7 @@ interface StaticRouteMapProps {
   onClick?: () => void;
 }
 
-export function StaticRouteMap({
+function StaticRouteMapInner({
   uid,
   workoutId,
   className,
@@ -150,7 +151,7 @@ export function StaticRouteMap({
       onClick={onClick}
       className={`relative overflow-hidden cursor-pointer ${className ?? ""}`}
     >
-      {/* Dedicated Leaflet mount target — full size, no competing handlers */}
+      {/* Dedicated Leaflet mount target */}
       <div
         ref={mapDivRef}
         className="absolute inset-0"
@@ -175,3 +176,17 @@ export function StaticRouteMap({
     </div>
   );
 }
+
+// Re-export as dynamic component with SSR disabled.
+// Leaflet requires window/document and causes silent hangs during SSR.
+export const StaticRouteMap = dynamic(
+  () => Promise.resolve(StaticRouteMapInner),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="w-full h-full flex items-center justify-center bg-gray-100">
+        <div className="w-5 h-5 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
+      </div>
+    ),
+  }
+);
