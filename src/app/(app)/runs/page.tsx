@@ -37,9 +37,13 @@ import {
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { type RunningShoe } from "@/types/shoe";
 import { evaluateAutoAssignRules } from "@/utils/shoeAutoAssign";
-import { fetchAllOverrides } from "@/services/workoutOverrides";
+import { fetchAllOverrides, excludeWorkout } from "@/services/workoutOverrides";
 import { ExcludedItemsModal } from "@/components/ExcludedItemsModal";
 import { type WorkoutOverride, applyOverride } from "@/types/workoutOverride";
+import {
+  detectDuplicatePairs,
+  type DuplicatePair,
+} from "@/utils/duplicateDetection";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -56,6 +60,57 @@ function weekKey(date: Date): string {
 }
 
 const DAY_ABBREVS = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
+
+// ─── Duplicate Suggestion Banner ──────────────────────────────────────────────
+
+function DuplicateSuggestionBanner({
+  pair,
+  onExclude,
+  onDismiss,
+}: {
+  pair: DuplicatePair;
+  onExclude: () => Promise<void>;
+  onDismiss: () => void;
+}) {
+  const [excluding, setExcluding] = useState(false);
+
+  return (
+    <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3 dark:bg-amber-950/20 dark:border-amber-800">
+      <div className="w-8 h-8 rounded-full bg-amber-100 dark:bg-amber-900/40 flex items-center justify-center shrink-0 mt-0.5">
+        <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+          Possible duplicate on {pair.date}
+        </p>
+        <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
+          <span className="font-medium">{pair.otfDisplayType}</span> and{" "}
+          <span className="font-medium">{pair.manualDisplayType}</span> overlap.
+          Exclude the {pair.otfDisplayType}?
+        </p>
+        <div className="flex items-center gap-2 mt-3">
+          <button
+            onClick={async () => {
+              setExcluding(true);
+              await onExclude();
+              setExcluding(false);
+            }}
+            disabled={excluding}
+            className="px-3 py-1.5 rounded-lg bg-amber-600 text-white text-xs font-semibold hover:bg-amber-700 disabled:opacity-50 transition-colors"
+          >
+            {excluding ? "Excluding..." : `Exclude ${pair.otfDisplayType}`}
+          </button>
+          <button
+            onClick={onDismiss}
+            className="px-3 py-1.5 rounded-lg text-amber-700 dark:text-amber-400 text-xs font-medium hover:bg-amber-100 dark:hover:bg-amber-900/30 transition-colors"
+          >
+            Dismiss
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function getPaceDisplay(w: HealthWorkout): string {
   if (w.avgPaceSecPerMile && w.avgPaceSecPerMile > 0) {
@@ -606,47 +661,32 @@ export default function RunsPage() {
     [visibleRuns, selectedYear]
   );
 
-  // Detect potential duplicates: only flag when at least one is OTF/HIIT
-  // Uses all visible runs (not year-filtered) so same-day pairs always detected
-  const duplicateIds = useMemo(() => {
-    function isOtfOrHiit(a: HealthWorkout): boolean {
-      const name = a.displayType.toLowerCase();
-      const type = a.activityType.toLowerCase();
-      return (
-        name.includes("orange") ||
-        name.includes("otf") ||
-        type === "high_intensity_interval_training" ||
-        type.includes("hiit")
-      );
-    }
+  // Detect duplicate pairs and derive badge IDs
+  const duplicatePairs = useMemo(
+    () => detectDuplicatePairs(visibleRuns),
+    [visibleRuns]
+  );
+  const duplicateIds = useMemo(
+    () =>
+      new Set(
+        duplicatePairs.flatMap((p) => [p.otfWorkoutId, p.manualWorkoutId])
+      ),
+    [duplicatePairs]
+  );
 
-    const ids = new Set<string>();
-    for (let i = 0; i < visibleRuns.length; i++) {
-      for (let j = i + 1; j < visibleRuns.length; j++) {
-        const a = visibleRuns[i];
-        const b = visibleRuns[j];
-
-        // At least one must be OTF or HIIT
-        if (!isOtfOrHiit(a) && !isOtfOrHiit(b)) continue;
-
-        // Must be within 60 minutes of each other
-        const timeA = new Date(a.startDate).getTime();
-        const timeB = new Date(b.startDate).getTime();
-        const diffMinutes = Math.abs(timeA - timeB) / 60000;
-        if (diffMinutes > 60) continue;
-
-        // Duration within 30% of each other
-        const durA = a.durationSeconds;
-        const durB = b.durationSeconds;
-        const durRatio = Math.min(durA, durB) / Math.max(durA, durB);
-        if (durRatio < 0.3) continue;
-
-        ids.add(a.workoutId);
-        ids.add(b.workoutId);
-      }
-    }
-    return ids;
-  }, [visibleRuns]);
+  // Suggestion banner state — dismissed pairs (session only)
+  const [dismissedPairIds, setDismissedPairIds] = useState<Set<string>>(
+    new Set()
+  );
+  const suggestionPairs = useMemo(
+    () =>
+      duplicatePairs.filter(
+        (pair) =>
+          !overrides[pair.otfWorkoutId]?.isExcluded &&
+          !dismissedPairIds.has(pair.otfWorkoutId)
+      ),
+    [duplicatePairs, overrides, dismissedPairIds]
+  );
 
   const groupedWeeks = useMemo(() => {
     const map: Record<string, HealthWorkout[]> = {};
@@ -734,6 +774,42 @@ export default function RunsPage() {
             &middot; {totalYearMiles.toFixed(1)} miles
           </span>
         </div>
+
+        {/* Duplicate suggestion banners */}
+        {suggestionPairs.length > 0 && (
+          <div className="flex flex-col gap-3 mb-4">
+            {suggestionPairs.map((pair) => (
+              <DuplicateSuggestionBanner
+                key={pair.otfWorkoutId}
+                pair={pair}
+                onExclude={async () => {
+                  if (!uid) return;
+                  await excludeWorkout(uid, pair.otfWorkoutId);
+                  setOverrides((prev) => ({
+                    ...prev,
+                    [pair.otfWorkoutId]: {
+                      ...prev[pair.otfWorkoutId],
+                      workoutId: pair.otfWorkoutId,
+                      userId: uid,
+                      isExcluded: true,
+                      excludedAt: new Date().toISOString(),
+                      excludedReason: "auto-suggested duplicate",
+                      distanceMilesOverride: null,
+                      durationSecondsOverride: null,
+                      runTypeOverride: null,
+                      updatedAt: new Date().toISOString(),
+                    },
+                  }));
+                }}
+                onDismiss={() => {
+                  setDismissedPairIds(
+                    (prev) => new Set([...prev, pair.otfWorkoutId])
+                  );
+                }}
+              />
+            ))}
+          </div>
+        )}
 
         {/* Column headers — desktop only */}
         {groupedWeeks.length > 0 && (
