@@ -79,15 +79,17 @@ function StaticRouteMapInner({
     async function draw() {
       try {
         const points = await getRoutePoints(uid, workoutId);
-        if (cancelled || points.length < 2) {
+        if (cancelled) return;
+        if (points.length < 2) {
           setStatus("error");
           return;
         }
 
         const canvas = canvasRef.current;
-        if (!canvas || cancelled) return;
+        if (cancelled) return;
+        if (!canvas) { setStatus("error"); return; }
         const ctx = canvas.getContext("2d");
-        if (!ctx) return;
+        if (!ctx) { setStatus("error"); return; }
 
         const W = canvas.width;
         const H = canvas.height;
@@ -219,6 +221,7 @@ function StaticRouteMapInner({
         ctx.lineWidth = 2.5;
         ctx.stroke();
 
+        if (cancelled) return;
         setStatus("done");
       } catch {
         if (!cancelled) setStatus("error");
