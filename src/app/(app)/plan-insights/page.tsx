@@ -13,7 +13,7 @@ import {
   Line,
   CartesianGrid,
 } from "recharts";
-import { Target, TrendingUp, Calendar, AlertTriangle } from "lucide-react";
+import { Target, TrendingUp, Calendar, AlertTriangle, Shield, Layers } from "lucide-react";
 
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -380,6 +380,231 @@ export default function PlanInsightsPage() {
     ? currentPlanWeek.entries.reduce((s, e) => s + e.distanceMiles, 0)
     : 0;
 
+  // ── Half Marathon Readiness computations ──────────────────────────────────
+
+  function toMs(d: Date): number {
+    return d.getTime();
+  }
+
+  const nowMs = Date.now();
+  const runsLast56 = runs.filter((r) => nowMs - toMs(r.startDate) < 56 * 86400000);
+
+  const longRunsSorted = runsLast56
+    .filter((r) => r.distanceMiles >= 6)
+    .sort((a, b) => toMs(b.startDate) - toMs(a.startDate));
+
+  // Half marathon specific Riegel fit
+  const halfFit = useMemo(() => {
+    const efforts = buildQualifyingEfforts(
+      runs.map((r) => ({
+        workoutId: r.workoutId,
+        distanceMiles: r.distanceMiles,
+        durationSeconds: r.durationSeconds,
+        startDate: r.startDate,
+        activityType: r.activityType,
+        sourceName: r.sourceName,
+      })),
+      56
+    );
+    return fitRiegel(efforts, 13.109, 3.0, { min: 1.05, max: 1.18 });
+  }, [runs]);
+
+  type ReadinessStatus = "onTrack" | "building" | "needsWork" | "insufficient";
+  interface ReadinessIndicator {
+    title: string;
+    status: ReadinessStatus;
+    detail: string;
+  }
+
+  const longRunReadiness: ReadinessIndicator = (() => {
+    const recent = longRunsSorted[0];
+    if (!recent)
+      return {
+        title: "Long Run Readiness",
+        status: "insufficient",
+        detail: "Need a long run (6+ mi) in the last 8 weeks.",
+      };
+    const mi = recent.distanceMiles;
+    return {
+      title: "Long Run Readiness",
+      status: mi >= 9.5 ? "onTrack" : mi >= 8.0 ? "building" : "needsWork",
+      detail: `Longest recent run: ${mi.toFixed(1)} mi`,
+    };
+  })();
+
+  const weeklyMilesMap = new Map<string, number>();
+  runs.forEach((r) => {
+    const d = new Date(toMs(r.startDate));
+    const day = d.getDay();
+    const mondayOffset = day === 0 ? -6 : 1 - day;
+    const monday = new Date(d);
+    monday.setDate(d.getDate() + mondayOffset);
+    monday.setHours(0, 0, 0, 0);
+    const key = monday.toISOString().split("T")[0];
+    weeklyMilesMap.set(key, (weeklyMilesMap.get(key) ?? 0) + r.distanceMiles);
+  });
+
+  const thisMondayStr = (() => {
+    const d = new Date();
+    const day = d.getDay();
+    const offset = day === 0 ? -6 : 1 - day;
+    d.setDate(d.getDate() + offset);
+    d.setHours(0, 0, 0, 0);
+    return d.toISOString().split("T")[0];
+  })();
+
+  const completedWeeks = Array.from(weeklyMilesMap.entries())
+    .filter(([k]) => k < thisMondayStr)
+    .sort(([a], [b]) => b.localeCompare(a))
+    .slice(0, 4)
+    .map(([, miles]) => miles);
+
+  const volumeReadiness: ReadinessIndicator = (() => {
+    if (completedWeeks.filter((m) => m > 0).length < 3)
+      return {
+        title: "Volume Readiness",
+        status: "insufficient",
+        detail: "Need more recent weekly mileage data.",
+      };
+    const avg = completedWeeks.reduce((a, b) => a + b, 0) / completedWeeks.length;
+    const trend = (completedWeeks[0] ?? 0) - (completedWeeks[completedWeeks.length - 1] ?? 0);
+    const detail =
+      trend >= 2.0
+        ? "Recent weekly mileage is building"
+        : trend <= -2.0
+          ? "Recent weekly mileage has dipped"
+          : `Recent avg: ${avg.toFixed(1)} mi/week`;
+    return {
+      title: "Volume Readiness",
+      status: avg >= 16 ? "onTrack" : avg >= 12 ? "building" : "needsWork",
+      detail,
+    };
+  })();
+
+  const paceReadiness: ReadinessIndicator = (() => {
+    if (!halfFit)
+      return {
+        title: "Pace Readiness",
+        status: "insufficient",
+        detail: "Need more recent runs of 3+ miles.",
+      };
+    const conf = riegelConfidenceLabel(halfFit);
+    const predicted = predictSeconds(halfFit, 13.109);
+    const predStr = formatRaceTime(predicted);
+    return {
+      title: "Pace Readiness",
+      status: conf === "High" ? "onTrack" : conf === "Medium" ? "building" : "needsWork",
+      detail: `Predicted half: ${predStr}`,
+    };
+  })();
+
+  const driftValues = longRunsSorted
+    .slice(0, 4)
+    .map((r) => r.hrDriftPct)
+    .filter((v): v is number => v !== null && v !== undefined && isFinite(v));
+
+  const durabilityReadiness: ReadinessIndicator = (() => {
+    if (driftValues.length < 3)
+      return {
+        title: "Durability Readiness",
+        status: "insufficient",
+        detail: "Need more long-run HR drift data.",
+      };
+    const avg = driftValues.reduce((a, b) => a + b, 0) / driftValues.length;
+    const delta = driftValues[0] - driftValues[driftValues.length - 1];
+    const detail =
+      delta <= -1.0
+        ? "Long-run drift is improving"
+        : avg > 8.0
+          ? "Long-run drift remains elevated"
+          : `Avg long-run drift: ${avg.toFixed(1)}%`;
+    return {
+      title: "Durability Readiness",
+      status: avg <= 6.0 ? "onTrack" : avg <= 8.5 ? "building" : "needsWork",
+      detail,
+    };
+  })();
+
+  const readinessIndicators: ReadinessIndicator[] = [
+    longRunReadiness,
+    volumeReadiness,
+    paceReadiness,
+    durabilityReadiness,
+  ].filter((i) => i.status !== "insufficient");
+
+  const overallReadiness = (() => {
+    const scored = readinessIndicators;
+    const onTrack = scored.filter((i) => i.status === "onTrack").length;
+    const needsWork = scored.filter((i) => i.status === "needsWork").length;
+    if (scored.length === 0)
+      return { label: "Building", status: "building", detail: "Based on limited recent data." };
+    if (needsWork >= 2)
+      return {
+        label: "Needs Work",
+        status: "needsWork",
+        detail: "Multiple readiness areas still need work.",
+      };
+    if (onTrack >= 2 && needsWork === 0)
+      return {
+        label: "On Track",
+        status: "onTrack",
+        detail: "Current performance trends support half marathon readiness.",
+      };
+    return { label: "Building", status: "building", detail: "Current readiness signals are mixed." };
+  })();
+
+  // ── Performance by Run Type (plan period) ─────────────────────────────────
+
+  const planStartMs = activePlan ? new Date(activePlan.startDate).getTime() : 0;
+
+  const planPeriodRuns = planStartMs > 0
+    ? runs.filter((r) => toMs(r.startDate) >= planStartMs)
+    : runs;
+
+  const shortRuns = planPeriodRuns.filter((r) => r.distanceMiles >= 1 && r.distanceMiles < 3);
+  const mediumRuns = planPeriodRuns.filter((r) => r.distanceMiles >= 3 && r.distanceMiles < 6);
+  const longRuns2 = planPeriodRuns.filter((r) => r.distanceMiles >= 6);
+
+  function avgPaceStr(bucket: HealthWorkout[]): string {
+    let totalSec = 0,
+      totalMi = 0;
+    bucket.forEach((r) => {
+      const mi = r.distanceMiles;
+      if (mi <= 0) return;
+      const sec = r.durationSeconds / mi;
+      if (!isFinite(sec) || sec <= 0) return;
+      totalSec += sec * mi;
+      totalMi += mi;
+    });
+    if (totalMi === 0) return "—";
+    const pace = totalSec / totalMi;
+    return `${Math.floor(pace / 60)}:${String(Math.round(pace % 60)).padStart(2, "0")} /mi`;
+  }
+
+  function avgEffStr(bucket: HealthWorkout[]): string {
+    const vals = bucket
+      .map((r) => r.efficiencyScore)
+      .filter((v): v is number => v !== null && v !== undefined && v > 0 && isFinite(v));
+    if (vals.length === 0) return "—";
+    const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+    return avg.toFixed(1);
+  }
+
+  function avgHRStr(bucket: HealthWorkout[]): string {
+    const vals = bucket
+      .map((r) => r.avgHeartRate)
+      .filter((v): v is number => v !== null && v !== undefined && v > 0 && isFinite(v));
+    if (vals.length === 0) return "—";
+    return `${Math.round(vals.reduce((a, b) => a + b, 0) / vals.length)} bpm`;
+  }
+
+  const runTypePace = [shortRuns, mediumRuns, longRuns2].map(avgPaceStr);
+  const runTypeEfficiency = [shortRuns, mediumRuns, longRuns2].map(avgEffStr);
+  const runTypeHR = [shortRuns, mediumRuns, longRuns2].map(avgHRStr);
+  const runTypeCount = [shortRuns, mediumRuns, longRuns2].map((b) =>
+    b.length > 0 ? String(b.length) : "—"
+  );
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -548,6 +773,102 @@ export default function PlanInsightsPage() {
           />
         </Card>
       )}
+
+      {/* ── Half Marathon Readiness ─────────────────────────── */}
+      <SectionHeader icon={Shield} title="Half Marathon Readiness" />
+
+      <div className="bg-card rounded-2xl border border-border p-6">
+        {/* Overall badge */}
+        <div className="flex items-center gap-3 mb-5">
+          <span
+            className={`px-3 py-1 rounded-full text-sm font-bold ${
+              overallReadiness.status === "onTrack"
+                ? "bg-green-100 text-green-700"
+                : overallReadiness.status === "building"
+                  ? "bg-yellow-100 text-yellow-700"
+                  : overallReadiness.status === "needsWork"
+                    ? "bg-red-100 text-red-700"
+                    : "bg-gray-100 text-gray-500"
+            }`}
+          >
+            {overallReadiness.label}
+          </span>
+          <p className="text-sm text-textSecondary flex-1">{overallReadiness.detail}</p>
+        </div>
+
+        {/* 2x2 indicator grid */}
+        {readinessIndicators.length > 0 ? (
+          <div className="grid grid-cols-2 gap-3">
+            {readinessIndicators.map((indicator) => (
+              <div
+                key={indicator.title}
+                className="bg-surface rounded-xl border border-border p-4"
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <span
+                    className={`w-2 h-2 rounded-full ${
+                      indicator.status === "onTrack"
+                        ? "bg-green-500"
+                        : indicator.status === "building"
+                          ? "bg-yellow-500"
+                          : indicator.status === "needsWork"
+                            ? "bg-red-500"
+                            : "bg-gray-300"
+                    }`}
+                  />
+                  <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide">
+                    {indicator.title}
+                  </p>
+                </div>
+                <p className="text-xs text-textSecondary mt-1">{indicator.detail}</p>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-textSecondary">
+            Not enough recent data to assess readiness. Keep logging runs!
+          </p>
+        )}
+      </div>
+
+      {/* ── Performance by Run Type ─────────────────────────── */}
+      <SectionHeader icon={Layers} title="Performance by Run Type" />
+
+      <div className="bg-card rounded-2xl border border-border p-6">
+        <p className="text-xs text-textSecondary mb-4">
+          {activePlan ? "During plan period" : "All time"}
+        </p>
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border">
+                <th className="text-left py-2 text-textSecondary font-medium w-36">Metric</th>
+                <th className="text-center py-2 text-textSecondary font-medium">Short (1–3 mi)</th>
+                <th className="text-center py-2 text-textSecondary font-medium">Medium (3–6 mi)</th>
+                <th className="text-center py-2 text-textSecondary font-medium">Long (6+ mi)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[
+                { label: "Avg Pace", values: runTypePace },
+                { label: "Avg Efficiency", values: runTypeEfficiency },
+                { label: "Avg HR", values: runTypeHR },
+                { label: "Run Count", values: runTypeCount },
+              ].map((row) => (
+                <tr key={row.label} className="border-b border-border/50">
+                  <td className="py-3 text-textSecondary font-medium">{row.label}</td>
+                  {row.values.map((v, i) => (
+                    <td key={i} className="py-3 text-center font-semibold text-textPrimary">
+                      {v}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
 
       {/* ── Training Trend ───────────────────────────────── */}
       <SectionHeader icon={TrendingUp} title="Recent Trends" />
