@@ -7,6 +7,7 @@ import React, {
   useRef,
   useCallback,
 } from "react";
+import { useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
 import { MetricBadge } from "@/components/ui/MetricBadge";
@@ -279,6 +280,7 @@ interface RunRowProps {
   isDropdownOpen: boolean;
   onToggleDropdown: () => void;
   onAssign: (shoeId: string | null) => void;
+  onRowClick: () => void;
 }
 
 function RunRow({
@@ -288,6 +290,7 @@ function RunRow({
   isDropdownOpen,
   onToggleDropdown,
   onAssign,
+  onRowClick,
 }: RunRowProps) {
   const localDate = getLocalDate(run);
   const dayAbbrev = DAY_ABBREVS[(localDate.getDay() + 6) % 7];
@@ -321,7 +324,7 @@ function RunRow({
     : null;
 
   return (
-    <div className="flex items-center gap-3 py-3 px-4 hover:bg-surface rounded-xl transition-colors group">
+    <div onClick={onRowClick} className="flex items-center gap-3 py-3 px-4 hover:bg-surface rounded-xl transition-colors group cursor-pointer">
       {/* Col 1: Date */}
       <div className="flex flex-col items-center w-9 shrink-0 select-none">
         <span className="text-[10px] font-semibold text-textSecondary leading-none">{dayAbbrev}</span>
@@ -368,7 +371,7 @@ function RunRow({
       </div>
 
       {/* Col 8: Shoe */}
-      <div className="relative shrink-0 w-28" data-shoe-dropdown="true">
+      <div className="relative shrink-0 w-28" data-shoe-dropdown="true" onClick={(e) => e.stopPropagation()}>
         {shoeName ? (
           <button
             onClick={onToggleDropdown}
@@ -439,6 +442,7 @@ interface WeekGroupProps {
   openDropdown: string | null;
   setOpenDropdown: (id: string | null) => void;
   onAssign: (workoutId: string, shoeId: string | null) => void;
+  onRunClick: (workoutId: string) => void;
 }
 
 function WeekGroup({
@@ -450,6 +454,7 @@ function WeekGroup({
   openDropdown,
   setOpenDropdown,
   onAssign,
+  onRunClick,
 }: WeekGroupProps) {
   const wStart = new Date(wKey + "T00:00:00");
   const weekLabel = wStart.toLocaleDateString("en-US", { month: "short", day: "numeric" });
@@ -479,6 +484,7 @@ function WeekGroup({
               setOpenDropdown(openDropdown === run.workoutId ? null : run.workoutId)
             }
             onAssign={(shoeId) => onAssign(run.workoutId, shoeId)}
+            onRowClick={() => onRunClick(run.workoutId)}
           />
         );
       })}
@@ -489,6 +495,7 @@ function WeekGroup({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function RunsPage() {
+  const router = useRouter();
   const { user } = useAuth();
   const uid = user?.uid ?? null;
 
@@ -693,6 +700,7 @@ export default function RunsPage() {
               openDropdown={openDropdown}
               setOpenDropdown={setOpenDropdown}
               onAssign={handleAssign}
+              onRunClick={(id) => router.push(`/runs/${id}`)}
               innerRef={(el) => {
                 weekRefs.current[wk] = el;
               }}

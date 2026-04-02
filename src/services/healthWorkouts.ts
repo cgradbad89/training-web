@@ -73,6 +73,7 @@ function docToHealthWorkout(
     cadenceSPM: (data.cadenceSPM as number | null) ?? null,
     efficiencyRaw: (data.efficiencyRaw as number | null) ?? null,
     efficiencyScore: (data.efficiencyScore as number | null) ?? null,
+    elevationGainM: (data.elevationGainM as number | null) ?? null,
   };
 }
 

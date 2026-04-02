@@ -29,6 +29,7 @@ export interface HealthWorkout {
   cadenceSPM: number | null;
   efficiencyRaw: number | null;
   efficiencyScore: number | null;
+  elevationGainM: number | null;
 }
 
 export function isRunWorkout(w: HealthWorkout): boolean {
