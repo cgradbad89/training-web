@@ -1,6 +1,14 @@
 "use client";
 
 import React, { useState, useEffect, useMemo } from "react";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  Tooltip,
+  Cell,
+  ResponsiveContainer,
+} from "recharts";
 import Link from "next/link";
 import {
   Dumbbell,
@@ -695,6 +703,61 @@ export default function DashboardPage() {
     return activePlan.weeks[weekIndex].entries.reduce((s, e) => s + e.distanceMiles, 0);
   }, [activePlan, selectedWeekStart]);
 
+  // ─── KPI data ────────────────────────────────────────────────────────────────
+
+  const thisWeekRuns = useMemo(
+    () => workouts.filter((w) => w.isRunLike && isInWeek(w, selectedWeekStart, selectedWeekEnd)),
+    [workouts, selectedWeekStart, selectedWeekEnd]
+  );
+
+  const actualMiles = useMemo(
+    () => thisWeekRuns.reduce((s, w) => s + w.distanceMiles, 0),
+    [thisWeekRuns]
+  );
+
+  const weekRunCount = thisWeekRuns.length;
+
+  const { fourWeekAvg, weeklyMileageData } = useMemo(() => {
+    const allRuns = workouts.filter((w) => w.isRunLike);
+    const runsByWeek = new Map<string, number>();
+    allRuns.forEach((run) => {
+      const d = getWorkoutLocalDate(run);
+      const ws = getWeekStart(d);
+      const key = ws.toISOString().split("T")[0];
+      runsByWeek.set(key, (runsByWeek.get(key) ?? 0) + run.distanceMiles);
+    });
+
+    const data = Array.from({ length: 8 }, (_, i) => {
+      const weekDate = new Date(selectedWeekStart);
+      weekDate.setDate(weekDate.getDate() - (7 - i) * 7);
+      const key = weekDate.toISOString().split("T")[0];
+      const miles = runsByWeek.get(key) ?? 0;
+      const isCurrentWeek = i === 7;
+      const label = weekDate.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      return { label, miles, isCurrentWeek, key };
+    });
+
+    const recentWeeks = data.slice(3, 7).map((w) => w.miles);
+    const avg =
+      recentWeeks.length > 0
+        ? recentWeeks.reduce((a, b) => a + b, 0) / recentWeeks.length
+        : 0;
+
+    return { fourWeekAvg: avg, weeklyMileageData: data };
+  }, [workouts, selectedWeekStart]);
+
+  const plannedRunCount = useMemo(() => {
+    if (!activePlan) return 0;
+    const planStart = new Date(activePlan.startDate);
+    const weekIndex = Math.floor(
+      (selectedWeekStart.getTime() - planStart.getTime()) / (7 * 24 * 60 * 60 * 1000)
+    );
+    if (weekIndex < 0 || weekIndex >= activePlan.weeks.length) return 0;
+    return activePlan.weeks[weekIndex].entries.filter((e) => e.distanceMiles > 0).length;
+  }, [activePlan, selectedWeekStart]);
+
+  const daysUntilRaceCount = activeRace ? Math.max(0, daysUntil(activeRace.raceDate)) : 0;
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -705,6 +768,9 @@ export default function DashboardPage() {
 
   return (
     <div className="flex flex-col gap-5 p-6 lg:p-6 p-4">
+      {/* Page title */}
+      <h1 className="text-2xl font-bold text-textPrimary">This Week</h1>
+
       {/* Row 1: Week Navigator */}
       <WeekNavigator weekStart={selectedWeekStart} onChange={setSelectedWeekStart} />
 
@@ -715,6 +781,116 @@ export default function DashboardPage() {
         weekEnd={selectedWeekEnd}
         plannedMiles={plannedMiles}
       />
+
+      {/* ── Weekly KPI Row ──────────────────────────────────── */}
+      <div className="grid grid-cols-3 gap-4">
+
+        {/* KPI 1 — Weekly Mileage vs 4-week average */}
+        <div className="bg-card rounded-2xl border border-border p-4">
+          <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-1">
+            vs Recent Avg
+          </p>
+          <p className="text-2xl font-bold text-textPrimary">
+            {actualMiles.toFixed(1)}
+            <span className="text-sm font-normal text-textSecondary ml-1">mi</span>
+          </p>
+          <p className="text-xs text-textSecondary mt-1">
+            {fourWeekAvg > 0 ? (
+              <>
+                {actualMiles >= fourWeekAvg ? (
+                  <span className="text-success">
+                    +{(actualMiles - fourWeekAvg).toFixed(1)} above
+                  </span>
+                ) : (
+                  <span className="text-textSecondary">
+                    {(fourWeekAvg - actualMiles).toFixed(1)} below
+                  </span>
+                )}
+                {" "}4-wk avg ({fourWeekAvg.toFixed(1)} mi/wk)
+              </>
+            ) : (
+              "—"
+            )}
+          </p>
+        </div>
+
+        {/* KPI 2 — Runs this week vs plan */}
+        <div className="bg-card rounded-2xl border border-border p-4">
+          <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-1">
+            Runs This Week
+          </p>
+          <p className="text-2xl font-bold text-textPrimary">
+            {weekRunCount}
+            {plannedRunCount > 0 && (
+              <span className="text-sm font-normal text-textSecondary ml-1">
+                / {plannedRunCount} planned
+              </span>
+            )}
+          </p>
+          <p className="text-xs text-textSecondary mt-1">
+            {weekRunCount >= plannedRunCount && plannedRunCount > 0 ? (
+              <span className="text-success">On track</span>
+            ) : weekRunCount > 0 ? (
+              `${plannedRunCount - weekRunCount} remaining`
+            ) : (
+              "No runs logged yet"
+            )}
+          </p>
+        </div>
+
+        {/* KPI 3 — Days until race */}
+        <div className="bg-card rounded-2xl border border-border p-4">
+          <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-1">
+            Race Countdown
+          </p>
+          {activeRace ? (
+            <>
+              <p className="text-2xl font-bold text-textPrimary">
+                {daysUntilRaceCount}
+                <span className="text-sm font-normal text-textSecondary ml-1">days</span>
+              </p>
+              <p className="text-xs text-textSecondary mt-1 truncate">{activeRace.name}</p>
+            </>
+          ) : (
+            <p className="text-2xl font-bold text-textSecondary">—</p>
+          )}
+        </div>
+      </div>
+
+      {/* ── 8-Week Mileage Trend ────────────────────────────── */}
+      {weeklyMileageData.length > 0 && (
+        <div className="bg-card rounded-2xl border border-border p-4">
+          <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-3">
+            Weekly Mileage — Last 8 Weeks
+          </p>
+          <ResponsiveContainer width="100%" height={80}>
+            <BarChart
+              data={weeklyMileageData}
+              barSize={20}
+              margin={{ top: 4, right: 0, bottom: 0, left: 0 }}
+            >
+              <XAxis
+                dataKey="label"
+                tick={{ fontSize: 10 }}
+                axisLine={false}
+                tickLine={false}
+              />
+              <Tooltip
+                formatter={(v) => [`${Number(v).toFixed(1)} mi`, "Miles"]}
+                contentStyle={{ fontSize: 12 }}
+              />
+              <Bar dataKey="miles" radius={[4, 4, 0, 0]}>
+                {weeklyMileageData.map((entry, i) => (
+                  <Cell
+                    key={i}
+                    fill={entry.isCurrentWeek ? "#2563eb" : "#93c5fd"}
+                  />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
 
       {/* Row 3: Two-column layout */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">

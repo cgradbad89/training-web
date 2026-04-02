@@ -12,18 +12,22 @@ import {
   ClipboardList,
   Trophy,
   CircleDot,
+  BarChart2,
+  TrendingUp,
 } from "lucide-react";
 import { AuthGuard } from "@/components/layout/AuthGuard";
 import { HubBanner } from "@/components/layout/HubBanner";
 
 const NAV_ITEMS = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/runs",      label: "Runs",      icon: Footprints },
-  { href: "/routes",    label: "Routes",    icon: Map },
-  { href: "/workouts",  label: "Workouts",  icon: Dumbbell },
-  { href: "/plans",     label: "Plans",     icon: ClipboardList },
-  { href: "/races",     label: "Races",     icon: Trophy },
-  { href: "/shoes",     label: "Shoes",     icon: CircleDot },
+  { href: "/dashboard",          label: "This Week",          icon: LayoutDashboard },
+  { href: "/plan-insights",      label: "Plan Insights",      icon: BarChart2 },
+  { href: "/personal-insights",  label: "Personal Insights",  icon: TrendingUp },
+  { href: "/runs",               label: "Runs",               icon: Footprints },
+  { href: "/routes",             label: "Routes",             icon: Map },
+  { href: "/workouts",           label: "Workouts",           icon: Dumbbell },
+  { href: "/plans",              label: "Plans",              icon: ClipboardList },
+  { href: "/races",              label: "Races",              icon: Trophy },
+  { href: "/shoes",              label: "Shoes",              icon: CircleDot },
 ];
 
 function SideNav() {
