@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
   Footprints,
+  Map,
   Dumbbell,
   ClipboardList,
   Trophy,
@@ -17,6 +18,7 @@ import { HubBanner } from "@/components/layout/HubBanner";
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/runs",      label: "Runs",      icon: Footprints },
+  { href: "/routes",    label: "Routes",    icon: Map },
   { href: "/workouts",  label: "Workouts",  icon: Dumbbell },
   { href: "/plans",     label: "Plans",     icon: ClipboardList },
   { href: "/races",     label: "Races",     icon: Trophy },
