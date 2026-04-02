@@ -14,6 +14,7 @@
  *   users/{uid}/shoeAssignments/{activityId}
  *   users/{uid}/shoeAutoAssignmentRules/{ruleId}
  *   users/{uid}/settings/prefs   (single doc)
+ *   users/{uid}/workoutOverrides/{workoutId} — WorkoutOverride docs
  */
 
 export const COLLECTIONS = {

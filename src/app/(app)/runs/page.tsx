@@ -8,7 +8,7 @@ import React, {
   useCallback,
 } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, AlertTriangle, RotateCcw } from "lucide-react";
 
 import { MetricBadge } from "@/components/ui/MetricBadge";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
@@ -37,6 +37,8 @@ import {
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { type RunningShoe } from "@/types/shoe";
 import { evaluateAutoAssignRules } from "@/utils/shoeAutoAssign";
+import { fetchAllOverrides, restoreWorkout } from "@/services/workoutOverrides";
+import { type WorkoutOverride, applyOverride } from "@/types/workoutOverride";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -282,6 +284,7 @@ interface RunRowProps {
   onToggleDropdown: () => void;
   onAssign: (shoeId: string | null) => void;
   onRowClick: () => void;
+  isDuplicate?: boolean;
 }
 
 function RunRow({
@@ -292,6 +295,7 @@ function RunRow({
   onToggleDropdown,
   onAssign,
   onRowClick,
+  isDuplicate,
 }: RunRowProps) {
   const localDate = getLocalDate(run);
   const dayAbbrev = DAY_ABBREVS[(localDate.getDay() + 6) % 7];
@@ -334,9 +338,16 @@ function RunRow({
 
       {/* Col 2: Run info */}
       <div className="flex flex-col min-w-0 flex-1 gap-0.5">
-        <span className="text-sm font-medium text-textPrimary truncate max-w-[180px]">
-          {run.displayType}
-        </span>
+        <div className="flex items-center gap-1.5">
+          <span className="text-sm font-medium text-textPrimary truncate max-w-[180px]">
+            {run.displayType}
+          </span>
+          {isDuplicate && (
+            <span className="text-warning" title="Possible duplicate">
+              <AlertTriangle size={12} />
+            </span>
+          )}
+        </div>
         <span className={`self-start text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${RUN_TAG_STYLES[tag]}`}>
           {RUN_TAG_LABELS[tag]}
         </span>
@@ -444,6 +455,7 @@ interface WeekGroupProps {
   setOpenDropdown: (id: string | null) => void;
   onAssign: (workoutId: string, shoeId: string | null) => void;
   onRunClick: (workoutId: string) => void;
+  duplicateIds: Set<string>;
 }
 
 function WeekGroup({
@@ -455,6 +467,7 @@ function WeekGroup({
   openDropdown,
   setOpenDropdown,
   onAssign,
+  duplicateIds,
   onRunClick,
 }: WeekGroupProps) {
   const wStart = new Date(wKey + "T00:00:00");
@@ -486,6 +499,7 @@ function WeekGroup({
             }
             onAssign={(shoeId) => onAssign(run.workoutId, shoeId)}
             onRowClick={() => onRunClick(run.workoutId)}
+            isDuplicate={duplicateIds.has(run.workoutId)}
           />
         );
       })}
@@ -503,6 +517,8 @@ export default function RunsPage() {
   const [allRuns, setAllRuns] = useState<HealthWorkout[]>([]);
   const [shoes, setShoes] = useState<RunningShoe[]>([]);
   const [manualAssignments, setManualAssignments] = useState<Record<string, string | null>>({});
+  const [overrides, setOverrides] = useState<Record<string, WorkoutOverride>>({});
+  const [showExcluded, setShowExcluded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
 
@@ -528,17 +544,15 @@ export default function RunsPage() {
       fetchHealthWorkouts(uid, { limitCount: 500 }),
       fetchShoes(uid),
       fetchManualShoeAssignmentsMap(uid),
+      fetchAllOverrides(uid),
     ])
-      .then(([wkts, fetchedShoes, assignments]) => {
+      .then(([wkts, fetchedShoes, assignments, fetchedOverrides]) => {
         const runs = wkts.filter((w) => w.isRunLike);
         setAllRuns(runs);
         setShoes(fetchedShoes);
-        // Compute auto-assignments for runs without manual assignments
+        setOverrides(fetchedOverrides);
         const autoAssigned = evaluateAutoAssignRules(runs, fetchedShoes, assignments);
-        // Merge: manual assignments take precedence over auto
         setManualAssignments({ ...autoAssigned, ...assignments });
-        // TODO: Persist auto-assignments to Firestore when the user
-        // confirms them, or add a "Apply auto-assignments" button on the shoes page
       })
       .catch(console.error)
       .finally(() => setLoading(false));
@@ -571,10 +585,49 @@ export default function RunsPage() {
     return years;
   }, [allRuns, currentYear]);
 
+  // Separate excluded from visible runs, apply overrides for display
+  const { visibleRuns, excludedRuns } = useMemo(() => {
+    const visible: HealthWorkout[] = [];
+    const excluded: HealthWorkout[] = [];
+    for (const r of allRuns) {
+      const displayed = applyOverride(r, overrides[r.workoutId] ?? null);
+      if (overrides[r.workoutId]?.isExcluded) {
+        excluded.push(displayed);
+      } else {
+        visible.push(displayed);
+      }
+    }
+    return { visibleRuns: visible, excludedRuns: excluded };
+  }, [allRuns, overrides]);
+
   const filteredRuns = useMemo(
-    () => allRuns.filter((r) => getLocalDate(r).getFullYear() === selectedYear),
-    [allRuns, selectedYear]
+    () => visibleRuns.filter((r) => getLocalDate(r).getFullYear() === selectedYear),
+    [visibleRuns, selectedYear]
   );
+
+  // Detect potential duplicates: runs within 30 min with duration within 20%
+  const duplicateIds = useMemo(() => {
+    const ids = new Set<string>();
+    const sorted = [...filteredRuns].sort(
+      (a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime()
+    );
+    for (let i = 0; i < sorted.length - 1; i++) {
+      const a = sorted[i];
+      const b = sorted[i + 1];
+      const timeDiff = Math.abs(
+        new Date(b.startDate).getTime() - new Date(a.startDate).getTime()
+      );
+      if (timeDiff <= 30 * 60 * 1000) {
+        const durRatio = Math.min(a.durationSeconds, b.durationSeconds) /
+          Math.max(a.durationSeconds, b.durationSeconds);
+        if (durRatio >= 0.8) {
+          ids.add(a.workoutId);
+          ids.add(b.workoutId);
+        }
+      }
+    }
+    return ids;
+  }, [filteredRuns]);
 
   const groupedWeeks = useMemo(() => {
     const map: Record<string, HealthWorkout[]> = {};
@@ -708,11 +761,63 @@ export default function RunsPage() {
               setOpenDropdown={setOpenDropdown}
               onAssign={handleAssign}
               onRunClick={(id) => router.push(`/runs/${id}`)}
+              duplicateIds={duplicateIds}
               innerRef={(el) => {
                 weekRefs.current[wk] = el;
               }}
             />
           ))
+        )}
+
+        {/* Excluded workouts */}
+        {excludedRuns.length > 0 && (
+          <div className="mt-8 border-t border-border pt-4">
+            <button
+              onClick={() => setShowExcluded(!showExcluded)}
+              className="text-sm text-textSecondary hover:text-textPrimary transition-colors"
+            >
+              {showExcluded ? "Hide" : "Show"} {excludedRuns.length} excluded{" "}
+              {excludedRuns.length === 1 ? "workout" : "workouts"}
+            </button>
+            {showExcluded && (
+              <div className="mt-3 opacity-60 space-y-2">
+                {excludedRuns.map((run) => (
+                  <div
+                    key={run.workoutId}
+                    className="flex items-center gap-3 py-2 px-4 rounded-lg bg-card border border-border"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <span className="text-sm text-textPrimary">
+                        {run.displayType} &middot;{" "}
+                        {new Date(run.startDate).toLocaleDateString("en-US", {
+                          month: "short",
+                          day: "numeric",
+                        })}
+                      </span>
+                      <span className="text-xs text-textSecondary ml-2">
+                        {run.distanceMiles.toFixed(2)} mi
+                      </span>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        if (!uid) return;
+                        await restoreWorkout(uid, run.workoutId);
+                        setOverrides((prev) => {
+                          const next = { ...prev };
+                          delete next[run.workoutId];
+                          return next;
+                        });
+                      }}
+                      className="flex items-center gap-1 text-xs text-primary hover:underline"
+                    >
+                      <RotateCcw size={12} />
+                      Restore
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         )}
       </main>
     </div>

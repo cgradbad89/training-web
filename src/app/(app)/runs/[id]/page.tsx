@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Pencil, Trash2, RotateCcw } from "lucide-react";
 
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { StatBlock } from "@/components/ui/StatBlock";
@@ -12,17 +12,29 @@ import { useAuth } from "@/hooks/useAuth";
 import { fetchHealthWorkout } from "@/services/healthWorkouts";
 import { fetchRoutePoints, type RoutePoint } from "@/services/routes";
 import { fetchShoes, fetchManualShoeAssignmentsMap } from "@/services/shoes";
-import { type HealthWorkout, computeEfficiencyDisplay } from "@/types/healthWorkout";
+import {
+  fetchOverride,
+  saveOverride,
+  deleteOverride,
+  excludeWorkout,
+  restoreWorkout,
+} from "@/services/workoutOverrides";
+import {
+  type HealthWorkout,
+  computeEfficiencyDisplay,
+} from "@/types/healthWorkout";
 import { type RunningShoe } from "@/types/shoe";
+import {
+  type WorkoutOverride,
+  applyOverride,
+} from "@/types/workoutOverride";
 import { formatPace, formatDuration } from "@/utils/pace";
 import {
-  efficiencyDisplayScore,
   efficiencyLevel,
   distanceBucket,
   driftLevel,
 } from "@/utils/metrics";
 
-// Dynamic import — Leaflet requires browser APIs
 const RunMap = dynamic(() => import("@/components/RunMap"), { ssr: false });
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -36,7 +48,10 @@ function getEffBadgeLevel(
   try {
     const rawScore =
       ((workout.avgSpeedMPS ?? 0) / workout.avgHeartRate) * 1000;
-    const level = efficiencyLevel(rawScore, distanceBucket(workout.distanceMiles));
+    const level = efficiencyLevel(
+      rawScore,
+      distanceBucket(workout.distanceMiles)
+    );
     return level === "good" ? "good" : level === "ok" ? "ok" : "low";
   } catch {
     return "neutral";
@@ -47,8 +62,18 @@ function getDriftBadgeLevel(
   workout: HealthWorkout
 ): "good" | "ok" | "high" | "neutral" {
   if (workout.hrDriftPct == null) return "neutral";
-  const level = driftLevel(workout.hrDriftPct, distanceBucket(workout.distanceMiles));
-  return level;
+  return driftLevel(
+    workout.hrDriftPct,
+    distanceBucket(workout.distanceMiles)
+  );
+}
+
+function parseDuration(s: string): number | null {
+  const parts = s.split(":").map(Number);
+  if (parts.some(isNaN)) return null;
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  return null;
 }
 
 // ─── Page ────────────────────────────────────────────────────────────────────
@@ -66,8 +91,20 @@ export default function RunDetailPage() {
   const [assignments, setAssignments] = useState<Record<string, string | null>>(
     {}
   );
+  const [override, setOverride] = useState<WorkoutOverride | null>(null);
   const [loading, setLoading] = useState(true);
   const [routeLoading, setRouteLoading] = useState(true);
+
+  // Edit panel state
+  const [isEditing, setIsEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [formDistance, setFormDistance] = useState("");
+  const [formDuration, setFormDuration] = useState("");
+  const [formRunType, setFormRunType] = useState("");
+
+  // Exclude state
+  const [excluding, setExcluding] = useState(false);
+  const [showExcludeConfirm, setShowExcludeConfirm] = useState(false);
 
   useEffect(() => {
     if (!uid || !workoutId) return;
@@ -77,13 +114,14 @@ export default function RunDetailPage() {
       fetchHealthWorkout(uid, workoutId),
       fetchShoes(uid),
       fetchManualShoeAssignmentsMap(uid),
+      fetchOverride(uid, workoutId),
     ])
-      .then(([w, s, a]) => {
+      .then(([w, s, a, o]) => {
         setWorkout(w);
         setShoes(s);
         setAssignments(a);
+        setOverride(o);
 
-        // Fetch route only if workout has one
         if (w?.hasRoute) {
           fetchRoutePoints(uid, workoutId)
             .then(setRoutePoints)
@@ -119,15 +157,25 @@ export default function RunDetailPage() {
     );
   }
 
+  // Apply override for display
+  const displayWorkout = applyOverride(workout, override);
+  const isExcluded = override?.isExcluded === true;
+  const hasOverrides =
+    override != null &&
+    (override.distanceMilesOverride != null ||
+      override.durationSecondsOverride != null ||
+      override.runTypeOverride != null);
+
   // Shoe assignment
   const assignedShoeId = assignments[workout.workoutId] ?? null;
   const assignedShoe = shoes.find((s) => s.id === assignedShoeId) ?? null;
   const shoeName = assignedShoe
-    ? assignedShoe.name || `${assignedShoe.brand} ${assignedShoe.model}`.trim()
+    ? assignedShoe.name ||
+      `${assignedShoe.brand} ${assignedShoe.model}`.trim()
     : null;
 
   // Date formatting
-  const startDate = new Date(workout.startDate);
+  const startDate = new Date(displayWorkout.startDate);
   const dateDisplay = startDate.toLocaleDateString("en-US", {
     weekday: "short",
     month: "short",
@@ -145,14 +193,110 @@ export default function RunDetailPage() {
   });
 
   // Efficiency
-  const effDisplay = computeEfficiencyDisplay(workout);
-  const effBadgeLevel = getEffBadgeLevel(workout);
-  const effStr = effDisplay != null ? effDisplay.toFixed(1) : "—";
+  const effDisplay = computeEfficiencyDisplay(displayWorkout);
+  const effBadgeLevel = getEffBadgeLevel(displayWorkout);
+  const effStr = effDisplay != null ? effDisplay.toFixed(1) : "\u2014";
 
   // HR Drift
-  const driftBadgeLevel = getDriftBadgeLevel(workout);
+  const driftBadgeLevel = getDriftBadgeLevel(displayWorkout);
   const driftStr =
-    workout.hrDriftPct != null ? `${workout.hrDriftPct.toFixed(1)}%` : "—";
+    displayWorkout.hrDriftPct != null
+      ? `${displayWorkout.hrDriftPct.toFixed(1)}%`
+      : "\u2014";
+
+  // Edit form handlers
+  function openEdit() {
+    setFormDistance(
+      override?.distanceMilesOverride != null
+        ? String(override.distanceMilesOverride)
+        : ""
+    );
+    setFormDuration(
+      override?.durationSecondsOverride != null
+        ? formatDuration(override.durationSecondsOverride)
+        : ""
+    );
+    setFormRunType(override?.runTypeOverride ?? displayWorkout.displayType);
+    setIsEditing(true);
+  }
+
+  async function handleSave() {
+    if (!uid || !workout) return;
+    setSaving(true);
+    const overrideObj: WorkoutOverride = {
+      workoutId: workout.workoutId,
+      userId: uid,
+      isExcluded: override?.isExcluded ?? false,
+      excludedAt: override?.excludedAt ?? null,
+      excludedReason: override?.excludedReason ?? null,
+      distanceMilesOverride: formDistance ? Number(formDistance) : null,
+      durationSecondsOverride: formDuration
+        ? parseDuration(formDuration)
+        : null,
+      runTypeOverride:
+        formRunType !== workout.displayType ? formRunType : null,
+      updatedAt: new Date().toISOString(),
+    };
+    await saveOverride(uid, overrideObj);
+    setOverride(overrideObj);
+    setIsEditing(false);
+    setSaving(false);
+  }
+
+  async function handleReset() {
+    if (!uid) return;
+    setSaving(true);
+    if (override?.isExcluded) {
+      await saveOverride(uid, {
+        ...override,
+        distanceMilesOverride: null,
+        durationSecondsOverride: null,
+        runTypeOverride: null,
+      });
+      setOverride({
+        ...override,
+        distanceMilesOverride: null,
+        durationSecondsOverride: null,
+        runTypeOverride: null,
+      });
+    } else {
+      await deleteOverride(uid, workoutId);
+      setOverride(null);
+    }
+    setIsEditing(false);
+    setSaving(false);
+  }
+
+  async function handleExclude() {
+    if (!uid) return;
+    setExcluding(true);
+    await excludeWorkout(uid, workoutId);
+    const updated = await fetchOverride(uid, workoutId);
+    setOverride(updated);
+    setShowExcludeConfirm(false);
+    setExcluding(false);
+  }
+
+  async function handleRestore() {
+    if (!uid) return;
+    setExcluding(true);
+    await restoreWorkout(uid, workoutId);
+    const updated = await fetchOverride(uid, workoutId);
+    setOverride(updated);
+    setExcluding(false);
+  }
+
+  // Live pace preview
+  const previewPace = (() => {
+    const dist = formDistance ? Number(formDistance) : null;
+    const dur = formDuration ? parseDuration(formDuration) : null;
+    const effectiveDist = dist ?? displayWorkout.distanceMiles;
+    const effectiveDur = dur ?? displayWorkout.durationSeconds;
+    if (effectiveDist && effectiveDist > 0 && effectiveDur > 0) {
+      return formatPace(effectiveDur / effectiveDist);
+    }
+    return null;
+  })();
 
   return (
     <div className="max-w-4xl mx-auto p-4 lg:p-6 flex flex-col gap-6">
@@ -164,56 +308,222 @@ export default function RunDetailPage() {
         >
           <ArrowLeft size={20} />
         </button>
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0 flex items-center gap-2">
           <h1 className="text-lg font-bold text-textPrimary truncate">
-            {workout.displayType} &middot; {dateDisplay}
+            {displayWorkout.displayType} &middot; {dateDisplay}
           </h1>
+          {hasOverrides && (
+            <span className="text-[10px] bg-warning/15 text-warning px-2 py-0.5 rounded-full font-semibold shrink-0">
+              Edited
+            </span>
+          )}
+          {isExcluded && (
+            <span className="text-[10px] bg-danger/15 text-danger px-2 py-0.5 rounded-full font-semibold shrink-0">
+              Excluded
+            </span>
+          )}
         </div>
-        {shoeName && (
-          <span className="text-xs bg-success/10 text-success px-2.5 py-1 rounded-full font-medium shrink-0">
-            {shoeName}
-          </span>
-        )}
+        <div className="flex items-center gap-2 shrink-0">
+          {shoeName && (
+            <span className="text-xs bg-success/10 text-success px-2.5 py-1 rounded-full font-medium">
+              {shoeName}
+            </span>
+          )}
+          {!isEditing && (
+            <button
+              onClick={openEdit}
+              className="p-2 rounded-xl hover:bg-surface transition-colors text-textSecondary"
+              title="Edit workout"
+            >
+              <Pencil size={16} />
+            </button>
+          )}
+          {isExcluded ? (
+            <button
+              onClick={handleRestore}
+              disabled={excluding}
+              className="text-xs text-primary font-medium hover:underline disabled:opacity-50"
+            >
+              Restore
+            </button>
+          ) : (
+            <button
+              onClick={() => setShowExcludeConfirm(true)}
+              className="text-xs text-danger font-medium hover:underline"
+            >
+              Exclude
+            </button>
+          )}
+        </div>
       </div>
+
+      {/* ── Exclude confirm ─────────────────────────────────── */}
+      {showExcludeConfirm && (
+        <div className="bg-danger/5 border border-danger/20 rounded-2xl p-4 flex items-center gap-3">
+          <Trash2 size={16} className="text-danger shrink-0" />
+          <p className="text-sm text-textPrimary flex-1">
+            Exclude this workout? It will be hidden from your history. You can
+            restore it anytime.
+          </p>
+          <button
+            onClick={() => setShowExcludeConfirm(false)}
+            className="text-xs text-textSecondary hover:text-textPrimary"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleExclude}
+            disabled={excluding}
+            className="text-xs font-semibold text-white bg-danger px-3 py-1.5 rounded-lg hover:bg-danger/90 disabled:opacity-50"
+          >
+            {excluding ? "Excluding..." : "Exclude"}
+          </button>
+        </div>
+      )}
+
+      {/* ── Edit Panel ──────────────────────────────────────── */}
+      {isEditing && (
+        <div className="bg-card rounded-2xl border border-border p-5">
+          <h2 className="text-sm font-semibold text-textPrimary mb-1">
+            Edit Workout Data
+          </h2>
+          <p className="text-xs text-textSecondary mb-4">
+            Overrides are layered on top of HealthKit data. Original data is
+            preserved and can be restored anytime.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="text-xs text-textSecondary block mb-1">
+                Distance (mi)
+              </label>
+              <input
+                type="number"
+                step="0.01"
+                value={formDistance}
+                onChange={(e) => setFormDistance(e.target.value)}
+                placeholder={workout.distanceMiles.toFixed(2)}
+                className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-surface text-textPrimary focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+              <span className="text-[10px] text-textSecondary mt-0.5 block">
+                Original: {workout.distanceMiles.toFixed(2)} mi
+              </span>
+            </div>
+            <div>
+              <label className="text-xs text-textSecondary block mb-1">
+                Duration (H:MM:SS or M:SS)
+              </label>
+              <input
+                type="text"
+                value={formDuration}
+                onChange={(e) => setFormDuration(e.target.value)}
+                placeholder={formatDuration(workout.durationSeconds)}
+                className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-surface text-textPrimary focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+              <span className="text-[10px] text-textSecondary mt-0.5 block">
+                Original: {formatDuration(workout.durationSeconds)}
+              </span>
+            </div>
+          </div>
+
+          {workout.isRunLike && (
+            <div className="mt-4">
+              <label className="text-xs text-textSecondary block mb-1.5">
+                Run Type
+              </label>
+              <div className="flex gap-2 flex-wrap">
+                {["Run", "Treadmill Run", "OTF", "Long Run"].map((type) => (
+                  <button
+                    key={type}
+                    onClick={() => setFormRunType(type)}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-full transition-colors ${
+                      formRunType === type
+                        ? "bg-primary text-white"
+                        : "border border-border text-textSecondary hover:text-textPrimary"
+                    }`}
+                  >
+                    {type}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {previewPace && (formDistance || formDuration) && (
+            <p className="text-sm text-primary font-medium mt-3">
+              New pace: {previewPace} /mi
+            </p>
+          )}
+
+          <div className="flex gap-2 mt-4 pt-4 border-t border-border">
+            <button
+              onClick={() => setIsEditing(false)}
+              className="px-4 py-2 text-sm text-textSecondary border border-border rounded-lg hover:bg-surface transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="px-4 py-2 text-sm font-semibold text-white bg-primary rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50"
+            >
+              {saving ? "Saving..." : "Save Changes"}
+            </button>
+            {hasOverrides && (
+              <button
+                onClick={handleReset}
+                disabled={saving}
+                className="flex items-center gap-1 px-4 py-2 text-sm text-textSecondary border border-border rounded-lg hover:bg-surface transition-colors disabled:opacity-50 ml-auto"
+              >
+                <RotateCcw size={14} />
+                Reset to Original
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ── Stats Grid ──────────────────────────────────────── */}
       <div className="bg-card rounded-2xl border border-border p-5">
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-4 gap-5">
           <StatBlock
             label="Distance"
-            value={workout.distanceMiles > 0 ? workout.distanceMiles.toFixed(2) : "—"}
-            unit={workout.distanceMiles > 0 ? "mi" : undefined}
+            value={
+              displayWorkout.distanceMiles > 0
+                ? displayWorkout.distanceMiles.toFixed(2)
+                : "\u2014"
+            }
+            unit={displayWorkout.distanceMiles > 0 ? "mi" : undefined}
           />
           <StatBlock
             label="Pace"
             value={
-              workout.avgPaceSecPerMile
-                ? formatPace(workout.avgPaceSecPerMile)
-                : "—"
+              displayWorkout.avgPaceSecPerMile
+                ? formatPace(displayWorkout.avgPaceSecPerMile)
+                : "\u2014"
             }
-            unit={workout.avgPaceSecPerMile ? "/mi" : undefined}
+            unit={displayWorkout.avgPaceSecPerMile ? "/mi" : undefined}
           />
           <StatBlock
             label="Duration"
-            value={formatDuration(workout.durationSeconds)}
+            value={formatDuration(displayWorkout.durationSeconds)}
           />
           <StatBlock
             label="Avg HR"
             value={
-              workout.avgHeartRate
-                ? Math.round(workout.avgHeartRate).toString()
-                : "—"
+              displayWorkout.avgHeartRate
+                ? Math.round(displayWorkout.avgHeartRate).toString()
+                : "\u2014"
             }
-            unit={workout.avgHeartRate ? "bpm" : undefined}
+            unit={displayWorkout.avgHeartRate ? "bpm" : undefined}
           />
           <StatBlock
             label="Calories"
             value={
-              workout.calories
-                ? Math.round(workout.calories).toString()
-                : "—"
+              displayWorkout.calories
+                ? Math.round(displayWorkout.calories).toString()
+                : "\u2014"
             }
-            unit={workout.calories ? "kcal" : undefined}
+            unit={displayWorkout.calories ? "kcal" : undefined}
           />
           <div className="flex flex-col gap-0.5">
             <span className="text-xs text-gray-500 uppercase tracking-wide">
@@ -222,7 +532,7 @@ export default function RunDetailPage() {
             <MetricBadge
               label="Eff"
               value={effStr}
-              level={effStr === "—" ? "neutral" : effBadgeLevel}
+              level={effStr === "\u2014" ? "neutral" : effBadgeLevel}
             />
           </div>
           <div className="flex flex-col gap-0.5">
@@ -232,17 +542,17 @@ export default function RunDetailPage() {
             <MetricBadge
               label="Drift"
               value={driftStr}
-              level={driftStr === "—" ? "neutral" : driftBadgeLevel}
+              level={driftStr === "\u2014" ? "neutral" : driftBadgeLevel}
             />
           </div>
           <StatBlock
             label="Cadence"
             value={
-              workout.cadenceSPM != null
-                ? Math.round(workout.cadenceSPM).toString()
-                : "—"
+              displayWorkout.cadenceSPM != null
+                ? Math.round(displayWorkout.cadenceSPM).toString()
+                : "\u2014"
             }
-            unit={workout.cadenceSPM != null ? "spm" : undefined}
+            unit={displayWorkout.cadenceSPM != null ? "spm" : undefined}
           />
         </div>
 
@@ -251,11 +561,11 @@ export default function RunDetailPage() {
           <StatBlock
             label="Elevation Gain"
             value={
-              workout.elevationGainM != null
-                ? Math.round(workout.elevationGainM).toString()
-                : "—"
+              displayWorkout.elevationGainM != null
+                ? Math.round(displayWorkout.elevationGainM).toString()
+                : "\u2014"
             }
-            unit={workout.elevationGainM != null ? "m" : undefined}
+            unit={displayWorkout.elevationGainM != null ? "m" : undefined}
           />
           <StatBlock
             label="Date & Time"
@@ -267,7 +577,7 @@ export default function RunDetailPage() {
 
       {/* ── Route Map ───────────────────────────────────────── */}
       <div className="bg-card rounded-2xl border border-border overflow-hidden">
-        {workout.hasRoute ? (
+        {displayWorkout.hasRoute ? (
           routeLoading ? (
             <div className="h-64 sm:h-96 bg-surface animate-pulse" />
           ) : routePoints.length > 0 ? (

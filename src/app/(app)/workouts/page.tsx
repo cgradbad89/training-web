@@ -17,6 +17,8 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { StatBlock } from "@/components/ui/StatBlock";
 import { useAuth } from "@/hooks/useAuth";
 import { fetchHealthWorkouts } from "@/services/healthWorkouts";
+import { fetchAllOverrides } from "@/services/workoutOverrides";
+import { type WorkoutOverride } from "@/types/workoutOverride";
 import { formatDuration } from "@/utils/pace";
 import { weekStart } from "@/utils/dates";
 import { type HealthWorkout } from "@/types/healthWorkout";
@@ -319,6 +321,7 @@ export default function WorkoutsPage() {
   const uid = user?.uid ?? null;
 
   const [allWorkouts, setAllWorkouts] = useState<HealthWorkout[]>([]);
+  const [overrides, setOverrides] = useState<Record<string, WorkoutOverride>>({});
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<TabKey>("all");
 
@@ -328,9 +331,18 @@ export default function WorkoutsPage() {
   useEffect(() => {
     if (!uid) return;
     setLoading(true);
-    fetchHealthWorkouts(uid, { limitCount: 500 })
-      .then((wkts) => {
-        setAllWorkouts(wkts.filter((w) => !w.isRunLike));
+    Promise.all([
+      fetchHealthWorkouts(uid, { limitCount: 500 }),
+      fetchAllOverrides(uid),
+    ])
+      .then(([wkts, fetchedOverrides]) => {
+        setOverrides(fetchedOverrides);
+        // Filter to non-runs, exclude overridden-excluded workouts
+        setAllWorkouts(
+          wkts.filter(
+            (w) => !w.isRunLike && !fetchedOverrides[w.workoutId]?.isExcluded
+          )
+        );
       })
       .catch(console.error)
       .finally(() => setLoading(false));
