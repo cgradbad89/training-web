@@ -23,6 +23,7 @@ import {
   type RunningShoe,
   type ShoeAutoAssignRule,
 } from "@/types/shoe";
+import { evaluateAutoAssignRules } from "@/utils/shoeAutoAssign";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -1112,6 +1113,10 @@ export default function ShoesPage() {
     return () => { document.body.style.overflow = ""; };
   }, [editingShoe, editingRule, deleteConfirm, runsPanel]);
 
+  const [autoAssignedCount, setAutoAssignedCount] = useState(0);
+  const [autoAssignedMap, setAutoAssignedMap] = useState<Record<string, string>>({});
+  const [savingAuto, setSavingAuto] = useState(false);
+
   const loadAll = useCallback(async () => {
     if (!uid) return;
     const [fetchedShoes, fetchedActs, fetchedAssign] = await Promise.all([
@@ -1121,7 +1126,12 @@ export default function ShoesPage() {
     ]);
     setShoes(fetchedShoes);
     setActivities(fetchedActs);
-    setAssignments(fetchedAssign);
+    // Compute auto-assignments
+    const autoAssigned = evaluateAutoAssignRules(fetchedActs, fetchedShoes, fetchedAssign);
+    setAutoAssignedMap(autoAssigned);
+    setAutoAssignedCount(Object.keys(autoAssigned).length);
+    // Merge: manual assignments take precedence
+    setAssignments({ ...autoAssigned, ...fetchedAssign });
   }, [uid]);
 
   useEffect(() => {
@@ -1297,6 +1307,36 @@ export default function ShoesPage() {
         onDeleteRule={handleDeleteRule}
         onToggleRule={handleToggleRule}
       />
+
+      {/* Save auto-assignments */}
+      {autoAssignedCount > 0 && (
+        <div className="bg-card rounded-2xl border border-border p-5 mt-4">
+          <p className="text-sm font-semibold text-textPrimary">
+            {autoAssignedCount} {autoAssignedCount === 1 ? "run" : "runs"} matched auto-assignment rules
+          </p>
+          <p className="text-xs text-textSecondary mt-1 mb-3">
+            These runs have been temporarily assigned based on your rules. Save them to make the assignments permanent.
+          </p>
+          <button
+            onClick={async () => {
+              if (!uid) return;
+              setSavingAuto(true);
+              try {
+                await saveManualAssignments(uid, autoAssignedMap);
+                setAutoAssignedCount(0);
+                setAutoAssignedMap({});
+              } catch (err) {
+                console.error(err);
+              }
+              setSavingAuto(false);
+            }}
+            disabled={savingAuto}
+            className="px-4 py-2 text-sm font-semibold text-white bg-primary rounded-xl hover:bg-primary/90 transition-colors disabled:opacity-50"
+          >
+            {savingAuto ? "Saving..." : "Save Auto-Assignments"}
+          </button>
+        </div>
+      )}
 
       {/* Modals */}
       {editingShoe !== null && (

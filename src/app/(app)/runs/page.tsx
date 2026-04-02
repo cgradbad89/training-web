@@ -36,6 +36,7 @@ import {
 } from "@/utils/activityTypes";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { type RunningShoe } from "@/types/shoe";
+import { evaluateAutoAssignRules } from "@/utils/shoeAutoAssign";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -529,9 +530,15 @@ export default function RunsPage() {
       fetchManualShoeAssignmentsMap(uid),
     ])
       .then(([wkts, fetchedShoes, assignments]) => {
-        setAllRuns(wkts.filter((w) => w.isRunLike));
+        const runs = wkts.filter((w) => w.isRunLike);
+        setAllRuns(runs);
         setShoes(fetchedShoes);
-        setManualAssignments(assignments);
+        // Compute auto-assignments for runs without manual assignments
+        const autoAssigned = evaluateAutoAssignRules(runs, fetchedShoes, assignments);
+        // Merge: manual assignments take precedence over auto
+        setManualAssignments({ ...autoAssigned, ...assignments });
+        // TODO: Persist auto-assignments to Firestore when the user
+        // confirms them, or add a "Apply auto-assignments" button on the shoes page
       })
       .catch(console.error)
       .finally(() => setLoading(false));
