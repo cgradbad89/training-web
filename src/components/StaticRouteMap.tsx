@@ -16,7 +16,8 @@ export function StaticRouteMap({
   className,
   onClick,
 }: StaticRouteMapProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const mapDivRef = useRef<HTMLDivElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mapRef = useRef<any>(null);
   const [visible, setVisible] = useState(() => isRouteCached(workoutId));
@@ -24,60 +25,54 @@ export function StaticRouteMap({
     "idle" | "loading" | "loaded" | "error"
   >("idle");
 
-  // IntersectionObserver — only load when scrolled into view
+  // IntersectionObserver on outer wrapper
   useEffect(() => {
+    if (visible) return;
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (entry.isIntersecting) setVisible(true);
       },
       { threshold: 0.1 }
     );
-    if (containerRef.current) observer.observe(containerRef.current);
+    if (wrapperRef.current) observer.observe(wrapperRef.current);
     return () => observer.disconnect();
-  }, []);
+  }, [visible]);
 
-  // Fetch route and initialize Leaflet when visible
+  // Initialize Leaflet when visible
   useEffect(() => {
     if (!visible || status !== "idle") return;
-    setStatus("loading");
+    if (!mapDivRef.current) return;
 
+    setStatus("loading");
     let cancelled = false;
 
     async function init() {
       try {
         const points = await getRoutePoints(uid, workoutId);
-        if (cancelled) return;
+        if (cancelled || !mapDivRef.current) return;
 
         if (points.length < 2) {
           setStatus("error");
           return;
         }
 
-        // Dynamic import — SSR safe
-        const L = (await import("leaflet")).default;
-        if (cancelled || !containerRef.current) return;
+        // Wait for browser paint so mapDivRef has real dimensions
+        await new Promise((r) => requestAnimationFrame(r));
+        await new Promise((r) => requestAnimationFrame(r));
+        if (cancelled || !mapDivRef.current) return;
 
-        // Ensure container has dimensions before Leaflet init
-        await new Promise((r) => setTimeout(r, 50));
-        if (cancelled || !containerRef.current) return;
-
-        const rect = containerRef.current.getBoundingClientRect();
-        if (rect.height === 0) {
-          containerRef.current.style.minHeight = "192px";
-          await new Promise((r) => setTimeout(r, 50));
-        }
-
-        // Destroy existing map if any
+        // Destroy previous map instance if any
         if (mapRef.current) {
           mapRef.current.remove();
           mapRef.current = null;
         }
 
-        const latlngs = points.map(
-          (p) => [p.lat, p.lng] as [number, number]
-        );
+        const L = (await import("leaflet")).default;
+        if (cancelled || !mapDivRef.current) return;
 
-        const map = L.map(containerRef.current, {
+        const latlngs: [number, number][] = points.map((p) => [p.lat, p.lng]);
+
+        const map = L.map(mapDivRef.current, {
           zoomControl: false,
           attributionControl: false,
           dragging: false,
@@ -92,7 +87,7 @@ export function StaticRouteMap({
 
         L.tileLayer(
           "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-          { maxZoom: 18 }
+          { maxZoom: 18, crossOrigin: true }
         ).addTo(map);
 
         const polyline = L.polyline(latlngs, {
@@ -118,16 +113,22 @@ export function StaticRouteMap({
         }).addTo(map);
 
         map.fitBounds(polyline.getBounds(), { padding: [12, 12] });
-        map.invalidateSize();
+
+        // Force Leaflet to recalculate size
+        setTimeout(() => {
+          if (mapRef.current && !cancelled) {
+            mapRef.current.invalidateSize();
+          }
+        }, 100);
 
         setStatus("loaded");
-      } catch {
+      } catch (err) {
+        console.error("[StaticRouteMap] init error:", err);
         if (!cancelled) setStatus("error");
       }
     }
 
     init();
-
     return () => {
       cancelled = true;
     };
@@ -145,22 +146,30 @@ export function StaticRouteMap({
 
   return (
     <div
-      ref={containerRef}
+      ref={wrapperRef}
       onClick={onClick}
       className={`relative overflow-hidden cursor-pointer ${className ?? ""}`}
-      style={{ background: "#e8e8e8" }}
     >
-      {/* Loading skeleton */}
-      {status === "loading" && (
-        <div className="absolute inset-0 flex items-center justify-center bg-surface animate-pulse z-10 pointer-events-none">
-          <div className="w-6 h-6 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+      {/* Dedicated Leaflet mount target — full size, no competing handlers */}
+      <div
+        ref={mapDivRef}
+        className="absolute inset-0"
+        style={{ zIndex: 0 }}
+      />
+
+      {/* Loading overlay */}
+      {(status === "idle" || status === "loading") && (
+        <div className="absolute inset-0 flex items-center justify-center bg-gray-100 z-10 pointer-events-none">
+          {status === "loading" && (
+            <div className="w-5 h-5 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
+          )}
         </div>
       )}
 
-      {/* No route data */}
+      {/* Error state */}
       {status === "error" && (
-        <div className="absolute inset-0 flex items-center justify-center bg-surface z-10 pointer-events-none">
-          <span className="text-xs text-textSecondary">No route data</span>
+        <div className="absolute inset-0 flex items-center justify-center bg-gray-100 z-10 pointer-events-none">
+          <span className="text-xs text-gray-400">No route data</span>
         </div>
       )}
     </div>
