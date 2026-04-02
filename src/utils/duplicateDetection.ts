@@ -11,11 +11,15 @@ export interface DuplicatePair {
 export function isOtfOrHiit(a: HealthWorkout): boolean {
   const name = a.displayType.toLowerCase();
   const type = a.activityType.toLowerCase();
+  const source = (a.sourceName ?? "").toLowerCase();
   return (
     name.includes("orange") ||
     name.includes("otf") ||
     type === "high_intensity_interval_training" ||
-    type.includes("hiit")
+    type.includes("hiit") ||
+    source.includes("orangetheory") ||
+    source.includes("orange theory") ||
+    source.includes("otf")
   );
 }
 
