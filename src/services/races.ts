@@ -11,6 +11,10 @@ import { COLLECTIONS } from "@/lib/firestore";
 import { type Race } from "@/types";
 import { toDate } from "@/utils/dates";
 
+function stripUndefined<T extends object>(obj: T): T {
+  return JSON.parse(JSON.stringify(obj)) as T;
+}
+
 export async function fetchRaces(uid: string): Promise<Race[]> {
   const snap = await getDocs(collection(db, COLLECTIONS.halfMarathonRaces(uid)));
   return snap.docs.map((d) => {
@@ -30,7 +34,7 @@ export async function createRace(
 ): Promise<string> {
   const id = crypto.randomUUID();
   const race: Race = { ...data, id, createdAt: new Date().toISOString() };
-  await setDoc(doc(db, COLLECTIONS.halfMarathonRaces(uid), id), race);
+  await setDoc(doc(db, COLLECTIONS.halfMarathonRaces(uid), id), stripUndefined(race));
   return id;
 }
 
@@ -41,7 +45,7 @@ export async function updateRace(
 ): Promise<void> {
   await setDoc(
     doc(db, COLLECTIONS.halfMarathonRaces(uid), raceId),
-    data,
+    stripUndefined(data),
     { merge: true }
   );
 }
