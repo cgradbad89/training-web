@@ -8,6 +8,7 @@ import {
   Bike,
   Zap,
   Activity,
+  EyeOff,
   type LucideProps,
 } from "lucide-react";
 
@@ -23,6 +24,7 @@ import { formatDuration } from "@/utils/pace";
 import { weekStart } from "@/utils/dates";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { WorkoutDetailModal } from "@/components/WorkoutDetailModal";
+import { ExcludedItemsModal } from "@/components/ExcludedItemsModal";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -325,8 +327,10 @@ export default function WorkoutsPage() {
 
   const [allWorkouts, setAllWorkouts] = useState<HealthWorkout[]>([]);
   const [overrides, setOverrides] = useState<Record<string, WorkoutOverride>>({});
+  const [excludedWorkouts, setExcludedWorkouts] = useState<HealthWorkout[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedWorkout, setSelectedWorkout] = useState<HealthWorkout | null>(null);
+  const [showExcludedModal, setShowExcludedModal] = useState(false);
   const [activeTab, setActiveTab] = useState<TabKey>("all");
 
   useEffect(() => {
@@ -346,11 +350,12 @@ export default function WorkoutsPage() {
     ])
       .then(([wkts, fetchedOverrides]) => {
         setOverrides(fetchedOverrides);
-        // Filter to non-runs, exclude overridden-excluded workouts
+        const nonRuns = wkts.filter((w) => !w.isRunLike);
         setAllWorkouts(
-          wkts.filter(
-            (w) => !w.isRunLike && !fetchedOverrides[w.workoutId]?.isExcluded
-          )
+          nonRuns.filter((w) => !fetchedOverrides[w.workoutId]?.isExcluded)
+        );
+        setExcludedWorkouts(
+          nonRuns.filter((w) => fetchedOverrides[w.workoutId]?.isExcluded === true)
         );
       })
       .catch(console.error)
@@ -417,8 +422,21 @@ export default function WorkoutsPage() {
       {/* Row 2: Year summary stats */}
       <YearSummary workouts={yearWorkouts} year={selectedYear} />
 
-      {/* Row 3: Type filter tabs */}
-      <TabStrip active={activeTab} onChange={setActiveTab} />
+      {/* Row 3: Type filter tabs + excluded button */}
+      <div className="flex items-center gap-3">
+        <div className="flex-1">
+          <TabStrip active={activeTab} onChange={setActiveTab} />
+        </div>
+        {excludedWorkouts.length > 0 && (
+          <button
+            onClick={() => setShowExcludedModal(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface border border-border text-xs font-medium text-textSecondary hover:text-textPrimary hover:border-textSecondary transition-colors shrink-0"
+          >
+            <EyeOff className="w-3.5 h-3.5" />
+            {excludedWorkouts.length} Excluded
+          </button>
+        )}
+      </div>
 
       {/* Row 4: Workout list grouped by week */}
       {filteredWorkouts.length === 0 ? (
@@ -464,6 +482,30 @@ export default function WorkoutsPage() {
                 prev.filter((w) => w.workoutId !== workoutId)
               );
               setSelectedWorkout(null);
+            }
+          }}
+        />
+      )}
+
+      {uid && (
+        <ExcludedItemsModal
+          isOpen={showExcludedModal}
+          onClose={() => setShowExcludedModal(false)}
+          excludedItems={excludedWorkouts}
+          userId={uid}
+          onRestored={(workoutId) => {
+            setOverrides((prev) => {
+              const updated = { ...prev };
+              delete updated[workoutId];
+              return updated;
+            });
+            // Move restored workout back to visible list
+            const restored = excludedWorkouts.find((w) => w.workoutId === workoutId);
+            if (restored) {
+              setAllWorkouts((prev) => [...prev, restored]);
+              setExcludedWorkouts((prev) =>
+                prev.filter((w) => w.workoutId !== workoutId)
+              );
             }
           }}
         />

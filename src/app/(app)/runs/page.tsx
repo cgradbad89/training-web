@@ -8,7 +8,7 @@ import React, {
   useCallback,
 } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight, AlertTriangle, RotateCcw } from "lucide-react";
+import { ChevronLeft, ChevronRight, AlertTriangle, EyeOff } from "lucide-react";
 
 import { MetricBadge } from "@/components/ui/MetricBadge";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
@@ -37,7 +37,8 @@ import {
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { type RunningShoe } from "@/types/shoe";
 import { evaluateAutoAssignRules } from "@/utils/shoeAutoAssign";
-import { fetchAllOverrides, restoreWorkout } from "@/services/workoutOverrides";
+import { fetchAllOverrides } from "@/services/workoutOverrides";
+import { ExcludedItemsModal } from "@/components/ExcludedItemsModal";
 import { type WorkoutOverride, applyOverride } from "@/types/workoutOverride";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -718,7 +719,16 @@ export default function RunsPage() {
       {/* ── Right Main Area ──────────────────────────────────── */}
       <main className="flex-1 min-w-0">
         {/* Controls row */}
-        <div className="flex items-center justify-end mb-4">
+        <div className="flex items-center justify-end gap-3 mb-4">
+          {excludedRuns.length > 0 && (
+            <button
+              onClick={() => setShowExcluded(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface border border-border text-xs font-medium text-textSecondary hover:text-textPrimary hover:border-textSecondary transition-colors"
+            >
+              <EyeOff className="w-3.5 h-3.5" />
+              {excludedRuns.length} Excluded
+            </button>
+          )}
           <span className="text-sm text-textSecondary tabular-nums">
             {filteredRuns.length} {filteredRuns.length === 1 ? "run" : "runs"}{" "}
             &middot; {totalYearMiles.toFixed(1)} miles
@@ -787,57 +797,23 @@ export default function RunsPage() {
           ))
         )}
 
-        {/* Excluded workouts */}
-        {excludedRuns.length > 0 && (
-          <div className="mt-8 border-t border-border pt-4">
-            <button
-              onClick={() => setShowExcluded(!showExcluded)}
-              className="text-sm text-textSecondary hover:text-textPrimary transition-colors"
-            >
-              {showExcluded ? "Hide" : "Show"} {excludedRuns.length} excluded{" "}
-              {excludedRuns.length === 1 ? "workout" : "workouts"}
-            </button>
-            {showExcluded && (
-              <div className="mt-3 opacity-60 space-y-2">
-                {excludedRuns.map((run) => (
-                  <div
-                    key={run.workoutId}
-                    className="flex items-center gap-3 py-2 px-4 rounded-lg bg-card border border-border"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <span className="text-sm text-textPrimary">
-                        {run.displayType} &middot;{" "}
-                        {new Date(run.startDate).toLocaleDateString("en-US", {
-                          month: "short",
-                          day: "numeric",
-                        })}
-                      </span>
-                      <span className="text-xs text-textSecondary ml-2">
-                        {run.distanceMiles.toFixed(2)} mi
-                      </span>
-                    </div>
-                    <button
-                      onClick={async () => {
-                        if (!uid) return;
-                        await restoreWorkout(uid, run.workoutId);
-                        setOverrides((prev) => {
-                          const next = { ...prev };
-                          delete next[run.workoutId];
-                          return next;
-                        });
-                      }}
-                      className="flex items-center gap-1 text-xs text-primary hover:underline"
-                    >
-                      <RotateCcw size={12} />
-                      Restore
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
       </main>
+
+      {uid && (
+        <ExcludedItemsModal
+          isOpen={showExcluded}
+          onClose={() => setShowExcluded(false)}
+          excludedItems={excludedRuns}
+          userId={uid}
+          onRestored={(workoutId) => {
+            setOverrides((prev) => {
+              const updated = { ...prev };
+              delete updated[workoutId];
+              return updated;
+            });
+          }}
+        />
+      )}
     </div>
   );
 }
