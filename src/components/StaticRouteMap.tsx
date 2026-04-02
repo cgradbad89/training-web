@@ -72,9 +72,12 @@ function StaticRouteMapInner({
 
   // Fetch + draw when visible
   useEffect(() => {
-    if (!visible || status !== "idle") return;
+    if (!visible) return;
+
     let cancelled = false;
-    setStatus("loading");
+
+    // Don't regress from done to loading
+    setStatus((s) => (s === "done" ? "done" : "loading"));
 
     async function draw() {
       try {
@@ -232,7 +235,7 @@ function StaticRouteMapInner({
     return () => {
       cancelled = true;
     };
-  }, [visible, uid, workoutId, status]);
+  }, [visible, uid, workoutId]);
 
   return (
     <div
