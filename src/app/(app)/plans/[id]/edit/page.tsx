@@ -177,7 +177,7 @@ function EntryForm({ initial, weekday, weekIndex, onSave, onCancel }: EntryFormP
             className={`flex-1 py-1.5 text-xs font-semibold transition-colors ${
               runType === value
                 ? "bg-primary text-white"
-                : "text-textSecondary hover:bg-surface"
+                : "bg-card text-textSecondary hover:bg-surface"
             }`}
           >
             {label}
@@ -193,7 +193,7 @@ function EntryForm({ initial, weekday, weekIndex, onSave, onCancel }: EntryFormP
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder="e.g. Easy effort with strides"
-            className="w-full text-sm border border-border rounded-lg px-2 py-1.5 bg-card text-textPrimary"
+            className="w-full text-sm border border-border rounded-lg px-2 py-1.5 bg-card text-textPrimary placeholder:text-textSecondary"
           />
         </div>
         <div className="flex items-center gap-1">
@@ -204,7 +204,7 @@ function EntryForm({ initial, weekday, weekIndex, onSave, onCancel }: EntryFormP
             placeholder="Distance"
             step="0.1"
             min="0"
-            className="flex-1 text-sm border border-border rounded-lg px-2 py-1.5 bg-card text-textPrimary"
+            className="flex-1 text-sm border border-border rounded-lg px-2 py-1.5 bg-card text-textPrimary placeholder:text-textSecondary"
           />
           <span className="text-sm text-textSecondary shrink-0">mi</span>
         </div>
@@ -214,7 +214,7 @@ function EntryForm({ initial, weekday, weekIndex, onSave, onCancel }: EntryFormP
             value={paceInput}
             onChange={(e) => setPaceInput(e.target.value)}
             placeholder="M:SS"
-            className="flex-1 text-sm border border-border rounded-lg px-2 py-1.5 bg-card text-textPrimary"
+            className="flex-1 text-sm border border-border rounded-lg px-2 py-1.5 bg-card text-textPrimary placeholder:text-textSecondary"
           />
           <span className="text-sm text-textSecondary shrink-0">/mi</span>
         </div>
@@ -226,7 +226,7 @@ function EntryForm({ initial, weekday, weekIndex, onSave, onCancel }: EntryFormP
             placeholder="HR"
             min="0"
             max="250"
-            className="flex-1 text-sm border border-border rounded-lg px-2 py-1.5 bg-card text-textPrimary"
+            className="flex-1 text-sm border border-border rounded-lg px-2 py-1.5 bg-card text-textPrimary placeholder:text-textSecondary"
           />
           <span className="text-sm text-textSecondary shrink-0">bpm</span>
         </div>
@@ -236,7 +236,7 @@ function EntryForm({ initial, weekday, weekIndex, onSave, onCancel }: EntryFormP
             value={notes}
             onChange={(e) => setNotes(e.target.value.slice(0, 200))}
             placeholder="Notes (optional)"
-            className="w-full text-sm border border-border rounded-lg px-2 py-1.5 bg-card text-textPrimary"
+            className="w-full text-sm border border-border rounded-lg px-2 py-1.5 bg-card text-textPrimary placeholder:text-textSecondary"
           />
         </div>
       </div>
@@ -302,11 +302,11 @@ function WeekAccordion({
   }
 
   return (
-    <div className="rounded-xl border border-border overflow-hidden mb-3">
+    <div className="rounded-xl border border-border overflow-hidden mb-3 bg-card">
       {/* Accordion header */}
       <button
         onClick={onToggle}
-        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-surface/50 transition-colors text-left"
+        className="w-full flex items-center gap-3 px-4 py-3 bg-card hover:bg-surface transition-colors text-left"
       >
         <div className="flex-1">
           <span className="text-sm font-semibold text-textPrimary">
@@ -347,7 +347,7 @@ function WeekAccordion({
                 className={weekday < 7 ? "border-b border-border" : ""}
               >
                 {/* Day row */}
-                <div className="flex items-center gap-3 py-3 px-4 hover:bg-surface/30 group min-h-[52px]">
+                <div className="flex items-center gap-3 py-3 px-4 bg-card hover:bg-surface/50 group min-h-[52px]">
                   {/* Left: day + date */}
                   <div className="w-14 shrink-0">
                     <div className="text-xs font-bold text-textSecondary">
@@ -634,7 +634,7 @@ export default function PlanEditPage() {
       </div>
 
       {/* Metadata bar */}
-      <div className="border-b border-border bg-card/50">
+      <div className="border-b border-border bg-card">
         <div className="flex items-center gap-4 px-4 py-2 max-w-4xl mx-auto w-full text-xs text-textSecondary flex-wrap">
           <span>{fmtDate(new Date(plan.startDate + "T00:00:00"))}</span>
           <span className="text-border">·</span>
