@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import { ChevronDown, ChevronUp, Map as MapIcon } from "lucide-react";
+import { ChevronDown, ChevronUp, Map as MapIcon, Plus, Trash2 } from "lucide-react";
 
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -12,10 +12,13 @@ import { useAuth } from "@/hooks/useAuth";
 import { fetchHealthWorkouts } from "@/services/healthWorkouts";
 import { fetchRoutePoints, type RoutePoint } from "@/services/routes";
 import { type HealthWorkout } from "@/types/healthWorkout";
+import { type CreatedRoute } from "@/types/createdRoute";
+import { fetchCreatedRoutes, saveCreatedRoute, deleteCreatedRoute } from "@/services/createdRoutes";
 import { formatPace, formatDuration } from "@/utils/pace";
 import { getRouteStartPoint, haversineMeters } from "@/utils/routeCache";
 
 const RunMap = dynamic(() => import("@/components/RunMap"), { ssr: false });
+const RouteDrawModal = dynamic(() => import("@/components/RouteDrawModal"), { ssr: false });
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -417,6 +420,41 @@ function RouteDetailModal({ cluster, uid, onClose }: RouteDetailModalProps) {
   );
 }
 
+// ─── Created Route Preview (SVG) ─────────────────────────────────────────────
+
+function CreatedRoutePreview({ route }: { route: CreatedRoute }) {
+  const pts = route.waypoints;
+  if (pts.length < 2) return null;
+
+  const lats = pts.map((p) => p.lat);
+  const lngs = pts.map((p) => p.lng);
+  const minLat = Math.min(...lats);
+  const maxLat = Math.max(...lats);
+  const minLng = Math.min(...lngs);
+  const maxLng = Math.max(...lngs);
+
+  const pad = 0.1;
+  const rangeX = maxLng - minLng || 0.001;
+  const rangeY = maxLat - minLat || 0.001;
+  const w = 200;
+  const h = 120;
+
+  const toX = (lng: number) => pad * w + ((lng - minLng) / rangeX) * w * (1 - 2 * pad);
+  const toY = (lat: number) => h - (pad * h + ((lat - minLat) / rangeY) * h * (1 - 2 * pad));
+
+  const pathD = pts
+    .map((p, i) => `${i === 0 ? "M" : "L"}${toX(p.lng).toFixed(1)},${toY(p.lat).toFixed(1)}`)
+    .join(" ");
+
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-32 rounded-t-2xl bg-surface">
+      <path d={pathD} fill="none" stroke="#007AFF" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx={toX(pts[0].lng)} cy={toY(pts[0].lat)} r="5" fill="#34C759" stroke="#fff" strokeWidth="1.5" />
+      <circle cx={toX(pts[pts.length - 1].lng)} cy={toY(pts[pts.length - 1].lat)} r="5" fill="#FF3B30" stroke="#fff" strokeWidth="1.5" />
+    </svg>
+  );
+}
+
 // ─── Page ────────────────────────────────────────────────────────────────────
 
 export default function RoutesPage() {
@@ -431,6 +469,8 @@ export default function RoutesPage() {
   );
   const [clusters, setClusters] = useState<RouteCluster[]>([]);
   const [clusteringLoading, setClusteringLoading] = useState(false);
+  const [createdRoutes, setCreatedRoutes] = useState<CreatedRoute[]>([]);
+  const [showDrawModal, setShowDrawModal] = useState(false);
 
   useEffect(() => {
     if (!uid) return;
@@ -453,6 +493,30 @@ export default function RoutesPage() {
       })
       .catch(() => setClusteringLoading(false));
   }, [runs, uid]);
+
+  // Fetch created routes
+  useEffect(() => {
+    if (!uid) return;
+    fetchCreatedRoutes(uid).then(setCreatedRoutes).catch(console.error);
+  }, [uid]);
+
+  const handleSaveRoute = async (data: {
+    name: string;
+    waypoints: { lat: number; lng: number }[];
+    distanceMiles: number;
+  }) => {
+    if (!uid) return;
+    await saveCreatedRoute(uid, data);
+    const updated = await fetchCreatedRoutes(uid);
+    setCreatedRoutes(updated);
+    setShowDrawModal(false);
+  };
+
+  const handleDeleteRoute = async (routeId: string) => {
+    if (!uid) return;
+    await deleteCreatedRoute(uid, routeId);
+    setCreatedRoutes((prev) => prev.filter((r) => r.id !== routeId));
+  };
 
   const filteredClusters = useMemo(
     () =>
@@ -530,27 +594,77 @@ export default function RoutesPage() {
         </div>
       )}
 
-      {/* Created Routes — coming soon */}
+      {/* Created Routes */}
       <div className="mt-10">
-        <div className="flex items-center gap-3 mb-4">
+        <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-bold text-textPrimary">
             Created Routes
           </h2>
-          <span className="text-xs bg-surface text-textSecondary px-2 py-0.5 rounded-full border border-border">
-            Coming Soon
-          </span>
+          <button
+            onClick={() => setShowDrawModal(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-white text-xs font-semibold hover:bg-primary/90 transition-colors"
+          >
+            <Plus size={14} />
+            New Route
+          </button>
         </div>
-        <div className="bg-card rounded-2xl border border-border p-8 text-center">
-          <MapIcon className="w-10 h-10 text-textSecondary mx-auto mb-3" />
-          <p className="text-sm font-medium text-textPrimary mb-1">
-            Plan your own routes
-          </p>
-          <p className="text-xs text-textSecondary max-w-xs mx-auto">
-            Draw custom routes on a map, set distance targets, and save them for
-            future runs.
-          </p>
-        </div>
+
+        {createdRoutes.length === 0 ? (
+          <div className="bg-card rounded-2xl border border-border p-8 text-center">
+            <MapIcon className="w-10 h-10 text-textSecondary mx-auto mb-3" />
+            <p className="text-sm font-medium text-textPrimary mb-1">
+              No created routes yet
+            </p>
+            <p className="text-xs text-textSecondary max-w-xs mx-auto">
+              Click &ldquo;New Route&rdquo; to draw a custom route on the map.
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {createdRoutes.map((route) => (
+              <div
+                key={route.id}
+                className="bg-card rounded-2xl border border-border overflow-hidden shadow-sm"
+              >
+                <CreatedRoutePreview route={route} />
+                <div className="p-4 flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-semibold text-textPrimary truncate">
+                      {route.name}
+                    </span>
+                    <span className="text-xs font-semibold bg-primary/10 text-primary px-2 py-0.5 rounded-full ml-2 shrink-0">
+                      {route.distanceMiles.toFixed(2)} mi
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-textSecondary">
+                      {new Date(route.createdAt).toLocaleDateString("en-US", {
+                        month: "short",
+                        day: "numeric",
+                        year: "numeric",
+                      })}
+                    </span>
+                    <button
+                      onClick={() => handleDeleteRoute(route.id)}
+                      className="text-textSecondary hover:text-danger transition-colors p-1"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
+
+      {/* Route Draw Modal */}
+      {showDrawModal && (
+        <RouteDrawModal
+          onSave={handleSaveRoute}
+          onClose={() => setShowDrawModal(false)}
+        />
+      )}
 
       {/* Expanded route modal */}
       {expandedCluster && uid && (
