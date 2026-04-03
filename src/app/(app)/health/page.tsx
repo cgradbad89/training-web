@@ -77,57 +77,79 @@ function isValidWeight(w: number | undefined): w is number {
 type MetricStatus = "green" | "yellow" | "red" | "neutral";
 
 function getStatus(
-  metric: string,
+  metric: keyof HealthMetric,
   value: number | undefined | null
 ): MetricStatus {
   if (value === undefined || value === null || !isFinite(value))
     return "neutral";
 
   switch (metric) {
-    case "weight":
+    // Weight: ≤170 green, ≤173 yellow, >173 red
+    case "weight_lbs":
       if (value <= 170) return "green";
       if (value <= 173) return "yellow";
       return "red";
+
+    // BMI: ≤24.9 green, ≤26 yellow, >26 red
     case "bmi":
-      if (value < 25) return "green";
-      if (value < 27) return "yellow";
+      if (value <= 24.9) return "green";
+      if (value <= 26) return "yellow";
       return "red";
+
+    // Resting HR: ≤67 green, ≤73 yellow (68-73 range), >73 red
     case "resting_hr":
-      if (value <= 60) return "green";
-      if (value <= 70) return "yellow";
+      if (value <= 67) return "green";
+      if (value <= 73) return "yellow";
       return "red";
+
+    // Steps: ≥10000 green, ≥7000 yellow, <7000 red
     case "steps":
       if (value >= 10000) return "green";
       if (value >= 7000) return "yellow";
       return "red";
+
+    // Exercise mins: ≥45 green, ≥30 yellow, <30 red
     case "exercise_mins":
-      if (value >= 30) return "green";
-      if (value >= 15) return "yellow";
+      if (value >= 45) return "green";
+      if (value >= 30) return "yellow";
       return "red";
+
+    // Move calories: ≥800 green, ≥600 yellow, <600 red
     case "move_calories":
-      if (value >= 500) return "green";
-      if (value >= 300) return "yellow";
+      if (value >= 800) return "green";
+      if (value >= 600) return "yellow";
       return "red";
+
+    // Stand hours: ≥12 green, ≥8 yellow, <8 red
     case "stand_hours":
       if (value >= 12) return "green";
       if (value >= 8) return "yellow";
       return "red";
-    case "sleep":
+
+    // Sleep hours: ≥7 green, ≥6 yellow, <6 red
+    case "sleep_total_hours":
       if (value >= 7) return "green";
       if (value >= 6) return "yellow";
       return "red";
-    case "awake":
-      if (value <= 15) return "green";
-      if (value <= 30) return "yellow";
+
+    // Sleep awake mins: ≤20 green, ≤40 yellow, >40 red
+    case "sleep_awake_mins":
+      if (value <= 20) return "green";
+      if (value <= 40) return "yellow";
       return "red";
+
+    // Brush count: ≥2 green, ≥1 yellow, <1 red
     case "brush_count":
       if (value >= 2) return "green";
       if (value >= 1) return "yellow";
       return "red";
-    case "brush_time":
+
+    // Brush duration: ≥2 mins green, ≥1.5 yellow, <1.5 red
+    case "brush_avg_duration_mins":
       if (value >= 2) return "green";
-      if (value >= 1) return "yellow";
+      if (value >= 1.5) return "yellow";
       return "red";
+
     default:
       return "neutral";
   }
@@ -245,6 +267,7 @@ function TrendChart({
   refLabel,
   type = "line",
   yDomain,
+  yTickFormatter,
 }: {
   data: { date: string; value: number | undefined }[];
   label: string;
@@ -254,6 +277,7 @@ function TrendChart({
   refLabel?: string;
   type?: "line" | "bar";
   yDomain?: [number, number];
+  yTickFormatter?: (v: number) => string;
 }) {
   const filtered = data.filter(
     (d) => d.value !== undefined && d.value > 0
@@ -267,6 +291,7 @@ function TrendChart({
   }
 
   const fmt = formatter ?? ((v: number) => String(v));
+  const yFmt = yTickFormatter ?? fmt;
   const chartMargin = { top: 4, right: 8, bottom: 0, left: 8 };
 
   if (type === "bar") {
@@ -284,7 +309,7 @@ function TrendChart({
           />
           <YAxis
             tick={{ fontSize: 9, fill: "#6b7280" }}
-            tickFormatter={fmt}
+            tickFormatter={yFmt}
             axisLine={false}
             tickLine={false}
             width={52}
@@ -469,6 +494,27 @@ export default function HealthPage() {
   }));
   const weightAllDomain = weightDomain(weightAllSeries);
 
+  // All-time resting HR — filter outliers, zoom domain
+  const allTimeHRSeries = allMetrics
+    .map((m) => ({ date: m.date, value: m.resting_hr }))
+    .filter(
+      (d) => d.value !== undefined && d.value >= 40 && d.value <= 120
+    );
+  const allTimeHRValues = allMetrics
+    .map((m) => m.resting_hr)
+    .filter(
+      (v): v is number =>
+        v !== undefined && v >= 40 && v <= 120 && isFinite(v)
+    );
+  const allTimeHRMin =
+    allTimeHRValues.length > 0
+      ? Math.floor(Math.min(...allTimeHRValues) - 3)
+      : 50;
+  const allTimeHRMax =
+    allTimeHRValues.length > 0
+      ? Math.ceil(Math.max(...allTimeHRValues) + 3)
+      : 100;
+
   // Today's weight display — only show if valid
   const todayWeight = isValidWeight(today?.weight_lbs)
     ? today.weight_lbs
@@ -548,7 +594,7 @@ export default function HealthPage() {
             avg7={a7Weight}
             avg30={a30Weight}
             formatter={(v) => (v ? `${v.toFixed(1)} lb` : "—")}
-            status={getStatus("weight", todayWeight)}
+            status={getStatus("weight_lbs", todayWeight)}
           />
           <KpiCard
             icon={TrendingUp}
@@ -582,6 +628,7 @@ export default function HealthPage() {
             color={getColor("weight")}
             formatter={(v) => `${v.toFixed(1)} lb`}
             yDomain={weight90Domain}
+            yTickFormatter={(v) => `${Math.round(v)} lb`}
           />
         </div>
       </Section>
@@ -681,7 +728,7 @@ export default function HealthPage() {
             avg7={a7("sleep_total_hours")}
             avg30={a30("sleep_total_hours")}
             formatter={(v) => formatHours(v)}
-            status={getStatus("sleep", today?.sleep_total_hours)}
+            status={getStatus("sleep_total_hours", today?.sleep_total_hours)}
           />
           <KpiCard
             icon={Moon}
@@ -691,7 +738,7 @@ export default function HealthPage() {
             avg7={a7("sleep_awake_mins")}
             avg30={a30("sleep_awake_mins")}
             formatter={(v) => (v ? `${Math.round(v)} min` : "—")}
-            status={getStatus("awake", today?.sleep_awake_mins)}
+            status={getStatus("sleep_awake_mins", today?.sleep_awake_mins)}
           />
         </div>
 
@@ -731,7 +778,7 @@ export default function HealthPage() {
             avg7={a7("brush_avg_duration_mins")}
             avg30={a30("brush_avg_duration_mins")}
             formatter={(v) => (v ? `${v.toFixed(1)} min` : "—")}
-            status={getStatus("brush_time", today?.brush_avg_duration_mins)}
+            status={getStatus("brush_avg_duration_mins", today?.brush_avg_duration_mins)}
           />
         </div>
 
@@ -760,13 +807,12 @@ export default function HealthPage() {
                 Resting HR — All Time
               </p>
               <TrendChart
-                data={allMetrics.map((m) => ({
-                  date: m.date,
-                  value: m.resting_hr,
-                }))}
+                data={allTimeHRSeries}
                 label="Resting HR"
                 color={getColor("hr")}
                 formatter={(v) => `${Math.round(v)} bpm`}
+                yDomain={[allTimeHRMin, allTimeHRMax]}
+                yTickFormatter={(v) => `${Math.round(v)}`}
               />
             </div>
             <div className="bg-card rounded-2xl border border-border p-4">
@@ -779,6 +825,7 @@ export default function HealthPage() {
                 color={getColor("weight")}
                 formatter={(v) => `${v.toFixed(1)} lb`}
                 yDomain={weightAllDomain}
+                yTickFormatter={(v) => `${Math.round(v)} lb`}
               />
             </div>
           </div>
