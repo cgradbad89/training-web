@@ -13,6 +13,11 @@ const firebaseConfig = {
 
 const app: FirebaseApp = getApps().length ? getApp() : initializeApp(firebaseConfig);
 
+// users/{uid}/healthMetrics/{YYYY-MM-DD} — HealthMetric daily snapshots
+// Rule: match /users/{uid}/healthMetrics/{docId} {
+//   allow read, write: if isOwner(uid);
+// }
+
 export const db: Firestore = getFirestore(app);
 export const auth: Auth = getAuth(app);
 export default app;
