@@ -28,6 +28,7 @@ import { type HealthWorkout } from "@/types/healthWorkout";
 import { type RunningPlan } from "@/types/plan";
 import { type Race, RACE_DISTANCE_MILES, RACE_DISTANCE_LABELS } from "@/types/race";
 import { formatPace, formatMiles } from "@/utils/pace";
+import { efficiencyDisplayScore } from "@/utils/metrics";
 import { weekStart as getWeekStart } from "@/utils/dates";
 import {
   buildQualifyingEfforts,
@@ -582,9 +583,14 @@ export default function PlanInsightsPage() {
   }
 
   function avgEffStr(bucket: HealthWorkout[]): string {
+    // Use efficiencyDisplayScore (1–10 scale) matching runs page normalization
     const vals = bucket
-      .map((r) => r.efficiencyScore)
-      .filter((v): v is number => v !== null && v !== undefined && v > 0 && isFinite(v));
+      .map((r) => {
+        if (!r.avgSpeedMPS || !r.avgHeartRate || r.avgSpeedMPS <= 0 || r.avgHeartRate <= 0)
+          return null;
+        return efficiencyDisplayScore(r.avgSpeedMPS, r.avgHeartRate);
+      })
+      .filter((v): v is number => v !== null && v > 0 && isFinite(v));
     if (vals.length === 0) return "—";
     const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
     return avg.toFixed(1);
