@@ -17,6 +17,9 @@ import { fetchCreatedRoutes, saveCreatedRoute, deleteCreatedRoute } from "@/serv
 import { formatPace, formatDuration } from "@/utils/pace";
 import { getRouteStartPoint, haversineMeters } from "@/utils/routeCache";
 
+import { CreatedRouteCanvas } from "@/components/CreatedRouteCanvas";
+import { CreatedRouteDetailModal } from "@/components/CreatedRouteDetailModal";
+
 const RunMap = dynamic(() => import("@/components/RunMap"), { ssr: false });
 const RouteDrawModal = dynamic(() => import("@/components/RouteDrawModal"), { ssr: false });
 
@@ -420,41 +423,6 @@ function RouteDetailModal({ cluster, uid, onClose }: RouteDetailModalProps) {
   );
 }
 
-// ─── Created Route Preview (SVG) ─────────────────────────────────────────────
-
-function CreatedRoutePreview({ route }: { route: CreatedRoute }) {
-  const pts = route.waypoints;
-  if (pts.length < 2) return null;
-
-  const lats = pts.map((p) => p.lat);
-  const lngs = pts.map((p) => p.lng);
-  const minLat = Math.min(...lats);
-  const maxLat = Math.max(...lats);
-  const minLng = Math.min(...lngs);
-  const maxLng = Math.max(...lngs);
-
-  const pad = 0.1;
-  const rangeX = maxLng - minLng || 0.001;
-  const rangeY = maxLat - minLat || 0.001;
-  const w = 200;
-  const h = 120;
-
-  const toX = (lng: number) => pad * w + ((lng - minLng) / rangeX) * w * (1 - 2 * pad);
-  const toY = (lat: number) => h - (pad * h + ((lat - minLat) / rangeY) * h * (1 - 2 * pad));
-
-  const pathD = pts
-    .map((p, i) => `${i === 0 ? "M" : "L"}${toX(p.lng).toFixed(1)},${toY(p.lat).toFixed(1)}`)
-    .join(" ");
-
-  return (
-    <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-32 rounded-t-2xl bg-surface">
-      <path d={pathD} fill="none" stroke="#007AFF" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-      <circle cx={toX(pts[0].lng)} cy={toY(pts[0].lat)} r="5" fill="#34C759" stroke="#fff" strokeWidth="1.5" />
-      <circle cx={toX(pts[pts.length - 1].lng)} cy={toY(pts[pts.length - 1].lat)} r="5" fill="#FF3B30" stroke="#fff" strokeWidth="1.5" />
-    </svg>
-  );
-}
-
 // ─── Page ────────────────────────────────────────────────────────────────────
 
 export default function RoutesPage() {
@@ -471,6 +439,8 @@ export default function RoutesPage() {
   const [clusteringLoading, setClusteringLoading] = useState(false);
   const [createdRoutes, setCreatedRoutes] = useState<CreatedRoute[]>([]);
   const [showDrawModal, setShowDrawModal] = useState(false);
+  const [selectedCreatedRoute, setSelectedCreatedRoute] =
+    useState<CreatedRoute | null>(null);
 
   useEffect(() => {
     if (!uid) return;
@@ -624,9 +594,14 @@ export default function RoutesPage() {
             {createdRoutes.map((route) => (
               <div
                 key={route.id}
-                className="bg-card rounded-2xl border border-border overflow-hidden shadow-sm"
+                onClick={() => setSelectedCreatedRoute(route)}
+                className="bg-card rounded-2xl border border-border overflow-hidden shadow-sm cursor-pointer hover:shadow-md transition-shadow"
               >
-                <CreatedRoutePreview route={route} />
+                <CreatedRouteCanvas
+                  waypoints={route.waypoints}
+                  className="h-40 w-full"
+                  onClick={() => setSelectedCreatedRoute(route)}
+                />
                 <div className="p-4 flex flex-col gap-2">
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-semibold text-textPrimary truncate">
@@ -645,7 +620,10 @@ export default function RoutesPage() {
                       })}
                     </span>
                     <button
-                      onClick={() => handleDeleteRoute(route.id)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteRoute(route.id);
+                      }}
                       className="text-textSecondary hover:text-danger transition-colors p-1"
                     >
                       <Trash2 size={14} />
@@ -674,6 +652,12 @@ export default function RoutesPage() {
           onClose={() => setExpandedCluster(null)}
         />
       )}
+
+      {/* Created route detail modal */}
+      <CreatedRouteDetailModal
+        route={selectedCreatedRoute}
+        onClose={() => setSelectedCreatedRoute(null)}
+      />
     </div>
   );
 }
