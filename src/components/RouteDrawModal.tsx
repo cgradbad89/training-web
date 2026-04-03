@@ -49,6 +49,9 @@ export default function RouteDrawModal({
   );
   const [name, setName] = useState(initial?.name ?? "");
   const [saving, setSaving] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
 
   const distanceMiles = computeDistanceMiles(waypoints);
 
@@ -100,6 +103,8 @@ export default function RouteDrawModal({
     if (!containerRef.current) return;
     if (mapRef.current) return;
 
+    let cancelled = false;
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     delete (L.Icon.Default.prototype as any)._getIconUrl;
     L.Icon.Default.mergeOptions({
@@ -111,32 +116,63 @@ export default function RouteDrawModal({
         "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
     });
 
-    const map = L.map(containerRef.current, {
-      scrollWheelZoom: true,
-      zoomControl: true,
-      center: [42.35, -71.06], // default: Boston
-      zoom: 13,
-    });
+    async function initMap() {
+      const fallback = { lat: 38.9072, lng: -77.0369 };
 
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution: "&copy; OpenStreetMap contributors",
-    }).addTo(map);
+      // Try browser geolocation first, fall back to DC
+      const getCenter = (): Promise<{ lat: number; lng: number }> =>
+        new Promise((resolve) => {
+          if (!navigator.geolocation) {
+            resolve(fallback);
+            return;
+          }
+          navigator.geolocation.getCurrentPosition(
+            (pos) =>
+              resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+            () => resolve(fallback),
+            { timeout: 4000 }
+          );
+        });
 
-    mapRef.current = map;
+      const center =
+        initial?.waypoints && initial.waypoints.length > 0
+          ? null
+          : await getCenter();
 
-    // If editing, fit to existing waypoints
-    if (initial?.waypoints && initial.waypoints.length > 0) {
-      const latLngs: L.LatLngTuple[] = initial.waypoints.map((p) => [
-        p.lat,
-        p.lng,
-      ]);
-      map.fitBounds(L.latLngBounds(latLngs), { padding: [40, 40] });
-      syncMapOverlays(map, initial.waypoints);
+      if (cancelled || !containerRef.current) return;
+
+      const map = L.map(containerRef.current, {
+        scrollWheelZoom: true,
+        zoomControl: true,
+        center: center ? [center.lat, center.lng] : [fallback.lat, fallback.lng],
+        zoom: 14,
+      });
+
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: "&copy; OpenStreetMap contributors",
+      }).addTo(map);
+
+      mapRef.current = map;
+
+      // If editing, fit to existing waypoints
+      if (initial?.waypoints && initial.waypoints.length > 0) {
+        const latLngs: L.LatLngTuple[] = initial.waypoints.map((p) => [
+          p.lat,
+          p.lng,
+        ]);
+        map.fitBounds(L.latLngBounds(latLngs), { padding: [40, 40] });
+        syncMapOverlays(map, initial.waypoints);
+      }
     }
 
+    initMap();
+
     return () => {
-      map.remove();
-      mapRef.current = null;
+      cancelled = true;
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+      }
       polylineRef.current = null;
       markersRef.current = [];
     };
@@ -171,6 +207,30 @@ export default function RouteDrawModal({
 
   const handleClear = () => {
     setWaypoints([]);
+  };
+
+  const handleSearch = async () => {
+    if (!searchQuery.trim() || !mapRef.current) return;
+    setSearching(true);
+    setSearchError(null);
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?` +
+          `q=${encodeURIComponent(searchQuery)}&format=json&limit=1`,
+        { headers: { "Accept-Language": "en" } }
+      );
+      const data = await res.json();
+      if (data.length === 0) {
+        setSearchError("Location not found. Try a city name or zip code.");
+        return;
+      }
+      const { lat, lon } = data[0];
+      mapRef.current.setView([parseFloat(lat), parseFloat(lon)], 14);
+    } catch {
+      setSearchError("Search failed. Check your connection.");
+    } finally {
+      setSearching(false);
+    }
   };
 
   const handleSave = async () => {
@@ -221,6 +281,30 @@ export default function RouteDrawModal({
             placeholder="Route name"
             className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-textPrimary placeholder:text-textSecondary focus:outline-none focus:ring-2 focus:ring-primary/30"
           />
+        </div>
+
+        {/* Location search */}
+        <div className="px-4 py-2 border-b border-border shrink-0">
+          <div className="flex gap-2">
+            <input
+              type="text"
+              placeholder="Search by city or zip code (e.g. 20001 or Washington DC)"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+              className="flex-1 text-sm border border-border rounded-xl px-3 py-1.5 bg-surface text-textPrimary placeholder:text-textSecondary focus:outline-none focus:ring-2 focus:ring-primary/30"
+            />
+            <button
+              onClick={handleSearch}
+              disabled={searching || !searchQuery.trim()}
+              className="px-3 py-1.5 rounded-xl bg-primary text-white text-sm font-semibold hover:bg-primary/90 disabled:opacity-40 transition-colors shrink-0"
+            >
+              {searching ? "…" : "Go"}
+            </button>
+          </div>
+          {searchError && (
+            <p className="text-xs text-danger mt-1">{searchError}</p>
+          )}
         </div>
 
         {/* Map */}
