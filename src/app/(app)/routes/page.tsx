@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import { ChevronDown, ChevronUp, Map } from "lucide-react";
+import { ChevronDown, ChevronUp, Map as MapIcon } from "lucide-react";
 
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -13,6 +13,7 @@ import { fetchHealthWorkouts } from "@/services/healthWorkouts";
 import { fetchRoutePoints, type RoutePoint } from "@/services/routes";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { formatPace, formatDuration } from "@/utils/pace";
+import { getRouteStartPoint, haversineMeters } from "@/utils/routeCache";
 
 const RunMap = dynamic(() => import("@/components/RunMap"), { ssr: false });
 
@@ -23,13 +24,35 @@ interface RouteCluster {
   representativeRun: HealthWorkout;
   allRuns: HealthWorkout[];
   distanceMiles: number;
+  startLat: number;
+  startLng: number;
 }
 
 // ─── Clustering ──────────────────────────────────────────────────────────────
 
-// TODO: Add start-point geographic clustering when route points
-// are pre-fetched or indexed. Currently clusters by 0.5-mile distance bucket.
-function clusterRoutes(runs: HealthWorkout[]): RouteCluster[] {
+/**
+ * Phase 1: Group runs by distance (±0.5 miles).
+ * Phase 2: Within each distance group, sub-cluster by start GPS point.
+ * Two runs cluster together only if start points are within 300m.
+ */
+async function clusterRoutesGeographic(
+  runs: HealthWorkout[],
+  uid: string
+): Promise<RouteCluster[]> {
+  // Fetch start points for all runs in parallel (batched)
+  const startPoints = new Map<string, { lat: number; lng: number } | null>();
+
+  for (let i = 0; i < runs.length; i += 10) {
+    const batch = runs.slice(i, i + 10);
+    await Promise.all(
+      batch.map(async (run) => {
+        const pt = await getRouteStartPoint(uid, run.workoutId);
+        startPoints.set(run.workoutId, pt);
+      })
+    );
+  }
+
+  // Sort by pace (best pace first = representative run)
   const sorted = [...runs].sort(
     (a, b) => (a.avgPaceSecPerMile ?? 999) - (b.avgPaceSecPerMile ?? 999)
   );
@@ -40,23 +63,41 @@ function clusterRoutes(runs: HealthWorkout[]): RouteCluster[] {
   for (const run of sorted) {
     if (assigned.has(run.workoutId)) continue;
 
-    const bucket = Math.floor((run.distanceMiles ?? 0) / 0.5);
-
+    const runStart = startPoints.get(run.workoutId);
     const cluster: RouteCluster = {
       id: run.workoutId,
       representativeRun: run,
       allRuns: [run],
       distanceMiles: run.distanceMiles ?? 0,
+      startLat: runStart?.lat ?? 0,
+      startLng: runStart?.lng ?? 0,
     };
 
     for (const other of sorted) {
       if (other.workoutId === run.workoutId) continue;
       if (assigned.has(other.workoutId)) continue;
-      const otherBucket = Math.floor((other.distanceMiles ?? 0) / 0.5);
-      if (otherBucket === bucket) {
-        cluster.allRuns.push(other);
-        assigned.add(other.workoutId);
+
+      // Distance must be within ±0.5 miles
+      const distDiff = Math.abs(
+        (run.distanceMiles ?? 0) - (other.distanceMiles ?? 0)
+      );
+      if (distDiff > 0.5) continue;
+
+      // If either run has no start point, fall back to distance-only
+      const otherStart = startPoints.get(other.workoutId);
+      if (runStart && otherStart) {
+        // Start points must be within 300 meters
+        const dist = haversineMeters(
+          runStart.lat,
+          runStart.lng,
+          otherStart.lat,
+          otherStart.lng
+        );
+        if (dist > 300) continue;
       }
+
+      cluster.allRuns.push(other);
+      assigned.add(other.workoutId);
     }
 
     assigned.add(run.workoutId);
@@ -388,6 +429,8 @@ export default function RoutesPage() {
   const [expandedCluster, setExpandedCluster] = useState<RouteCluster | null>(
     null
   );
+  const [clusters, setClusters] = useState<RouteCluster[]>([]);
+  const [clusteringLoading, setClusteringLoading] = useState(false);
 
   useEffect(() => {
     if (!uid) return;
@@ -400,7 +443,16 @@ export default function RoutesPage() {
       .finally(() => setLoading(false));
   }, [uid]);
 
-  const clusters = useMemo(() => clusterRoutes(runs), [runs]);
+  useEffect(() => {
+    if (!uid || runs.length === 0) return;
+    setClusteringLoading(true);
+    clusterRoutesGeographic(runs, uid)
+      .then((result) => {
+        setClusters(result);
+        setClusteringLoading(false);
+      })
+      .catch(() => setClusteringLoading(false));
+  }, [runs, uid]);
 
   const filteredClusters = useMemo(
     () =>
@@ -455,8 +507,15 @@ export default function RoutesPage() {
         ))}
       </div>
 
+      {/* Clustering indicator */}
+      {clusteringLoading && (
+        <p className="text-xs text-textSecondary">
+          Grouping routes by location…
+        </p>
+      )}
+
       {/* Route cards grid */}
-      {filteredClusters.length === 0 ? (
+      {filteredClusters.length === 0 && !clusteringLoading ? (
         <EmptyState title="No routes in this distance range" />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
@@ -482,7 +541,7 @@ export default function RoutesPage() {
           </span>
         </div>
         <div className="bg-card rounded-2xl border border-border p-8 text-center">
-          <Map className="w-10 h-10 text-textSecondary mx-auto mb-3" />
+          <MapIcon className="w-10 h-10 text-textSecondary mx-auto mb-3" />
           <p className="text-sm font-medium text-textPrimary mb-1">
             Plan your own routes
           </p>
