@@ -29,6 +29,7 @@ import {
   SmilePlus,
   TrendingUp,
   RefreshCw,
+  PersonStanding,
 } from "lucide-react";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -66,6 +67,98 @@ function getColor(metric: string): string {
   return colors[metric] ?? "#2563eb";
 }
 
+/** Filter out bad weight readings below 155 lb */
+function isValidWeight(w: number | undefined): w is number {
+  return w !== undefined && w >= 155;
+}
+
+// ── Conditional status colors ────────────────────────────────────────────────
+
+type MetricStatus = "green" | "yellow" | "red" | "neutral";
+
+function getStatus(
+  metric: string,
+  value: number | undefined | null
+): MetricStatus {
+  if (value === undefined || value === null || !isFinite(value))
+    return "neutral";
+
+  switch (metric) {
+    case "weight":
+      if (value <= 170) return "green";
+      if (value <= 173) return "yellow";
+      return "red";
+    case "bmi":
+      if (value < 25) return "green";
+      if (value < 27) return "yellow";
+      return "red";
+    case "resting_hr":
+      if (value <= 60) return "green";
+      if (value <= 70) return "yellow";
+      return "red";
+    case "steps":
+      if (value >= 10000) return "green";
+      if (value >= 7000) return "yellow";
+      return "red";
+    case "exercise_mins":
+      if (value >= 30) return "green";
+      if (value >= 15) return "yellow";
+      return "red";
+    case "move_calories":
+      if (value >= 500) return "green";
+      if (value >= 300) return "yellow";
+      return "red";
+    case "stand_hours":
+      if (value >= 12) return "green";
+      if (value >= 8) return "yellow";
+      return "red";
+    case "sleep":
+      if (value >= 7) return "green";
+      if (value >= 6) return "yellow";
+      return "red";
+    case "awake":
+      if (value <= 15) return "green";
+      if (value <= 30) return "yellow";
+      return "red";
+    case "brush_count":
+      if (value >= 2) return "green";
+      if (value >= 1) return "yellow";
+      return "red";
+    case "brush_time":
+      if (value >= 2) return "green";
+      if (value >= 1) return "yellow";
+      return "red";
+    default:
+      return "neutral";
+  }
+}
+
+function statusColor(status: MetricStatus): string {
+  switch (status) {
+    case "green":
+      return "#16a34a";
+    case "yellow":
+      return "#d97706";
+    case "red":
+      return "#dc2626";
+    default:
+      return "";
+  }
+}
+
+function statusBg(status: MetricStatus): string {
+  switch (status) {
+    case "green":
+      return "rgba(22,163,74,0.08)";
+    case "yellow":
+      return "rgba(217,119,6,0.08)";
+    case "red":
+      return "rgba(220,38,38,0.08)";
+    default:
+      return "";
+  }
+}
+
 // ── KPI Card ──────────────────────────────────────────────────────────────────
 
 function KpiCard({
@@ -76,30 +169,47 @@ function KpiCard({
   avg30,
   color,
   formatter,
+  status = "neutral",
 }: {
-  icon: React.ComponentType<{ className?: string; style?: React.CSSProperties }>;
+  icon: React.ComponentType<{
+    className?: string;
+    style?: React.CSSProperties;
+  }>;
   label: string;
   today: number | undefined;
   avg7: number | null;
   avg30: number | null;
   color: string;
   formatter: (v: number | undefined) => string;
+  status?: MetricStatus;
 }) {
+  const sc = statusColor(status);
+  const sb = statusBg(status);
+  const iconColor = status !== "neutral" ? sc : color;
+  const iconBg =
+    status !== "neutral" ? sb : `${color}18`;
+
   return (
-    <div className="bg-card rounded-2xl border border-border p-4">
+    <div
+      className="bg-card rounded-2xl border border-border p-4"
+      style={status !== "neutral" ? { borderColor: sc, borderWidth: 1 } : {}}
+    >
       <div className="flex items-center gap-2 mb-3">
         <div
           className="w-8 h-8 rounded-xl flex items-center justify-center"
-          style={{ backgroundColor: `${color}18` }}
+          style={{ backgroundColor: iconBg }}
         >
-          <Icon className="w-4 h-4" style={{ color }} />
+          <Icon className="w-4 h-4" style={{ color: iconColor }} />
         </div>
         <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide">
           {label}
         </p>
       </div>
 
-      <p className="text-2xl font-bold text-textPrimary mb-3">
+      <p
+        className="text-2xl font-bold mb-3"
+        style={{ color: status !== "neutral" ? sc : undefined }}
+      >
         {formatter(today)}
       </p>
 
@@ -131,6 +241,7 @@ function TrendChart({
   refValue,
   refLabel,
   type = "line",
+  yDomain,
 }: {
   data: { date: string; value: number | undefined }[];
   label: string;
@@ -139,6 +250,7 @@ function TrendChart({
   refValue?: number;
   refLabel?: string;
   type?: "line" | "bar";
+  yDomain?: [number, number];
 }) {
   const filtered = data.filter(
     (d) => d.value !== undefined && d.value > 0
@@ -152,14 +264,12 @@ function TrendChart({
   }
 
   const fmt = formatter ?? ((v: number) => String(v));
+  const chartMargin = { top: 4, right: 8, bottom: 0, left: 8 };
 
   if (type === "bar") {
     return (
       <ResponsiveContainer width="100%" height={112}>
-        <BarChart
-          data={filtered}
-          margin={{ top: 4, right: 4, bottom: 0, left: -20 }}
-        >
+        <BarChart data={filtered} margin={chartMargin}>
           <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
           <XAxis
             dataKey="date"
@@ -174,7 +284,8 @@ function TrendChart({
             tickFormatter={fmt}
             axisLine={false}
             tickLine={false}
-            width={36}
+            width={52}
+            domain={yDomain}
           />
           <Tooltip
             formatter={(v) => [fmt(Number(v)), label]}
@@ -203,10 +314,7 @@ function TrendChart({
 
   return (
     <ResponsiveContainer width="100%" height={112}>
-      <LineChart
-        data={filtered}
-        margin={{ top: 4, right: 4, bottom: 0, left: -20 }}
-      >
+      <LineChart data={filtered} margin={chartMargin}>
         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
         <XAxis
           dataKey="date"
@@ -221,7 +329,8 @@ function TrendChart({
           tickFormatter={fmt}
           axisLine={false}
           tickLine={false}
-          width={36}
+          width={52}
+          domain={yDomain}
         />
         <Tooltip
           formatter={(v) => [fmt(Number(v)), label]}
@@ -303,11 +412,18 @@ export default function HealthPage() {
   const last7 = metrics90.slice(0, 7);
   const last30 = metrics90.slice(0, 30);
 
-  // Averages
+  // Averages (weight uses isValidWeight filter)
   const a7 = (key: keyof HealthMetric) =>
     avg(last7.map((m) => m[key] as number).filter(Boolean));
   const a30 = (key: keyof HealthMetric) =>
     avg(last30.map((m) => m[key] as number).filter(Boolean));
+
+  const a7Weight = avg(
+    last7.map((m) => m.weight_lbs).filter(isValidWeight)
+  );
+  const a30Weight = avg(
+    last30.map((m) => m.weight_lbs).filter(isValidWeight)
+  );
 
   // Chart data — last 90 days ascending
   const chartData = useMemo(() => [...metrics90].reverse(), [metrics90]);
@@ -318,6 +434,42 @@ export default function HealthPage() {
       value: m[key] as number | undefined,
     }));
   }
+
+  /** Weight chart series — filter out invalid readings */
+  function weightChartSeries() {
+    return chartData.map((m) => ({
+      date: m.date,
+      value: isValidWeight(m.weight_lbs) ? m.weight_lbs : undefined,
+    }));
+  }
+
+  /** Compute tight Y domain for weight charts */
+  function weightDomain(
+    series: { value: number | undefined }[]
+  ): [number, number] | undefined {
+    const vals = series
+      .map((d) => d.value)
+      .filter((v): v is number => v !== undefined && v > 0);
+    if (vals.length < 2) return undefined;
+    const min = Math.min(...vals);
+    const max = Math.max(...vals);
+    return [Math.floor(min - 2), Math.ceil(max + 2)];
+  }
+
+  const weight90Series = weightChartSeries();
+  const weight90Domain = weightDomain(weight90Series);
+
+  // All-time weight series (filtered)
+  const weightAllSeries = allMetrics.map((m) => ({
+    date: m.date,
+    value: isValidWeight(m.weight_lbs) ? m.weight_lbs : undefined,
+  }));
+  const weightAllDomain = weightDomain(weightAllSeries);
+
+  // Today's weight display — only show if valid
+  const todayWeight = isValidWeight(today?.weight_lbs)
+    ? today.weight_lbs
+    : undefined;
 
   // Last synced
   const lastSynced = today?.syncedAt
@@ -389,10 +541,11 @@ export default function HealthPage() {
             icon={Scale}
             label="Weight"
             color={getColor("weight")}
-            today={today?.weight_lbs}
-            avg7={a7("weight_lbs")}
-            avg30={a30("weight_lbs")}
+            today={todayWeight}
+            avg7={a7Weight}
+            avg30={a30Weight}
             formatter={(v) => (v ? `${v.toFixed(1)} lb` : "—")}
+            status={getStatus("weight", todayWeight)}
           />
           <KpiCard
             icon={TrendingUp}
@@ -402,6 +555,7 @@ export default function HealthPage() {
             avg7={a7("bmi")}
             avg30={a30("bmi")}
             formatter={(v) => (v ? v.toFixed(1) : "—")}
+            status={getStatus("bmi", today?.bmi)}
           />
           <KpiCard
             icon={Heart}
@@ -411,6 +565,7 @@ export default function HealthPage() {
             avg7={a7("resting_hr")}
             avg30={a30("resting_hr")}
             formatter={(v) => (v ? `${Math.round(v)} bpm` : "—")}
+            status={getStatus("resting_hr", today?.resting_hr)}
           />
         </div>
 
@@ -419,17 +574,18 @@ export default function HealthPage() {
             Weight — Last 90 Days
           </p>
           <TrendChart
-            data={toChartSeries("weight_lbs")}
+            data={weight90Series}
             label="Weight"
             color={getColor("weight")}
             formatter={(v) => `${v.toFixed(1)} lb`}
+            yDomain={weight90Domain}
           />
         </div>
       </Section>
 
       {/* ── Activity ─────────────────────────────────────────────── */}
       <Section title="Activity">
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
           <KpiCard
             icon={Footprints}
             label="Steps"
@@ -438,6 +594,7 @@ export default function HealthPage() {
             avg7={a7("steps")}
             avg30={a30("steps")}
             formatter={(v) => (v ? Math.round(v).toLocaleString() : "—")}
+            status={getStatus("steps", today?.steps)}
           />
           <KpiCard
             icon={Clock}
@@ -447,6 +604,7 @@ export default function HealthPage() {
             avg7={a7("exercise_mins")}
             avg30={a30("exercise_mins")}
             formatter={(v) => (v ? `${Math.round(v)} min` : "—")}
+            status={getStatus("exercise_mins", today?.exercise_mins)}
           />
           <KpiCard
             icon={Zap}
@@ -456,6 +614,17 @@ export default function HealthPage() {
             avg7={a7("move_calories")}
             avg30={a30("move_calories")}
             formatter={(v) => (v ? `${Math.round(v)} kcal` : "—")}
+            status={getStatus("move_calories", today?.move_calories)}
+          />
+          <KpiCard
+            icon={PersonStanding}
+            label="Stand Hours"
+            color={getColor("stand")}
+            today={today?.stand_hours}
+            avg7={a7("stand_hours")}
+            avg30={a30("stand_hours")}
+            formatter={(v) => (v ? `${Math.round(v)}h` : "—")}
+            status={getStatus("stand_hours", today?.stand_hours)}
           />
         </div>
 
@@ -509,6 +678,7 @@ export default function HealthPage() {
             avg7={a7("sleep_total_hours")}
             avg30={a30("sleep_total_hours")}
             formatter={(v) => formatHours(v)}
+            status={getStatus("sleep", today?.sleep_total_hours)}
           />
           <KpiCard
             icon={Moon}
@@ -518,6 +688,7 @@ export default function HealthPage() {
             avg7={a7("sleep_awake_mins")}
             avg30={a30("sleep_awake_mins")}
             formatter={(v) => (v ? `${Math.round(v)} min` : "—")}
+            status={getStatus("awake", today?.sleep_awake_mins)}
           />
         </div>
 
@@ -546,7 +717,8 @@ export default function HealthPage() {
             today={today?.brush_count}
             avg7={a7("brush_count")}
             avg30={a30("brush_count")}
-            formatter={(v) => (v ? `${Math.round(v)}x` : "—")}
+            formatter={(v) => (v ? `${v.toFixed(1)}x` : "—")}
+            status={getStatus("brush_count", today?.brush_count)}
           />
           <KpiCard
             icon={Clock}
@@ -556,6 +728,7 @@ export default function HealthPage() {
             avg7={a7("brush_avg_duration_mins")}
             avg30={a30("brush_avg_duration_mins")}
             formatter={(v) => (v ? `${v.toFixed(1)} min` : "—")}
+            status={getStatus("brush_time", today?.brush_avg_duration_mins)}
           />
         </div>
 
@@ -567,7 +740,7 @@ export default function HealthPage() {
             data={toChartSeries("brush_count")}
             label="Sessions"
             color={getColor("brush")}
-            formatter={(v) => `${Math.round(v)}x`}
+            formatter={(v) => `${v.toFixed(1)}x`}
             refValue={2}
             refLabel="2x goal"
             type="bar"
@@ -598,13 +771,11 @@ export default function HealthPage() {
                 Weight — All Time
               </p>
               <TrendChart
-                data={allMetrics.map((m) => ({
-                  date: m.date,
-                  value: m.weight_lbs,
-                }))}
+                data={weightAllSeries}
                 label="Weight"
                 color={getColor("weight")}
                 formatter={(v) => `${v.toFixed(1)} lb`}
+                yDomain={weightAllDomain}
               />
             </div>
           </div>
