@@ -191,8 +191,11 @@ function KpiCard({
 
   return (
     <div
-      className="bg-card rounded-2xl border border-border p-4"
-      style={status !== "neutral" ? { borderColor: sc, borderWidth: 1 } : {}}
+      className="bg-card rounded-2xl border p-4"
+      style={{
+        borderColor: status !== "neutral" ? sc : undefined,
+        backgroundColor: status !== "neutral" ? sb : undefined,
+      }}
     >
       <div className="flex items-center gap-2 mb-3">
         <div
