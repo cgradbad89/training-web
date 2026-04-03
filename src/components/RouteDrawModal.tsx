@@ -86,6 +86,11 @@ function rebuildPolyline(
   }).addTo(map);
 }
 
+interface MarkerEntry {
+  marker: L.CircleMarker;
+  index: number;
+}
+
 export default function RouteDrawModal({
   onSave,
   onClose,
@@ -94,10 +99,11 @@ export default function RouteDrawModal({
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const polylineRef = useRef<L.Polyline | null>(null);
-  const markersRef = useRef<L.CircleMarker[]>([]);
+  const markersRef = useRef<MarkerEntry[]>([]);
   const waypointsRef = useRef<{ lat: number; lng: number }[]>(
     initial?.waypoints ?? []
   );
+  const routedSegmentsRef = useRef<{ lat: number; lng: number }[][]>([]);
   const drawModeRef = useRef(true);
 
   const [waypoints, setWaypoints] = useState<CreatedRouteWaypoint[]>(
@@ -118,6 +124,10 @@ export default function RouteDrawModal({
   useEffect(() => {
     waypointsRef.current = waypoints;
   }, [waypoints]);
+
+  useEffect(() => {
+    routedSegmentsRef.current = routedSegments;
+  }, [routedSegments]);
 
   useEffect(() => {
     drawModeRef.current = drawMode;
@@ -160,6 +170,107 @@ export default function RouteDrawModal({
       mapRef.current.getContainer().style.cursor = "grab";
     }
   }, [drawMode, mapReady]);
+
+  // Helper: attach hover + click-to-delete on a marker
+  function attachMarkerInteractions(
+    marker: L.CircleMarker,
+    map: L.Map
+  ) {
+    marker.on("mouseover", () => {
+      marker.setStyle({ fillColor: "#FF3B30", radius: 8 });
+      (marker.getElement() as HTMLElement | undefined)?.style.setProperty("cursor", "pointer");
+    });
+    marker.on("mouseout", () => {
+      const entry = markersRef.current.find((m) => m.marker === marker);
+      const isFirst = entry && entry.index === 0;
+      marker.setStyle({
+        fillColor: isFirst ? "#34C759" : "#2563eb",
+        radius: isFirst ? 7 : 5,
+      });
+    });
+    marker.on("click", (e: L.LeafletMouseEvent) => {
+      L.DomEvent.stopPropagation(e);
+      const markerLatLng = marker.getLatLng();
+      const waypointIndex = waypointsRef.current.findIndex(
+        (wp) =>
+          Math.abs(wp.lat - markerLatLng.lat) < 0.000001 &&
+          Math.abs(wp.lng - markerLatLng.lng) < 0.000001
+      );
+      if (waypointIndex === -1) return;
+      deleteWaypoint(waypointIndex, map);
+    });
+  }
+
+  // Delete a waypoint by index, remove marker, re-stitch route
+  async function deleteWaypoint(index: number, map: L.Map) {
+    const current = waypointsRef.current;
+    if (current.length === 0) return;
+
+    // Remove the marker from the map
+    const markerEntry = markersRef.current.find((m) => {
+      const ml = m.marker.getLatLng();
+      return (
+        Math.abs(ml.lat - current[index].lat) < 0.000001 &&
+        Math.abs(ml.lng - current[index].lng) < 0.000001
+      );
+    });
+    if (markerEntry) {
+      markerEntry.marker.remove();
+      markersRef.current = markersRef.current.filter(
+        (m) => m !== markerEntry
+      );
+    }
+
+    // Reindex remaining markers
+    markersRef.current.forEach((m, i) => {
+      m.index = i;
+    });
+
+    // Remove the waypoint
+    const newWaypoints = current.filter((_, i) => i !== index);
+    waypointsRef.current = newWaypoints;
+    setWaypoints(newWaypoints);
+
+    if (newWaypoints.length < 2) {
+      setRoutedSegments([]);
+      routedSegmentsRef.current = [];
+      if (polylineRef.current) {
+        polylineRef.current.remove();
+        polylineRef.current = null;
+      }
+      return;
+    }
+
+    const prev = routedSegmentsRef.current;
+
+    if (index === 0) {
+      // Deleted first waypoint — drop first segment
+      const newSegments = prev.slice(1);
+      setRoutedSegments(newSegments);
+      routedSegmentsRef.current = newSegments;
+      rebuildPolyline(newSegments, map, polylineRef);
+    } else if (index === current.length - 1) {
+      // Deleted last waypoint — drop last segment
+      const newSegments = prev.slice(0, -1);
+      setRoutedSegments(newSegments);
+      routedSegmentsRef.current = newSegments;
+      rebuildPolyline(newSegments, map, polylineRef);
+    } else {
+      // Deleted middle waypoint — fetch new connecting segment
+      const prevWp = current[index - 1];
+      const nextWp = current[index + 1];
+      const newSegment = await fetchRoutedPath(prevWp, nextWp);
+
+      const updated = [
+        ...prev.slice(0, index - 1),
+        newSegment,
+        ...prev.slice(index + 1),
+      ];
+      setRoutedSegments(updated);
+      routedSegmentsRef.current = updated;
+      rebuildPolyline(updated, map, polylineRef);
+    }
+  }
 
   // Init map
   useEffect(() => {
@@ -244,7 +355,8 @@ export default function RouteDrawModal({
             weight: 2,
             fillOpacity: 1,
           }).addTo(map);
-          markersRef.current.push(marker);
+          attachMarkerInteractions(marker, map);
+          markersRef.current.push({ marker, index: i });
         });
 
         // Fetch routed segments for existing waypoints
@@ -258,6 +370,7 @@ export default function RouteDrawModal({
         }
         if (!cancelled) {
           setRoutedSegments(segments);
+          routedSegmentsRef.current = segments;
           rebuildPolyline(segments, map, polylineRef);
         }
       }
@@ -276,7 +389,7 @@ export default function RouteDrawModal({
           weight: 2,
           fillOpacity: 1,
         }).addTo(map);
-        markersRef.current.push(marker);
+        attachMarkerInteractions(marker, map);
 
         const prevWaypoints = waypointsRef.current;
         const newWaypoint = { lat, lng };
@@ -284,6 +397,10 @@ export default function RouteDrawModal({
         const updatedWaypoints = [...prevWaypoints, newWaypoint];
         waypointsRef.current = updatedWaypoints;
         setWaypoints(updatedWaypoints);
+        markersRef.current.push({
+          marker,
+          index: updatedWaypoints.length - 1,
+        });
 
         if (prevWaypoints.length >= 1) {
           const prev = prevWaypoints[prevWaypoints.length - 1];
@@ -291,6 +408,7 @@ export default function RouteDrawModal({
 
           setRoutedSegments((segs) => {
             const updated = [...segs, routedPath];
+            routedSegmentsRef.current = updated;
             rebuildPolyline(updated, map, polylineRef);
             return updated;
           });
@@ -315,11 +433,12 @@ export default function RouteDrawModal({
   const handleUndo = () => {
     if (waypoints.length === 0) return;
 
-    const lastMarker = markersRef.current.pop();
-    if (lastMarker && mapRef.current) lastMarker.remove();
+    const last = markersRef.current.pop();
+    if (last?.marker && mapRef.current) last.marker.remove();
 
     setRoutedSegments((segs) => {
       const updated = segs.slice(0, -1);
+      routedSegmentsRef.current = updated;
       if (mapRef.current) {
         rebuildPolyline(updated, mapRef.current, polylineRef);
       }
@@ -330,7 +449,7 @@ export default function RouteDrawModal({
   };
 
   const handleClear = () => {
-    markersRef.current.forEach((m) => m.remove());
+    markersRef.current.forEach((m) => m.marker.remove());
     markersRef.current = [];
     if (polylineRef.current) {
       polylineRef.current.remove();
@@ -338,6 +457,7 @@ export default function RouteDrawModal({
     }
     setWaypoints([]);
     setRoutedSegments([]);
+    routedSegmentsRef.current = [];
     waypointsRef.current = [];
   };
 
@@ -452,7 +572,8 @@ export default function RouteDrawModal({
                   Draw mode is active
                 </p>
                 <p className="text-xs text-textSecondary mt-1">
-                  Click the map to add waypoints along your route.
+                  Click the map to add waypoints. Click a waypoint to delete
+                  it.
                   <br />
                   Toggle to Pan mode to navigate the map.
                 </p>
