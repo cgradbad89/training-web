@@ -1,9 +1,9 @@
 "use client";
 
-import React, { useEffect, useRef, useState, useCallback } from "react";
+import React, { useEffect, useRef, useState, useMemo } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { Undo2, Trash2, X } from "lucide-react";
+import { Undo2, Trash2, X, Pencil, Hand } from "lucide-react";
 import { haversineMeters } from "@/utils/routeCache";
 import type { CreatedRouteWaypoint } from "@/types/createdRoute";
 
@@ -21,17 +21,69 @@ interface RouteDrawModalProps {
   };
 }
 
-function computeDistanceMiles(waypoints: CreatedRouteWaypoint[]): number {
-  let total = 0;
-  for (let i = 1; i < waypoints.length; i++) {
-    total += haversineMeters(
-      waypoints[i - 1].lat,
-      waypoints[i - 1].lng,
-      waypoints[i].lat,
-      waypoints[i].lng
+function computeDistanceMilesFromPoints(
+  pts: { lat: number; lng: number }[]
+): number {
+  if (pts.length < 2) return 0;
+  let totalMeters = 0;
+  for (let i = 1; i < pts.length; i++) {
+    totalMeters += haversineMeters(
+      pts[i - 1].lat,
+      pts[i - 1].lng,
+      pts[i].lat,
+      pts[i].lng
     );
   }
-  return total / 1609.344;
+  return totalMeters / 1609.344;
+}
+
+// Fetch road-snapped path between two points via OSRM
+async function fetchRoutedPath(
+  from: { lat: number; lng: number },
+  to: { lat: number; lng: number }
+): Promise<{ lat: number; lng: number }[]> {
+  try {
+    const url =
+      `https://router.project-osrm.org/route/v1/foot/` +
+      `${from.lng},${from.lat};${to.lng},${to.lat}` +
+      `?overview=full&geometries=geojson`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("OSRM error");
+    const data = await res.json();
+    if (!data.routes?.[0]?.geometry?.coordinates)
+      throw new Error("No route");
+    return data.routes[0].geometry.coordinates.map(
+      ([lng, lat]: [number, number]) => ({ lat, lng })
+    );
+  } catch {
+    return [from, to];
+  }
+}
+
+function rebuildPolyline(
+  segments: { lat: number; lng: number }[][],
+  map: L.Map,
+  polylineRef: React.MutableRefObject<L.Polyline | null>
+) {
+  if (polylineRef.current) {
+    polylineRef.current.remove();
+    polylineRef.current = null;
+  }
+  if (segments.length === 0) return;
+
+  const allPoints: L.LatLngTuple[] = [];
+  segments.forEach((seg, i) => {
+    const startIdx = i === 0 ? 0 : 1;
+    seg.slice(startIdx).forEach((p) => allPoints.push([p.lat, p.lng]));
+  });
+
+  if (allPoints.length < 2) return;
+
+  polylineRef.current = L.polyline(allPoints, {
+    color: "#2563eb",
+    weight: 3.5,
+    opacity: 0.9,
+  }).addTo(map);
 }
 
 export default function RouteDrawModal({
@@ -43,17 +95,51 @@ export default function RouteDrawModal({
   const mapRef = useRef<L.Map | null>(null);
   const polylineRef = useRef<L.Polyline | null>(null);
   const markersRef = useRef<L.CircleMarker[]>([]);
+  const waypointsRef = useRef<{ lat: number; lng: number }[]>(
+    initial?.waypoints ?? []
+  );
+  const drawModeRef = useRef(true);
 
   const [waypoints, setWaypoints] = useState<CreatedRouteWaypoint[]>(
     initial?.waypoints ?? []
   );
+  const [routedSegments, setRoutedSegments] = useState<
+    { lat: number; lng: number }[][]
+  >([]);
   const [name, setName] = useState(initial?.name ?? "");
   const [saving, setSaving] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [drawMode, setDrawMode] = useState(true);
+  const [mapReady, setMapReady] = useState(false);
 
-  const distanceMiles = computeDistanceMiles(waypoints);
+  // Keep refs in sync
+  useEffect(() => {
+    waypointsRef.current = waypoints;
+  }, [waypoints]);
+
+  useEffect(() => {
+    drawModeRef.current = drawMode;
+  }, [drawMode]);
+
+  const distanceMiles = useMemo(() => {
+    if (routedSegments.length > 0) {
+      let totalMeters = 0;
+      routedSegments.forEach((seg) => {
+        for (let i = 1; i < seg.length; i++) {
+          totalMeters += haversineMeters(
+            seg[i - 1].lat,
+            seg[i - 1].lng,
+            seg[i].lat,
+            seg[i].lng
+          );
+        }
+      });
+      return totalMeters / 1609.344;
+    }
+    return computeDistanceMilesFromPoints(waypoints);
+  }, [routedSegments, waypoints]);
 
   // Lock body scroll
   useEffect(() => {
@@ -63,40 +149,17 @@ export default function RouteDrawModal({
     };
   }, []);
 
-  // Sync polyline + markers when waypoints change
-  const syncMapOverlays = useCallback(
-    (map: L.Map, pts: CreatedRouteWaypoint[]) => {
-      // Clear existing markers
-      markersRef.current.forEach((m) => m.remove());
-      markersRef.current = [];
-
-      const latLngs: L.LatLngTuple[] = pts.map((p) => [p.lat, p.lng]);
-
-      if (polylineRef.current) {
-        polylineRef.current.setLatLngs(latLngs);
-      } else {
-        polylineRef.current = L.polyline(latLngs, {
-          color: "#007AFF",
-          weight: 4,
-          opacity: 0.9,
-        }).addTo(map);
-      }
-
-      pts.forEach((p, i) => {
-        const isFirst = i === 0;
-        const isLast = i === pts.length - 1 && pts.length > 1;
-        const marker = L.circleMarker([p.lat, p.lng], {
-          radius: isFirst || isLast ? 8 : 5,
-          fillColor: isFirst ? "#34C759" : isLast ? "#FF3B30" : "#007AFF",
-          color: "#fff",
-          weight: 2,
-          fillOpacity: 1,
-        }).addTo(map);
-        markersRef.current.push(marker);
-      });
-    },
-    []
-  );
+  // Toggle dragging based on drawMode
+  useEffect(() => {
+    if (!mapRef.current) return;
+    if (drawMode) {
+      mapRef.current.dragging.disable();
+      mapRef.current.getContainer().style.cursor = "crosshair";
+    } else {
+      mapRef.current.dragging.enable();
+      mapRef.current.getContainer().style.cursor = "grab";
+    }
+  }, [drawMode, mapReady]);
 
   // Init map
   useEffect(() => {
@@ -119,7 +182,6 @@ export default function RouteDrawModal({
     async function initMap() {
       const fallback = { lat: 38.9072, lng: -77.0369 };
 
-      // Try browser geolocation first, fall back to DC
       const getCenter = (): Promise<{ lat: number; lng: number }> =>
         new Promise((resolve) => {
           if (!navigator.geolocation) {
@@ -128,7 +190,10 @@ export default function RouteDrawModal({
           }
           navigator.geolocation.getCurrentPosition(
             (pos) =>
-              resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+              resolve({
+                lat: pos.coords.latitude,
+                lng: pos.coords.longitude,
+              }),
             () => resolve(fallback),
             { timeout: 4000 }
           );
@@ -142,9 +207,14 @@ export default function RouteDrawModal({
       if (cancelled || !containerRef.current) return;
 
       const map = L.map(containerRef.current, {
-        scrollWheelZoom: true,
         zoomControl: true,
-        center: center ? [center.lat, center.lng] : [fallback.lat, fallback.lng],
+        attributionControl: false,
+        dragging: false,
+        scrollWheelZoom: true,
+        doubleClickZoom: false,
+        center: center
+          ? [center.lat, center.lng]
+          : [fallback.lat, fallback.lng],
         zoom: 14,
       });
 
@@ -152,17 +222,80 @@ export default function RouteDrawModal({
         attribution: "&copy; OpenStreetMap contributors",
       }).addTo(map);
 
+      map.getContainer().style.cursor = "crosshair";
       mapRef.current = map;
+      setMapReady(true);
 
-      // If editing, fit to existing waypoints
+      // If editing, fit to existing waypoints and draw markers + segments
       if (initial?.waypoints && initial.waypoints.length > 0) {
         const latLngs: L.LatLngTuple[] = initial.waypoints.map((p) => [
           p.lat,
           p.lng,
         ]);
         map.fitBounds(L.latLngBounds(latLngs), { padding: [40, 40] });
-        syncMapOverlays(map, initial.waypoints);
+
+        // Draw markers for existing waypoints
+        initial.waypoints.forEach((p, i) => {
+          const isFirst = i === 0;
+          const marker = L.circleMarker([p.lat, p.lng], {
+            radius: isFirst ? 7 : 5,
+            fillColor: isFirst ? "#34C759" : "#2563eb",
+            color: "#fff",
+            weight: 2,
+            fillOpacity: 1,
+          }).addTo(map);
+          markersRef.current.push(marker);
+        });
+
+        // Fetch routed segments for existing waypoints
+        const segments: { lat: number; lng: number }[][] = [];
+        for (let i = 1; i < initial.waypoints.length; i++) {
+          const routed = await fetchRoutedPath(
+            initial.waypoints[i - 1],
+            initial.waypoints[i]
+          );
+          segments.push(routed);
+        }
+        if (!cancelled) {
+          setRoutedSegments(segments);
+          rebuildPolyline(segments, map, polylineRef);
+        }
       }
+
+      // Click handler — add waypoint with OSRM snapping
+      map.on("click", async (e: L.LeafletMouseEvent) => {
+        if (!drawModeRef.current) return;
+        const { lat, lng } = e.latlng;
+
+        const isFirst = waypointsRef.current.length === 0;
+        const markerColor = isFirst ? "#34C759" : "#2563eb";
+        const marker = L.circleMarker([lat, lng], {
+          radius: isFirst ? 7 : 5,
+          fillColor: markerColor,
+          color: "#fff",
+          weight: 2,
+          fillOpacity: 1,
+        }).addTo(map);
+        markersRef.current.push(marker);
+
+        const prevWaypoints = waypointsRef.current;
+        const newWaypoint = { lat, lng };
+
+        const updatedWaypoints = [...prevWaypoints, newWaypoint];
+        waypointsRef.current = updatedWaypoints;
+        setWaypoints(updatedWaypoints);
+
+        if (prevWaypoints.length >= 1) {
+          const prev = prevWaypoints[prevWaypoints.length - 1];
+          const routedPath = await fetchRoutedPath(prev, newWaypoint);
+
+          setRoutedSegments((segs) => {
+            const updated = [...segs, routedPath];
+            rebuildPolyline(updated, map, polylineRef);
+            return updated;
+          });
+        }
+      });
     }
 
     initMap();
@@ -179,34 +312,33 @@ export default function RouteDrawModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Click handler — add waypoint
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-
-    const handler = (e: L.LeafletMouseEvent) => {
-      setWaypoints((prev) => [...prev, { lat: e.latlng.lat, lng: e.latlng.lng }]);
-    };
-
-    map.on("click", handler);
-    return () => {
-      map.off("click", handler);
-    };
-  }, []);
-
-  // Redraw overlays when waypoints change
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
-    syncMapOverlays(map, waypoints);
-  }, [waypoints, syncMapOverlays]);
-
   const handleUndo = () => {
+    if (waypoints.length === 0) return;
+
+    const lastMarker = markersRef.current.pop();
+    if (lastMarker && mapRef.current) lastMarker.remove();
+
+    setRoutedSegments((segs) => {
+      const updated = segs.slice(0, -1);
+      if (mapRef.current) {
+        rebuildPolyline(updated, mapRef.current, polylineRef);
+      }
+      return updated;
+    });
+
     setWaypoints((prev) => prev.slice(0, -1));
   };
 
   const handleClear = () => {
+    markersRef.current.forEach((m) => m.remove());
+    markersRef.current = [];
+    if (polylineRef.current) {
+      polylineRef.current.remove();
+      polylineRef.current = null;
+    }
     setWaypoints([]);
+    setRoutedSegments([]);
+    waypointsRef.current = [];
   };
 
   const handleSearch = async () => {
@@ -216,7 +348,7 @@ export default function RouteDrawModal({
     try {
       const res = await fetch(
         `https://nominatim.openstreetmap.org/search?` +
-          `q=${encodeURIComponent(searchQuery)}&format=json&limit=1`,
+          `q=${encodeURIComponent(searchQuery)}&format=json&limit=1&countrycodes=us`,
         { headers: { "Accept-Language": "en" } }
       );
       const data = await res.json();
@@ -308,10 +440,53 @@ export default function RouteDrawModal({
         </div>
 
         {/* Map */}
-        <div ref={containerRef} className="flex-1 min-h-[50vh]" />
+        <div className="relative flex-1 min-h-[50vh]">
+          <div ref={containerRef} className="absolute inset-0" />
+
+          {/* Instruction overlay */}
+          {waypoints.length === 0 && mapReady && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-[999]">
+              <div className="bg-card/90 backdrop-blur-sm border border-border rounded-2xl px-5 py-4 text-center shadow-lg">
+                <Pencil className="w-8 h-8 text-primary mx-auto mb-2" />
+                <p className="text-sm font-semibold text-textPrimary">
+                  Draw mode is active
+                </p>
+                <p className="text-xs text-textSecondary mt-1">
+                  Click the map to add waypoints along your route.
+                  <br />
+                  Toggle to Pan mode to navigate the map.
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* Toolbar */}
         <div className="flex items-center gap-3 p-4 border-t border-border">
+          {/* Mode toggle */}
+          <button
+            onClick={() => setDrawMode((m) => !m)}
+            className={`border rounded-xl p-2 shadow text-xs font-semibold transition-colors flex items-center gap-1 ${
+              drawMode
+                ? "bg-primary text-white border-primary"
+                : "bg-card text-textSecondary hover:text-textPrimary border-border"
+            }`}
+            title={
+              drawMode ? "Switch to navigate mode" : "Switch to draw mode"
+            }
+          >
+            {drawMode ? (
+              <>
+                <Pencil className="w-3.5 h-3.5" />
+                <span>Draw</span>
+              </>
+            ) : (
+              <>
+                <Hand className="w-3.5 h-3.5" />
+                <span>Pan</span>
+              </>
+            )}
+          </button>
           <button
             onClick={handleUndo}
             disabled={waypoints.length === 0}
