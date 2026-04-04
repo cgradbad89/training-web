@@ -6,6 +6,7 @@ import dynamic from "next/dynamic";
 import { ArrowLeft, Pencil, Trash2, RotateCcw } from "lucide-react";
 
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
+import { MileSplitsTable } from "@/components/MileSplitsTable";
 import { StatBlock } from "@/components/ui/StatBlock";
 import { MetricBadge } from "@/components/ui/MetricBadge";
 import { useAuth } from "@/hooks/useAuth";
@@ -598,18 +599,13 @@ export default function RunDetailPage() {
         )}
       </div>
 
-      {/* ── Splits ──────────────────────────────────────────── */}
-      {/* TODO: Fetch splits from users/{uid}/healthWorkouts/{id}/splits
-          when iOS sync adds per-mile split data */}
-      <div className="bg-card rounded-2xl border border-border p-5">
-        <h2 className="text-sm font-semibold text-textPrimary mb-2">
-          Mile Splits
-        </h2>
-        <p className="text-sm text-textSecondary">Mile splits coming soon</p>
-        <p className="text-xs text-textSecondary mt-1">
-          Split data will appear here in a future update
-        </p>
-      </div>
+      {/* ── Mile Splits ────────────────────────────────────── */}
+      <MileSplitsTable
+        routePoints={routePoints}
+        routeLoading={routeLoading}
+        hasRoute={displayWorkout.hasRoute}
+        avgHeartRate={displayWorkout.avgHeartRate}
+      />
     </div>
   );
 }
