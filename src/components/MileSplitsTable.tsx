@@ -1,8 +1,7 @@
 "use client";
 
-import React, { useMemo } from "react";
-import { type RoutePoint } from "@/services/routes";
-import { computeMileSplits, type MileSplit } from "@/utils/mileSplits";
+import React from "react";
+import { type MileSplit } from "@/utils/mileSplits";
 import { formatPace } from "@/utils/pace";
 
 // ─── Efficiency color helpers (matches MetricBadge / runs list styling) ─────
@@ -16,25 +15,16 @@ function efficiencyColor(score: number): string {
 // ─── Component ──────────────────────────────────────────────────────────────
 
 interface MileSplitsTableProps {
-  routePoints: RoutePoint[];
+  splits: MileSplit[];
   routeLoading: boolean;
   hasRoute: boolean;
-  avgHeartRate: number | null;
 }
 
 export function MileSplitsTable({
-  routePoints,
+  splits,
   routeLoading,
   hasRoute,
-  avgHeartRate,
 }: MileSplitsTableProps) {
-  const splits = useMemo(
-    () =>
-      routePoints.length >= 2
-        ? computeMileSplits(routePoints, avgHeartRate)
-        : [],
-    [routePoints, avgHeartRate]
-  );
 
   // No GPS route at all
   if (!hasRoute) {

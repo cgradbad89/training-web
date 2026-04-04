@@ -1,12 +1,13 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { ArrowLeft, Pencil, Trash2, RotateCcw } from "lucide-react";
 
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { MileSplitsTable } from "@/components/MileSplitsTable";
+import { MileSplitCharts } from "@/components/MileSplitCharts";
 import { StatBlock } from "@/components/ui/StatBlock";
 import { MetricBadge } from "@/components/ui/MetricBadge";
 import { useAuth } from "@/hooks/useAuth";
@@ -35,6 +36,7 @@ import {
   distanceBucket,
   driftLevel,
 } from "@/utils/metrics";
+import { computeMileSplits } from "@/utils/mileSplits";
 
 const RunMap = dynamic(() => import("@/components/RunMap"), { ssr: false });
 
@@ -160,6 +162,16 @@ export default function RunDetailPage() {
 
   // Apply override for display
   const displayWorkout = applyOverride(workout, override);
+
+  // Compute mile splits once, shared by table and charts
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- displayWorkout derived from workout+override
+  const mileSplits = useMemo(
+    () =>
+      routePoints.length >= 2
+        ? computeMileSplits(routePoints, displayWorkout.avgHeartRate)
+        : [],
+    [routePoints, displayWorkout.avgHeartRate]
+  );
   const isExcluded = override?.isExcluded === true;
   const hasOverrides =
     override != null &&
@@ -601,10 +613,15 @@ export default function RunDetailPage() {
 
       {/* ── Mile Splits ────────────────────────────────────── */}
       <MileSplitsTable
-        routePoints={routePoints}
+        splits={mileSplits}
         routeLoading={routeLoading}
         hasRoute={displayWorkout.hasRoute}
-        avgHeartRate={displayWorkout.avgHeartRate}
+      />
+
+      {/* ── Pace & HR Charts ───────────────────────────────── */}
+      <MileSplitCharts
+        splits={mileSplits}
+        hasRoute={displayWorkout.hasRoute}
       />
     </div>
   );
