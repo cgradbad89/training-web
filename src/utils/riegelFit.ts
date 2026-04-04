@@ -214,7 +214,7 @@ export function buildQualifyingEfforts(
       ? w.startDate.toDate().getTime()
       : new Date(w.startDate).getTime()
 
-    if (startMs < cutoff) return []
+    if (!isFinite(startMs) || startMs < cutoff) return []
 
     const totalSeconds = w.durationSeconds
     if (totalSeconds <= 0 || miles <= 0) return []

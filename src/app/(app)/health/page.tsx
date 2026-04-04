@@ -484,36 +484,42 @@ export default function HealthPage() {
     return [Math.floor(min - 2), Math.ceil(max + 2)];
   }
 
-  const weight90Series = weightChartSeries();
-  const weight90Domain = weightDomain(weight90Series);
+  const weight90Series = useMemo(() => weightChartSeries(), [chartData]);
+  const weight90Domain = useMemo(() => weightDomain(weight90Series), [weight90Series]);
 
   // All-time weight series (filtered)
-  const weightAllSeries = allMetrics.map((m) => ({
-    date: m.date,
-    value: isValidWeight(m.weight_lbs) ? m.weight_lbs : undefined,
-  }));
-  const weightAllDomain = weightDomain(weightAllSeries);
+  const weightAllSeries = useMemo(
+    () => allMetrics.map((m) => ({
+      date: m.date,
+      value: isValidWeight(m.weight_lbs) ? m.weight_lbs : undefined,
+    })),
+    [allMetrics]
+  );
+  const weightAllDomain = useMemo(() => weightDomain(weightAllSeries), [weightAllSeries]);
 
   // All-time resting HR — filter outliers, zoom domain
-  const allTimeHRSeries = allMetrics
-    .map((m) => ({ date: m.date, value: m.resting_hr }))
-    .filter(
-      (d) => d.value !== undefined && d.value >= 40 && d.value <= 120
-    );
-  const allTimeHRValues = allMetrics
-    .map((m) => m.resting_hr)
-    .filter(
-      (v): v is number =>
-        v !== undefined && v >= 40 && v <= 120 && isFinite(v)
-    );
-  const allTimeHRMin =
-    allTimeHRValues.length > 0
-      ? Math.floor(Math.min(...allTimeHRValues) - 3)
-      : 50;
-  const allTimeHRMax =
-    allTimeHRValues.length > 0
-      ? Math.ceil(Math.max(...allTimeHRValues) + 3)
-      : 100;
+  const { allTimeHRSeries, allTimeHRMin, allTimeHRMax } = useMemo(() => {
+    const series = allMetrics
+      .map((m) => ({ date: m.date, value: m.resting_hr }))
+      .filter(
+        (d) => d.value !== undefined && d.value >= 40 && d.value <= 120
+      );
+    const values = allMetrics
+      .map((m) => m.resting_hr)
+      .filter(
+        (v): v is number =>
+          v !== undefined && v >= 40 && v <= 120 && isFinite(v)
+      );
+    const min =
+      values.length > 0
+        ? Math.floor(Math.min(...values) - 3)
+        : 50;
+    const max =
+      values.length > 0
+        ? Math.ceil(Math.max(...values) + 3)
+        : 100;
+    return { allTimeHRSeries: series, allTimeHRMin: min, allTimeHRMax: max };
+  }, [allMetrics]);
 
   // Today's weight display — only show if valid
   const todayWeight = isValidWeight(today?.weight_lbs)

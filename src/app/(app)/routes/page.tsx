@@ -290,10 +290,12 @@ function RouteDetailModal({ cluster, uid, onClose }: RouteDetailModalProps) {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
     fetchRoutePoints(uid, run.workoutId)
-      .then(setRoutePoints)
-      .catch(console.error)
-      .finally(() => setRouteLoading(false));
+      .then((pts) => { if (!cancelled) setRoutePoints(pts); })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setRouteLoading(false); });
+    return () => { cancelled = true; };
   }, [uid, run.workoutId]);
 
   const dateDisplay = new Date(run.startDate).toLocaleDateString("en-US", {

@@ -42,6 +42,12 @@ export default function CoachPage() {
   const [error, setError] = useState<string | null>(null)
   const [hasAsked, setHasAsked] = useState(false)
   const responseRef = useRef<HTMLDivElement>(null)
+  const abortRef = useRef<AbortController | null>(null)
+
+  // Abort in-flight stream on unmount
+  useEffect(() => {
+    return () => { abortRef.current?.abort() }
+  }, [])
 
   // Load all training data on mount
   useEffect(() => {
@@ -100,6 +106,10 @@ export default function CoachPage() {
     if (q) setQuestion(q)
 
     try {
+      abortRef.current?.abort()
+      const controller = new AbortController()
+      abortRef.current = controller
+
       const res = await fetch('/api/coach', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -107,6 +117,7 @@ export default function CoachPage() {
           question: questionToAsk,
           context,
         }),
+        signal: controller.signal,
       })
 
       if (!res.ok) {

@@ -5,17 +5,20 @@
 
 /** Format seconds-per-mile as "M:SS" */
 export function formatPace(secPerMile: number): string {
-  if (!secPerMile || secPerMile <= 0) return "--:--";
-  const m = Math.floor(secPerMile / 60);
-  const s = Math.round(secPerMile % 60);
+  if (!secPerMile || !isFinite(secPerMile) || secPerMile <= 0) return "--:--";
+  const total = Math.round(secPerMile);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
 /** Format total seconds as "H:MM:SS" or "M:SS" */
 export function formatDuration(totalSeconds: number): string {
-  const h = Math.floor(totalSeconds / 3600);
-  const m = Math.floor((totalSeconds % 3600) / 60);
-  const s = Math.round(totalSeconds % 60);
+  if (!isFinite(totalSeconds) || totalSeconds < 0) return "0:00";
+  const total = Math.round(totalSeconds);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
   if (h > 0) {
     return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   }
