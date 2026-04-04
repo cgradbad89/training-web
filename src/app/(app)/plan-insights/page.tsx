@@ -13,7 +13,8 @@ import {
   Line,
   CartesianGrid,
 } from "recharts";
-import { Target, TrendingUp, Calendar, AlertTriangle, Shield, Layers } from "lucide-react";
+import { Target, TrendingUp, Calendar, AlertTriangle, Shield, Layers, BotMessageSquare } from "lucide-react";
+import { useRouter } from "next/navigation";
 
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -204,6 +205,11 @@ function PlanAdherenceChart({ data }: { data: WeekAdherenceData[] }) {
 export default function PlanInsightsPage() {
   const { user } = useAuth();
   const uid = user?.uid ?? null;
+  const router = useRouter();
+
+  function askCoach(question: string) {
+    router.push(`/coach?q=${encodeURIComponent(question)}`);
+  }
 
   const [workouts, setWorkouts] = useState<HealthWorkout[]>([]);
   const [plans, setPlans] = useState<RunningPlan[]>([]);
@@ -625,7 +631,20 @@ export default function PlanInsightsPage() {
 
   return (
     <div className="flex flex-col gap-6 p-6 lg:p-6 max-w-5xl">
-      <h1 className="text-2xl font-bold text-textPrimary">Plan Insights</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-textPrimary">Plan Insights</h1>
+        <button
+          onClick={() => askCoach(
+            'Analyze my training plan adherence and progress. ' +
+            'Am I on track for my race goal? What should I ' +
+            'focus on in the coming weeks?'
+          )}
+          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary/10 text-primary text-sm font-semibold hover:bg-primary/20 transition-colors"
+        >
+          <BotMessageSquare className="w-4 h-4" />
+          Ask AI Coach
+        </button>
+      </div>
 
       {/* ── Race Predictions ─────────────────────────────── */}
       <SectionHeader icon={Target} title="Race Predictions" />
@@ -835,6 +854,17 @@ export default function PlanInsightsPage() {
             Not enough recent data to assess readiness. Keep logging runs!
           </p>
         )}
+        <button
+          onClick={() => askCoach(
+            'What does my current readiness signal suggest? ' +
+            'How should I adjust my training given my long run ' +
+            'distance, volume, and pace readiness?'
+          )}
+          className="text-xs text-primary hover:underline flex items-center gap-1 mt-2"
+        >
+          <BotMessageSquare className="w-3 h-3" />
+          Ask about my readiness
+        </button>
       </div>
 
       {/* ── Performance by Run Type ─────────────────────────── */}
@@ -874,6 +904,17 @@ export default function PlanInsightsPage() {
             </tbody>
           </table>
         </div>
+        <button
+          onClick={() => askCoach(
+            'Looking at my performance across short, medium, ' +
+            'and long runs — what does the efficiency and pace ' +
+            'data suggest about where I should focus my training?'
+          )}
+          className="text-xs text-primary hover:underline flex items-center gap-1 mt-2"
+        >
+          <BotMessageSquare className="w-3 h-3" />
+          Ask about my run performance
+        </button>
       </div>
 
       {/* ── Training Trend ───────────────────────────────── */}

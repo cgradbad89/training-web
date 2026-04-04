@@ -11,7 +11,8 @@ import {
   ResponsiveContainer,
   Legend,
 } from "recharts";
-import { ChevronLeft, ChevronRight, Timer, Trophy, TrendingUp } from "lucide-react";
+import { ChevronLeft, ChevronRight, Timer, Trophy, TrendingUp, BotMessageSquare } from "lucide-react";
+import { useRouter } from "next/navigation";
 
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { MetricBadge } from "@/components/ui/MetricBadge";
@@ -68,6 +69,11 @@ function formatPaceLabel(secPerMile: number): string {
 export default function PersonalInsightsPage() {
   const { user } = useAuth();
   const uid = user?.uid ?? null;
+  const router = useRouter();
+
+  function askCoach(question: string) {
+    router.push(`/coach?q=${encodeURIComponent(question)}`);
+  }
 
   const [workouts, setWorkouts] = useState<HealthWorkout[]>([]);
   const [loading, setLoading] = useState(true);
@@ -234,7 +240,21 @@ export default function PersonalInsightsPage() {
 
   return (
     <div className="flex flex-col gap-6 p-6 lg:p-6 max-w-5xl">
-      <h1 className="text-2xl font-bold text-textPrimary">Personal Insights</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-textPrimary">Personal Insights</h1>
+        <button
+          onClick={() => askCoach(
+            'Analyze my personal running trends and fitness ' +
+            'progression. What do my pace trends, PRs, and ' +
+            'predicted race times suggest about my fitness ' +
+            'development over time?'
+          )}
+          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary/10 text-primary text-sm font-semibold hover:bg-primary/20 transition-colors"
+        >
+          <BotMessageSquare className="w-4 h-4" />
+          Ask AI Coach
+        </button>
+      </div>
 
       {/* ── Predicted Race Times ─────────────────────────── */}
       <SectionHeader icon={Timer} title="Predicted Race Times" />
@@ -273,6 +293,17 @@ export default function PersonalInsightsPage() {
             {fitLong.k.toFixed(3)}
           </p>
         )}
+        <button
+          onClick={() => askCoach(
+            'Based on my predicted race times, how realistic is ' +
+            'my half marathon goal? What training would most ' +
+            'improve my predicted finish time?'
+          )}
+          className="text-xs text-primary hover:underline flex items-center gap-1 mt-2"
+        >
+          <BotMessageSquare className="w-3 h-3" />
+          Ask about my race predictions
+        </button>
       </Card>
 
       {/* ── Personal Records by Year ─────────────────────── */}
@@ -348,6 +379,17 @@ export default function PersonalInsightsPage() {
         <p className="text-xs text-textSecondary mt-3 text-center">
           {yearRuns.length} runs in {selectedYear}
         </p>
+        <button
+          onClick={() => askCoach(
+            'What do my personal records across distances suggest ' +
+            'about my fitness trajectory? Am I improving, plateauing, ' +
+            'or declining? What should I do differently?'
+          )}
+          className="text-xs text-primary hover:underline flex items-center gap-1 mt-2"
+        >
+          <BotMessageSquare className="w-3 h-3" />
+          Ask about my PRs and trends
+        </button>
       </Card>
 
       {/* ── Pace Trends (Last 8 Weeks) ───────────────────── */}

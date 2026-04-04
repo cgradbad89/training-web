@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useRef } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { useAuth } from '@/hooks/useAuth'
 import { fetchHealthWorkouts } from '@/services/healthWorkouts'
 import { fetchAllOverrides } from '@/services/workoutOverrides'
@@ -34,6 +35,7 @@ export default function CoachPage() {
   const { user } = useAuth()
   const userId = user?.uid ?? ''
 
+  const searchParams = useSearchParams()
   const [loading, setLoading] = useState(true)
   const [context, setContext] = useState<ReturnType<typeof buildCoachContext> | null>(null)
   const [question, setQuestion] = useState('')
@@ -87,6 +89,17 @@ export default function CoachPage() {
       setLoading(false)
     })
   }, [userId])
+
+  // Auto-ask if a question was passed via URL param
+  useEffect(() => {
+    if (!context || asking || hasAsked) return
+    const prefilled = searchParams.get('q')
+    if (prefilled) {
+      setQuestion(prefilled)
+      handleAsk(prefilled)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [context])
 
   // Auto-scroll response as it streams
   useEffect(() => {
