@@ -110,9 +110,23 @@ export default function CoachPage() {
       const controller = new AbortController()
       abortRef.current = controller
 
+      // Get current user's Firebase ID token
+      const { getAuth } = await import('firebase/auth')
+      const currentUser = getAuth().currentUser
+      const idToken = currentUser ? await currentUser.getIdToken() : null
+
+      if (!idToken) {
+        setError('You must be signed in to use AI Coach.')
+        setAsking(false)
+        return
+      }
+
       const res = await fetch('/api/coach', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`,
+        },
         body: JSON.stringify({
           question: questionToAsk,
           context,

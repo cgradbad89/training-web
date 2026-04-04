@@ -6,6 +6,27 @@ const anthropic = new Anthropic({
 })
 
 export async function POST(req: NextRequest) {
+  // Verify Firebase Auth token
+  const authHeader = req.headers.get('Authorization')
+  const token = authHeader?.split('Bearer ')[1]
+
+  if (!token) {
+    return new Response(
+      JSON.stringify({ error: 'Unauthorized' }),
+      { status: 401, headers: { 'Content-Type': 'application/json' } }
+    )
+  }
+
+  try {
+    const { getAuth } = await import('@/lib/firebaseAdmin')
+    await getAuth().verifyIdToken(token)
+  } catch {
+    return new Response(
+      JSON.stringify({ error: 'Invalid token' }),
+      { status: 401, headers: { 'Content-Type': 'application/json' } }
+    )
+  }
+
   try {
     const { question, context } = await req.json()
 
