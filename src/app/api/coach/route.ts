@@ -128,6 +128,45 @@ ${runs.slice(0, 20).map((r: { date: string; distance: number; pace: string | nul
     `.trim()
     : 'No runs in the last 30 days.'
 
+  function fmtSleep(h: number | null | undefined): string {
+    if (!h || !isFinite(h)) return '—'
+    const hrs = Math.floor(h)
+    const mins = Math.round((h - hrs) * 60)
+    return mins > 0 ? `${hrs}h ${mins}m` : `${hrs}h`
+  }
+
+  function fmtNum(v: number | null | undefined, decimals = 0, suffix = ''): string {
+    if (v === null || v === undefined || !isFinite(v)) return '—'
+    return `${v.toFixed(decimals)}${suffix}`
+  }
+
+  const healthSection = context.healthSummary
+    ? `
+## Health & Lifestyle Metrics (last ${context.healthSummary.daysOfData} days avg)
+
+### Sleep
+- Average sleep: ${fmtSleep(context.healthSummary.avgSleepHours)} per night
+- Average time awake: ${fmtNum(context.healthSummary.avgAwakeMins, 0, ' min')} per night
+- Most recent night: ${fmtSleep(context.healthSummary.latestSleep)}
+
+### Body
+- Current weight: ${fmtNum(context.healthSummary.latestWeight, 1, ' lb')}
+- Current BMI: ${fmtNum(context.healthSummary.latestBMI, 1)}
+- Avg resting HR: ${fmtNum(context.healthSummary.avgRestingHR, 0, ' bpm')}
+- Latest resting HR: ${fmtNum(context.healthSummary.latestRestingHR, 0, ' bpm')}
+
+### Daily Activity
+- Avg daily steps: ${context.healthSummary.avgSteps ? Math.round(context.healthSummary.avgSteps).toLocaleString() : '—'}
+- Avg exercise minutes: ${fmtNum(context.healthSummary.avgExerciseMins, 0, ' min')}
+- Avg move calories: ${fmtNum(context.healthSummary.avgMoveCalories, 0, ' kcal')}
+- Avg stand hours: ${fmtNum(context.healthSummary.avgStandHours, 1, 'h')}
+
+### Oral Care
+- Avg brushing sessions/day: ${fmtNum(context.healthSummary.avgBrushCount, 1, 'x')}
+- Avg brush duration: ${fmtNum(context.healthSummary.avgBrushDuration, 1, ' min')}
+`.trim()
+    : 'No health metrics data available.'
+
   return `You are an expert running coach with deep knowledge of half marathon training, periodization, and performance analytics. You have access to a runner's complete training data and race goals.
 
 Be specific, actionable, and data-driven in your responses. Reference specific numbers from their data. Keep responses concise but comprehensive — use bullet points for recommendations. Be encouraging but honest about areas needing improvement.
@@ -139,6 +178,10 @@ ${planSection}
 ${statsSection}
 
 ${runsSection}
+
+${healthSection}
+
+When asked about sleep, weight, steps, or other health metrics, use the actual numbers above. Connect health data to running performance — e.g. poor sleep correlating with slower paces, elevated resting HR suggesting fatigue or illness, low steps on rest days being appropriate vs concerning.
 
 When asked about plan changes, consider the runner's current fitness, race timeline, and adherence patterns. When asked about predictions, use the data provided. Always ground advice in the actual numbers shown above.`
 }
@@ -192,4 +235,20 @@ interface CoachContext {
     mediumRunCount: number
     shortRunCount: number
   }
+  healthSummary: {
+    avgSleepHours: number | null
+    avgAwakeMins: number | null
+    latestSleep: number | null
+    latestWeight: number | null
+    latestBMI: number | null
+    latestRestingHR: number | null
+    avgRestingHR: number | null
+    avgSteps: number | null
+    avgExerciseMins: number | null
+    avgMoveCalories: number | null
+    avgStandHours: number | null
+    avgBrushCount: number | null
+    avgBrushDuration: number | null
+    daysOfData: number
+  } | null
 }

@@ -1,4 +1,5 @@
 import type { HealthWorkout } from '@/types/healthWorkout'
+import type { HealthMetric } from '@/services/healthMetrics'
 import type { RunningPlan } from '@/types/plan'
 import type { Race, RaceDistance } from '@/types/race'
 import {
@@ -52,7 +53,8 @@ export function buildCoachContext(
   allRuns: HealthWorkout[],
   activePlan: RunningPlan | null,
   activeRace: Race | null,
-  overrides: Record<string, WorkoutOverride>
+  overrides: Record<string, WorkoutOverride>,
+  healthMetrics: HealthMetric[] = []
 ) {
   const now = Date.now()
   const thirtyDaysAgo = now - 30 * 86400000
@@ -264,6 +266,41 @@ export function buildCoachContext(
     }
   }
 
+  // ── Health metrics summary (last 30 days) ──────────────────────────
+
+  function healthAvg(key: keyof HealthMetric): number | null {
+    const vals = healthMetrics
+      .map(m => m[key] as number | undefined)
+      .filter((v): v is number => v !== undefined && v > 0 && isFinite(v))
+    if (vals.length === 0) return null
+    return vals.reduce((a, b) => a + b, 0) / vals.length
+  }
+
+  function healthLatest(key: keyof HealthMetric): number | null {
+    for (const m of healthMetrics) {
+      const v = m[key] as number | undefined
+      if (v !== undefined && v > 0 && isFinite(v)) return v
+    }
+    return null
+  }
+
+  const healthSummary = healthMetrics.length > 0 ? {
+    avgSleepHours: healthAvg('sleep_total_hours'),
+    avgAwakeMins:  healthAvg('sleep_awake_mins'),
+    latestSleep:   healthLatest('sleep_total_hours'),
+    latestWeight:  healthLatest('weight_lbs'),
+    latestBMI:     healthLatest('bmi'),
+    latestRestingHR: healthLatest('resting_hr'),
+    avgRestingHR:  healthAvg('resting_hr'),
+    avgSteps:      healthAvg('steps'),
+    avgExerciseMins: healthAvg('exercise_mins'),
+    avgMoveCalories: healthAvg('move_calories'),
+    avgStandHours: healthAvg('stand_hours'),
+    avgBrushCount:    healthAvg('brush_count'),
+    avgBrushDuration: healthAvg('brush_avg_duration_mins'),
+    daysOfData: healthMetrics.length,
+  } : null
+
   return {
     runs,
     activePlan: planContext,
@@ -279,5 +316,6 @@ export function buildCoachContext(
       mediumRunCount,
       shortRunCount,
     },
+    healthSummary,
   }
 }

@@ -6,6 +6,7 @@ import { fetchHealthWorkouts } from '@/services/healthWorkouts'
 import { fetchAllOverrides } from '@/services/workoutOverrides'
 import { fetchPlans } from '@/services/plans'
 import { fetchRaces } from '@/services/races'
+import { fetchHealthMetrics } from '@/services/healthMetrics'
 import { buildCoachContext } from '@/utils/coachContext'
 import { applyOverride } from '@/types/workoutOverride'
 import {
@@ -21,7 +22,9 @@ const SUGGESTED_QUESTIONS = [
   'What does my pace trend suggest about my fitness?',
   'How can I improve my long run performance?',
   'What should I focus on in the next 2 weeks?',
-  'Am I at risk of injury based on my training load?',
+  'How is my sleep affecting my running performance?',
+  'Is my resting heart rate suggesting I need more recovery?',
+  'How should my daily step count relate to my training load?',
   'How does my current fitness compare to my race goal?',
 ]
 
@@ -50,7 +53,8 @@ export default function CoachPage() {
       fetchAllOverrides(userId),
       fetchPlans(userId),
       fetchRaces(userId),
-    ]).then(([workouts, overrides, plans, races]) => {
+      fetchHealthMetrics(userId, 30),
+    ]).then(([workouts, overrides, plans, races, healthMetrics]) => {
       // Apply overrides
       const runs = workouts
         .filter(w => w.isRunLike)
@@ -69,7 +73,7 @@ export default function CoachPage() {
         })
       const activeRace = upcomingRaces.find(r => r.isActive) ?? upcomingRaces[0] ?? null
 
-      const ctx = buildCoachContext(runs, activePlan, activeRace, overrides)
+      const ctx = buildCoachContext(runs, activePlan, activeRace, overrides, healthMetrics)
       setContext(ctx)
       setLoading(false)
     }).catch(err => {
@@ -189,6 +193,16 @@ export default function CoachPage() {
               <span>
                 {context.activeRace.name} in{' '}
                 {context.activeRace.daysAway} days
+              </span>
+            )}
+            {context.healthSummary && (
+              <span>
+                {context.healthSummary.daysOfData} days health data
+                {context.healthSummary.avgSleepHours
+                  ? ` · ${Math.floor(context.healthSummary.avgSleepHours)}h ${Math.round(
+                      (context.healthSummary.avgSleepHours % 1) * 60
+                    )}m avg sleep`
+                  : ''}
               </span>
             )}
           </div>
