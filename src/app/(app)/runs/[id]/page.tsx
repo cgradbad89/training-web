@@ -109,6 +109,16 @@ export default function RunDetailPage() {
   const [excluding, setExcluding] = useState(false);
   const [showExcludeConfirm, setShowExcludeConfirm] = useState(false);
 
+  // Compute mile splits unconditionally (before early returns) to satisfy Rules of Hooks
+  const displayWorkoutForSplits = workout ? applyOverride(workout, override) : null;
+  const mileSplits = useMemo(
+    () =>
+      routePoints.length >= 2 && displayWorkoutForSplits
+        ? computeMileSplits(routePoints, displayWorkoutForSplits.avgHeartRate)
+        : [],
+    [routePoints, displayWorkoutForSplits]
+  );
+
   useEffect(() => {
     if (!uid || !workoutId) return;
     setLoading(true);
@@ -162,16 +172,6 @@ export default function RunDetailPage() {
 
   // Apply override for display
   const displayWorkout = applyOverride(workout, override);
-
-  // Compute mile splits once, shared by table and charts
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- displayWorkout derived from workout+override
-  const mileSplits = useMemo(
-    () =>
-      routePoints.length >= 2
-        ? computeMileSplits(routePoints, displayWorkout.avgHeartRate)
-        : [],
-    [routePoints, displayWorkout.avgHeartRate]
-  );
   const isExcluded = override?.isExcluded === true;
   const hasOverrides =
     override != null &&
