@@ -15,6 +15,7 @@ import {
   BarChart2,
   TrendingUp,
   Heart,
+  BotMessageSquare,
 } from "lucide-react";
 import { AuthGuard } from "@/components/layout/AuthGuard";
 import { HubBanner } from "@/components/layout/HubBanner";
@@ -23,6 +24,7 @@ const NAV_ITEMS = [
   { href: "/dashboard",          label: "This Week",          icon: LayoutDashboard },
   { href: "/plan-insights",      label: "Plan Insights",      icon: BarChart2 },
   { href: "/personal-insights",  label: "Personal Insights",  icon: TrendingUp },
+  { href: "/coach",              label: "AI Coach",            icon: BotMessageSquare },
   { href: "/health",             label: "Health",             icon: Heart },
   { href: "/runs",               label: "Runs",               icon: Footprints },
   { href: "/routes",             label: "Routes",             icon: Map },
