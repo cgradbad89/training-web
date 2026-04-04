@@ -15,8 +15,6 @@ export interface MileSplit {
   segmentMiles: number;
   /** Pace in seconds per mile */
   paceSecPerMile: number;
-  /** Average HR for this segment, or null if unavailable */
-  avgHeartRate: number | null;
   /** Efficiency display score (1–10), or null if HR unavailable */
   efficiency: number | null;
   /** Whether this is a partial (final) mile */
@@ -140,20 +138,16 @@ export function computeMileSplits(
     const segmentMeters = segmentMiles * 1609.344;
     const speedMps = elapsedSec > 0 ? segmentMeters / elapsedSec : 0;
 
-    // HR: no per-point HR in route data, use run-level fallback
-    const avgHR = fallbackHR;
-
-    // Efficiency
+    // Efficiency (uses run-level fallbackHR since no per-point HR exists)
     const efficiency =
-      speedMps > 0 && avgHR != null && avgHR > 0
-        ? efficiencyDisplayScore(speedMps, avgHR)
+      speedMps > 0 && fallbackHR != null && fallbackHR > 0
+        ? efficiencyDisplayScore(speedMps, fallbackHR)
         : null;
 
     splits.push({
       mile,
       segmentMiles,
       paceSecPerMile,
-      avgHeartRate: avgHR,
       efficiency,
       isPartial: isLast,
     });

@@ -4,8 +4,6 @@ import React, { useMemo } from "react";
 import {
   BarChart,
   Bar,
-  LineChart,
-  Line,
   XAxis,
   YAxis,
   Tooltip,
@@ -89,102 +87,6 @@ function PaceBarChart({ splits }: { splits: MileSplit[] }) {
   );
 }
 
-// ─── Heart Rate Line Chart ──────────────────────────────────────────────────
-
-interface HRChartDatum {
-  label: string;
-  hr: number;
-}
-
-function HRTooltip({
-  active,
-  payload,
-}: {
-  active?: boolean;
-  payload?: { payload: HRChartDatum }[];
-}) {
-  if (!active || !payload?.length) return null;
-  const d = payload[0].payload;
-  return (
-    <div className="bg-card border border-border rounded-lg px-3 py-2 shadow-md text-sm">
-      <p className="font-medium text-textPrimary">{d.label}</p>
-      <p className="text-textSecondary">{Math.round(d.hr)} bpm</p>
-    </div>
-  );
-}
-
-function HeartRateLineChart({ splits }: { splits: MileSplit[] }) {
-  const data = useMemo<HRChartDatum[]>(() => {
-    return splits
-      .filter(
-        (s) =>
-          s.avgHeartRate != null &&
-          s.avgHeartRate >= 40 &&
-          s.avgHeartRate <= 220
-      )
-      .map((s) => ({
-        label: s.isPartial
-          ? `Mile ${s.mile} (${s.segmentMiles.toFixed(1)})`
-          : `Mile ${s.mile}`,
-        hr: s.avgHeartRate as number,
-      }));
-  }, [splits]);
-
-  if (data.length < 2) {
-    return (
-      <div className="bg-card rounded-2xl border border-border p-5">
-        <h2 className="text-sm font-semibold text-textPrimary mb-2">
-          Heart Rate by Mile
-        </h2>
-        <p className="text-sm text-textSecondary">
-          Heart rate data unavailable for this run
-        </p>
-      </div>
-    );
-  }
-
-  const hrs = data.map((d) => d.hr);
-  const minHR = Math.min(...hrs);
-  const maxHR = Math.max(...hrs);
-  const domainMin = Math.floor(minHR - 5);
-  const domainMax = Math.ceil(maxHR + 5);
-
-  return (
-    <div className="bg-card rounded-2xl border border-border p-5">
-      <h2 className="text-sm font-semibold text-textPrimary mb-3">
-        Heart Rate by Mile
-      </h2>
-      <ResponsiveContainer width="100%" height={220}>
-        <LineChart data={data} margin={{ left: 8, right: 8, top: 8, bottom: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.3} />
-          <XAxis
-            dataKey="label"
-            tick={{ fontSize: 11 }}
-            tickLine={false}
-            axisLine={false}
-          />
-          <YAxis
-            domain={[domainMin, domainMax]}
-            tick={{ fontSize: 11 }}
-            tickLine={false}
-            axisLine={false}
-            width={45}
-          />
-          <Tooltip content={<HRTooltip />} cursor={{ strokeDasharray: "3 3" }} />
-          <Line
-            type="monotone"
-            dataKey="hr"
-            stroke="#ef4444"
-            strokeWidth={2}
-            dot={{ r: 4, fill: "#ef4444", strokeWidth: 0 }}
-            activeDot={{ r: 6, fill: "#ef4444", strokeWidth: 2, stroke: "#fff" }}
-          />
-        </LineChart>
-      </ResponsiveContainer>
-    </div>
-  );
-}
-
 // ─── Combined export ────────────────────────────────────────────────────────
 
 interface MileSplitChartsProps {
@@ -195,10 +97,5 @@ interface MileSplitChartsProps {
 export function MileSplitCharts({ splits, hasRoute }: MileSplitChartsProps) {
   if (!hasRoute || splits.length === 0) return null;
 
-  return (
-    <>
-      <PaceBarChart splits={splits} />
-      <HeartRateLineChart splits={splits} />
-    </>
-  );
+  return <PaceBarChart splits={splits} />;
 }
