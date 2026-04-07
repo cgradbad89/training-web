@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useAuth } from "@/hooks/useAuth";
 import {
   fetchPlans,
@@ -942,20 +943,16 @@ export default function PlansPage() {
         </Modal>
       )}
 
-      {confirmDelete && (
-        <Modal
-          title="Delete Plan?"
-          onClose={() => setConfirmDelete(false)}
-          onSave={handleDelete}
-          saveLabel="Delete"
-        >
-          <p className="text-sm text-textSecondary">
-            Are you sure you want to delete{" "}
-            <strong className="text-textPrimary">{selectedPlan?.name}</strong>?
-            This cannot be undone.
-          </p>
-        </Modal>
-      )}
+      <ConfirmDialog
+        isOpen={confirmDelete}
+        title="Delete this plan?"
+        message="This will permanently delete the plan and all its workouts."
+        confirmLabel="Delete Plan"
+        confirmVariant="danger"
+        onConfirm={handleDelete}
+        onCancel={() => setConfirmDelete(false)}
+        loading={saving}
+      />
     </div>
   );
 }

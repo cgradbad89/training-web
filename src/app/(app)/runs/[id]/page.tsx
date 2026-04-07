@@ -3,14 +3,16 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import { ArrowLeft, Pencil, Trash2, RotateCcw } from "lucide-react";
+import { ArrowLeft, Pencil, RotateCcw } from "lucide-react";
 
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { MileSplitsTable } from "@/components/MileSplitsTable";
 import { MileSplitCharts } from "@/components/MileSplitCharts";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { StatBlock } from "@/components/ui/StatBlock";
 import { MetricBadge } from "@/components/ui/MetricBadge";
 import { useAuth } from "@/hooks/useAuth";
+import { useUnsavedChanges } from "@/hooks/useUnsavedChanges";
 import { fetchHealthWorkout } from "@/services/healthWorkouts";
 import { fetchRoutePoints, type RoutePoint } from "@/services/routes";
 import { fetchShoes, fetchManualShoeAssignmentsMap } from "@/services/shoes";
@@ -108,6 +110,10 @@ export default function RunDetailPage() {
   // Exclude state
   const [excluding, setExcluding] = useState(false);
   const [showExcludeConfirm, setShowExcludeConfirm] = useState(false);
+
+  // Unsaved-changes warning for the edit form
+  const editFormDirty = isEditing && (formDistance !== "" || formDuration !== "" || formRunType !== "");
+  useUnsavedChanges(editFormDirty);
 
   // Compute mile splits unconditionally (before early returns) to satisfy Rules of Hooks
   const displayWorkoutForSplits = workout ? applyOverride(workout, override) : null;
@@ -371,28 +377,16 @@ export default function RunDetailPage() {
       </div>
 
       {/* ── Exclude confirm ─────────────────────────────────── */}
-      {showExcludeConfirm && (
-        <div className="bg-danger/5 border border-danger/20 rounded-2xl p-4 flex items-center gap-3">
-          <Trash2 size={16} className="text-danger shrink-0" />
-          <p className="text-sm text-textPrimary flex-1">
-            Exclude this workout? It will be hidden from your history. You can
-            restore it anytime.
-          </p>
-          <button
-            onClick={() => setShowExcludeConfirm(false)}
-            className="text-xs text-textSecondary hover:text-textPrimary"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleExclude}
-            disabled={excluding}
-            className="text-xs font-semibold text-white bg-danger px-3 py-1.5 rounded-lg hover:bg-danger/90 disabled:opacity-50"
-          >
-            {excluding ? "Excluding..." : "Exclude"}
-          </button>
-        </div>
-      )}
+      <ConfirmDialog
+        isOpen={showExcludeConfirm}
+        title="Exclude this run?"
+        message="This run will be hidden from your stats and insights. You can un-exclude it later."
+        confirmLabel="Exclude"
+        confirmVariant="danger"
+        onConfirm={handleExclude}
+        onCancel={() => setShowExcludeConfirm(false)}
+        loading={excluding}
+      />
 
       {/* ── Edit Panel ──────────────────────────────────────── */}
       {isEditing && (

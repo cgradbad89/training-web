@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useAuth } from "@/hooks/useAuth";
+import { useUnsavedChanges } from "@/hooks/useUnsavedChanges";
 import {
   fetchRaces,
   createRace,
@@ -340,6 +342,11 @@ function RaceModal({ editing, activities, onSave, onClose, saving }: RaceModalPr
   const [form, setForm] = useState<ModalFormState>(
     editing ? raceToForm(editing) : defaultForm()
   );
+  const [initialForm] = useState<ModalFormState>(
+    editing ? raceToForm(editing) : defaultForm()
+  );
+  const isDirty = JSON.stringify(form) !== JSON.stringify(initialForm);
+  useUnsavedChanges(isDirty);
 
   const parsedPace = parsePaceString(form.paceInput);
   const distMiles =
@@ -571,50 +578,7 @@ function RaceModal({ editing, activities, onSave, onClose, saving }: RaceModalPr
   );
 }
 
-// ─── Confirm Delete Modal ─────────────────────────────────────────────────────
-
-function ConfirmDelete({
-  race,
-  onConfirm,
-  onCancel,
-  saving,
-}: {
-  race: Race;
-  onConfirm: () => void;
-  onCancel: () => void;
-  saving: boolean;
-}) {
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 overflow-hidden"
-      onClick={(e) => e.target === e.currentTarget && onCancel()}
-    >
-      <div className="relative z-10 bg-card rounded-2xl shadow-xl w-full max-w-sm p-6">
-        <h3 className="font-bold text-textPrimary mb-2">Delete Race?</h3>
-        <p className="text-sm text-textSecondary">
-          Delete{" "}
-          <strong className="text-textPrimary">{race.name}</strong>? This
-          cannot be undone.
-        </p>
-        <div className="flex justify-end gap-2 mt-5">
-          <button
-            onClick={onCancel}
-            className="px-4 py-2 rounded-xl border border-border text-sm text-textSecondary hover:bg-surface"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={onConfirm}
-            disabled={saving}
-            className="px-4 py-2 rounded-xl bg-danger text-white text-sm font-medium hover:bg-danger/90 disabled:opacity-50"
-          >
-            Delete
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
+// ConfirmDelete replaced by shared ConfirmDialog
 
 // ─── Field helper ─────────────────────────────────────────────────────────────
 
@@ -854,14 +818,16 @@ export default function RacesPage() {
       )}
 
       {/* Delete confirm */}
-      {deletingRace && (
-        <ConfirmDelete
-          race={deletingRace}
-          onConfirm={handleDelete}
-          onCancel={() => setDeletingRace(null)}
-          saving={saving}
-        />
-      )}
+      <ConfirmDialog
+        isOpen={!!deletingRace}
+        title="Delete this race?"
+        message="This will permanently remove the race and its goal data."
+        confirmLabel="Delete Race"
+        confirmVariant="danger"
+        onConfirm={handleDelete}
+        onCancel={() => setDeletingRace(null)}
+        loading={saving}
+      />
     </div>
   );
 }

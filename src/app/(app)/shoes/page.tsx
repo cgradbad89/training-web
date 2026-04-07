@@ -6,7 +6,9 @@ import { Pencil, Trash2, Plus, X, Footprints } from "lucide-react";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useAuth } from "@/hooks/useAuth";
+import { useUnsavedChanges } from "@/hooks/useUnsavedChanges";
 import { fetchHealthWorkouts } from "@/services/healthWorkouts";
 import {
   fetchShoes,
@@ -329,6 +331,9 @@ function AddEditShoeModal({
     notes: shoe?.notes ?? "",
     isRetired: shoe?.isRetired ?? false,
   }));
+  const [initialForm] = useState<ShoeFormState>(() => ({ ...form }));
+  const isDirty = JSON.stringify(form) !== JSON.stringify(initialForm);
+  useUnsavedChanges(isDirty);
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -558,6 +563,9 @@ function AddEditRuleModal({
     endDate: rule?.endDate ?? "",
     isEnabled: rule?.isEnabled ?? true,
   }));
+  const [initialForm] = useState<RuleFormState>(() => ({ ...form }));
+  const isDirty = JSON.stringify(form) !== JSON.stringify(initialForm);
+  useUnsavedChanges(isDirty);
 
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -1099,6 +1107,10 @@ export default function ShoesPage() {
   const [editingShoe, setEditingShoe] = useState<RunningShoe | null | "new">(null);
   const [editingRule, setEditingRule] = useState<{ rule: ShoeAutoAssignRule | null; shoe: RunningShoe | null } | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<RunningShoe | null>(null);
+  const [deleteRuleConfirm, setDeleteRuleConfirm] = useState<{
+    rule: ShoeAutoAssignRule;
+    shoe: RunningShoe;
+  } | null>(null);
 
   // Slide-over panel state
   const [runsPanel, setRunsPanel] = useState<RunningShoe | null>(null);
@@ -1108,14 +1120,16 @@ export default function ShoesPage() {
       editingShoe !== null ||
       editingRule !== null ||
       !!deleteConfirm ||
+      !!deleteRuleConfirm ||
       !!runsPanel;
     document.body.style.overflow = isOpen ? "hidden" : "";
     return () => { document.body.style.overflow = ""; };
-  }, [editingShoe, editingRule, deleteConfirm, runsPanel]);
+  }, [editingShoe, editingRule, deleteConfirm, deleteRuleConfirm, runsPanel]);
 
   const [autoAssignedCount, setAutoAssignedCount] = useState(0);
   const [autoAssignedMap, setAutoAssignedMap] = useState<Record<string, string>>({});
   const [savingAuto, setSavingAuto] = useState(false);
+  const [autoSaveMsg, setAutoSaveMsg] = useState<"success" | "error" | null>(null);
 
   const loadAll = useCallback(async () => {
     if (!uid) return;
@@ -1218,6 +1232,7 @@ export default function ShoesPage() {
     if (!uid) return;
     const updated = (shoe.autoAssignRules ?? []).filter((r) => r.id !== rule.id);
     await updateShoe(uid, shoe.id, { autoAssignRules: updated });
+    setDeleteRuleConfirm(null);
     await loadAll();
   }
 
@@ -1304,7 +1319,7 @@ export default function ShoesPage() {
         activeShoes={activeShoes}
         onAddRule={() => setEditingRule({ rule: null, shoe: null })}
         onEditRule={({ rule, shoe }) => setEditingRule({ rule, shoe })}
-        onDeleteRule={handleDeleteRule}
+        onDeleteRule={({ rule, shoe }) => setDeleteRuleConfirm({ rule, shoe })}
         onToggleRule={handleToggleRule}
       />
 
@@ -1321,12 +1336,17 @@ export default function ShoesPage() {
             onClick={async () => {
               if (!uid) return;
               setSavingAuto(true);
+              setAutoSaveMsg(null);
               try {
                 await saveManualAssignments(uid, autoAssignedMap);
                 setAutoAssignedCount(0);
                 setAutoAssignedMap({});
+                setAutoSaveMsg("success");
+                setTimeout(() => setAutoSaveMsg(null), 3000);
               } catch (err) {
                 console.error(err);
+                setAutoSaveMsg("error");
+                setTimeout(() => setAutoSaveMsg(null), 5000);
               }
               setSavingAuto(false);
             }}
@@ -1335,6 +1355,16 @@ export default function ShoesPage() {
           >
             {savingAuto ? "Saving..." : "Save Auto-Assignments"}
           </button>
+          {autoSaveMsg === "success" && (
+            <p className="text-sm text-success font-medium mt-2 transition-opacity">
+              Auto-assignments saved
+            </p>
+          )}
+          {autoSaveMsg === "error" && (
+            <p className="text-sm text-danger font-medium mt-2">
+              Failed to save. Please try again.
+            </p>
+          )}
         </div>
       )}
 
@@ -1348,33 +1378,25 @@ export default function ShoesPage() {
         />
       )}
 
-      {deleteConfirm && (
-        <Modal
-          title={`Delete "${deleteConfirm.name}"?`}
-          onClose={() => setDeleteConfirm(null)}
-        >
-          <div className="flex flex-col gap-4">
-            <p className="text-sm text-textSecondary">
-              This will permanently delete the shoe and remove all manual assignments.
-              This cannot be undone.
-            </p>
-            <div className="flex gap-2 justify-end">
-              <button
-                onClick={() => setDeleteConfirm(null)}
-                className="px-4 py-2 text-sm text-textSecondary border border-border rounded-lg hover:bg-surface transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => handleDeleteShoe(deleteConfirm)}
-                className="px-4 py-2 text-sm font-semibold text-white bg-danger rounded-lg hover:bg-danger/90 transition-colors"
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </Modal>
-      )}
+      <ConfirmDialog
+        isOpen={!!deleteConfirm}
+        title="Delete this shoe?"
+        message="This will remove the shoe and all its mileage history. This cannot be undone."
+        confirmLabel="Delete Shoe"
+        confirmVariant="danger"
+        onConfirm={() => deleteConfirm && handleDeleteShoe(deleteConfirm)}
+        onCancel={() => setDeleteConfirm(null)}
+      />
+
+      <ConfirmDialog
+        isOpen={!!deleteRuleConfirm}
+        title="Delete this rule?"
+        message="Runs matched by this rule will no longer be auto-assigned."
+        confirmLabel="Delete Rule"
+        confirmVariant="danger"
+        onConfirm={() => deleteRuleConfirm && handleDeleteRule(deleteRuleConfirm)}
+        onCancel={() => setDeleteRuleConfirm(null)}
+      />
 
       {editingRule !== null && (
         <AddEditRuleModal

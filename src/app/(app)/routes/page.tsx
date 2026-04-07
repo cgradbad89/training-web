@@ -7,6 +7,7 @@ import { ChevronDown, ChevronUp, Map as MapIcon, Plus, Trash2 } from "lucide-rea
 
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { StaticRouteMap } from "@/components/StaticRouteMap";
 import { useAuth } from "@/hooks/useAuth";
 import { fetchHealthWorkouts } from "@/services/healthWorkouts";
@@ -443,6 +444,7 @@ export default function RoutesPage() {
   const [showDrawModal, setShowDrawModal] = useState(false);
   const [selectedCreatedRoute, setSelectedCreatedRoute] =
     useState<CreatedRoute | null>(null);
+  const [deleteRouteConfirm, setDeleteRouteConfirm] = useState<CreatedRoute | null>(null);
 
   useEffect(() => {
     if (!uid) return;
@@ -488,6 +490,7 @@ export default function RoutesPage() {
     if (!uid) return;
     await deleteCreatedRoute(uid, routeId);
     setCreatedRoutes((prev) => prev.filter((r) => r.id !== routeId));
+    setDeleteRouteConfirm(null);
   };
 
   const filteredClusters = useMemo(
@@ -624,7 +627,7 @@ export default function RoutesPage() {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        handleDeleteRoute(route.id);
+                        setDeleteRouteConfirm(route);
                       }}
                       className="text-textSecondary hover:text-danger transition-colors p-1"
                     >
@@ -659,6 +662,17 @@ export default function RoutesPage() {
       <CreatedRouteDetailModal
         route={selectedCreatedRoute}
         onClose={() => setSelectedCreatedRoute(null)}
+      />
+
+      {/* Delete route confirm */}
+      <ConfirmDialog
+        isOpen={!!deleteRouteConfirm}
+        title="Delete this route?"
+        message="This will permanently delete the route. This cannot be undone."
+        confirmLabel="Delete Route"
+        confirmVariant="danger"
+        onConfirm={() => deleteRouteConfirm && handleDeleteRoute(deleteRouteConfirm.id)}
+        onCancel={() => setDeleteRouteConfirm(null)}
       />
     </div>
   );
