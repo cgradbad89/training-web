@@ -16,6 +16,7 @@ import { useRouter } from "next/navigation";
 
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { MetricBadge } from "@/components/ui/MetricBadge";
+import { WorkoutTrendsSection } from "@/components/WorkoutTrendsSection";
 import { useAuth } from "@/hooks/useAuth";
 import { fetchHealthWorkouts } from "@/services/healthWorkouts";
 import { fetchAllOverrides } from "@/services/workoutOverrides";
@@ -461,6 +462,9 @@ export default function PersonalInsightsPage() {
           </p>
         </Card>
       )}
+
+      {/* ── Workout Trends (Phase 3) ────────────────────── */}
+      {uid && <WorkoutTrendsSection uid={uid} workouts={workouts} />}
     </div>
   );
 }

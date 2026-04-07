@@ -294,20 +294,38 @@ function PilatesEntryEditor({
   );
 }
 
+// ─── Completion helpers ─────────────────────────────────────────────────────
+
+function formatCompletedAt(iso?: string): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return null;
+  return d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  }) + " at " + d.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 // ─── Read-only day card ────────────────────────────────────────────────────
 
 function WorkoutDayCard({
   entry,
   onEdit,
   onDelete,
+  onUnmatch,
 }: {
   entry: PlannedWorkoutEntry;
   onEdit: () => void;
   onDelete: () => void;
+  onUnmatch: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const exCount = entry.exercises?.length ?? 0;
   const completed = entry.completed === true;
+  const completedLabel = formatCompletedAt(entry.completedAt);
 
   return (
     <div
@@ -318,7 +336,7 @@ function WorkoutDayCard({
       <div className="flex items-center gap-2">
         <button
           onClick={() => setExpanded((v) => !v)}
-          className="flex-1 min-w-0 text-left flex items-center gap-2"
+          className="flex-1 min-w-0 text-left flex items-center gap-2 flex-wrap"
         >
           <span className="text-xs font-bold uppercase tracking-wide text-purple-600">
             Workout
@@ -332,10 +350,21 @@ function WorkoutDayCard({
             · {exCount} {exCount === 1 ? "exercise" : "exercises"}
           </span>
           {completed && (
-            <span className="text-xs text-success font-medium">✓</span>
+            <span className="text-xs text-success font-medium">
+              ✓ Completed{completedLabel ? ` · ${completedLabel}` : ""}
+            </span>
           )}
         </button>
         <div className="flex items-center gap-1 shrink-0">
+          {completed && (
+            <button
+              onClick={onUnmatch}
+              className="text-[10px] text-textSecondary hover:text-textPrimary border border-border rounded px-1.5 py-0.5"
+              title="Unmatch this session"
+            >
+              Unmatch
+            </button>
+          )}
           <button
             onClick={onEdit}
             className="p-1 rounded hover:bg-surface text-textSecondary hover:text-textPrimary"
@@ -378,12 +407,15 @@ function PilatesDayCard({
   entry,
   onEdit,
   onDelete,
+  onUnmatch,
 }: {
   entry: PlannedPilatesEntry;
   onEdit: () => void;
   onDelete: () => void;
+  onUnmatch: () => void;
 }) {
   const completed = entry.completed === true;
+  const completedLabel = formatCompletedAt(entry.completedAt);
 
   return (
     <div
@@ -392,7 +424,7 @@ function PilatesDayCard({
       }`}
     >
       <div className="flex items-center gap-2">
-        <div className="flex-1 min-w-0 flex items-center gap-2">
+        <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
           <span className="text-xs font-bold uppercase tracking-wide text-teal-600">
             Pilates
           </span>
@@ -407,10 +439,21 @@ function PilatesDayCard({
             </span>
           )}
           {completed && (
-            <span className="text-xs text-success font-medium">✓</span>
+            <span className="text-xs text-success font-medium">
+              ✓ Completed{completedLabel ? ` · ${completedLabel}` : ""}
+            </span>
           )}
         </div>
         <div className="flex items-center gap-1 shrink-0">
+          {completed && (
+            <button
+              onClick={onUnmatch}
+              className="text-[10px] text-textSecondary hover:text-textPrimary border border-border rounded px-1.5 py-0.5"
+              title="Unmatch this session"
+            >
+              Unmatch
+            </button>
+          )}
           <button
             onClick={onEdit}
             className="p-1 rounded hover:bg-surface text-textSecondary hover:text-textPrimary"
@@ -505,6 +548,17 @@ export function CrossTrainingPlanDetail({
 
   function deleteEntry(id: string) {
     updateWeekEntries(sortedEntries.filter((e) => e.id !== id));
+  }
+
+  function unmatchEntry(id: string) {
+    const next = sortedEntries.map((e) => {
+      if (e.id !== id) return e;
+      // Strip completed flags. Use Object spread + delete to avoid undefined leaks.
+      const cleared = { ...e, completed: false };
+      delete cleared.completedAt;
+      return cleared;
+    });
+    updateWeekEntries(next);
   }
 
   function newEntryFor(weekday: number): PlannedWorkoutEntry | PlannedPilatesEntry {
@@ -650,12 +704,14 @@ export function CrossTrainingPlanDetail({
                       entry={entry as PlannedWorkoutEntry}
                       onEdit={() => setEditingDay(weekday)}
                       onDelete={() => deleteEntry(entry.id)}
+                      onUnmatch={() => unmatchEntry(entry.id)}
                     />
                   ) : (
                     <PilatesDayCard
                       entry={entry as PlannedPilatesEntry}
                       onEdit={() => setEditingDay(weekday)}
                       onDelete={() => deleteEntry(entry.id)}
+                      onUnmatch={() => unmatchEntry(entry.id)}
                     />
                   )}
                 </div>

@@ -12,6 +12,7 @@ import {
   setActivePlan,
 } from "@/services/plans";
 import { fetchHealthWorkouts } from "@/services/healthWorkouts";
+import { autoMatchCrossTrainingSessions } from "@/services/autoMatch";
 import { DEFAULT_HALF_MARATHON_PLAN } from "@/lib/seedData";
 import {
   type Plan,
@@ -428,6 +429,23 @@ export default function PlansPage() {
           DEFAULT_HALF_MARATHON_PLAN
         );
         finalPlans = [seeded];
+      }
+
+      // Phase 2: auto-match cross-training plan sessions to HealthKit workouts.
+      // This silently advances completed flags before the user sees the page.
+      // Errors are non-fatal — we keep going with whatever state we have.
+      try {
+        const { plans: matchedPlans, result } =
+          await autoMatchCrossTrainingSessions(
+            user.uid,
+            finalPlans,
+            loadedActivities
+          );
+        if (result.matched > 0) {
+          finalPlans = matchedPlans;
+        }
+      } catch (err) {
+        console.error("[AutoMatch] error", err);
       }
 
       setPlans(finalPlans);
