@@ -12,6 +12,7 @@ import {
   type PlannedRunEntry,
   type PlanWeek,
   type PlanRunType,
+  isRunningPlan,
 } from "@/types/plan";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { formatPace, parsePaceString } from "@/utils/pace";
@@ -481,7 +482,9 @@ export default function PlanEditPage() {
     ])
       .then(([plans, acts]) => {
         const found = plans.find((p) => p.id === planId);
-        if (!found) {
+        if (!found || !isRunningPlan(found)) {
+          // This editor only handles running plans. Cross-training plans
+          // are edited inline on the main plans page.
           setNotFound(true);
           return;
         }

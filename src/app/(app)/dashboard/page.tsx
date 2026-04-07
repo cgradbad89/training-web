@@ -51,7 +51,7 @@ import {
   isSameWeek,
 } from "@/utils/dates";
 import { type HealthWorkout } from "@/types/healthWorkout";
-import { type RunningPlan, type PlannedRunEntry } from "@/types/plan";
+import { type RunningPlan, type PlannedRunEntry, isRunningPlan } from "@/types/plan";
 import { type HalfMarathonRace, HALF_MARATHON_MILES } from "@/types/race";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -670,7 +670,8 @@ export default function DashboardPage() {
     ])
       .then(([wkts, plans, races]) => {
         setWorkouts(wkts);
-        setActivePlan(plans.find((p) => p.isActive) ?? null);
+        const runningPlans = plans.filter(isRunningPlan);
+        setActivePlan(runningPlans.find((p) => p.isActive) ?? null);
         setActiveRace(races.find((r) => r.isActive) ?? null);
 
         // Background prefetch — most recent 20 runs with routes

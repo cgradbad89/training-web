@@ -6,6 +6,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { fetchHealthWorkouts } from '@/services/healthWorkouts'
 import { fetchAllOverrides } from '@/services/workoutOverrides'
 import { fetchPlans } from '@/services/plans'
+import { isRunningPlan } from '@/types/plan'
 import { fetchRaces } from '@/services/races'
 import { fetchHealthMetrics } from '@/services/healthMetrics'
 import { buildCoachContext } from '@/utils/coachContext'
@@ -68,8 +69,9 @@ export default function CoachPage() {
         .filter(w => w.isRunLike)
         .map(w => applyOverride(w, overrides[w.workoutId] ?? null))
 
-      // Find active plan and race
-      const activePlan = plans.find(p => p.isActive) ?? plans[0] ?? null
+      // Find active plan and race (running plans only — coach is running-focused)
+      const runningPlans = plans.filter(isRunningPlan)
+      const activePlan = runningPlans.find(p => p.isActive) ?? runningPlans[0] ?? null
       const now = new Date()
       const upcomingRaces = races
         .filter(r => {

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { CrossTrainingPlanDetail } from "@/components/CrossTrainingPlanDetail";
 import { useAuth } from "@/hooks/useAuth";
 import {
   fetchPlans,
@@ -13,11 +14,18 @@ import {
 import { fetchHealthWorkouts } from "@/services/healthWorkouts";
 import { DEFAULT_HALF_MARATHON_PLAN } from "@/lib/seedData";
 import {
+  type Plan,
+  type PlanType,
   type RunningPlan,
+  type WorkoutPlan,
+  type PilatesPlan,
   type PlannedRunEntry,
   type PlanWeek,
   type PlanRunType,
-} from "@/types";
+  isRunningPlan,
+  isWorkoutPlan,
+  isPilatesPlan,
+} from "@/types/plan";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { useRouter } from "next/navigation";
 import {
@@ -30,6 +38,9 @@ import {
   Copy,
   Check,
   AlertCircle,
+  Dumbbell,
+  Flower2,
+  Footprints,
 } from "lucide-react";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -265,6 +276,57 @@ function WeekSummaryBar({
   );
 }
 
+// ─── Sidebar plan item ───────────────────────────────────────────────────────
+
+function SidebarPlanItem({
+  plan,
+  isSelected,
+  onSelect,
+}: {
+  plan: Plan;
+  isSelected: boolean;
+  onSelect: () => void;
+}) {
+  const Icon = isWorkoutPlan(plan)
+    ? Dumbbell
+    : isPilatesPlan(plan)
+      ? Flower2
+      : Footprints;
+  const typeLabel = isWorkoutPlan(plan)
+    ? "Workout"
+    : isPilatesPlan(plan)
+      ? "Pilates"
+      : "Running";
+  return (
+    <button
+      onClick={onSelect}
+      className={`w-full text-left px-4 py-3 flex items-center gap-2 transition-colors ${
+        isSelected
+          ? "bg-primary/10 text-primary"
+          : "text-textPrimary hover:bg-surface"
+      }`}
+    >
+      <Icon className="w-4 h-4 shrink-0 text-textSecondary" />
+      <div className="flex-1 min-w-0">
+        <div className="text-sm font-medium truncate">{plan.name}</div>
+        <div className="text-xs text-textSecondary mt-0.5">
+          {plan.weeks.length} weeks · {typeLabel}
+          {isRunningPlan(plan) && plan.isBuiltInDefault && (
+            <span className="ml-1.5 text-warning">Template</span>
+          )}
+        </div>
+      </div>
+      {plan.isActive && (
+        <span
+          className="w-2 h-2 rounded-full bg-success shrink-0"
+          title="Active"
+        />
+      )}
+      <ChevronRight className="w-4 h-4 shrink-0 text-textSecondary" />
+    </button>
+  );
+}
+
 // ─── Modal wrapper ────────────────────────────────────────────────────────────
 
 function Modal({
@@ -307,7 +369,7 @@ function Modal({
 export default function PlansPage() {
   const { user } = useAuth();
   const router = useRouter();
-  const [plans, setPlans] = useState<RunningPlan[]>([]);
+  const [plans, setPlans] = useState<Plan[]>([]);
   const [activities, setActivities] = useState<HealthWorkout[]>([]);
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [selectedWeekIndex, setSelectedWeekIndex] = useState(0);
@@ -315,6 +377,8 @@ export default function PlansPage() {
   const [saving, setSaving] = useState(false);
   const [mobileView, setMobileView] = useState<"list" | "detail">("list");
 
+  const [showTypePicker, setShowTypePicker] = useState(false);
+  const [pendingPlanType, setPendingPlanType] = useState<PlanType | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -326,9 +390,18 @@ export default function PlansPage() {
   const weekTabsRef = useRef<HTMLDivElement>(null);
 
   const selectedPlan = plans.find((p) => p.id === selectedPlanId) ?? null;
-  const matchMap = selectedPlan
-    ? matchPlanToActual(selectedPlan, activities)
+  const selectedRunningPlan =
+    selectedPlan && isRunningPlan(selectedPlan) ? selectedPlan : null;
+  const matchMap = selectedRunningPlan
+    ? matchPlanToActual(selectedRunningPlan, activities)
     : new Map<string, PlanMatch | null>();
+
+  // Sidebar grouping
+  const runningPlans = plans.filter(isRunningPlan);
+  const crossTrainingPlans = plans.filter(
+    (p): p is WorkoutPlan | PilatesPlan =>
+      isWorkoutPlan(p) || isPilatesPlan(p)
+  );
 
   // ── Load ──────────────────────────────────────────────────────────────────
 
@@ -347,9 +420,13 @@ export default function PlansPage() {
         fetchHealthWorkouts(user.uid),
       ]);
 
-      let finalPlans = loadedPlans;
+      let finalPlans: Plan[] = loadedPlans;
+      // Seed default running plan only if no plans of any kind exist
       if (loadedPlans.length === 0) {
-        const seeded = await createPlan(user.uid, DEFAULT_HALF_MARATHON_PLAN);
+        const seeded = await createPlan<RunningPlan>(
+          user.uid,
+          DEFAULT_HALF_MARATHON_PLAN
+        );
         finalPlans = [seeded];
       }
 
@@ -366,7 +443,7 @@ export default function PlansPage() {
     }
   }
 
-  function currentWeekIndex(plan: RunningPlan): number {
+  function currentWeekIndex(plan: Plan): number {
     const start = new Date(plan.startDate + "T00:00:00");
     const today = new Date();
     const diff = Math.floor(
@@ -392,6 +469,7 @@ export default function PlansPage() {
 
   async function handleCreate() {
     if (!user || !nameInput.trim() || !startDateInput || !endDateInput) return;
+    if (!pendingPlanType) return;
     const numWeeks = Math.max(
       1,
       Math.ceil(
@@ -402,20 +480,47 @@ export default function PlansPage() {
     );
     setSaving(true);
     try {
-      const plan = await createPlan(user.uid, {
-        name: nameInput.trim(),
-        startDate: startDateInput,
-        isActive: false,
-        weeks: Array.from({ length: numWeeks }, (_, i) => ({
-          weekNumber: i + 1,
-          entries: [],
-        })),
-      });
+      let plan: Plan;
+      if (pendingPlanType === "running") {
+        plan = await createPlan<RunningPlan>(user.uid, {
+          name: nameInput.trim(),
+          planType: "running",
+          startDate: startDateInput,
+          isActive: false,
+          weeks: Array.from({ length: numWeeks }, (_, i) => ({
+            weekNumber: i + 1,
+            entries: [],
+          })),
+        });
+      } else if (pendingPlanType === "workout") {
+        plan = await createPlan<WorkoutPlan>(user.uid, {
+          name: nameInput.trim(),
+          planType: "workout",
+          startDate: startDateInput,
+          isActive: false,
+          weeks: Array.from({ length: numWeeks }, (_, i) => ({
+            weekNumber: i + 1,
+            entries: [],
+          })),
+        });
+      } else {
+        plan = await createPlan<PilatesPlan>(user.uid, {
+          name: nameInput.trim(),
+          planType: "pilates",
+          startDate: startDateInput,
+          isActive: false,
+          weeks: Array.from({ length: numWeeks }, (_, i) => ({
+            weekNumber: i + 1,
+            entries: [],
+          })),
+        });
+      }
       setPlans((prev) => [...prev, plan]);
       setSelectedPlanId(plan.id);
       setSelectedWeekIndex(0);
       setMobileView("detail");
       setShowCreateModal(false);
+      setPendingPlanType(null);
       setNameInput("");
       setStartDateInput("");
       setEndDateInput("");
@@ -426,10 +531,12 @@ export default function PlansPage() {
 
   async function handleDuplicate() {
     if (!user || !selectedPlan) return;
+    if (!isRunningPlan(selectedPlan)) return; // duplicate currently running-only
     setSaving(true);
     try {
-      const plan = await createPlan(user.uid, {
+      const plan = await createPlan<RunningPlan>(user.uid, {
         name: `${selectedPlan.name} (Copy)`,
+        planType: "running",
         startDate: selectedPlan.startDate,
         isActive: false,
         isBuiltInDefault: false,
@@ -439,6 +546,20 @@ export default function PlansPage() {
       setSelectedPlanId(plan.id);
     } finally {
       setSaving(false);
+    }
+  }
+
+  /**
+   * Persist updates to a Workout/Pilates plan from CrossTrainingPlanDetail.
+   * Optimistically updates local state, then writes through Firestore.
+   */
+  async function handleCrossTrainingUpdate(updated: WorkoutPlan | PilatesPlan) {
+    if (!user) return;
+    setPlans((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+    try {
+      await updatePlan(user.uid, updated);
+    } catch (e) {
+      console.error(e);
     }
   }
 
@@ -471,16 +592,16 @@ export default function PlansPage() {
   }
 
 
-  // ── Derived ───────────────────────────────────────────────────────────────
+  // ── Derived (running plan only — polymorphic plans render via separate component) ──
 
   const currentWeek: PlanWeek | undefined =
-    selectedPlan?.weeks[selectedWeekIndex];
+    selectedRunningPlan?.weeks[selectedWeekIndex];
 
   const weekEntries = (currentWeek?.entries ?? [])
     .slice()
     .sort((a, b) => a.weekday - b.weekday);
 
-  function weekDateRange(plan: RunningPlan, weekIdx: number): string {
+  function weekDateRange(plan: Plan, weekIdx: number): string {
     const start = new Date(plan.startDate + "T00:00:00");
     start.setDate(start.getDate() + weekIdx * 7);
     const end = new Date(start);
@@ -490,18 +611,25 @@ export default function PlansPage() {
     return `${fmt(start)} – ${fmt(end)}`;
   }
 
-  function weekStats(plan: RunningPlan, week: PlanWeek) {
+  function weekStats(_plan: RunningPlan, week: PlanWeek) {
     const runEntries = week.entries.filter((e) => e.runType !== "rest");
     const completed = runEntries.filter((e) => matchMap.get(e.id)).length;
     const totalMiles = runEntries.reduce((s, e) => s + e.distanceMiles, 0);
     return { completed, total: runEntries.length, totalMiles };
   }
 
-  function openCreateModal() {
+  function openTypePicker() {
+    setShowTypePicker(true);
+  }
+
+  function openCreateModalForType(type: PlanType) {
     const nm = nextMonday();
+    const defaultWeeks = type === "running" ? 13 : 8;
+    setPendingPlanType(type);
     setNameInput("");
     setStartDateInput(nm);
-    setEndDateInput(endDateForWeeks(nm, 13));
+    setEndDateInput(endDateForWeeks(nm, defaultWeeks));
+    setShowTypePicker(false);
     setShowCreateModal(true);
   }
 
@@ -522,7 +650,7 @@ export default function PlansPage() {
         <div className="p-4 border-b border-border flex items-center justify-between">
           <h2 className="font-semibold text-textPrimary">Plans</h2>
           <button
-            onClick={openCreateModal}
+            onClick={openTypePicker}
             className="p-1.5 rounded-lg hover:bg-surface text-textSecondary hover:text-primary"
             title="New plan"
           >
@@ -531,55 +659,99 @@ export default function PlansPage() {
         </div>
 
         <div className="flex-1 overflow-y-auto py-2">
-          {plans.map((plan) => (
-            <button
+          {/* Running Plans group */}
+          <div className="px-4 pt-1 pb-2">
+            <h3 className="text-[10px] font-bold uppercase tracking-widest text-textSecondary">
+              Running Plans
+            </h3>
+          </div>
+          {runningPlans.length === 0 && (
+            <p className="px-4 pb-2 text-xs text-textSecondary italic">
+              No running plans
+            </p>
+          )}
+          {runningPlans.map((plan) => (
+            <SidebarPlanItem
               key={plan.id}
-              onClick={() => {
+              plan={plan}
+              isSelected={selectedPlanId === plan.id}
+              onSelect={() => {
                 setSelectedPlanId(plan.id);
                 setSelectedWeekIndex(currentWeekIndex(plan));
                 setMobileView("detail");
               }}
-              className={`w-full text-left px-4 py-3 flex items-center gap-2 transition-colors ${
-                selectedPlanId === plan.id
-                  ? "bg-primary/10 text-primary"
-                  : "text-textPrimary hover:bg-surface"
-              }`}
-            >
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium truncate">{plan.name}</div>
-                <div className="text-xs text-textSecondary mt-0.5">
-                  {plan.weeks.length} weeks
-                  {plan.isBuiltInDefault && (
-                    <span className="ml-1.5 text-warning">Template</span>
-                  )}
-                </div>
-              </div>
-              {plan.isActive && (
-                <span
-                  className="w-2 h-2 rounded-full bg-success shrink-0"
-                  title="Active"
-                />
-              )}
-              <ChevronRight className="w-4 h-4 shrink-0 text-textSecondary" />
-            </button>
+            />
+          ))}
+
+          {/* Cross Training Plans group */}
+          <div className="px-4 pt-4 pb-2 border-t border-border mt-2">
+            <h3 className="text-[10px] font-bold uppercase tracking-widest text-textSecondary">
+              Cross Training Plans
+            </h3>
+          </div>
+          {crossTrainingPlans.length === 0 && (
+            <p className="px-4 pb-2 text-xs text-textSecondary italic">
+              No cross-training plans
+            </p>
+          )}
+          {crossTrainingPlans.map((plan) => (
+            <SidebarPlanItem
+              key={plan.id}
+              plan={plan}
+              isSelected={selectedPlanId === plan.id}
+              onSelect={() => {
+                setSelectedPlanId(plan.id);
+                setSelectedWeekIndex(currentWeekIndex(plan));
+                setMobileView("detail");
+              }}
+            />
           ))}
         </div>
       </div>
 
       {/* ── Right Panel ─────────────────────────────────────────────────── */}
       <div className={`${mobileView === "list" ? "hidden lg:flex" : "flex"} flex-1 flex-col overflow-hidden`}>
-        {selectedPlan ? (
-          <>
-            {/* Back button — mobile only */}
-            <div className="lg:hidden px-6 pt-4 pb-0 bg-card border-b border-transparent">
-              <button
-                onClick={() => setMobileView("list")}
-                className="text-sm text-primary mb-4 flex items-center gap-1"
-              >
-                ← Back to Plans
-              </button>
-            </div>
+        {/* Mobile back button (always available when a plan is selected) */}
+        {selectedPlan && (
+          <div className="lg:hidden px-6 pt-4 pb-0 bg-card border-b border-transparent">
+            <button
+              onClick={() => setMobileView("list")}
+              className="text-sm text-primary mb-4 flex items-center gap-1"
+            >
+              ← Back to Plans
+            </button>
+          </div>
+        )}
 
+        {/* Cross-training plans (Workout + Pilates) — dedicated detail */}
+        {selectedPlan && !isRunningPlan(selectedPlan) && (
+          <CrossTrainingPlanDetail
+            plan={selectedPlan}
+            onUpdate={handleCrossTrainingUpdate}
+            onDelete={async () => {
+              if (!user) return;
+              setSaving(true);
+              try {
+                await deletePlan(user.uid, selectedPlan.id);
+                const remaining = plans.filter((p) => p.id !== selectedPlan.id);
+                setPlans(remaining);
+                setSelectedPlanId(remaining[0]?.id ?? null);
+              } finally {
+                setSaving(false);
+              }
+            }}
+            onSetActive={() => handleSetActive(selectedPlan.id)}
+            saving={saving}
+          />
+        )}
+
+        {/* Running plan detail (existing rendering) */}
+        {selectedRunningPlan ? (() => {
+          // Local alias so the existing JSX (which referenced `selectedPlan`)
+          // continues to compile against the narrowed RunningPlan type.
+          const selectedPlan: RunningPlan = selectedRunningPlan;
+          return (
+          <>
             {/* Plan header */}
             <div className="px-6 py-4 border-b border-border bg-card flex items-start gap-4">
               <div className="flex-1 min-w-0">
@@ -838,24 +1010,81 @@ export default function PlansPage() {
               )}
             </div>
           </>
-        ) : (
+          );
+        })() : !selectedPlan ? (
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center">
               <p className="text-textSecondary mb-4">
                 No training plan selected.
               </p>
               <button
-                onClick={openCreateModal}
+                onClick={openTypePicker}
                 className="px-4 py-2 bg-primary text-white text-sm font-medium rounded-xl hover:bg-primary/90"
               >
                 Create a plan
               </button>
             </div>
           </div>
-        )}
+        ) : null}
       </div>
 
       {/* ── Modals ─────────────────────────────────────────────────────── */}
+
+      {/* Type picker — opened first when user clicks + */}
+      {showTypePicker && (
+        <Modal
+          title="New Plan"
+          onClose={() => setShowTypePicker(false)}
+        >
+          <p className="text-sm text-textSecondary mb-4">
+            What kind of plan would you like to create?
+          </p>
+          <div className="flex flex-col gap-2">
+            <button
+              onClick={() => openCreateModalForType("running")}
+              className="flex items-center gap-3 p-3 rounded-xl border border-border hover:border-primary hover:bg-primary/5 transition-colors text-left"
+            >
+              <Footprints className="w-5 h-5 text-primary shrink-0" />
+              <div>
+                <div className="text-sm font-semibold text-textPrimary">
+                  Running Plan
+                </div>
+                <div className="text-xs text-textSecondary">
+                  Track planned runs with distance and pace
+                </div>
+              </div>
+            </button>
+            <button
+              onClick={() => openCreateModalForType("workout")}
+              className="flex items-center gap-3 p-3 rounded-xl border border-border hover:border-purple-400 hover:bg-purple-50 transition-colors text-left"
+            >
+              <Dumbbell className="w-5 h-5 text-purple-600 shrink-0" />
+              <div>
+                <div className="text-sm font-semibold text-textPrimary">
+                  Workout Plan
+                </div>
+                <div className="text-xs text-textSecondary">
+                  Strength training, OTF, HIIT — track exercises, sets & reps
+                </div>
+              </div>
+            </button>
+            <button
+              onClick={() => openCreateModalForType("pilates")}
+              className="flex items-center gap-3 p-3 rounded-xl border border-border hover:border-teal-400 hover:bg-teal-50 transition-colors text-left"
+            >
+              <Flower2 className="w-5 h-5 text-teal-600 shrink-0" />
+              <div>
+                <div className="text-sm font-semibold text-textPrimary">
+                  Pilates Plan
+                </div>
+                <div className="text-xs text-textSecondary">
+                  Reformer or mat pilates sessions
+                </div>
+              </div>
+            </button>
+          </div>
+        </Modal>
+      )}
 
       {showCreateModal && (() => {
         const startD = startDateInput
@@ -875,8 +1104,17 @@ export default function PlansPage() {
 
         return (
           <Modal
-            title="New Training Plan"
-            onClose={() => setShowCreateModal(false)}
+            title={
+              pendingPlanType === "workout"
+                ? "New Workout Plan"
+                : pendingPlanType === "pilates"
+                  ? "New Pilates Plan"
+                  : "New Running Plan"
+            }
+            onClose={() => {
+              setShowCreateModal(false);
+              setPendingPlanType(null);
+            }}
             onSave={handleCreate}
             saveLabel="Create"
           >
@@ -889,7 +1127,13 @@ export default function PlansPage() {
                   type="text"
                   value={nameInput}
                   onChange={(e) => setNameInput(e.target.value)}
-                  placeholder="e.g. Fall Marathon 2026"
+                  placeholder={
+                    pendingPlanType === "workout"
+                      ? "e.g. Off-season Strength"
+                      : pendingPlanType === "pilates"
+                        ? "e.g. Weekly Reformer"
+                        : "e.g. Fall Marathon 2026"
+                  }
                   className="w-full border border-border rounded-xl px-3 py-2 text-sm bg-card text-textPrimary focus:outline-none focus:ring-2 focus:ring-primary"
                   autoFocus
                 />

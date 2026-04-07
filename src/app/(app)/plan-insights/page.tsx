@@ -26,7 +26,7 @@ import { fetchRaces } from "@/services/races";
 import { fetchAllOverrides } from "@/services/workoutOverrides";
 import { applyOverride } from "@/types/workoutOverride";
 import { type HealthWorkout } from "@/types/healthWorkout";
-import { type RunningPlan } from "@/types/plan";
+import { type RunningPlan, isRunningPlan } from "@/types/plan";
 import { type Race, RACE_DISTANCE_MILES, RACE_DISTANCE_LABELS } from "@/types/race";
 import { formatPace, formatMiles } from "@/utils/pace";
 import { efficiencyDisplayScore } from "@/utils/metrics";
@@ -232,7 +232,7 @@ export default function PlanInsightsPage() {
           .map((w) => applyOverride(w, overrides[w.workoutId] ?? null))
           .filter((w) => !overrides[w.workoutId]?.isExcluded);
         setWorkouts(processed);
-        setPlans(plansList);
+        setPlans(plansList.filter(isRunningPlan));
         setRaces(racesList);
       })
       .catch(console.error)
