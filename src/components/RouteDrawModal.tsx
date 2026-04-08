@@ -75,6 +75,8 @@ export default function RouteDrawModal({
   const waypointsRef = useRef<LatLng[]>(initial?.waypoints ?? []);
   const routedSegmentsRef = useRef<LatLng[][]>([]);
   const drawModeRef = useRef(true);
+  const shiftPressedRef = useRef(false);
+  const polylineDragStartRef = useRef<LatLng | null>(null);
 
   const [waypoints, setWaypoints] = useState<CreatedRouteWaypoint[]>(
     initial?.waypoints ?? []
@@ -86,6 +88,8 @@ export default function RouteDrawModal({
   const [drawMode, setDrawMode] = useState(true);
   const [center, setCenter] = useState<LatLng | null>(null);
   const [mapReady, setMapReady] = useState(false);
+  const [shiftHeld, setShiftHeld] = useState(false);
+  const [recomputing, setRecomputing] = useState(false);
 
   // Keep refs in sync
   useEffect(() => {
@@ -105,6 +109,27 @@ export default function RouteDrawModal({
     document.body.style.overflow = "hidden";
     return () => {
       document.body.style.overflow = "";
+    };
+  }, []);
+
+  // Track Shift key (for "force straight line" drag mode)
+  useEffect(() => {
+    const updateShift = (e: KeyboardEvent) => {
+      const next = e.shiftKey;
+      shiftPressedRef.current = next;
+      setShiftHeld(next);
+    };
+    const clearShift = () => {
+      shiftPressedRef.current = false;
+      setShiftHeld(false);
+    };
+    window.addEventListener("keydown", updateShift);
+    window.addEventListener("keyup", updateShift);
+    window.addEventListener("blur", clearShift);
+    return () => {
+      window.removeEventListener("keydown", updateShift);
+      window.removeEventListener("keyup", updateShift);
+      window.removeEventListener("blur", clearShift);
     };
   }, []);
 
@@ -201,6 +226,212 @@ export default function RouteDrawModal({
     mapRef.current = null;
     directionsServiceRef.current = null;
   }, []);
+
+  // Compute one segment between two waypoints — Directions API or straight line
+  const computeSegment = useCallback(
+    async (from: LatLng, to: LatLng, useStraight: boolean): Promise<LatLng[]> => {
+      if (useStraight || !directionsServiceRef.current) return [from, to];
+      return fetchRoutedPath(directionsServiceRef.current, from, to);
+    },
+    []
+  );
+
+  // Marker drag end — update waypoint position, re-fetch adjacent segment(s)
+  const handleMarkerDragEnd = useCallback(
+    async (index: number, e: google.maps.MapMouseEvent) => {
+      if (!e.latLng) return;
+      const newPos: LatLng = { lat: e.latLng.lat(), lng: e.latLng.lng() };
+      const useStraight = shiftPressedRef.current;
+
+      const current = waypointsRef.current;
+      if (current.length === 0) return;
+      const updatedWaypoints = current.map((wp, i) =>
+        i === index ? newPos : wp
+      );
+      waypointsRef.current = updatedWaypoints;
+      setWaypoints(updatedWaypoints);
+
+      if (updatedWaypoints.length < 2) return;
+
+      // Optimistic straight-line segments while we fetch routed paths
+      const segs = [...routedSegmentsRef.current];
+      const isFirst = index === 0;
+      const isLast = index === updatedWaypoints.length - 1;
+
+      if (isFirst) {
+        segs[0] = [updatedWaypoints[0], updatedWaypoints[1]];
+      } else if (isLast) {
+        segs[segs.length - 1] = [
+          updatedWaypoints[index - 1],
+          updatedWaypoints[index],
+        ];
+      } else {
+        segs[index - 1] = [
+          updatedWaypoints[index - 1],
+          updatedWaypoints[index],
+        ];
+        segs[index] = [
+          updatedWaypoints[index],
+          updatedWaypoints[index + 1],
+        ];
+      }
+      routedSegmentsRef.current = segs;
+      setRoutedSegments(segs);
+
+      // Real fetch
+      setRecomputing(true);
+      try {
+        const next = [...routedSegmentsRef.current];
+        if (isFirst) {
+          next[0] = await computeSegment(
+            updatedWaypoints[0],
+            updatedWaypoints[1],
+            useStraight
+          );
+        } else if (isLast) {
+          next[next.length - 1] = await computeSegment(
+            updatedWaypoints[index - 1],
+            updatedWaypoints[index],
+            useStraight
+          );
+        } else {
+          const before = await computeSegment(
+            updatedWaypoints[index - 1],
+            updatedWaypoints[index],
+            useStraight
+          );
+          const after = await computeSegment(
+            updatedWaypoints[index],
+            updatedWaypoints[index + 1],
+            useStraight
+          );
+          next[index - 1] = before;
+          next[index] = after;
+        }
+        routedSegmentsRef.current = next;
+        setRoutedSegments(next);
+      } finally {
+        setRecomputing(false);
+      }
+    },
+    [computeSegment]
+  );
+
+  // Insert a new waypoint into the segment nearest to `referencePoint`
+  const insertWaypointOnSegment = useCallback(
+    async (referencePoint: LatLng, newWaypoint: LatLng) => {
+      const useStraight = shiftPressedRef.current;
+      const segs = routedSegmentsRef.current;
+      const wps = waypointsRef.current;
+      if (wps.length < 2 || segs.length === 0) return;
+
+      // Find which segment was grabbed: closest segment vertex to reference point
+      let bestSegIdx = 0;
+      let bestDist = Infinity;
+      for (let s = 0; s < segs.length; s++) {
+        for (const pt of segs[s]) {
+          const d = haversineMeters(
+            pt.lat,
+            pt.lng,
+            referencePoint.lat,
+            referencePoint.lng
+          );
+          if (d < bestDist) {
+            bestDist = d;
+            bestSegIdx = s;
+          }
+        }
+      }
+
+      const insertIdx = bestSegIdx + 1;
+      const newWaypoints = [
+        ...wps.slice(0, insertIdx),
+        newWaypoint,
+        ...wps.slice(insertIdx),
+      ];
+      waypointsRef.current = newWaypoints;
+      setWaypoints(newWaypoints);
+
+      // Optimistic straight-line segments
+      const optimisticBefore: LatLng[] = [
+        newWaypoints[insertIdx - 1],
+        newWaypoint,
+      ];
+      const optimisticAfter: LatLng[] = [
+        newWaypoint,
+        newWaypoints[insertIdx + 1],
+      ];
+      const optimisticSegs = [
+        ...segs.slice(0, bestSegIdx),
+        optimisticBefore,
+        optimisticAfter,
+        ...segs.slice(bestSegIdx + 1),
+      ];
+      routedSegmentsRef.current = optimisticSegs;
+      setRoutedSegments(optimisticSegs);
+
+      // Real fetch
+      setRecomputing(true);
+      try {
+        const before = await computeSegment(
+          newWaypoints[insertIdx - 1],
+          newWaypoint,
+          useStraight
+        );
+        const after = await computeSegment(
+          newWaypoint,
+          newWaypoints[insertIdx + 1],
+          useStraight
+        );
+        const currentSegs = routedSegmentsRef.current;
+        const finalSegs = [
+          ...currentSegs.slice(0, bestSegIdx),
+          before,
+          after,
+          ...currentSegs.slice(bestSegIdx + 1),
+        ];
+        routedSegmentsRef.current = finalSegs;
+        setRoutedSegments(finalSegs);
+      } finally {
+        setRecomputing(false);
+      }
+    },
+    [computeSegment]
+  );
+
+  // Polyline drag handlers — drag a point on the route to insert a waypoint
+  const handlePolylineDragStart = useCallback(
+    (e: google.maps.MapMouseEvent) => {
+      if (!e.latLng) return;
+      polylineDragStartRef.current = {
+        lat: e.latLng.lat(),
+        lng: e.latLng.lng(),
+      };
+    },
+    []
+  );
+
+  const handlePolylineDragEnd = useCallback(
+    async (e: google.maps.MapMouseEvent) => {
+      const start = polylineDragStartRef.current;
+      polylineDragStartRef.current = null;
+      if (!e.latLng || !start) return;
+      const drop: LatLng = { lat: e.latLng.lat(), lng: e.latLng.lng() };
+      await insertWaypointOnSegment(start, drop);
+    },
+    [insertWaypointOnSegment]
+  );
+
+  // Click on the polyline — same as click-on-line insertion (no movement)
+  const handlePolylineClick = useCallback(
+    async (e: google.maps.MapMouseEvent) => {
+      if (!drawModeRef.current) return;
+      if (!e.latLng) return;
+      const pt: LatLng = { lat: e.latLng.lat(), lng: e.latLng.lng() };
+      await insertWaypointOnSegment(pt, pt);
+    },
+    [insertWaypointOnSegment]
+  );
 
   // Click on map — add a waypoint (only in draw mode)
   const handleMapClick = useCallback(
@@ -431,7 +662,7 @@ export default function RouteDrawModal({
               onUnmount={handleMapUnmount}
               onClick={handleMapClick}
             >
-              {/* Routed polyline */}
+              {/* Routed polyline (visible) */}
               {polylinePath.length >= 2 && (
                 <Polyline
                   path={polylinePath}
@@ -440,7 +671,26 @@ export default function RouteDrawModal({
                     strokeWeight: 4,
                     strokeOpacity: 0.9,
                     clickable: false,
+                    zIndex: 1,
                   }}
+                />
+              )}
+
+              {/* Invisible wide polyline — hit-target for click/drag to insert */}
+              {polylinePath.length >= 2 && (
+                <Polyline
+                  path={polylinePath}
+                  options={{
+                    strokeColor: "#000000",
+                    strokeOpacity: 0,
+                    strokeWeight: 20,
+                    draggable: true,
+                    clickable: true,
+                    zIndex: 2,
+                  }}
+                  onClick={handlePolylineClick}
+                  onDragStart={handlePolylineDragStart}
+                  onDragEnd={handlePolylineDragEnd}
                 />
               )}
 
@@ -456,8 +706,9 @@ export default function RouteDrawModal({
                 const scale = isFirst || isLast ? 7 : 5;
                 return (
                   <Marker
-                    key={`wp-${i}-${wp.lat}-${wp.lng}`}
+                    key={`wp-${i}`}
                     position={wp}
+                    draggable
                     icon={{
                       path: google.maps.SymbolPath.CIRCLE,
                       scale,
@@ -467,12 +718,30 @@ export default function RouteDrawModal({
                       strokeWeight: 2,
                     }}
                     onClick={() => deleteWaypoint(i)}
+                    onDragEnd={(e) => handleMarkerDragEnd(i, e)}
                     cursor="pointer"
-                    zIndex={isFirst || isLast ? 3 : 2}
+                    zIndex={isFirst || isLast ? 4 : 3}
                   />
                 );
               })}
             </GoogleMap>
+          )}
+
+          {/* Shift-held indicator */}
+          {shiftHeld && mapReady && (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[999] bg-amber-500/95 text-white text-xs font-semibold px-3 py-1.5 rounded-full shadow-lg pointer-events-none">
+              Straight-line mode (Shift)
+            </div>
+          )}
+
+          {/* Recomputing indicator */}
+          {recomputing && mapReady && (
+            <div className="absolute top-3 right-3 z-[999] bg-card/90 backdrop-blur-sm border border-border rounded-full px-3 py-1.5 shadow-lg pointer-events-none flex items-center gap-2">
+              <div className="w-3 h-3 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+              <span className="text-xs text-textPrimary font-medium">
+                Updating route…
+              </span>
+            </div>
           )}
 
           {/* Instruction overlay */}
