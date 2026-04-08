@@ -1,10 +1,10 @@
 "use client";
 
-import React, { useEffect, useRef } from "react";
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
+import React, { useCallback, useMemo } from "react";
+import { GoogleMap, Polyline, Marker } from "@react-google-maps/api";
 
 import { type RoutePoint } from "@/services/routes";
+import { useGoogleMaps } from "@/components/GoogleMapsProvider";
 
 interface RunMapProps {
   points: RoutePoint[];
@@ -12,78 +12,99 @@ interface RunMapProps {
 }
 
 export default function RunMap({ points, className = "" }: RunMapProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<L.Map | null>(null);
+  const { isLoaded, loadError } = useGoogleMaps();
 
-  useEffect(() => {
-    if (!containerRef.current || points.length === 0) return;
-    if (mapRef.current) return; // already initialized
+  const path = useMemo(
+    () => points.map((p) => ({ lat: p.lat, lng: p.lng })),
+    [points]
+  );
 
-    // Fix Leaflet default marker icons broken by webpack
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    delete (L.Icon.Default.prototype as any)._getIconUrl;
-    L.Icon.Default.mergeOptions({
-      iconRetinaUrl:
-        "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png",
-      iconUrl:
-        "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png",
-      shadowUrl:
-        "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
-    });
+  const start = path[0];
+  const end = path[path.length - 1];
 
-    const latLngs: L.LatLngTuple[] = points.map((p) => [p.lat, p.lng]);
+  const onLoad = useCallback(
+    (map: google.maps.Map) => {
+      if (path.length === 0) return;
+      const bounds = new google.maps.LatLngBounds();
+      path.forEach((p) => bounds.extend(p));
+      map.fitBounds(bounds, 30);
+    },
+    [path]
+  );
 
-    const map = L.map(containerRef.current, {
-      scrollWheelZoom: false,
-      zoomControl: true,
-    });
+  if (loadError) {
+    return (
+      <div
+        className={`w-full h-64 sm:h-96 flex items-center justify-center bg-gray-100 text-sm text-gray-500 ${className}`}
+      >
+        Failed to load map
+      </div>
+    );
+  }
 
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution: "&copy; OpenStreetMap contributors",
-    }).addTo(map);
+  if (!isLoaded) {
+    return (
+      <div
+        className={`w-full h-64 sm:h-96 flex items-center justify-center bg-gray-100 ${className}`}
+      >
+        <div className="w-5 h-5 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
+      </div>
+    );
+  }
 
-    // Draw route polyline
-    const polyline = L.polyline(latLngs, {
-      color: "#007AFF",
-      weight: 4,
-      opacity: 0.9,
-    }).addTo(map);
-
-    // Fit bounds to show entire route
-    map.fitBounds(polyline.getBounds(), { padding: [30, 30] });
-
-    // Start marker (green)
-    const first = latLngs[0];
-    L.circleMarker(first, {
-      radius: 8,
-      fillColor: "#34C759",
-      color: "#fff",
-      weight: 2,
-      fillOpacity: 1,
-    }).addTo(map);
-
-    // End marker (red)
-    const last = latLngs[latLngs.length - 1];
-    L.circleMarker(last, {
-      radius: 8,
-      fillColor: "#FF3B30",
-      color: "#fff",
-      weight: 2,
-      fillOpacity: 1,
-    }).addTo(map);
-
-    mapRef.current = map;
-
-    return () => {
-      map.remove();
-      mapRef.current = null;
-    };
-  }, [points]);
+  if (points.length === 0) {
+    return <div className={`w-full h-64 sm:h-96 ${className}`} />;
+  }
 
   return (
-    <div
-      ref={containerRef}
-      className={`w-full h-64 sm:h-96 ${className}`}
-    />
+    <div className={`w-full h-64 sm:h-96 ${className}`}>
+      <GoogleMap
+        mapContainerStyle={{ width: "100%", height: "100%" }}
+        onLoad={onLoad}
+        options={{
+          scrollwheel: false,
+          streetViewControl: false,
+          mapTypeControl: false,
+          fullscreenControl: false,
+        }}
+      >
+        <Polyline
+          path={path}
+          options={{
+            strokeColor: "#007AFF",
+            strokeWeight: 4,
+            strokeOpacity: 0.9,
+          }}
+        />
+        {start && (
+          <Marker
+            position={start}
+            icon={{
+              path: google.maps.SymbolPath.CIRCLE,
+              scale: 8,
+              fillColor: "#34C759",
+              fillOpacity: 1,
+              strokeColor: "#ffffff",
+              strokeWeight: 2,
+            }}
+            zIndex={2}
+          />
+        )}
+        {end && (
+          <Marker
+            position={end}
+            icon={{
+              path: google.maps.SymbolPath.CIRCLE,
+              scale: 8,
+              fillColor: "#FF3B30",
+              fillOpacity: 1,
+              strokeColor: "#ffffff",
+              strokeWeight: 2,
+            }}
+            zIndex={2}
+          />
+        )}
+      </GoogleMap>
+    </div>
   );
 }

@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { AuthGuard } from "@/components/layout/AuthGuard";
 import { HubBanner } from "@/components/layout/HubBanner";
+import { GoogleMapsProvider } from "@/components/GoogleMapsProvider";
 
 const NAV_ITEMS = [
   { href: "/dashboard",          label: "This Week",          icon: LayoutDashboard },
@@ -87,14 +88,16 @@ function BottomTabBar() {
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <AuthGuard>
-      <div className="flex flex-col min-h-screen">
-        <HubBanner />
-        <div className="flex flex-1 overflow-hidden">
-          <SideNav />
-          <main className="flex-1 overflow-y-auto bg-surface p-6 pb-20 lg:pb-6">{children}</main>
+      <GoogleMapsProvider>
+        <div className="flex flex-col min-h-screen">
+          <HubBanner />
+          <div className="flex flex-1 overflow-hidden">
+            <SideNav />
+            <main className="flex-1 overflow-y-auto bg-surface p-6 pb-20 lg:pb-6">{children}</main>
+          </div>
+          <BottomTabBar />
         </div>
-        <BottomTabBar />
-      </div>
+      </GoogleMapsProvider>
     </AuthGuard>
   );
 }

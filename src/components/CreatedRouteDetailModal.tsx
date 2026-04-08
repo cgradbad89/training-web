@@ -1,101 +1,33 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { X } from "lucide-react";
 import type { CreatedRoute } from "@/types/createdRoute";
-import dynamic from "next/dynamic";
+import { GoogleMap, Polyline, Marker } from "@react-google-maps/api";
+import { useGoogleMaps } from "@/components/GoogleMapsProvider";
 
 interface Props {
   route: CreatedRoute | null;
   onClose: () => void;
 }
 
-function CreatedRouteDetailModalInner({ route, onClose }: Props) {
-  const mapContainerRef = useRef<HTMLDivElement>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const leafletMapRef = useRef<any>(null);
+export function CreatedRouteDetailModal({ route, onClose }: Props) {
+  const { isLoaded, loadError } = useGoogleMaps();
 
-  useEffect(() => {
-    if (!route || !mapContainerRef.current) return;
-    let cancelled = false;
+  const path = useMemo(
+    () => (route ? route.waypoints.map((p) => ({ lat: p.lat, lng: p.lng })) : []),
+    [route]
+  );
 
-    async function initMap() {
-      const L = (await import("leaflet")).default;
-      await import("leaflet/dist/leaflet.css");
-      if (cancelled || !mapContainerRef.current) return;
-
-      if (leafletMapRef.current) {
-        leafletMapRef.current.remove();
-        leafletMapRef.current = null;
-      }
-
-      const sorted = [...route!.waypoints];
-      const latlngs: [number, number][] = sorted.map((p) => [p.lat, p.lng]);
-
-      const map = L.map(mapContainerRef.current, {
-        zoomControl: true,
-        attributionControl: true,
-        dragging: true,
-        scrollWheelZoom: true,
-      });
-
-      leafletMapRef.current = map;
-
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        maxZoom: 19,
-        attribution: "&copy; OpenStreetMap contributors",
-      }).addTo(map);
-
-      // Dashed polyline (planned route visual style)
-      const polyline = L.polyline(latlngs, {
-        color: "#2563eb",
-        weight: 4,
-        opacity: 0.9,
-        dashArray: "10 6",
-      }).addTo(map);
-
-      // Start marker — green
-      L.circleMarker(latlngs[0], {
-        radius: 8,
-        fillColor: "#34C759",
-        color: "#fff",
-        weight: 2.5,
-        fillOpacity: 1,
-      }).addTo(map);
-
-      // End marker — red
-      L.circleMarker(latlngs[latlngs.length - 1], {
-        radius: 8,
-        fillColor: "#FF3B30",
-        color: "#fff",
-        weight: 2.5,
-        fillOpacity: 1,
-      }).addTo(map);
-
-      // Intermediate waypoint dots — small blue
-      latlngs.slice(1, -1).forEach((ll) => {
-        L.circleMarker(ll, {
-          radius: 4,
-          fillColor: "#2563eb",
-          color: "#fff",
-          weight: 1.5,
-          fillOpacity: 0.8,
-        }).addTo(map);
-      });
-
-      map.fitBounds(polyline.getBounds(), { padding: [24, 24] });
-      setTimeout(() => map.invalidateSize(), 100);
-    }
-
-    initMap();
-    return () => {
-      cancelled = true;
-      if (leafletMapRef.current) {
-        leafletMapRef.current.remove();
-        leafletMapRef.current = null;
-      }
-    };
-  }, [route]);
+  const onMapLoad = useCallback(
+    (map: google.maps.Map) => {
+      if (path.length === 0) return;
+      const bounds = new google.maps.LatLngBounds();
+      path.forEach((p) => bounds.extend(p));
+      map.fitBounds(bounds, 24);
+    },
+    [path]
+  );
 
   // Body scroll lock
   useEffect(() => {
@@ -110,6 +42,10 @@ function CreatedRouteDetailModalInner({ route, onClose }: Props) {
   }, [route]);
 
   if (!route) return null;
+
+  const start = path[0];
+  const end = path[path.length - 1];
+  const intermediate = path.slice(1, -1);
 
   return (
     <>
@@ -144,11 +80,99 @@ function CreatedRouteDetailModalInner({ route, onClose }: Props) {
           </div>
 
           {/* Map */}
-          <div
-            ref={mapContainerRef}
-            className="flex-1"
-            style={{ minHeight: "400px" }}
-          />
+          <div className="flex-1" style={{ minHeight: "400px" }}>
+            {loadError ? (
+              <div className="w-full h-full flex items-center justify-center bg-gray-100 text-sm text-gray-500">
+                Failed to load map
+              </div>
+            ) : !isLoaded ? (
+              <div className="w-full h-full flex items-center justify-center bg-gray-100">
+                <div className="w-5 h-5 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
+              </div>
+            ) : (
+              <GoogleMap
+                mapContainerStyle={{ width: "100%", height: "100%" }}
+                onLoad={onMapLoad}
+                options={{
+                  streetViewControl: false,
+                  mapTypeControl: false,
+                  fullscreenControl: false,
+                }}
+              >
+                {/* Dashed planned-route polyline */}
+                <Polyline
+                  path={path}
+                  options={{
+                    strokeColor: "#2563eb",
+                    strokeOpacity: 0,
+                    strokeWeight: 4,
+                    icons: [
+                      {
+                        icon: {
+                          path: "M 0,-1 0,1",
+                          strokeColor: "#2563eb",
+                          strokeOpacity: 0.9,
+                          strokeWeight: 4,
+                          scale: 2,
+                        },
+                        offset: "0",
+                        repeat: "12px",
+                      },
+                    ],
+                  }}
+                />
+
+                {/* Intermediate waypoint dots */}
+                {intermediate.map((p, i) => (
+                  <Marker
+                    key={`wp-${i}`}
+                    position={p}
+                    icon={{
+                      path: google.maps.SymbolPath.CIRCLE,
+                      scale: 4,
+                      fillColor: "#2563eb",
+                      fillOpacity: 0.8,
+                      strokeColor: "#ffffff",
+                      strokeWeight: 1.5,
+                    }}
+                    zIndex={1}
+                  />
+                ))}
+
+                {/* Start marker — green */}
+                {start && (
+                  <Marker
+                    position={start}
+                    icon={{
+                      path: google.maps.SymbolPath.CIRCLE,
+                      scale: 8,
+                      fillColor: "#34C759",
+                      fillOpacity: 1,
+                      strokeColor: "#ffffff",
+                      strokeWeight: 2.5,
+                    }}
+                    zIndex={2}
+                  />
+                )}
+
+                {/* End marker — red */}
+                {end && (
+                  <Marker
+                    position={end}
+                    icon={{
+                      path: google.maps.SymbolPath.CIRCLE,
+                      scale: 8,
+                      fillColor: "#FF3B30",
+                      fillOpacity: 1,
+                      strokeColor: "#ffffff",
+                      strokeWeight: 2.5,
+                    }}
+                    zIndex={2}
+                  />
+                )}
+              </GoogleMap>
+            )}
+          </div>
 
           {/* Footer */}
           <div className="p-4 border-t border-border shrink-0">
@@ -168,8 +192,3 @@ function CreatedRouteDetailModalInner({ route, onClose }: Props) {
     </>
   );
 }
-
-export const CreatedRouteDetailModal = dynamic(
-  () => Promise.resolve(CreatedRouteDetailModalInner),
-  { ssr: false }
-);
