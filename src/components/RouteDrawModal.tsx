@@ -1,10 +1,10 @@
 "use client";
 
-import React, { useEffect, useRef, useState, useMemo } from "react";
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { GoogleMap, Marker, Polyline, Autocomplete } from "@react-google-maps/api";
 import { Undo2, Trash2, X, Pencil, Hand } from "lucide-react";
 import { haversineMeters } from "@/utils/routeCache";
+import { useGoogleMaps } from "@/components/GoogleMapsProvider";
 import type { CreatedRouteWaypoint } from "@/types/createdRoute";
 
 interface RouteDrawModalProps {
@@ -21,9 +21,11 @@ interface RouteDrawModalProps {
   };
 }
 
-function computeDistanceMilesFromPoints(
-  pts: { lat: number; lng: number }[]
-): number {
+type LatLng = { lat: number; lng: number };
+
+const FALLBACK_CENTER: LatLng = { lat: 38.9072, lng: -77.0369 }; // DC
+
+function computeDistanceMilesFromPoints(pts: LatLng[]): number {
   if (pts.length < 2) return 0;
   let totalMeters = 0;
   for (let i = 1; i < pts.length; i++) {
@@ -37,58 +39,24 @@ function computeDistanceMilesFromPoints(
   return totalMeters / 1609.344;
 }
 
-// Fetch road-snapped path between two points via OSRM
+// Fetch road-snapped path between two points via Google Directions API
 async function fetchRoutedPath(
-  from: { lat: number; lng: number },
-  to: { lat: number; lng: number }
-): Promise<{ lat: number; lng: number }[]> {
+  service: google.maps.DirectionsService,
+  from: LatLng,
+  to: LatLng
+): Promise<LatLng[]> {
   try {
-    const url =
-      `https://router.project-osrm.org/route/v1/foot/` +
-      `${from.lng},${from.lat};${to.lng},${to.lat}` +
-      `?overview=full&geometries=geojson`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error("OSRM error");
-    const data = await res.json();
-    if (!data.routes?.[0]?.geometry?.coordinates)
-      throw new Error("No route");
-    return data.routes[0].geometry.coordinates.map(
-      ([lng, lat]: [number, number]) => ({ lat, lng })
-    );
+    const result = await service.route({
+      origin: from,
+      destination: to,
+      travelMode: google.maps.TravelMode.WALKING,
+    });
+    const overview = result.routes?.[0]?.overview_path;
+    if (!overview || overview.length === 0) throw new Error("No route");
+    return overview.map((p) => ({ lat: p.lat(), lng: p.lng() }));
   } catch {
     return [from, to];
   }
-}
-
-function rebuildPolyline(
-  segments: { lat: number; lng: number }[][],
-  map: L.Map,
-  polylineRef: React.MutableRefObject<L.Polyline | null>
-) {
-  if (polylineRef.current) {
-    polylineRef.current.remove();
-    polylineRef.current = null;
-  }
-  if (segments.length === 0) return;
-
-  const allPoints: L.LatLngTuple[] = [];
-  segments.forEach((seg, i) => {
-    const startIdx = i === 0 ? 0 : 1;
-    seg.slice(startIdx).forEach((p) => allPoints.push([p.lat, p.lng]));
-  });
-
-  if (allPoints.length < 2) return;
-
-  polylineRef.current = L.polyline(allPoints, {
-    color: "#2563eb",
-    weight: 3.5,
-    opacity: 0.9,
-  }).addTo(map);
-}
-
-interface MarkerEntry {
-  marker: L.CircleMarker;
-  index: number;
 }
 
 export default function RouteDrawModal({
@@ -96,28 +64,27 @@ export default function RouteDrawModal({
   onClose,
   initial,
 }: RouteDrawModalProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<L.Map | null>(null);
-  const polylineRef = useRef<L.Polyline | null>(null);
-  const markersRef = useRef<MarkerEntry[]>([]);
-  const waypointsRef = useRef<{ lat: number; lng: number }[]>(
-    initial?.waypoints ?? []
+  const { isLoaded, loadError } = useGoogleMaps();
+
+  const mapRef = useRef<google.maps.Map | null>(null);
+  const directionsServiceRef = useRef<google.maps.DirectionsService | null>(
+    null
   );
-  const routedSegmentsRef = useRef<{ lat: number; lng: number }[][]>([]);
+  const autocompleteRef = useRef<google.maps.places.Autocomplete | null>(null);
+
+  const waypointsRef = useRef<LatLng[]>(initial?.waypoints ?? []);
+  const routedSegmentsRef = useRef<LatLng[][]>([]);
   const drawModeRef = useRef(true);
 
   const [waypoints, setWaypoints] = useState<CreatedRouteWaypoint[]>(
     initial?.waypoints ?? []
   );
-  const [routedSegments, setRoutedSegments] = useState<
-    { lat: number; lng: number }[][]
-  >([]);
+  const [routedSegments, setRoutedSegments] = useState<LatLng[][]>([]);
   const [name, setName] = useState(initial?.name ?? "");
   const [saving, setSaving] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [drawMode, setDrawMode] = useState(true);
+  const [center, setCenter] = useState<LatLng | null>(null);
   const [mapReady, setMapReady] = useState(false);
 
   // Keep refs in sync
@@ -133,6 +100,55 @@ export default function RouteDrawModal({
     drawModeRef.current = drawMode;
   }, [drawMode]);
 
+  // Lock body scroll
+  useEffect(() => {
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, []);
+
+  // Resolve initial center: editing → first waypoint, else geolocation, else DC
+  useEffect(() => {
+    let cancelled = false;
+    if (initial?.waypoints && initial.waypoints.length > 0) {
+      setCenter({
+        lat: initial.waypoints[0].lat,
+        lng: initial.waypoints[0].lng,
+      });
+      return;
+    }
+    if (!navigator.geolocation) {
+      setCenter(FALLBACK_CENTER);
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        if (cancelled) return;
+        setCenter({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+      },
+      () => {
+        if (!cancelled) setCenter(FALLBACK_CENTER);
+      },
+      { timeout: 4000 }
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [initial]);
+
+  // Flat path from all routed segments (for the visible polyline)
+  const polylinePath = useMemo(() => {
+    if (routedSegments.length === 0) return [] as LatLng[];
+    const out: LatLng[] = [];
+    routedSegments.forEach((seg, i) => {
+      const startIdx = i === 0 ? 0 : 1;
+      for (let j = startIdx; j < seg.length; j++) out.push(seg[j]);
+    });
+    return out;
+  }, [routedSegments]);
+
+  // Live distance — sum routed segments if present, else straight-line waypoints
   const distanceMiles = useMemo(() => {
     if (routedSegments.length > 0) {
       let totalMeters = 0;
@@ -151,82 +167,75 @@ export default function RouteDrawModal({
     return computeDistanceMilesFromPoints(waypoints);
   }, [routedSegments, waypoints]);
 
-  // Lock body scroll
-  useEffect(() => {
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = "";
-    };
+  // Map onLoad — store ref, init Directions service, fit bounds if editing
+  const handleMapLoad = useCallback(
+    async (map: google.maps.Map) => {
+      mapRef.current = map;
+      directionsServiceRef.current = new google.maps.DirectionsService();
+      setMapReady(true);
+
+      if (initial?.waypoints && initial.waypoints.length > 0) {
+        const bounds = new google.maps.LatLngBounds();
+        initial.waypoints.forEach((p) => bounds.extend(p));
+        map.fitBounds(bounds, 40);
+
+        // Re-fetch routed segments for existing waypoints
+        const service = directionsServiceRef.current;
+        const segments: LatLng[][] = [];
+        for (let i = 1; i < initial.waypoints.length; i++) {
+          const routed = await fetchRoutedPath(
+            service,
+            initial.waypoints[i - 1],
+            initial.waypoints[i]
+          );
+          segments.push(routed);
+        }
+        setRoutedSegments(segments);
+        routedSegmentsRef.current = segments;
+      }
+    },
+    [initial]
+  );
+
+  const handleMapUnmount = useCallback(() => {
+    mapRef.current = null;
+    directionsServiceRef.current = null;
   }, []);
 
-  // Toggle dragging based on drawMode
-  useEffect(() => {
-    if (!mapRef.current) return;
-    if (drawMode) {
-      mapRef.current.dragging.disable();
-      mapRef.current.getContainer().style.cursor = "crosshair";
-    } else {
-      mapRef.current.dragging.enable();
-      mapRef.current.getContainer().style.cursor = "grab";
-    }
-  }, [drawMode, mapReady]);
+  // Click on map — add a waypoint (only in draw mode)
+  const handleMapClick = useCallback(
+    async (e: google.maps.MapMouseEvent) => {
+      if (!drawModeRef.current) return;
+      if (!e.latLng) return;
+      const lat = e.latLng.lat();
+      const lng = e.latLng.lng();
+      const newWaypoint: LatLng = { lat, lng };
 
-  // Helper: attach hover + click-to-delete on a marker
-  function attachMarkerInteractions(
-    marker: L.CircleMarker,
-    map: L.Map
-  ) {
-    marker.on("mouseover", () => {
-      marker.setStyle({ fillColor: "#FF3B30", radius: 8 });
-      (marker.getElement() as HTMLElement | undefined)?.style.setProperty("cursor", "pointer");
-    });
-    marker.on("mouseout", () => {
-      const entry = markersRef.current.find((m) => m.marker === marker);
-      const isFirst = entry && entry.index === 0;
-      marker.setStyle({
-        fillColor: isFirst ? "#34C759" : "#2563eb",
-        radius: isFirst ? 7 : 5,
-      });
-    });
-    marker.on("click", (e: L.LeafletMouseEvent) => {
-      L.DomEvent.stopPropagation(e);
-      const markerLatLng = marker.getLatLng();
-      const waypointIndex = waypointsRef.current.findIndex(
-        (wp) =>
-          Math.abs(wp.lat - markerLatLng.lat) < 0.000001 &&
-          Math.abs(wp.lng - markerLatLng.lng) < 0.000001
-      );
-      if (waypointIndex === -1) return;
-      deleteWaypoint(waypointIndex, map);
-    });
-  }
+      const prevWaypoints = waypointsRef.current;
+      const updated = [...prevWaypoints, newWaypoint];
+      waypointsRef.current = updated;
+      setWaypoints(updated);
 
-  // Delete a waypoint by index, remove marker, re-stitch route
-  async function deleteWaypoint(index: number, map: L.Map) {
+      if (prevWaypoints.length >= 1 && directionsServiceRef.current) {
+        const prev = prevWaypoints[prevWaypoints.length - 1];
+        const routedPath = await fetchRoutedPath(
+          directionsServiceRef.current,
+          prev,
+          newWaypoint
+        );
+        const segs = [...routedSegmentsRef.current, routedPath];
+        routedSegmentsRef.current = segs;
+        setRoutedSegments(segs);
+      }
+    },
+    []
+  );
+
+  // Click a waypoint marker — delete it and re-stitch
+  const deleteWaypoint = useCallback(async (index: number) => {
     const current = waypointsRef.current;
     if (current.length === 0) return;
 
-    // Remove the marker from the map
-    const markerEntry = markersRef.current.find((m) => {
-      const ml = m.marker.getLatLng();
-      return (
-        Math.abs(ml.lat - current[index].lat) < 0.000001 &&
-        Math.abs(ml.lng - current[index].lng) < 0.000001
-      );
-    });
-    if (markerEntry) {
-      markerEntry.marker.remove();
-      markersRef.current = markersRef.current.filter(
-        (m) => m !== markerEntry
-      );
-    }
-
-    // Reindex remaining markers
-    markersRef.current.forEach((m, i) => {
-      m.index = i;
-    });
-
-    // Remove the waypoint
     const newWaypoints = current.filter((_, i) => i !== index);
     waypointsRef.current = newWaypoints;
     setWaypoints(newWaypoints);
@@ -234,254 +243,76 @@ export default function RouteDrawModal({
     if (newWaypoints.length < 2) {
       setRoutedSegments([]);
       routedSegmentsRef.current = [];
-      if (polylineRef.current) {
-        polylineRef.current.remove();
-        polylineRef.current = null;
-      }
       return;
     }
 
     const prev = routedSegmentsRef.current;
 
     if (index === 0) {
-      // Deleted first waypoint — drop first segment
       const newSegments = prev.slice(1);
-      setRoutedSegments(newSegments);
       routedSegmentsRef.current = newSegments;
-      rebuildPolyline(newSegments, map, polylineRef);
+      setRoutedSegments(newSegments);
     } else if (index === current.length - 1) {
-      // Deleted last waypoint — drop last segment
       const newSegments = prev.slice(0, -1);
-      setRoutedSegments(newSegments);
       routedSegmentsRef.current = newSegments;
-      rebuildPolyline(newSegments, map, polylineRef);
+      setRoutedSegments(newSegments);
     } else {
-      // Deleted middle waypoint — fetch new connecting segment
       const prevWp = current[index - 1];
       const nextWp = current[index + 1];
-      const newSegment = await fetchRoutedPath(prevWp, nextWp);
+      const service = directionsServiceRef.current;
+      const newSegment = service
+        ? await fetchRoutedPath(service, prevWp, nextWp)
+        : [prevWp, nextWp];
 
       const updated = [
         ...prev.slice(0, index - 1),
         newSegment,
         ...prev.slice(index + 1),
       ];
-      setRoutedSegments(updated);
       routedSegmentsRef.current = updated;
-      rebuildPolyline(updated, map, polylineRef);
+      setRoutedSegments(updated);
     }
-  }
-
-  // Init map
-  useEffect(() => {
-    if (!containerRef.current) return;
-    if (mapRef.current) return;
-
-    let cancelled = false;
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    delete (L.Icon.Default.prototype as any)._getIconUrl;
-    L.Icon.Default.mergeOptions({
-      iconRetinaUrl:
-        "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png",
-      iconUrl:
-        "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png",
-      shadowUrl:
-        "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
-    });
-
-    async function initMap() {
-      const fallback = { lat: 38.9072, lng: -77.0369 };
-
-      const getCenter = (): Promise<{ lat: number; lng: number }> =>
-        new Promise((resolve) => {
-          if (!navigator.geolocation) {
-            resolve(fallback);
-            return;
-          }
-          navigator.geolocation.getCurrentPosition(
-            (pos) =>
-              resolve({
-                lat: pos.coords.latitude,
-                lng: pos.coords.longitude,
-              }),
-            () => resolve(fallback),
-            { timeout: 4000 }
-          );
-        });
-
-      const center =
-        initial?.waypoints && initial.waypoints.length > 0
-          ? null
-          : await getCenter();
-
-      if (cancelled || !containerRef.current) return;
-
-      const map = L.map(containerRef.current, {
-        zoomControl: true,
-        attributionControl: false,
-        dragging: false,
-        scrollWheelZoom: true,
-        doubleClickZoom: false,
-        center: center
-          ? [center.lat, center.lng]
-          : [fallback.lat, fallback.lng],
-        zoom: 14,
-      });
-
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        attribution: "&copy; OpenStreetMap contributors",
-      }).addTo(map);
-
-      map.getContainer().style.cursor = "crosshair";
-      mapRef.current = map;
-      setMapReady(true);
-
-      // If editing, fit to existing waypoints and draw markers + segments
-      if (initial?.waypoints && initial.waypoints.length > 0) {
-        const latLngs: L.LatLngTuple[] = initial.waypoints.map((p) => [
-          p.lat,
-          p.lng,
-        ]);
-        map.fitBounds(L.latLngBounds(latLngs), { padding: [40, 40] });
-
-        // Draw markers for existing waypoints
-        initial.waypoints.forEach((p, i) => {
-          const isFirst = i === 0;
-          const marker = L.circleMarker([p.lat, p.lng], {
-            radius: isFirst ? 7 : 5,
-            fillColor: isFirst ? "#34C759" : "#2563eb",
-            color: "#fff",
-            weight: 2,
-            fillOpacity: 1,
-          }).addTo(map);
-          attachMarkerInteractions(marker, map);
-          markersRef.current.push({ marker, index: i });
-        });
-
-        // Fetch routed segments for existing waypoints
-        const segments: { lat: number; lng: number }[][] = [];
-        for (let i = 1; i < initial.waypoints.length; i++) {
-          const routed = await fetchRoutedPath(
-            initial.waypoints[i - 1],
-            initial.waypoints[i]
-          );
-          segments.push(routed);
-        }
-        if (!cancelled) {
-          setRoutedSegments(segments);
-          routedSegmentsRef.current = segments;
-          rebuildPolyline(segments, map, polylineRef);
-        }
-      }
-
-      // Click handler — add waypoint with OSRM snapping
-      map.on("click", async (e: L.LeafletMouseEvent) => {
-        if (!drawModeRef.current) return;
-        const { lat, lng } = e.latlng;
-
-        const isFirst = waypointsRef.current.length === 0;
-        const markerColor = isFirst ? "#34C759" : "#2563eb";
-        const marker = L.circleMarker([lat, lng], {
-          radius: isFirst ? 7 : 5,
-          fillColor: markerColor,
-          color: "#fff",
-          weight: 2,
-          fillOpacity: 1,
-        }).addTo(map);
-        attachMarkerInteractions(marker, map);
-
-        const prevWaypoints = waypointsRef.current;
-        const newWaypoint = { lat, lng };
-
-        const updatedWaypoints = [...prevWaypoints, newWaypoint];
-        waypointsRef.current = updatedWaypoints;
-        setWaypoints(updatedWaypoints);
-        markersRef.current.push({
-          marker,
-          index: updatedWaypoints.length - 1,
-        });
-
-        if (prevWaypoints.length >= 1) {
-          const prev = prevWaypoints[prevWaypoints.length - 1];
-          const routedPath = await fetchRoutedPath(prev, newWaypoint);
-
-          setRoutedSegments((segs) => {
-            const updated = [...segs, routedPath];
-            routedSegmentsRef.current = updated;
-            rebuildPolyline(updated, map, polylineRef);
-            return updated;
-          });
-        }
-      });
-    }
-
-    initMap();
-
-    return () => {
-      cancelled = true;
-      if (mapRef.current) {
-        mapRef.current.remove();
-        mapRef.current = null;
-      }
-      polylineRef.current = null;
-      markersRef.current = [];
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleUndo = () => {
     if (waypoints.length === 0) return;
-
-    const last = markersRef.current.pop();
-    if (last?.marker && mapRef.current) last.marker.remove();
-
+    setWaypoints((prev) => prev.slice(0, -1));
     setRoutedSegments((segs) => {
       const updated = segs.slice(0, -1);
       routedSegmentsRef.current = updated;
-      if (mapRef.current) {
-        rebuildPolyline(updated, mapRef.current, polylineRef);
-      }
       return updated;
     });
-
-    setWaypoints((prev) => prev.slice(0, -1));
   };
 
   const handleClear = () => {
-    markersRef.current.forEach((m) => m.marker.remove());
-    markersRef.current = [];
-    if (polylineRef.current) {
-      polylineRef.current.remove();
-      polylineRef.current = null;
-    }
     setWaypoints([]);
     setRoutedSegments([]);
     routedSegmentsRef.current = [];
     waypointsRef.current = [];
   };
 
-  const handleSearch = async () => {
-    if (!searchQuery.trim() || !mapRef.current) return;
-    setSearching(true);
+  // Places Autocomplete handlers
+  const handleAutocompleteLoad = (ac: google.maps.places.Autocomplete) => {
+    autocompleteRef.current = ac;
+    if (mapRef.current) {
+      ac.bindTo("bounds", mapRef.current);
+    }
+  };
+
+  const handlePlaceChanged = () => {
     setSearchError(null);
-    try {
-      const res = await fetch(
-        `https://nominatim.openstreetmap.org/search?` +
-          `q=${encodeURIComponent(searchQuery)}&format=json&limit=1&countrycodes=us`,
-        { headers: { "Accept-Language": "en" } }
-      );
-      const data = await res.json();
-      if (data.length === 0) {
-        setSearchError("Location not found. Try a city name or zip code.");
-        return;
-      }
-      const { lat, lon } = data[0];
-      mapRef.current.setView([parseFloat(lat), parseFloat(lon)], 14);
-    } catch {
-      setSearchError("Search failed. Check your connection.");
-    } finally {
-      setSearching(false);
+    const ac = autocompleteRef.current;
+    if (!ac || !mapRef.current) return;
+    const place = ac.getPlace();
+    if (!place.geometry) {
+      setSearchError("Location not found. Try a different search.");
+      return;
+    }
+    if (place.geometry.viewport) {
+      mapRef.current.fitBounds(place.geometry.viewport);
+    } else if (place.geometry.location) {
+      mapRef.current.panTo(place.geometry.location);
+      mapRef.current.setZoom(14);
     }
   };
 
@@ -498,6 +329,22 @@ export default function RouteDrawModal({
       setSaving(false);
     }
   };
+
+  // Map options computed from drawMode
+  const mapOptions: google.maps.MapOptions = useMemo(
+    () => ({
+      zoomControl: true,
+      streetViewControl: false,
+      mapTypeControl: false,
+      fullscreenControl: false,
+      disableDoubleClickZoom: true,
+      clickableIcons: false,
+      draggable: !drawMode,
+      draggableCursor: drawMode ? "crosshair" : "grab",
+      gestureHandling: "greedy",
+    }),
+    [drawMode]
+  );
 
   return (
     <div
@@ -535,25 +382,30 @@ export default function RouteDrawModal({
           />
         </div>
 
-        {/* Location search */}
+        {/* Location search (Places Autocomplete) */}
         <div className="px-4 py-2 border-b border-border shrink-0">
-          <div className="flex gap-2">
+          {isLoaded ? (
+            <Autocomplete
+              onLoad={handleAutocompleteLoad}
+              onPlaceChanged={handlePlaceChanged}
+              options={{
+                fields: ["geometry", "name", "formatted_address"],
+              }}
+            >
+              <input
+                type="text"
+                placeholder="Search by city, address, or place"
+                className="w-full text-sm border border-border rounded-xl px-3 py-1.5 bg-surface text-textPrimary placeholder:text-textSecondary focus:outline-none focus:ring-2 focus:ring-primary/30"
+              />
+            </Autocomplete>
+          ) : (
             <input
               type="text"
-              placeholder="Search by city or zip code (e.g. 20001 or Washington DC)"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-              className="flex-1 text-sm border border-border rounded-xl px-3 py-1.5 bg-surface text-textPrimary placeholder:text-textSecondary focus:outline-none focus:ring-2 focus:ring-primary/30"
+              disabled
+              placeholder="Loading map…"
+              className="w-full text-sm border border-border rounded-xl px-3 py-1.5 bg-surface text-textSecondary"
             />
-            <button
-              onClick={handleSearch}
-              disabled={searching || !searchQuery.trim()}
-              className="px-3 py-1.5 rounded-xl bg-primary text-white text-sm font-semibold hover:bg-primary/90 disabled:opacity-40 transition-colors shrink-0"
-            >
-              {searching ? "…" : "Go"}
-            </button>
-          </div>
+          )}
           {searchError && (
             <p className="text-xs text-danger mt-1">{searchError}</p>
           )}
@@ -561,7 +413,67 @@ export default function RouteDrawModal({
 
         {/* Map */}
         <div className="relative flex-1 min-h-[50vh]">
-          <div ref={containerRef} className="absolute inset-0" />
+          {loadError ? (
+            <div className="absolute inset-0 flex items-center justify-center bg-gray-100 text-sm text-gray-500">
+              Failed to load map
+            </div>
+          ) : !isLoaded || !center ? (
+            <div className="absolute inset-0 flex items-center justify-center bg-gray-100">
+              <div className="w-5 h-5 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
+            </div>
+          ) : (
+            <GoogleMap
+              mapContainerStyle={{ position: "absolute", inset: 0 }}
+              center={center}
+              zoom={14}
+              options={mapOptions}
+              onLoad={handleMapLoad}
+              onUnmount={handleMapUnmount}
+              onClick={handleMapClick}
+            >
+              {/* Routed polyline */}
+              {polylinePath.length >= 2 && (
+                <Polyline
+                  path={polylinePath}
+                  options={{
+                    strokeColor: "#2563eb",
+                    strokeWeight: 4,
+                    strokeOpacity: 0.9,
+                    clickable: false,
+                  }}
+                />
+              )}
+
+              {/* Waypoint markers */}
+              {waypoints.map((wp, i) => {
+                const isFirst = i === 0;
+                const isLast = i === waypoints.length - 1;
+                const fillColor = isFirst
+                  ? "#34C759"
+                  : isLast
+                  ? "#FF3B30"
+                  : "#2563eb";
+                const scale = isFirst || isLast ? 7 : 5;
+                return (
+                  <Marker
+                    key={`wp-${i}-${wp.lat}-${wp.lng}`}
+                    position={wp}
+                    icon={{
+                      path: google.maps.SymbolPath.CIRCLE,
+                      scale,
+                      fillColor,
+                      fillOpacity: 1,
+                      strokeColor: "#ffffff",
+                      strokeWeight: 2,
+                    }}
+                    onClick={() => deleteWaypoint(i)}
+                    cursor="pointer"
+                    zIndex={isFirst || isLast ? 3 : 2}
+                  />
+                );
+              })}
+            </GoogleMap>
+          )}
 
           {/* Instruction overlay */}
           {waypoints.length === 0 && mapReady && (
