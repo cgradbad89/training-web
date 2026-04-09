@@ -24,10 +24,16 @@ export function CreatedRouteDetailModal({ route, onClose }: Props) {
       if (path.length === 0) return;
       const bounds = new google.maps.LatLngBounds();
       path.forEach((p) => bounds.extend(p));
-      map.fitBounds(bounds, 24);
+      // Defer fitBounds to the next idle tick so the container has
+      // been laid out and the map knows its real viewport dimensions.
+      google.maps.event.addListenerOnce(map, "idle", () => {
+        map.fitBounds(bounds, 24);
+      });
     },
     [path]
   );
+
+  const initialCenter = path[0] ?? { lat: 0, lng: 0 };
 
   // Body scroll lock
   useEffect(() => {
@@ -80,7 +86,7 @@ export function CreatedRouteDetailModal({ route, onClose }: Props) {
           </div>
 
           {/* Map */}
-          <div className="flex-1" style={{ minHeight: "400px" }}>
+          <div className="w-full h-[60vh] max-h-[520px] shrink-0">
             {loadError ? (
               <div className="w-full h-full flex items-center justify-center bg-gray-100 text-sm text-gray-500">
                 Failed to load map
@@ -92,6 +98,8 @@ export function CreatedRouteDetailModal({ route, onClose }: Props) {
             ) : (
               <GoogleMap
                 mapContainerStyle={{ width: "100%", height: "100%" }}
+                center={initialCenter}
+                zoom={13}
                 onLoad={onMapLoad}
                 options={{
                   streetViewControl: false,
