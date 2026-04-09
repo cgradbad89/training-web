@@ -1,39 +1,224 @@
 "use client";
 
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { X } from "lucide-react";
-import type { CreatedRoute } from "@/types/createdRoute";
+import type { CreatedRoute, CreatedRouteWaypoint } from "@/types/createdRoute";
 import { GoogleMap, Polyline, Marker } from "@react-google-maps/api";
 import { useGoogleMaps } from "@/components/GoogleMapsProvider";
+import { useAuth } from "@/hooks/useAuth";
+import { updateCreatedRoute } from "@/services/createdRoutes";
+import { haversineMeters } from "@/utils/routeCache";
 
 interface Props {
   route: CreatedRoute | null;
   onClose: () => void;
+  /**
+   * Called after a legacy route is re-snapped and the snapped path
+   * is persisted back to Firestore. Lets the parent refresh its
+   * in-memory copy so the same route opens instantly next time.
+   */
+  onRouteUpdated?: (
+    routeId: string,
+    snappedPath: CreatedRouteWaypoint[],
+    distanceMiles: number
+  ) => void;
 }
 
-export function CreatedRouteDetailModal({ route, onClose }: Props) {
-  const { isLoaded, loadError } = useGoogleMaps();
+type LatLng = CreatedRouteWaypoint;
 
-  const path = useMemo(
+// Fetch road-snapped walking path between two waypoints.
+async function fetchSegment(
+  service: google.maps.DirectionsService,
+  from: LatLng,
+  to: LatLng
+): Promise<{ path: LatLng[]; ok: boolean }> {
+  try {
+    const result = await service.route({
+      origin: from,
+      destination: to,
+      travelMode: google.maps.TravelMode.WALKING,
+    });
+    const overview = result.routes?.[0]?.overview_path;
+    if (!overview || overview.length === 0) throw new Error("No route");
+    return {
+      path: overview.map((p) => ({ lat: p.lat(), lng: p.lng() })),
+      ok: true,
+    };
+  } catch {
+    // Straight-line fallback for this segment
+    return { path: [from, to], ok: false };
+  }
+}
+
+// Fetch all segments sequentially, combine into a single flat polyline.
+async function fetchAndSaveSnappedPath(
+  route: CreatedRoute,
+  directionsService: google.maps.DirectionsService
+): Promise<{ snappedPath: LatLng[]; distanceMiles: number; failures: number }> {
+  const wps = route.waypoints;
+  if (wps.length < 2) {
+    return { snappedPath: [], distanceMiles: 0, failures: 0 };
+  }
+
+  const segments: LatLng[][] = [];
+  let failures = 0;
+  for (let i = 1; i < wps.length; i++) {
+    const { path, ok } = await fetchSegment(
+      directionsService,
+      wps[i - 1],
+      wps[i]
+    );
+    if (!ok) {
+      failures += 1;
+      console.warn(
+        `[CreatedRouteDetailModal] Directions failed for segment ${
+          i - 1
+        }→${i} of route ${route.id}; falling back to straight line.`
+      );
+    }
+    segments.push(path);
+  }
+
+  // Flatten (skip first point of every segment after the first to dedupe joins)
+  const snappedPath: LatLng[] = [];
+  segments.forEach((seg, i) => {
+    const startIdx = i === 0 ? 0 : 1;
+    for (let j = startIdx; j < seg.length; j++) snappedPath.push(seg[j]);
+  });
+
+  // Recalculate distance from the snapped path
+  let meters = 0;
+  for (let i = 1; i < snappedPath.length; i++) {
+    meters += haversineMeters(
+      snappedPath[i - 1].lat,
+      snappedPath[i - 1].lng,
+      snappedPath[i].lat,
+      snappedPath[i].lng
+    );
+  }
+  const distanceMiles = meters / 1609.344;
+
+  return { snappedPath, distanceMiles, failures };
+}
+
+export function CreatedRouteDetailModal({
+  route,
+  onClose,
+  onRouteUpdated,
+}: Props) {
+  const { isLoaded, loadError } = useGoogleMaps();
+  const { user } = useAuth();
+  const uid = user?.uid ?? null;
+
+  const directionsServiceRef = useRef<google.maps.DirectionsService | null>(
+    null
+  );
+
+  // Snapped path currently rendered on the map. Starts null until we
+  // decide whether to use route.snappedPath, re-snap, or fall back.
+  const [snappedPath, setSnappedPath] = useState<LatLng[] | null>(null);
+  const [isLoadingPath, setIsLoadingPath] = useState(false);
+  const [displayDistance, setDisplayDistance] = useState<number>(
+    route?.distanceMiles ?? 0
+  );
+
+  // Waypoints are still needed for markers (start/end/intermediate)
+  const waypoints = useMemo<LatLng[]>(
     () => (route ? route.waypoints.map((p) => ({ lat: p.lat, lng: p.lng })) : []),
     [route]
   );
 
+  // When the route prop changes (user opens a different route), reset
+  // state and re-derive snappedPath from the prop.
+  useEffect(() => {
+    if (!route) {
+      setSnappedPath(null);
+      setIsLoadingPath(false);
+      return;
+    }
+    setDisplayDistance(route.distanceMiles);
+    if (route.snappedPath && route.snappedPath.length >= 2) {
+      // Fast path: already snapped, just render.
+      setSnappedPath(route.snappedPath);
+      setIsLoadingPath(false);
+    } else {
+      // Needs re-snap. Mark as loading; the Directions fetch kicks off
+      // once the map has mounted and the service ref is populated.
+      setSnappedPath(null);
+      setIsLoadingPath(true);
+    }
+  }, [route]);
+
+  // Run the migration once the map is loaded AND we need to re-snap.
+  const runMigration = useCallback(
+    async (routeForMigration: CreatedRoute) => {
+      const service = directionsServiceRef.current;
+      if (!service) return;
+
+      const { snappedPath: fetched, distanceMiles, failures } =
+        await fetchAndSaveSnappedPath(routeForMigration, service);
+
+      if (fetched.length === 0) {
+        setIsLoadingPath(false);
+        return;
+      }
+
+      setSnappedPath(fetched);
+      setDisplayDistance(distanceMiles);
+      setIsLoadingPath(false);
+
+      // Persist migration to Firestore (best-effort).
+      if (uid) {
+        try {
+          await updateCreatedRoute(uid, routeForMigration.id, {
+            snappedPath: fetched,
+            distanceMiles,
+          });
+          onRouteUpdated?.(routeForMigration.id, fetched, distanceMiles);
+          if (failures > 0) {
+            console.warn(
+              `[CreatedRouteDetailModal] Migrated route ${routeForMigration.id} with ${failures} straight-line fallback segment(s).`
+            );
+          }
+        } catch (e) {
+          console.error(
+            "[CreatedRouteDetailModal] Failed to persist snappedPath migration:",
+            e
+          );
+        }
+      }
+    },
+    [uid, onRouteUpdated]
+  );
+
   const onMapLoad = useCallback(
     (map: google.maps.Map) => {
-      if (path.length === 0) return;
+      // Initialize Directions service for legacy migrations
+      if (!directionsServiceRef.current) {
+        directionsServiceRef.current = new google.maps.DirectionsService();
+      }
+
+      if (waypoints.length === 0) return;
+
       const bounds = new google.maps.LatLngBounds();
-      path.forEach((p) => bounds.extend(p));
-      // Defer fitBounds to the next idle tick so the container has
-      // been laid out and the map knows its real viewport dimensions.
+      waypoints.forEach((p) => bounds.extend(p));
       google.maps.event.addListenerOnce(map, "idle", () => {
         map.fitBounds(bounds, 24);
       });
+
+      // If we need to migrate this route, fire the Directions requests now.
+      if (
+        route &&
+        (!route.snappedPath || route.snappedPath.length < 2) &&
+        route.waypoints.length >= 2
+      ) {
+        runMigration(route);
+      }
     },
-    [path]
+    [waypoints, route, runMigration]
   );
 
-  const initialCenter = path[0] ?? { lat: 0, lng: 0 };
+  const initialCenter = waypoints[0] ?? { lat: 0, lng: 0 };
 
   // Body scroll lock
   useEffect(() => {
@@ -49,9 +234,14 @@ export function CreatedRouteDetailModal({ route, onClose }: Props) {
 
   if (!route) return null;
 
-  const start = path[0];
-  const end = path[path.length - 1];
-  const intermediate = path.slice(1, -1);
+  const start = waypoints[0];
+  const end = waypoints[waypoints.length - 1];
+  const intermediate = waypoints.slice(1, -1);
+
+  // Use the snapped path for the polyline once it's available; fall
+  // back to straight-line waypoints during the brief loading window.
+  const polylinePath: LatLng[] =
+    snappedPath && snappedPath.length >= 2 ? snappedPath : waypoints;
 
   return (
     <>
@@ -69,7 +259,7 @@ export function CreatedRouteDetailModal({ route, onClose }: Props) {
               </h2>
               <div className="flex items-center gap-3 mt-0.5">
                 <span className="text-sm text-textSecondary">
-                  {route.distanceMiles.toFixed(2)} mi
+                  {displayDistance.toFixed(2)} mi
                 </span>
                 <span className="text-sm text-textSecondary">&middot;</span>
                 <span className="text-sm text-textSecondary">
@@ -86,7 +276,7 @@ export function CreatedRouteDetailModal({ route, onClose }: Props) {
           </div>
 
           {/* Map */}
-          <div className="w-full h-[60vh] max-h-[520px] shrink-0">
+          <div className="relative w-full h-[60vh] max-h-[520px] shrink-0">
             {loadError ? (
               <div className="w-full h-full flex items-center justify-center bg-gray-100 text-sm text-gray-500">
                 Failed to load map
@@ -108,27 +298,29 @@ export function CreatedRouteDetailModal({ route, onClose }: Props) {
                 }}
               >
                 {/* Dashed planned-route polyline */}
-                <Polyline
-                  path={path}
-                  options={{
-                    strokeColor: "#2563eb",
-                    strokeOpacity: 0,
-                    strokeWeight: 4,
-                    icons: [
-                      {
-                        icon: {
-                          path: "M 0,-1 0,1",
-                          strokeColor: "#2563eb",
-                          strokeOpacity: 0.9,
-                          strokeWeight: 4,
-                          scale: 2,
+                {polylinePath.length >= 2 && (
+                  <Polyline
+                    path={polylinePath}
+                    options={{
+                      strokeColor: "#2563eb",
+                      strokeOpacity: 0,
+                      strokeWeight: 4,
+                      icons: [
+                        {
+                          icon: {
+                            path: "M 0,-1 0,1",
+                            strokeColor: "#2563eb",
+                            strokeOpacity: 0.9,
+                            strokeWeight: 4,
+                            scale: 2,
+                          },
+                          offset: "0",
+                          repeat: "12px",
                         },
-                        offset: "0",
-                        repeat: "12px",
-                      },
-                    ],
-                  }}
-                />
+                      ],
+                    }}
+                  />
+                )}
 
                 {/* Intermediate waypoint dots */}
                 {intermediate.map((p, i) => (
@@ -179,6 +371,18 @@ export function CreatedRouteDetailModal({ route, onClose }: Props) {
                   />
                 )}
               </GoogleMap>
+            )}
+
+            {/* Loading overlay — shown while re-snapping a legacy route */}
+            {isLoadingPath && !loadError && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/20 backdrop-blur-[1px] pointer-events-none z-[999]">
+                <div className="bg-card/95 border border-border rounded-2xl px-4 py-3 shadow-lg flex items-center gap-2.5">
+                  <div className="w-4 h-4 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+                  <span className="text-sm font-medium text-textPrimary">
+                    Loading route…
+                  </span>
+                </div>
+              </div>
             )}
           </div>
 

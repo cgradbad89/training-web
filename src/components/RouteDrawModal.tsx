@@ -11,6 +11,7 @@ interface RouteDrawModalProps {
   onSave: (data: {
     name: string;
     waypoints: CreatedRouteWaypoint[];
+    snappedPath: CreatedRouteWaypoint[];
     distanceMiles: number;
   }) => void;
   onClose: () => void;
@@ -554,6 +555,7 @@ export default function RouteDrawModal({
       await onSave({
         name: name.trim() || "Untitled Route",
         waypoints,
+        snappedPath: polylinePath,
         distanceMiles,
       });
     } finally {

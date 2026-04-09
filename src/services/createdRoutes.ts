@@ -28,10 +28,12 @@ function toCreatedRoute(id: string, data: Record<string, any>): CreatedRoute {
     }
     return new Date();
   };
+  const snapped = data.snappedPath as CreatedRouteWaypoint[] | undefined;
   return {
     id,
     name: (data.name as string) ?? "Untitled Route",
     waypoints: (data.waypoints as CreatedRouteWaypoint[]) ?? [],
+    snappedPath: snapped && snapped.length > 0 ? snapped : undefined,
     distanceMiles: (data.distanceMiles as number) ?? 0,
     createdAt: ts(data.createdAt),
     updatedAt: ts(data.updatedAt),
@@ -51,22 +53,31 @@ export async function saveCreatedRoute(
   route: {
     name: string;
     waypoints: CreatedRouteWaypoint[];
+    snappedPath?: CreatedRouteWaypoint[];
     distanceMiles: number;
   }
 ): Promise<string> {
   const ref = doc(colRef(uid));
-  await setDoc(ref, {
-    ...route,
+  const payload: Record<string, unknown> = {
+    name: route.name,
+    waypoints: route.waypoints,
+    distanceMiles: route.distanceMiles,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
-  });
+  };
+  if (route.snappedPath && route.snappedPath.length > 0) {
+    payload.snappedPath = route.snappedPath;
+  }
+  await setDoc(ref, payload);
   return ref.id;
 }
 
 export async function updateCreatedRoute(
   uid: string,
   routeId: string,
-  data: Partial<Pick<CreatedRoute, "name" | "waypoints" | "distanceMiles">>
+  data: Partial<
+    Pick<CreatedRoute, "name" | "waypoints" | "snappedPath" | "distanceMiles">
+  >
 ): Promise<void> {
   await updateDoc(docRef(uid, routeId), {
     ...data,

@@ -477,6 +477,7 @@ export default function RoutesPage() {
   const handleSaveRoute = async (data: {
     name: string;
     waypoints: { lat: number; lng: number }[];
+    snappedPath: { lat: number; lng: number }[];
     distanceMiles: number;
   }) => {
     if (!uid) return;
@@ -662,6 +663,20 @@ export default function RoutesPage() {
       <CreatedRouteDetailModal
         route={selectedCreatedRoute}
         onClose={() => setSelectedCreatedRoute(null)}
+        onRouteUpdated={(routeId, snappedPath, distanceMiles) => {
+          setCreatedRoutes((prev) =>
+            prev.map((r) =>
+              r.id === routeId
+                ? { ...r, snappedPath, distanceMiles }
+                : r
+            )
+          );
+          setSelectedCreatedRoute((prev) =>
+            prev && prev.id === routeId
+              ? { ...prev, snappedPath, distanceMiles }
+              : prev
+          );
+        }}
       />
 
       {/* Delete route confirm */}
