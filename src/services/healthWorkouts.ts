@@ -34,10 +34,12 @@ import {
   doc,
   getDocs,
   getDoc,
+  onSnapshot,
   query,
   orderBy,
   limit,
   type QueryConstraint,
+  type Unsubscribe,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { toDate } from "@/utils/dates";
@@ -103,4 +105,39 @@ export async function fetchHealthWorkout(
   );
   if (!snap.exists()) return null;
   return docToHealthWorkout(snap.id, snap.data() as Record<string, unknown>);
+}
+
+/**
+ * Real-time listener for healthWorkouts. Calls `onData` whenever the
+ * result set changes (initial load + subsequent writes from iOS sync).
+ * Returns an unsubscribe function — caller MUST call it on unmount.
+ */
+export function onHealthWorkoutsSnapshot(
+  uid: string,
+  opts: { limitCount?: number },
+  onData: (workouts: HealthWorkout[]) => void,
+  onError?: (error: Error) => void
+): Unsubscribe {
+  const constraints: QueryConstraint[] = [orderBy("startDate", "desc")];
+  if (opts.limitCount) constraints.push(limit(opts.limitCount));
+
+  const q = query(
+    collection(db, "users", uid, "healthWorkouts"),
+    ...constraints
+  );
+
+  return onSnapshot(
+    q,
+    (snap) => {
+      onData(
+        snap.docs.map((d) =>
+          docToHealthWorkout(d.id, d.data() as Record<string, unknown>)
+        )
+      );
+    },
+    (err) => {
+      console.error("[onHealthWorkoutsSnapshot] listener error:", err);
+      onError?.(err);
+    }
+  );
 }

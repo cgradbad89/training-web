@@ -3,8 +3,8 @@
 import { useEffect, useState, useMemo } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import {
-  fetchHealthMetrics,
-  fetchAllHealthMetrics,
+  onHealthMetricsSnapshot,
+  onAllHealthMetricsSnapshot,
   type HealthMetric,
 } from "@/services/healthMetrics";
 import {
@@ -417,22 +417,34 @@ export default function HealthPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Real-time listener for last-90-days health metrics
   useEffect(() => {
     if (!userId) return;
     setLoading(true);
-    Promise.all([
-      fetchHealthMetrics(userId, 90),
-      fetchAllHealthMetrics(userId),
-    ])
-      .then(([m90, all]) => {
+    const unsub = onHealthMetricsSnapshot(
+      userId,
+      90,
+      (m90) => {
         setMetrics90(m90);
-        setAllMetrics(all);
         setLoading(false);
-      })
-      .catch((err) => {
+      },
+      (err) => {
         setError(err.message);
         setLoading(false);
-      });
+      }
+    );
+    return () => unsub();
+  }, [userId]);
+
+  // Real-time listener for all-time health metrics (for trend charts)
+  useEffect(() => {
+    if (!userId) return;
+    const unsub = onAllHealthMetricsSnapshot(
+      userId,
+      (all) => setAllMetrics(all),
+      (err) => console.error("All-time health metrics error:", err)
+    );
+    return () => unsub();
   }, [userId]);
 
   // Most recent day with any data

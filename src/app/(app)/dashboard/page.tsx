@@ -28,7 +28,7 @@ import { MetricBadge } from "@/components/ui/MetricBadge";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useAuth } from "@/hooks/useAuth";
-import { fetchHealthWorkouts } from "@/services/healthWorkouts";
+import { onHealthWorkoutsSnapshot } from "@/services/healthWorkouts";
 import { prefetchRoutes } from "@/utils/routeCache";
 import { fetchPlans } from "@/services/plans";
 import { fetchRaces } from "@/services/races";
@@ -787,17 +787,11 @@ export default function DashboardPage() {
   const [activeRace, setActiveRace] = useState<HalfMarathonRace | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // One-time fetch for plans and races (user-managed data, not iOS-synced)
   useEffect(() => {
     if (!uid) return;
-
-    setLoading(true);
-    Promise.all([
-      fetchHealthWorkouts(uid, { limitCount: 200 }),
-      fetchPlans(uid),
-      fetchRaces(uid),
-    ])
-      .then(([wkts, plans, races]) => {
-        setWorkouts(wkts);
+    Promise.all([fetchPlans(uid), fetchRaces(uid)])
+      .then(([plans, races]) => {
         const runningPlans = plans.filter(isRunningPlan);
         setActivePlan(runningPlans.find((p) => p.isActive) ?? null);
         const workoutPlansList = plans.filter(isWorkoutPlan);
@@ -805,6 +799,21 @@ export default function DashboardPage() {
           workoutPlansList.find((p) => p.isActive) ?? null
         );
         setActiveRace(races.find((r) => r.isActive) ?? null);
+      })
+      .catch(console.error);
+  }, [uid]);
+
+  // Real-time listener for healthWorkouts — updates when iOS syncs
+  useEffect(() => {
+    if (!uid) return;
+    setLoading(true);
+
+    const unsubscribe = onHealthWorkoutsSnapshot(
+      uid,
+      { limitCount: 200 },
+      (wkts) => {
+        setWorkouts(wkts);
+        setLoading(false);
 
         // Background prefetch — most recent 20 runs with routes
         setTimeout(() => {
@@ -821,9 +830,11 @@ export default function DashboardPage() {
             prefetchRoutes(uid, recentWithRoutes).catch(() => {});
           }
         }, 1000);
-      })
-      .catch(console.error)
-      .finally(() => setLoading(false));
+      },
+      () => setLoading(false)
+    );
+
+    return () => unsubscribe();
   }, [uid]);
 
   const plannedMiles = useMemo(() => {

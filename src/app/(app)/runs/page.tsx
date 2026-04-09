@@ -14,7 +14,7 @@ import { MetricBadge } from "@/components/ui/MetricBadge";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useAuth } from "@/hooks/useAuth";
-import { fetchHealthWorkouts } from "@/services/healthWorkouts";
+import { onHealthWorkoutsSnapshot } from "@/services/healthWorkouts";
 import {
   fetchShoes,
   fetchManualShoeAssignmentsMap,
@@ -587,22 +587,50 @@ export default function RunsPage() {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
+  // One-time fetch for shoes, assignments, and overrides (user-managed data)
   useEffect(() => {
     if (!uid) return;
-    setLoading(true);
     Promise.all([
-      fetchHealthWorkouts(uid, { limitCount: 500 }),
       fetchShoes(uid),
       fetchManualShoeAssignmentsMap(uid),
       fetchAllOverrides(uid),
     ])
-      .then(([wkts, fetchedShoes, assignments, fetchedOverrides]) => {
-        const runs = wkts.filter((w) => w.isRunLike);
-        setAllRuns(runs);
+      .then(([fetchedShoes, assignments, fetchedOverrides]) => {
         setShoes(fetchedShoes);
         setOverrides(fetchedOverrides);
-        const autoAssigned = evaluateAutoAssignRules(runs, fetchedShoes, assignments);
-        setManualAssignments({ ...autoAssigned, ...assignments });
+        // Store raw assignments — merged with auto-assign in the snapshot callback
+        shoesRef.current = fetchedShoes;
+        assignmentsRef.current = assignments;
+      })
+      .catch(console.error);
+  }, [uid]);
+
+  // Refs to hold latest shoes/assignments for use inside the snapshot callback
+  // without re-subscribing the listener every time shoes/assignments change.
+  const shoesRef = useRef<RunningShoe[]>([]);
+  const assignmentsRef = useRef<Record<string, string | null>>({});
+
+  // Real-time listener for healthWorkouts — updates when iOS syncs a new run
+  useEffect(() => {
+    if (!uid) return;
+    setLoading(true);
+
+    const unsubscribe = onHealthWorkoutsSnapshot(
+      uid,
+      { limitCount: 500 },
+      (wkts) => {
+        const runs = wkts.filter((w) => w.isRunLike);
+        setAllRuns(runs);
+
+        // Recompute auto-assignments whenever the run list changes
+        const autoAssigned = evaluateAutoAssignRules(
+          runs,
+          shoesRef.current,
+          assignmentsRef.current
+        );
+        setManualAssignments({ ...autoAssigned, ...assignmentsRef.current });
+
+        setLoading(false);
 
         // Background prefetch — most recent 20 runs with routes
         setTimeout(() => {
@@ -619,9 +647,11 @@ export default function RunsPage() {
             prefetchRoutes(uid, recentWithRoutes).catch(() => {});
           }
         }, 500);
-      })
-      .catch(console.error)
-      .finally(() => setLoading(false));
+      },
+      () => setLoading(false)
+    );
+
+    return () => unsubscribe();
   }, [uid]);
 
   const activeShoes = useMemo(
