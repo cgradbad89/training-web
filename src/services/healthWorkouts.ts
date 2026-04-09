@@ -36,6 +36,7 @@ import {
   getDoc,
   onSnapshot,
   query,
+  where,
   orderBy,
   limit,
   type QueryConstraint,
@@ -114,11 +115,14 @@ export async function fetchHealthWorkout(
  */
 export function onHealthWorkoutsSnapshot(
   uid: string,
-  opts: { limitCount?: number },
+  opts: { limitCount?: number; isRunLike?: boolean },
   onData: (workouts: HealthWorkout[]) => void,
   onError?: (error: Error) => void
 ): Unsubscribe {
   const constraints: QueryConstraint[] = [orderBy("startDate", "desc")];
+  if (opts.isRunLike !== undefined) {
+    constraints.push(where("isRunLike", "==", opts.isRunLike));
+  }
   if (opts.limitCount) constraints.push(limit(opts.limitCount));
 
   const q = query(

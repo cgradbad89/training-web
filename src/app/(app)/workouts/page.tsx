@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
   Dumbbell,
   Wind,
@@ -20,7 +20,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { StatBlock } from "@/components/ui/StatBlock";
 import { useAuth } from "@/hooks/useAuth";
-import { fetchHealthWorkouts } from "@/services/healthWorkouts";
+import { onHealthWorkoutsSnapshot } from "@/services/healthWorkouts";
 import { fetchAllOverrides, excludeWorkout } from "@/services/workoutOverrides";
 import { detectDuplicatePairs, type DuplicatePair } from "@/utils/duplicateDetection";
 import { type WorkoutOverride } from "@/types/workoutOverride";
@@ -430,25 +430,38 @@ export default function WorkoutsPage() {
   const currentYear = new Date().getFullYear();
   const [selectedYear, setSelectedYear] = useState<number>(currentYear);
 
+  // One-time fetch for overrides (user-managed data)
+  const overridesRef = useRef<Record<string, import("@/types/workoutOverride").WorkoutOverride>>({});
+  useEffect(() => {
+    if (!uid) return;
+    fetchAllOverrides(uid)
+      .then((o) => {
+        overridesRef.current = o;
+        setOverrides(o);
+      })
+      .catch(console.error);
+  }, [uid]);
+
+  // Real-time listener for non-running workouts (isRunLike === false)
   useEffect(() => {
     if (!uid) return;
     setLoading(true);
-    Promise.all([
-      fetchHealthWorkouts(uid, { limitCount: 500 }),
-      fetchAllOverrides(uid),
-    ])
-      .then(([wkts, fetchedOverrides]) => {
-        setOverrides(fetchedOverrides);
-        const nonRuns = wkts.filter((w) => !w.isRunLike);
-        setAllWorkouts(
-          nonRuns.filter((w) => !fetchedOverrides[w.workoutId]?.isExcluded)
-        );
+
+    const unsubscribe = onHealthWorkoutsSnapshot(
+      uid,
+      { limitCount: 500, isRunLike: false },
+      (nonRuns) => {
+        const o = overridesRef.current;
+        setAllWorkouts(nonRuns.filter((w) => !o[w.workoutId]?.isExcluded));
         setExcludedWorkouts(
-          nonRuns.filter((w) => fetchedOverrides[w.workoutId]?.isExcluded === true)
+          nonRuns.filter((w) => o[w.workoutId]?.isExcluded === true)
         );
-      })
-      .catch(console.error)
-      .finally(() => setLoading(false));
+        setLoading(false);
+      },
+      () => setLoading(false)
+    );
+
+    return () => unsubscribe();
   }, [uid]);
 
   const availableYears = useMemo(() => {
