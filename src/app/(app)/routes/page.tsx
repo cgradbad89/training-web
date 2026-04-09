@@ -14,7 +14,12 @@ import { fetchHealthWorkouts } from "@/services/healthWorkouts";
 import { fetchRoutePoints, type RoutePoint } from "@/services/routes";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { type CreatedRoute } from "@/types/createdRoute";
-import { fetchCreatedRoutes, saveCreatedRoute, deleteCreatedRoute } from "@/services/createdRoutes";
+import {
+  fetchCreatedRoutes,
+  saveCreatedRoute,
+  updateCreatedRoute,
+  deleteCreatedRoute,
+} from "@/services/createdRoutes";
 import { formatPace, formatDuration } from "@/utils/pace";
 import { getRouteStartPoint, haversineMeters } from "@/utils/routeCache";
 
@@ -442,6 +447,7 @@ export default function RoutesPage() {
   const [clusteringLoading, setClusteringLoading] = useState(false);
   const [createdRoutes, setCreatedRoutes] = useState<CreatedRoute[]>([]);
   const [showDrawModal, setShowDrawModal] = useState(false);
+  const [editingRoute, setEditingRoute] = useState<CreatedRoute | null>(null);
   const [selectedCreatedRoute, setSelectedCreatedRoute] =
     useState<CreatedRoute | null>(null);
   const [deleteRouteConfirm, setDeleteRouteConfirm] = useState<CreatedRoute | null>(null);
@@ -481,10 +487,40 @@ export default function RoutesPage() {
     distanceMiles: number;
   }) => {
     if (!uid) return;
+    if (editingRoute) {
+      // Update the existing Firestore document in place.
+      await updateCreatedRoute(uid, editingRoute.id, {
+        name: data.name,
+        waypoints: data.waypoints,
+        snappedPath: data.snappedPath,
+        distanceMiles: data.distanceMiles,
+      });
+      // Patch local state so the detail modal re-opens with fresh data.
+      const updatedRoute: CreatedRoute = {
+        ...editingRoute,
+        name: data.name,
+        waypoints: data.waypoints,
+        snappedPath: data.snappedPath,
+        distanceMiles: data.distanceMiles,
+        updatedAt: new Date(),
+      };
+      setCreatedRoutes((prev) =>
+        prev.map((r) => (r.id === editingRoute.id ? updatedRoute : r))
+      );
+      setEditingRoute(null);
+      setSelectedCreatedRoute(updatedRoute);
+      return;
+    }
     await saveCreatedRoute(uid, data);
     const updated = await fetchCreatedRoutes(uid);
     setCreatedRoutes(updated);
     setShowDrawModal(false);
+  };
+
+  const handleEditRoute = (route: CreatedRoute) => {
+    // Close the detail modal and open the draw modal in edit mode.
+    setSelectedCreatedRoute(null);
+    setEditingRoute(route);
   };
 
   const handleDeleteRoute = async (routeId: string) => {
@@ -642,11 +678,23 @@ export default function RoutesPage() {
         )}
       </div>
 
-      {/* Route Draw Modal */}
-      {showDrawModal && (
+      {/* Route Draw Modal — create mode */}
+      {showDrawModal && !editingRoute && (
         <RouteDrawModal
           onSave={handleSaveRoute}
           onClose={() => setShowDrawModal(false)}
+        />
+      )}
+
+      {/* Route Draw Modal — edit mode */}
+      {editingRoute && (
+        <RouteDrawModal
+          onSave={handleSaveRoute}
+          onClose={() => setEditingRoute(null)}
+          initial={{
+            name: editingRoute.name,
+            waypoints: editingRoute.waypoints,
+          }}
         />
       )}
 
@@ -663,6 +711,7 @@ export default function RoutesPage() {
       <CreatedRouteDetailModal
         route={selectedCreatedRoute}
         onClose={() => setSelectedCreatedRoute(null)}
+        onEditRoute={handleEditRoute}
         onRouteUpdated={(routeId, snappedPath, distanceMiles) => {
           setCreatedRoutes((prev) =>
             prev.map((r) =>

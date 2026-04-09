@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { X } from "lucide-react";
+import { Pencil, X } from "lucide-react";
 import type { CreatedRoute, CreatedRouteWaypoint } from "@/types/createdRoute";
 import { GoogleMap, Polyline, Marker } from "@react-google-maps/api";
 import { useGoogleMaps } from "@/components/GoogleMapsProvider";
@@ -22,6 +22,11 @@ interface Props {
     snappedPath: CreatedRouteWaypoint[],
     distanceMiles: number
   ) => void;
+  /**
+   * Called when the user clicks "Edit Route". The parent is responsible
+   * for closing this modal and opening the RouteDrawModal in edit mode.
+   */
+  onEditRoute?: (route: CreatedRoute) => void;
 }
 
 type LatLng = CreatedRouteWaypoint;
@@ -105,6 +110,7 @@ export function CreatedRouteDetailModal({
   route,
   onClose,
   onRouteUpdated,
+  onEditRoute,
 }: Props) {
   const { isLoaded, loadError } = useGoogleMaps();
   const { user } = useAuth();
@@ -387,7 +393,7 @@ export function CreatedRouteDetailModal({
           </div>
 
           {/* Footer */}
-          <div className="p-4 border-t border-border shrink-0">
+          <div className="p-4 border-t border-border shrink-0 flex items-center justify-between gap-3">
             <p className="text-xs text-textSecondary">
               Created{" "}
               {new Date(route.createdAt).toLocaleDateString("en-US", {
@@ -398,6 +404,15 @@ export function CreatedRouteDetailModal({
               {" · "}
               <span className="italic">Planned route</span>
             </p>
+            {onEditRoute && (
+              <button
+                onClick={() => onEditRoute(route)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-white text-xs font-semibold hover:bg-primary/90 transition-colors shrink-0"
+              >
+                <Pencil size={14} />
+                Edit Route
+              </button>
+            )}
           </div>
         </div>
       </div>
