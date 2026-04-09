@@ -19,13 +19,13 @@ import {
   type PlanType,
   type RunningPlan,
   type WorkoutPlan,
-  type PilatesPlan,
+  type LegacyPilatesPlan,
   type PlannedRunEntry,
   type PlanWeek,
   type PlanRunType,
   isRunningPlan,
   isWorkoutPlan,
-  isPilatesPlan,
+  isLegacyPilatesPlan,
 } from "@/types/plan";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { useRouter } from "next/navigation";
@@ -40,7 +40,6 @@ import {
   Check,
   AlertCircle,
   Dumbbell,
-  Flower2,
   Footprints,
 } from "lucide-react";
 
@@ -288,15 +287,12 @@ function SidebarPlanItem({
   isSelected: boolean;
   onSelect: () => void;
 }) {
-  const Icon = isWorkoutPlan(plan)
-    ? Dumbbell
-    : isPilatesPlan(plan)
-      ? Flower2
-      : Footprints;
+  const isLegacy = isLegacyPilatesPlan(plan);
+  const Icon = isWorkoutPlan(plan) || isLegacy ? Dumbbell : Footprints;
   const typeLabel = isWorkoutPlan(plan)
     ? "Workout"
-    : isPilatesPlan(plan)
-      ? "Pilates"
+    : isLegacy
+      ? "Unsupported"
       : "Running";
   return (
     <button
@@ -397,11 +393,12 @@ export default function PlansPage() {
     ? matchPlanToActual(selectedRunningPlan, activities)
     : new Map<string, PlanMatch | null>();
 
-  // Sidebar grouping
+  // Sidebar grouping — "Workout Plans" includes legacy pilates docs
+  // so the user can see them and delete manually.
   const runningPlans = plans.filter(isRunningPlan);
-  const crossTrainingPlans = plans.filter(
-    (p): p is WorkoutPlan | PilatesPlan =>
-      isWorkoutPlan(p) || isPilatesPlan(p)
+  const workoutPlans = plans.filter(
+    (p): p is WorkoutPlan | LegacyPilatesPlan =>
+      isWorkoutPlan(p) || isLegacyPilatesPlan(p)
   );
 
   // ── Load ──────────────────────────────────────────────────────────────────
@@ -510,21 +507,10 @@ export default function PlansPage() {
             entries: [],
           })),
         });
-      } else if (pendingPlanType === "workout") {
+      } else {
         plan = await createPlan<WorkoutPlan>(user.uid, {
           name: nameInput.trim(),
           planType: "workout",
-          startDate: startDateInput,
-          isActive: false,
-          weeks: Array.from({ length: numWeeks }, (_, i) => ({
-            weekNumber: i + 1,
-            entries: [],
-          })),
-        });
-      } else {
-        plan = await createPlan<PilatesPlan>(user.uid, {
-          name: nameInput.trim(),
-          planType: "pilates",
           startDate: startDateInput,
           isActive: false,
           weeks: Array.from({ length: numWeeks }, (_, i) => ({
@@ -568,10 +554,10 @@ export default function PlansPage() {
   }
 
   /**
-   * Persist updates to a Workout/Pilates plan from CrossTrainingPlanDetail.
+   * Persist updates to a Workout plan from CrossTrainingPlanDetail.
    * Optimistically updates local state, then writes through Firestore.
    */
-  async function handleCrossTrainingUpdate(updated: WorkoutPlan | PilatesPlan) {
+  async function handleCrossTrainingUpdate(updated: WorkoutPlan) {
     if (!user) return;
     setPlans((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
     try {
@@ -701,18 +687,18 @@ export default function PlansPage() {
             />
           ))}
 
-          {/* Cross Training Plans group */}
+          {/* Workout Plans group */}
           <div className="px-4 pt-4 pb-2 border-t border-border mt-2">
             <h3 className="text-[10px] font-bold uppercase tracking-widest text-textSecondary">
-              Cross Training Plans
+              Workout Plans
             </h3>
           </div>
-          {crossTrainingPlans.length === 0 && (
+          {workoutPlans.length === 0 && (
             <p className="px-4 pb-2 text-xs text-textSecondary italic">
-              No cross-training plans
+              No workout plans
             </p>
           )}
-          {crossTrainingPlans.map((plan) => (
+          {workoutPlans.map((plan) => (
             <SidebarPlanItem
               key={plan.id}
               plan={plan}
@@ -741,8 +727,8 @@ export default function PlansPage() {
           </div>
         )}
 
-        {/* Cross-training plans (Workout + Pilates) — dedicated detail */}
-        {selectedPlan && !isRunningPlan(selectedPlan) && (
+        {/* Workout plan detail */}
+        {selectedPlan && isWorkoutPlan(selectedPlan) && (
           <CrossTrainingPlanDetail
             plan={selectedPlan}
             onUpdate={handleCrossTrainingUpdate}
@@ -761,6 +747,56 @@ export default function PlansPage() {
             onSetActive={() => handleSetActive(selectedPlan.id)}
             saving={saving}
           />
+        )}
+
+        {/* Orphaned legacy Pilates plan — unsupported message */}
+        {selectedPlan && isLegacyPilatesPlan(selectedPlan) && (
+          <div className="flex-1 flex flex-col">
+            <div className="px-6 py-4 border-b border-border bg-card flex items-start gap-4">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <h1 className="text-lg font-bold text-textPrimary truncate">
+                    {selectedPlan.name}
+                  </h1>
+                  <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-warning/15 text-warning">
+                    Unsupported
+                  </span>
+                </div>
+              </div>
+              <button
+                onClick={async () => {
+                  if (!user) return;
+                  setSaving(true);
+                  try {
+                    await deletePlan(user.uid, selectedPlan.id);
+                    const remaining = plans.filter((p) => p.id !== selectedPlan.id);
+                    setPlans(remaining);
+                    setSelectedPlanId(remaining[0]?.id ?? null);
+                  } finally {
+                    setSaving(false);
+                  }
+                }}
+                disabled={saving}
+                className="p-1.5 rounded-lg hover:bg-red-50 text-textSecondary hover:text-danger disabled:opacity-50 shrink-0"
+                title="Delete plan"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="flex-1 flex items-center justify-center p-6">
+              <div className="max-w-md text-center">
+                <AlertCircle className="w-10 h-10 text-warning mx-auto mb-3" />
+                <p className="text-sm text-textPrimary font-medium mb-2">
+                  This plan type is no longer supported
+                </p>
+                <p className="text-sm text-textSecondary">
+                  Pilates plans have been merged into Workout plans. Please delete
+                  this plan and recreate it as a Workout plan with duration-only
+                  sessions.
+                </p>
+              </div>
+            </div>
+          </div>
         )}
 
         {/* Running plan detail (existing rendering) */}
@@ -1082,21 +1118,7 @@ export default function PlansPage() {
                   Workout Plan
                 </div>
                 <div className="text-xs text-textSecondary">
-                  Strength training, OTF, HIIT — track exercises, sets & reps
-                </div>
-              </div>
-            </button>
-            <button
-              onClick={() => openCreateModalForType("pilates")}
-              className="flex items-center gap-3 p-3 rounded-xl border border-border hover:border-teal-400 hover:bg-teal-50 transition-colors text-left"
-            >
-              <Flower2 className="w-5 h-5 text-teal-600 shrink-0" />
-              <div>
-                <div className="text-sm font-semibold text-textPrimary">
-                  Pilates Plan
-                </div>
-                <div className="text-xs text-textSecondary">
-                  Reformer or mat pilates sessions
+                  Strength, HIIT, OTF, pilates, yoga — exercises or duration
                 </div>
               </div>
             </button>
@@ -1125,9 +1147,7 @@ export default function PlansPage() {
             title={
               pendingPlanType === "workout"
                 ? "New Workout Plan"
-                : pendingPlanType === "pilates"
-                  ? "New Pilates Plan"
-                  : "New Running Plan"
+                : "New Running Plan"
             }
             onClose={() => {
               setShowCreateModal(false);
@@ -1148,9 +1168,7 @@ export default function PlansPage() {
                   placeholder={
                     pendingPlanType === "workout"
                       ? "e.g. Off-season Strength"
-                      : pendingPlanType === "pilates"
-                        ? "e.g. Weekly Reformer"
-                        : "e.g. Fall Marathon 2026"
+                      : "e.g. Fall Marathon 2026"
                   }
                   className="w-full border border-border rounded-xl px-3 py-2 text-sm bg-card text-textPrimary focus:outline-none focus:ring-2 focus:ring-primary"
                   autoFocus

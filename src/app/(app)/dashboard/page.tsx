@@ -51,7 +51,15 @@ import {
   isSameWeek,
 } from "@/utils/dates";
 import { type HealthWorkout } from "@/types/healthWorkout";
-import { type RunningPlan, type PlannedRunEntry, isRunningPlan } from "@/types/plan";
+import {
+  type RunningPlan,
+  type WorkoutPlan,
+  type PlannedRunEntry,
+  type PlannedWorkoutEntry,
+  isRunningPlan,
+  isWorkoutPlan,
+  isDurationOnlyEntry,
+} from "@/types/plan";
 import { type HalfMarathonRace, HALF_MARATHON_MILES } from "@/types/race";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -492,6 +500,123 @@ function StatusIcon({ status }: { status: RunStatus }) {
   }
 }
 
+// ─── Workout Plan Progress ────────────────────────────────────────────────────
+
+interface WorkoutPlanProgressCardProps {
+  activeWorkoutPlan: WorkoutPlan | null;
+  weekStart: Date;
+}
+
+function WorkoutPlanProgressCard({
+  activeWorkoutPlan,
+  weekStart,
+}: WorkoutPlanProgressCardProps) {
+  // Intentionally render nothing if there is no active workout plan.
+  if (!activeWorkoutPlan) return null;
+
+  const planStart = new Date(activeWorkoutPlan.startDate + "T00:00:00");
+  const weekIndex = Math.floor(
+    (weekStart.getTime() - planStart.getTime()) / (7 * 24 * 60 * 60 * 1000)
+  );
+  const planWeek =
+    weekIndex >= 0 && weekIndex < activeWorkoutPlan.weeks.length
+      ? activeWorkoutPlan.weeks[weekIndex]
+      : null;
+
+  const sessionEntries = (planWeek?.entries ?? [])
+    .filter((e): e is PlannedWorkoutEntry => e.type === "workout")
+    .sort((a, b) => a.weekday - b.weekday);
+
+  const completedCount = sessionEntries.filter(
+    (e) => e.completed === true
+  ).length;
+  const totalCount = sessionEntries.length;
+  const progressPct =
+    totalCount > 0 ? Math.min(1, completedCount / totalCount) : 0;
+
+  return (
+    <Card>
+      <CardTitle>Workout Plan</CardTitle>
+      <p className="text-sm font-semibold text-textPrimary mb-0.5">
+        {activeWorkoutPlan.name}
+      </p>
+      <p className="text-xs text-textSecondary mb-4">
+        Week {planWeek ? planWeek.weekNumber : "—"} of{" "}
+        {activeWorkoutPlan.weeks.length}
+      </p>
+
+      {!planWeek ? (
+        <p className="text-sm text-textSecondary">
+          This week is outside the plan range.
+        </p>
+      ) : sessionEntries.length === 0 ? (
+        <p className="text-sm text-textSecondary">
+          Rest week — no sessions planned.
+        </p>
+      ) : (
+        <div className="flex flex-col gap-1 mb-4">
+          {sessionEntries.map((entry) => {
+            const dayLabel = DAY_LABELS[entry.dayOfWeek];
+            const isComplete = entry.completed === true;
+            const subtitle = isDurationOnlyEntry(entry)
+              ? entry.duration_mins != null
+                ? `${entry.duration_mins} min`
+                : "Session"
+              : `${entry.exercises?.length ?? 0} exercise${
+                  (entry.exercises?.length ?? 0) === 1 ? "" : "s"
+                }`;
+            return (
+              <div
+                key={entry.id}
+                className={`flex items-center gap-2.5 py-1.5 ${
+                  isComplete ? "opacity-60" : ""
+                }`}
+              >
+                {isComplete ? (
+                  <CheckCircle2
+                    size={15}
+                    className="text-success shrink-0"
+                  />
+                ) : (
+                  <Circle
+                    size={15}
+                    className="text-textSecondary shrink-0"
+                  />
+                )}
+                <span className="text-xs text-textSecondary w-7 shrink-0">
+                  {dayLabel}
+                </span>
+                <span className="text-sm text-textPrimary flex-1 truncate">
+                  {entry.label ?? "Workout"}
+                </span>
+                <span className="text-xs text-textSecondary shrink-0">
+                  {subtitle}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Progress bar */}
+      <div className="mt-2">
+        <div className="flex justify-between mb-1">
+          <span className="text-xs text-textSecondary">Weekly sessions</span>
+          <span className="text-xs text-textSecondary tabular-nums">
+            {completedCount} / {totalCount} sessions
+          </span>
+        </div>
+        <div className="h-2 bg-surface rounded-full overflow-hidden border border-border">
+          <div
+            className="h-full bg-purple-500 rounded-full transition-all duration-500"
+            style={{ width: `${progressPct * 100}%` }}
+          />
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 // ─── Race Goal ────────────────────────────────────────────────────────────────
 
 interface RaceGoalCardProps {
@@ -656,6 +781,9 @@ export default function DashboardPage() {
 
   const [workouts, setWorkouts] = useState<HealthWorkout[]>([]);
   const [activePlan, setActivePlan] = useState<RunningPlan | null>(null);
+  const [activeWorkoutPlan, setActiveWorkoutPlan] = useState<WorkoutPlan | null>(
+    null
+  );
   const [activeRace, setActiveRace] = useState<HalfMarathonRace | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -672,6 +800,10 @@ export default function DashboardPage() {
         setWorkouts(wkts);
         const runningPlans = plans.filter(isRunningPlan);
         setActivePlan(runningPlans.find((p) => p.isActive) ?? null);
+        const workoutPlansList = plans.filter(isWorkoutPlan);
+        setActiveWorkoutPlan(
+          workoutPlansList.find((p) => p.isActive) ?? null
+        );
         setActiveRace(races.find((r) => r.isActive) ?? null);
 
         // Background prefetch — most recent 20 runs with routes
@@ -911,6 +1043,10 @@ export default function DashboardPage() {
             workouts={workouts}
             weekStart={selectedWeekStart}
             weekEnd={selectedWeekEnd}
+          />
+          <WorkoutPlanProgressCard
+            activeWorkoutPlan={activeWorkoutPlan}
+            weekStart={selectedWeekStart}
           />
           <ThisWeekRunsCard
             workouts={workouts}

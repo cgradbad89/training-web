@@ -7,7 +7,12 @@ import {
   writeBatch,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { type Plan, type RunningPlan } from "@/types";
+import {
+  type Plan,
+  type RunningPlan,
+  isRunningPlan,
+  isWorkoutPlan,
+} from "@/types/plan";
 import { toDate } from "@/utils/dates";
 
 function stripUndefined<T extends object>(obj: T): T {
@@ -58,17 +63,35 @@ export async function deletePlan(uid: string, planId: string): Promise<void> {
 }
 
 /**
- * Atomically sets one plan as active and deactivates all others.
- * Uses writeBatch for atomicity.
+ * Atomically sets one plan as active, deactivating other plans of the
+ * SAME TYPE. Running and Workout plans are independent — activating a
+ * workout plan does not affect the active running plan and vice versa.
+ *
+ * Legacy pilates plans are always deactivated (we no longer honor an
+ * active flag on them since the type is unsupported).
  */
 export async function setActivePlan(
   uid: string,
   planId: string,
   allPlans: Plan[]
 ): Promise<void> {
+  const target = allPlans.find((p) => p.id === planId);
+  if (!target) return;
+  const targetIsRunning = isRunningPlan(target);
+  const targetIsWorkout = isWorkoutPlan(target);
+
   const batch = writeBatch(db);
   for (const p of allPlans) {
-    batch.update(doc(db, plansPath(uid), p.id), stripUndefined({ isActive: p.id === planId }));
+    // Only touch plans of the same type as the one being activated.
+    // Plans of other types keep their current isActive value.
+    const sameType =
+      (targetIsRunning && isRunningPlan(p)) ||
+      (targetIsWorkout && isWorkoutPlan(p));
+    if (!sameType) continue;
+    batch.update(
+      doc(db, plansPath(uid), p.id),
+      stripUndefined({ isActive: p.id === planId })
+    );
   }
   await batch.commit();
 }

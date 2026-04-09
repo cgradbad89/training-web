@@ -35,7 +35,7 @@ export interface RunningPlan {
   updatedAt: string;
 }
 
-// ─── Cross training plan types (new) ─────────────────────────────────────────
+// ─── Workout plan types (unified — includes former Pilates) ─────────────────
 
 export interface PlanExercise {
   id: string;
@@ -45,28 +45,27 @@ export interface PlanExercise {
   weight_lbs: number;
 }
 
+/**
+ * A single planned workout day.
+ *
+ * Two modes:
+ *   1. Exercise-based (`exercises` non-empty) — strength / HIIT / OTF.
+ *      Auto-matches against any non-running, non-yoga-like HealthKit workout.
+ *   2. Duration-only (`exercises` empty AND `duration_mins` present) —
+ *      what used to be the separate Pilates plan type. Auto-matches against
+ *      yoga/pilates/mind-body/flexibility HealthKit workouts.
+ */
 export interface PlannedWorkoutEntry {
   id: string;
   weekIndex: number;
   weekday: number;     // 1=Mon … 7=Sun
   dayOfWeek: number;
   type: "rest" | "workout";
-  label?: string;          // e.g. "Upper Body", "OTF", "HIIT"
+  label?: string;          // e.g. "Upper Body", "Reformer Pilates"
   notes?: string;
   exercises?: PlanExercise[];
-  completed?: boolean;
-  completedAt?: string;
-}
-
-export interface PlannedPilatesEntry {
-  id: string;
-  weekIndex: number;
-  weekday: number;
-  dayOfWeek: number;
-  type: "rest" | "pilates";
-  label?: string;          // e.g. "Reformer Pilates"
+  /** Duration for duration-only sessions (e.g. pilates, yoga, cardio). */
   duration_mins?: number;
-  notes?: string;
   completed?: boolean;
   completedAt?: string;
 }
@@ -74,12 +73,6 @@ export interface PlannedPilatesEntry {
 export interface PlanWorkoutWeek {
   weekNumber: number;
   entries: PlannedWorkoutEntry[];
-  notes?: string;
-}
-
-export interface PlanPilatesWeek {
-  weekNumber: number;
-  entries: PlannedPilatesEntry[];
   notes?: string;
 }
 
@@ -96,23 +89,29 @@ export interface WorkoutPlan {
   updatedAt: string;
 }
 
-export interface PilatesPlan {
+// ─── Legacy: orphaned Pilates plans ─────────────────────────────────────────
+
+/**
+ * Old Pilates plan shape kept ONLY so we can detect and display an
+ * "unsupported, please delete" message for any orphaned documents in
+ * Firestore. No code path creates or edits these anymore.
+ */
+export interface LegacyPilatesPlan {
   id: string;
   name: string;
   planType: "pilates";
   startDate: string;
-  weeks: PlanPilatesWeek[];
+  weeks: Array<{ weekNumber: number; entries: unknown[]; notes?: string }>;
   isActive: boolean;
-  raceId?: string;
   createdAt: string;
   updatedAt: string;
 }
 
 // ─── Discriminated union ─────────────────────────────────────────────────────
 
-export type Plan = RunningPlan | WorkoutPlan | PilatesPlan;
+export type Plan = RunningPlan | WorkoutPlan | LegacyPilatesPlan;
 
-export type PlanType = "running" | "workout" | "pilates";
+export type PlanType = "running" | "workout";
 
 /** Type guards for narrowing the discriminated union. */
 export function isRunningPlan(plan: Plan): plan is RunningPlan {
@@ -123,6 +122,12 @@ export function isWorkoutPlan(plan: Plan): plan is WorkoutPlan {
   return plan.planType === "workout";
 }
 
-export function isPilatesPlan(plan: Plan): plan is PilatesPlan {
+export function isLegacyPilatesPlan(plan: Plan): plan is LegacyPilatesPlan {
   return plan.planType === "pilates";
+}
+
+/** True when the session should be treated as duration-only (ex-Pilates). */
+export function isDurationOnlyEntry(entry: PlannedWorkoutEntry): boolean {
+  const hasExercises = (entry.exercises?.length ?? 0) > 0;
+  return !hasExercises && entry.duration_mins != null;
 }

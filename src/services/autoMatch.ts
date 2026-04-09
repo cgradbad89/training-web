@@ -1,22 +1,23 @@
 /**
  * Auto-match cross-training plan sessions against HealthKit workouts.
  *
- * Phase 2 of non-running plans. For each Workout / Pilates plan,
- * walk every planned session and try to find a HealthWorkout that
- * fell on the same calendar date and matches the activityType
- * filter for that session type. If found, mark the session
- * completed and persist via updatePlan().
+ * For each WorkoutPlan, walk every planned session and try to find a
+ * HealthWorkout that fell on the same calendar date and matches the
+ * activityType filter for that session's flavor (exercise-based vs
+ * duration-only). If found, mark the session completed and persist.
+ *
+ * Duration-only sessions (exercises empty, duration_mins set) are the
+ * former Pilates plan type — they match yoga/pilates/mind-body/
+ * flexibility activity types.
  */
 
 import { type HealthWorkout } from "@/types/healthWorkout";
 import {
   type Plan,
   type WorkoutPlan,
-  type PilatesPlan,
   type PlannedWorkoutEntry,
-  type PlannedPilatesEntry,
   isWorkoutPlan,
-  isPilatesPlan,
+  isDurationOnlyEntry,
 } from "@/types/plan";
 import { updatePlan } from "@/services/plans";
 
@@ -42,8 +43,8 @@ export function isPilatesActivity(w: HealthWorkout): boolean {
 
 /**
  * Returns true if the workout is a non-running, non-pilates strength /
- * functional / HIIT / OTF style workout — i.e. eligible to satisfy a
- * Workout plan session.
+ * functional / HIIT / OTF style workout — i.e. eligible to satisfy an
+ * exercise-based Workout plan session.
  */
 export function isStrengthLikeActivity(w: HealthWorkout): boolean {
   if (w.isRunLike) return false;
@@ -85,17 +86,14 @@ export interface AutoMatchResult {
 // ─── Core matcher ───────────────────────────────────────────────────────────
 
 /**
- * Walk every Workout / Pilates plan and auto-mark matching sessions.
+ * Walk every WorkoutPlan and auto-mark matching sessions.
  *
- * - Skips sessions that are already `completed === true`
+ * - Skips sessions already `completed === true`
  * - Skips sessions whose planned date is in the future
- * - Each HealthWorkout can only satisfy one session per run (avoids
- *   double-counting if two sessions land on the same day)
- * - Persists each modified plan via updatePlan() and updates the
- *   provided plans array in place via the returned new objects.
- *
- * Returns the modified plans (running plans pass through unchanged) so
- * the caller can replace its state.
+ * - Each HealthWorkout can only satisfy one session per run
+ * - Duration-only sessions match yoga/pilates/mind-body activity types
+ * - Exercise-based sessions match any other non-running workout
+ * - Running plans and orphaned legacy pilates plans pass through unchanged
  */
 export async function autoMatchCrossTrainingSessions(
   uid: string,
@@ -123,108 +121,66 @@ export async function autoMatchCrossTrainingSessions(
   const nextPlans: Plan[] = [];
 
   for (const plan of plans) {
-    if (!isWorkoutPlan(plan) && !isPilatesPlan(plan)) {
+    if (!isWorkoutPlan(plan)) {
+      // Running plans and legacy pilates plans pass through unchanged.
       nextPlans.push(plan);
       continue;
     }
 
     let planChanged = false;
 
-    if (isWorkoutPlan(plan)) {
-      const updatedWeeks = plan.weeks.map((week) => {
-        const updatedEntries: PlannedWorkoutEntry[] = week.entries.map((entry) => {
-          if (entry.type !== "workout") return entry;
-          if (entry.completed === true) return entry;
-          const sessionDate = plannedSessionDate(
-            plan.startDate,
-            entry.weekIndex,
-            entry.weekday
-          );
-          if (sessionDate > today) return entry;
+    const updatedWeeks = plan.weeks.map((week) => {
+      const updatedEntries: PlannedWorkoutEntry[] = week.entries.map((entry) => {
+        if (entry.type !== "workout") return entry;
+        if (entry.completed === true) return entry;
+        const sessionDate = plannedSessionDate(
+          plan.startDate,
+          entry.weekIndex,
+          entry.weekday
+        );
+        if (sessionDate > today) return entry;
 
-          const key = localISODate(sessionDate);
-          const candidates = byDate.get(key);
-          if (!candidates || candidates.length === 0) return entry;
+        const key = localISODate(sessionDate);
+        const candidates = byDate.get(key);
+        if (!candidates || candidates.length === 0) return entry;
 
-          const matchIdx = candidates.findIndex(isStrengthLikeActivity);
-          if (matchIdx === -1) return entry;
+        // Pick the predicate based on session flavor. Duration-only
+        // sessions (former Pilates) match yoga/mind-body; everything
+        // else matches strength-like.
+        const predicate = isDurationOnlyEntry(entry)
+          ? isPilatesActivity
+          : isStrengthLikeActivity;
 
-          const matched = candidates.splice(matchIdx, 1)[0];
-          planChanged = true;
-          result.matched += 1;
-          console.log(
-            `[AutoMatch] Workout session matched: ${plan.id} day ${entry.weekIndex * 7 + (entry.weekday - 1)} → ${matched.workoutId}`
-          );
-          return {
-            ...entry,
-            completed: true,
-            completedAt: matched.startDate.toISOString(),
-          };
-        });
-        return { ...week, entries: updatedEntries };
+        const matchIdx = candidates.findIndex(predicate);
+        if (matchIdx === -1) return entry;
+
+        const matched = candidates.splice(matchIdx, 1)[0];
+        planChanged = true;
+        result.matched += 1;
+        console.log(
+          `[AutoMatch] Workout session matched: ${plan.id} day ${entry.weekIndex * 7 + (entry.weekday - 1)} → ${matched.workoutId}`
+        );
+        return {
+          ...entry,
+          completed: true,
+          completedAt: matched.startDate.toISOString(),
+        };
       });
+      return { ...week, entries: updatedEntries };
+    });
 
-      if (planChanged) {
-        const updated: WorkoutPlan = { ...plan, weeks: updatedWeeks };
-        try {
-          await updatePlan(uid, updated);
-          result.updatedPlanIds.push(plan.id);
-          nextPlans.push(updated);
-        } catch (err) {
-          console.error("[AutoMatch] failed to persist workout plan", plan.id, err);
-          nextPlans.push(plan);
-        }
-      } else {
+    if (planChanged) {
+      const updated: WorkoutPlan = { ...plan, weeks: updatedWeeks };
+      try {
+        await updatePlan(uid, updated);
+        result.updatedPlanIds.push(plan.id);
+        nextPlans.push(updated);
+      } catch (err) {
+        console.error("[AutoMatch] failed to persist workout plan", plan.id, err);
         nextPlans.push(plan);
       }
     } else {
-      // Pilates plan
-      const updatedWeeks = plan.weeks.map((week) => {
-        const updatedEntries: PlannedPilatesEntry[] = week.entries.map((entry) => {
-          if (entry.type !== "pilates") return entry;
-          if (entry.completed === true) return entry;
-          const sessionDate = plannedSessionDate(
-            plan.startDate,
-            entry.weekIndex,
-            entry.weekday
-          );
-          if (sessionDate > today) return entry;
-
-          const key = localISODate(sessionDate);
-          const candidates = byDate.get(key);
-          if (!candidates || candidates.length === 0) return entry;
-
-          const matchIdx = candidates.findIndex(isPilatesActivity);
-          if (matchIdx === -1) return entry;
-
-          const matched = candidates.splice(matchIdx, 1)[0];
-          planChanged = true;
-          result.matched += 1;
-          console.log(
-            `[AutoMatch] Pilates session matched: ${plan.id} day ${entry.weekIndex * 7 + (entry.weekday - 1)} → ${matched.workoutId}`
-          );
-          return {
-            ...entry,
-            completed: true,
-            completedAt: matched.startDate.toISOString(),
-          };
-        });
-        return { ...week, entries: updatedEntries };
-      });
-
-      if (planChanged) {
-        const updated: PilatesPlan = { ...plan, weeks: updatedWeeks };
-        try {
-          await updatePlan(uid, updated);
-          result.updatedPlanIds.push(plan.id);
-          nextPlans.push(updated);
-        } catch (err) {
-          console.error("[AutoMatch] failed to persist pilates plan", plan.id, err);
-          nextPlans.push(plan);
-        }
-      } else {
-        nextPlans.push(plan);
-      }
+      nextPlans.push(plan);
     }
   }
 
