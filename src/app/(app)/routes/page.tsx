@@ -280,9 +280,10 @@ interface RouteDetailModalProps {
   cluster: RouteCluster;
   uid: string;
   onClose: () => void;
+  onUseAsTemplate: (points: RoutePoint[]) => void;
 }
 
-function RouteDetailModal({ cluster, uid, onClose }: RouteDetailModalProps) {
+function RouteDetailModal({ cluster, uid, onClose, onUseAsTemplate }: RouteDetailModalProps) {
   const router = useRouter();
   const run = cluster.representativeRun;
   const [routePoints, setRoutePoints] = useState<RoutePoint[]>([]);
@@ -327,14 +328,22 @@ function RouteDetailModal({ cluster, uid, onClose }: RouteDetailModalProps) {
         <div className="sticky top-0 bg-card border-b border-border p-4 flex items-center gap-3 z-10 rounded-t-2xl">
           <button
             onClick={onClose}
-            className="text-sm text-primary font-medium"
+            className="text-sm text-primary font-medium shrink-0"
           >
             &larr; Close
           </button>
           <span className="text-sm font-bold text-textPrimary flex-1 text-center truncate">
             {cluster.distanceMiles.toFixed(1)} mi &middot; {dateDisplay}
           </span>
-          <div className="w-14" />
+          <button
+            onClick={() => {
+              if (routePoints.length > 0) onUseAsTemplate(routePoints);
+            }}
+            disabled={routeLoading || routePoints.length === 0}
+            className="text-xs text-primary font-medium hover:text-primary/80 disabled:opacity-30 shrink-0 whitespace-nowrap"
+          >
+            Use as template →
+          </button>
         </div>
 
         {/* Map */}
@@ -451,6 +460,11 @@ export default function RoutesPage() {
   const [selectedCreatedRoute, setSelectedCreatedRoute] =
     useState<CreatedRoute | null>(null);
   const [deleteRouteConfirm, setDeleteRouteConfirm] = useState<CreatedRoute | null>(null);
+  /** Template waypoints from a GPS run route (downsampled for editability). */
+  const [templateInitial, setTemplateInitial] = useState<{
+    name: string;
+    waypoints: { lat: number; lng: number }[];
+  } | null>(null);
 
   useEffect(() => {
     if (!uid) return;
@@ -521,6 +535,44 @@ export default function RoutesPage() {
     // Close the detail modal and open the draw modal in edit mode.
     setSelectedCreatedRoute(null);
     setEditingRoute(route);
+  };
+
+  /**
+   * Called from RouteDetailModal "Use as template" button.
+   * Downsamples the dense GPS points to ~25 editable waypoints and opens
+   * RouteDrawModal in create mode with those pre-populated.
+   */
+  const handleUseAsTemplate = (points: RoutePoint[], run: HealthWorkout) => {
+    if (points.length === 0) return;
+
+    // Downsample to ~25 evenly spaced waypoints
+    const targetCount = 25;
+    const step = Math.max(1, Math.floor(points.length / targetCount));
+    const downsampled: { lat: number; lng: number }[] = [];
+    for (let i = 0; i < points.length; i += step) {
+      downsampled.push({ lat: points[i].lat, lng: points[i].lng });
+    }
+    // Always include the last point to close the route shape
+    const last = points[points.length - 1];
+    if (
+      downsampled.length > 0 &&
+      (downsampled[downsampled.length - 1].lat !== last.lat ||
+        downsampled[downsampled.length - 1].lng !== last.lng)
+    ) {
+      downsampled.push({ lat: last.lat, lng: last.lng });
+    }
+
+    const dateLabel = run.startDate.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+    });
+
+    // Close the detail modal and open the draw modal with template
+    setExpandedCluster(null);
+    setTemplateInitial({
+      name: `Route from ${dateLabel}`,
+      waypoints: downsampled,
+    });
   };
 
   const handleDeleteRoute = async (routeId: string) => {
@@ -679,10 +731,23 @@ export default function RoutesPage() {
       </div>
 
       {/* Route Draw Modal — create mode */}
-      {showDrawModal && !editingRoute && (
+      {showDrawModal && !editingRoute && !templateInitial && (
         <RouteDrawModal
           onSave={handleSaveRoute}
           onClose={() => setShowDrawModal(false)}
+        />
+      )}
+
+      {/* Route Draw Modal — create from GPS template */}
+      {templateInitial && !editingRoute && (
+        <RouteDrawModal
+          onSave={(data) => {
+            // Clear template state, then save as new
+            setTemplateInitial(null);
+            handleSaveRoute(data);
+          }}
+          onClose={() => setTemplateInitial(null)}
+          initial={templateInitial}
         />
       )}
 
@@ -704,6 +769,9 @@ export default function RoutesPage() {
           cluster={expandedCluster}
           uid={uid}
           onClose={() => setExpandedCluster(null)}
+          onUseAsTemplate={(points) =>
+            handleUseAsTemplate(points, expandedCluster.representativeRun)
+          }
         />
       )}
 
