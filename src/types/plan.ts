@@ -37,12 +37,71 @@ export interface RunningPlan {
 
 // ─── Workout plan types (unified — includes former Pilates) ─────────────────
 
+/**
+ * An individual exercise within a workout session.
+ * The `notes` field holds per-exercise instructions (e.g. "Pause at bottom").
+ */
 export interface PlanExercise {
   id: string;
   name: string;
   sets: number;
   reps: number;
   weight_lbs: number;
+  notes?: string;
+}
+
+/**
+ * A section header that can be placed between exercises to visually group
+ * them (e.g. "Warm Up", "Superset 1").
+ */
+export interface PlanSection {
+  id: string;
+  kind: "section";
+  title: string;
+}
+
+/**
+ * Discriminated union for items in a workout day's exercise list.
+ * An exercise item has `kind: "exercise"` (or no `kind` for legacy docs).
+ * A section header has `kind: "section"`.
+ */
+export type ExerciseItem =
+  | (PlanExercise & { kind: "exercise" })
+  | PlanSection;
+
+/**
+ * Normalize a raw Firestore item into ExerciseItem. Existing documents
+ * written before the discriminated-union migration lack a `kind` field —
+ * they are treated as plain exercises.
+ */
+export function normalizeExerciseItem(raw: Record<string, unknown>): ExerciseItem {
+  const kind = (raw.kind as string | undefined) ?? "exercise";
+  if (kind === "section") {
+    return {
+      id: (raw.id as string) ?? "",
+      kind: "section",
+      title: (raw.title as string) ?? "",
+    };
+  }
+  return {
+    id: (raw.id as string) ?? "",
+    kind: "exercise",
+    name: (raw.name as string) ?? "",
+    sets: (raw.sets as number) ?? 0,
+    reps: (raw.reps as number) ?? 0,
+    weight_lbs: (raw.weight_lbs as number) ?? 0,
+    notes: raw.notes as string | undefined,
+  };
+}
+
+/** Type guard: true when item is an exercise, false for section headers. */
+export function isExerciseItem(item: ExerciseItem): item is PlanExercise & { kind: "exercise" } {
+  return item.kind === "exercise" || !("kind" in item) || (item as unknown as Record<string, unknown>).kind === undefined;
+}
+
+/** Type guard: true when item is a section header. */
+export function isSectionItem(item: ExerciseItem): item is PlanSection {
+  return item.kind === "section";
 }
 
 /**
@@ -63,7 +122,7 @@ export interface PlannedWorkoutEntry {
   type: "rest" | "workout";
   label?: string;          // e.g. "Upper Body", "Reformer Pilates"
   notes?: string;
-  exercises?: PlanExercise[];
+  exercises?: ExerciseItem[];
   /** Duration for duration-only sessions (e.g. pilates, yoga, cardio). */
   duration_mins?: number;
   completed?: boolean;
@@ -128,6 +187,8 @@ export function isLegacyPilatesPlan(plan: Plan): plan is LegacyPilatesPlan {
 
 /** True when the session should be treated as duration-only (ex-Pilates). */
 export function isDurationOnlyEntry(entry: PlannedWorkoutEntry): boolean {
-  const hasExercises = (entry.exercises?.length ?? 0) > 0;
-  return !hasExercises && entry.duration_mins != null;
+  const exerciseCount = (entry.exercises ?? []).filter(
+    (e) => !("kind" in e) || e.kind === "exercise"
+  ).length;
+  return exerciseCount === 0 && entry.duration_mins != null;
 }

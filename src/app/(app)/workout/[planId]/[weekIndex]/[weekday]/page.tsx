@@ -11,8 +11,11 @@ import {
   type WorkoutPlan,
   type PlannedWorkoutEntry,
   type PlanExercise,
+  type ExerciseItem,
   isWorkoutPlan,
   isDurationOnlyEntry,
+  isExerciseItem,
+  isSectionItem,
 } from "@/types/plan";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -101,11 +104,42 @@ export default function WorkoutDetailPage() {
     return entry ?? null;
   })();
 
-  const exercises = session?.exercises ?? [];
+  // All items in the session (exercises + section headers).
+  // Normalize legacy items that lack the `kind` discriminator.
+  const allItems: ExerciseItem[] = (session?.exercises ?? []).map((raw) => {
+    if ("kind" in raw && raw.kind != null) return raw;
+    // Legacy exercise without kind — safe to cast after adding discriminator
+    const legacy = raw as unknown as Record<string, unknown>;
+    return {
+      id: (legacy.id as string) ?? "",
+      kind: "exercise" as const,
+      name: (legacy.name as string) ?? "",
+      sets: (legacy.sets as number) ?? 0,
+      reps: (legacy.reps as number) ?? 0,
+      weight_lbs: (legacy.weight_lbs as number) ?? 0,
+      notes: legacy.notes as string | undefined,
+    };
+  });
+  // Only actual exercises (for Start Workout mode navigation + counting)
+  const exercises = allItems.filter(isExerciseItem) as (PlanExercise & { kind: "exercise" })[];
   const isDuration = session ? isDurationOnlyEntry(session) : false;
   const sessionDate = plan
     ? dayDate(plan.startDate, weekIndex, weekday)
     : null;
+
+  // Build a map of exerciseId → section title for Start Workout subtitle
+  const sectionForExercise = (() => {
+    const map = new Map<string, string>();
+    let currentSection = "";
+    for (const item of allItems) {
+      if (isSectionItem(item)) {
+        currentSection = item.title;
+      } else if (isExerciseItem(item)) {
+        if (currentSection) map.set(item.id, currentSection);
+      }
+    }
+    return map;
+  })();
 
   // Start workout handler
   const handleStartWorkout = useCallback(() => {
@@ -245,11 +279,21 @@ export default function WorkoutDetailPage() {
         {/* Exercise card */}
         <div className="bg-card rounded-2xl border border-border p-6 flex-1 flex flex-col gap-5">
           <div>
+            {sectionForExercise.has(ex.id) && (
+              <p className="text-xs font-semibold text-purple-600 uppercase tracking-wide mb-1">
+                {sectionForExercise.get(ex.id)}
+              </p>
+            )}
             <h2 className="text-xl font-bold text-textPrimary">{ex.name}</h2>
             <p className="text-sm text-textSecondary mt-1">
               {ex.sets} sets × {ex.reps} reps
               {ex.weight_lbs > 0 && ` @ ${ex.weight_lbs} lbs`}
             </p>
+            {ex.notes?.trim() && (
+              <p className="text-xs text-textSecondary italic mt-1">
+                {ex.notes}
+              </p>
+            )}
           </div>
 
           {/* Set rows */}
@@ -418,29 +462,55 @@ export default function WorkoutDetailPage() {
         </div>
       )}
 
-      {/* Exercise list */}
-      {!isDuration && exercises.length > 0 && (
-        <div className="bg-card rounded-2xl border border-border divide-y divide-border">
-          {exercises.map((ex, idx) => (
-            <div key={ex.id} className="p-4">
-              <div className="flex items-center gap-3">
-                <span className="text-xs font-bold text-textSecondary w-6 shrink-0 text-center">
-                  {idx + 1}
-                </span>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-textPrimary">
-                    {ex.name}
-                  </p>
-                  <p className="text-xs text-textSecondary mt-0.5 tabular-nums">
-                    {ex.sets} × {ex.reps}
-                    {ex.weight_lbs > 0 && ` @ ${ex.weight_lbs} lbs`}
-                  </p>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      {/* Exercise list (with section headers + per-exercise notes) */}
+      {!isDuration && allItems.length > 0 && (() => {
+        let exNum = 0;
+        return (
+          <div className="bg-card rounded-2xl border border-border divide-y divide-border">
+            {allItems.map((item) => {
+              if (isSectionItem(item)) {
+                return (
+                  <div
+                    key={item.id}
+                    className="px-4 py-2.5 bg-purple-50"
+                  >
+                    <p className="text-xs font-bold text-purple-600 uppercase tracking-wide">
+                      {item.title}
+                    </p>
+                  </div>
+                );
+              }
+              if (isExerciseItem(item)) {
+                exNum += 1;
+                return (
+                  <div key={item.id} className="p-4">
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs font-bold text-textSecondary w-6 shrink-0 text-center">
+                        {exNum}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-textPrimary">
+                          {item.name}
+                        </p>
+                        <p className="text-xs text-textSecondary mt-0.5 tabular-nums">
+                          {item.sets} × {item.reps}
+                          {item.weight_lbs > 0 && ` @ ${item.weight_lbs} lbs`}
+                        </p>
+                        {item.notes?.trim() && (
+                          <p className="text-xs text-textSecondary italic mt-1">
+                            {item.notes}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
+              return null;
+            })}
+          </div>
+        );
+      })()}
 
       {/* Exercise-based but empty */}
       {!isDuration && exercises.length === 0 && (

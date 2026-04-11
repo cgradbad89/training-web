@@ -28,7 +28,7 @@ import {
 import { Dumbbell } from "lucide-react";
 
 import { type HealthWorkout } from "@/types/healthWorkout";
-import { type Plan, isWorkoutPlan } from "@/types/plan";
+import { type Plan, isWorkoutPlan, isExerciseItem } from "@/types/plan";
 import { fetchPlans } from "@/services/plans";
 import {
   isPilatesActivity,
@@ -142,10 +142,11 @@ function buildExerciseProgressions(
           : null;
         if (!completedDate || isNaN(completedDate.getTime())) continue;
 
-        for (const ex of entry.exercises) {
-          if (!ex.name.trim()) continue;
-          if (ex.weight_lbs <= 0) continue;
-          const key = ex.name.trim().toLowerCase();
+        for (const item of entry.exercises) {
+          if (!isExerciseItem(item)) continue;
+          if (!item.name.trim()) continue;
+          if (item.weight_lbs <= 0) continue;
+          const key = item.name.trim().toLowerCase();
           const list = byName.get(key) ?? [];
           list.push({
             date: completedDate.getTime(),
@@ -153,7 +154,7 @@ function buildExerciseProgressions(
               month: "short",
               day: "numeric",
             }),
-            weight: ex.weight_lbs,
+            weight: item.weight_lbs,
           });
           byName.set(key, list);
         }
@@ -184,9 +185,10 @@ function findOriginalExerciseName(
     for (const week of plan.weeks) {
       for (const entry of week.entries) {
         if (entry.type !== "workout") continue;
-        for (const ex of entry.exercises ?? []) {
-          if (ex.name.trim().toLowerCase() === lowercaseKey) {
-            return ex.name.trim();
+        for (const item of entry.exercises ?? []) {
+          if (!isExerciseItem(item)) continue;
+          if (item.name.trim().toLowerCase() === lowercaseKey) {
+            return item.name.trim();
           }
         }
       }
@@ -234,9 +236,10 @@ function buildVolumeTrend(plans: Plan[]): VolumeDatum[] {
         const bucket = buckets.find((b) => b.weekStart === ws);
         if (!bucket) continue;
 
-        for (const ex of entry.exercises ?? []) {
-          if (ex.weight_lbs <= 0) continue;
-          bucket.volume += ex.sets * ex.reps * ex.weight_lbs;
+        for (const item of entry.exercises ?? []) {
+          if (!isExerciseItem(item)) continue;
+          if (item.weight_lbs <= 0) continue;
+          bucket.volume += item.sets * item.reps * item.weight_lbs;
         }
       }
     }

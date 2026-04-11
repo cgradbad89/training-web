@@ -34,8 +34,12 @@ import {
   type WorkoutPlan,
   type PlannedWorkoutEntry,
   type PlanExercise,
+  type ExerciseItem,
   type PlanWorkoutWeek,
   isDurationOnlyEntry,
+  isExerciseItem,
+  isSectionItem,
+  normalizeExerciseItem,
 } from "@/types/plan";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 
@@ -133,21 +137,33 @@ interface EntryEditorProps {
 function EntryEditor({ entry, onSave, onCancel }: EntryEditorProps) {
   const [label, setLabel] = useState(entry.label ?? "");
   const [notes, setNotes] = useState(entry.notes ?? "");
-  const [exercises, setExercises] = useState<PlanExercise[]>(
-    entry.exercises ?? []
-  );
+  const [items, setItems] = useState<ExerciseItem[]>(() => {
+    // Normalize legacy items that lack a `kind` field.
+    return (entry.exercises ?? []).map((raw) =>
+      normalizeExerciseItem(raw as unknown as Record<string, unknown>)
+    );
+  });
   const [durationStr, setDurationStr] = useState(
     entry.duration_mins != null ? String(entry.duration_mins) : ""
   );
   const [mode, setMode] = useState<"exercises" | "duration">(() =>
     isDurationOnlyEntry(entry) ? "duration" : "exercises"
   );
+  // Track which exercise ids have notes expanded
+  const [notesOpen, setNotesOpen] = useState<Set<string>>(() => {
+    const ids = new Set<string>();
+    for (const item of items) {
+      if (isExerciseItem(item) && item.notes?.trim()) ids.add(item.id);
+    }
+    return ids;
+  });
 
   function addExercise() {
-    setExercises((prev) => [
+    setItems((prev) => [
       ...prev,
       {
         id: crypto.randomUUID(),
+        kind: "exercise" as const,
         name: "",
         sets: 3,
         reps: 10,
@@ -156,14 +172,31 @@ function EntryEditor({ entry, onSave, onCancel }: EntryEditorProps) {
     ]);
   }
 
-  function updateExercise(id: string, patch: Partial<PlanExercise>) {
-    setExercises((prev) =>
-      prev.map((ex) => (ex.id === id ? { ...ex, ...patch } : ex))
+  function addSection() {
+    setItems((prev) => [
+      ...prev,
+      { id: crypto.randomUUID(), kind: "section" as const, title: "" },
+    ]);
+  }
+
+  function updateItem(id: string, patch: Partial<PlanExercise> | { title: string }) {
+    setItems((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, ...patch } : item))
     );
   }
 
-  function removeExercise(id: string) {
-    setExercises((prev) => prev.filter((ex) => ex.id !== id));
+  function removeItem(id: string) {
+    setItems((prev) => prev.filter((item) => item.id !== id));
+    setNotesOpen((prev) => { const next = new Set(prev); next.delete(id); return next; });
+  }
+
+  function toggleExNotes(id: string) {
+    setNotesOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   }
 
   function handleSave() {
@@ -180,12 +213,18 @@ function EntryEditor({ entry, onSave, onCancel }: EntryEditorProps) {
         duration_mins: isNaN(dur) ? undefined : dur,
       });
     } else {
+      // Keep sections + filter empty exercise names
+      const cleaned = items.filter((item) =>
+        isSectionItem(item)
+          ? item.title.trim().length > 0
+          : isExerciseItem(item) && item.name.trim().length > 0
+      );
       onSave({
         ...entry,
         type: "workout",
         label: trimmedLabel,
         notes: trimmedNotes,
-        exercises: exercises.filter((ex) => ex.name.trim().length > 0),
+        exercises: cleaned,
         duration_mins: undefined,
       });
     }
@@ -247,79 +286,123 @@ function EntryEditor({ entry, onSave, onCancel }: EntryEditorProps) {
       ) : (
         <>
           <div className="flex flex-col gap-2 mb-3">
-            {exercises.length === 0 && (
+            {items.length === 0 && (
               <p className="text-xs text-textSecondary italic">
                 No exercises yet
               </p>
             )}
-            {exercises.map((ex) => (
-              <div key={ex.id} className="flex items-center gap-1.5">
-                <input
-                  type="text"
-                  value={ex.name}
-                  onChange={(e) =>
-                    updateExercise(ex.id, { name: e.target.value })
-                  }
-                  placeholder="Exercise"
-                  className="flex-1 min-w-0 text-sm border border-border rounded-lg px-2 py-1.5 bg-card text-textPrimary placeholder:text-textSecondary"
-                />
-                <input
-                  type="number"
-                  value={ex.sets}
-                  min={0}
-                  onChange={(e) =>
-                    updateExercise(ex.id, {
-                      sets: parseInt(e.target.value, 10) || 0,
-                    })
-                  }
-                  className="w-12 text-sm border border-border rounded-lg px-1 py-1.5 bg-card text-textPrimary text-center"
-                  title="Sets"
-                />
-                <span className="text-xs text-textSecondary">×</span>
-                <input
-                  type="number"
-                  value={ex.reps}
-                  min={0}
-                  onChange={(e) =>
-                    updateExercise(ex.id, {
-                      reps: parseInt(e.target.value, 10) || 0,
-                    })
-                  }
-                  className="w-12 text-sm border border-border rounded-lg px-1 py-1.5 bg-card text-textPrimary text-center"
-                  title="Reps"
-                />
-                <input
-                  type="number"
-                  value={ex.weight_lbs}
-                  min={0}
-                  step={2.5}
-                  onChange={(e) =>
-                    updateExercise(ex.id, {
-                      weight_lbs: parseFloat(e.target.value) || 0,
-                    })
-                  }
-                  className="w-16 text-sm border border-border rounded-lg px-1 py-1.5 bg-card text-textPrimary text-center"
-                  title="Weight (lbs)"
-                />
-                <span className="text-xs text-textSecondary">lbs</span>
-                <button
-                  onClick={() => removeExercise(ex.id)}
-                  className="p-1 rounded hover:bg-red-100 text-textSecondary hover:text-danger"
-                  title="Remove exercise"
+            {items.map((item) =>
+              isSectionItem(item) ? (
+                /* ── Section header row ── */
+                <div
+                  key={item.id}
+                  className="flex items-center gap-1.5 bg-purple-50 rounded-lg px-2 py-1.5 -mx-0.5"
                 >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            ))}
+                  <AutoTextarea
+                    value={item.title}
+                    onChange={(v) => updateItem(item.id, { title: v })}
+                    placeholder="Section (e.g. Warm Up, Superset 1)"
+                    maxLength={100}
+                    className="!bg-transparent !border-0 !ring-0 font-bold text-purple-700 placeholder:text-purple-400 placeholder:font-normal !px-1 !py-0"
+                  />
+                  <button
+                    onClick={() => removeItem(item.id)}
+                    className="p-1 rounded hover:bg-red-100 text-textSecondary hover:text-danger shrink-0"
+                    title="Remove section"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ) : isExerciseItem(item) ? (
+                /* ── Exercise row ── */
+                <div key={item.id} className="flex flex-col gap-1">
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      value={item.name}
+                      onChange={(e) => updateItem(item.id, { name: e.target.value })}
+                      placeholder="Exercise"
+                      className="flex-1 min-w-0 text-sm border border-border rounded-lg px-2 py-1.5 bg-card text-textPrimary placeholder:text-textSecondary"
+                    />
+                    <input
+                      type="number"
+                      value={item.sets}
+                      min={0}
+                      onChange={(e) =>
+                        updateItem(item.id, { sets: parseInt(e.target.value, 10) || 0 })
+                      }
+                      className="w-12 text-sm border border-border rounded-lg px-1 py-1.5 bg-card text-textPrimary text-center"
+                      title="Sets"
+                    />
+                    <span className="text-xs text-textSecondary">×</span>
+                    <input
+                      type="number"
+                      value={item.reps}
+                      min={0}
+                      onChange={(e) =>
+                        updateItem(item.id, { reps: parseInt(e.target.value, 10) || 0 })
+                      }
+                      className="w-12 text-sm border border-border rounded-lg px-1 py-1.5 bg-card text-textPrimary text-center"
+                      title="Reps"
+                    />
+                    <input
+                      type="number"
+                      value={item.weight_lbs}
+                      min={0}
+                      step={2.5}
+                      onChange={(e) =>
+                        updateItem(item.id, { weight_lbs: parseFloat(e.target.value) || 0 })
+                      }
+                      className="w-16 text-sm border border-border rounded-lg px-1 py-1.5 bg-card text-textPrimary text-center"
+                      title="Weight (lbs)"
+                    />
+                    <span className="text-xs text-textSecondary">lbs</span>
+                    <button
+                      onClick={() => removeItem(item.id)}
+                      className="p-1 rounded hover:bg-red-100 text-textSecondary hover:text-danger"
+                      title="Remove exercise"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  {/* Per-exercise notes toggle */}
+                  {notesOpen.has(item.id) ? (
+                    <input
+                      type="text"
+                      value={item.notes ?? ""}
+                      onChange={(e) => updateItem(item.id, { notes: e.target.value })}
+                      placeholder="Exercise notes (e.g. Pause at bottom)"
+                      className="ml-0 text-xs border border-border rounded-lg px-2 py-1 bg-card text-textSecondary placeholder:text-textSecondary"
+                    />
+                  ) : (
+                    <button
+                      onClick={() => toggleExNotes(item.id)}
+                      className="text-[10px] text-textSecondary hover:text-textPrimary ml-0"
+                    >
+                      {item.notes?.trim() ? `Note: ${item.notes}` : "＋ note"}
+                    </button>
+                  )}
+                </div>
+              ) : null
+            )}
           </div>
 
-          <button
-            onClick={addExercise}
-            className="text-xs text-primary hover:text-primary/80 flex items-center gap-1 mb-3"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            Add exercise
-          </button>
+          <div className="flex gap-3 mb-3">
+            <button
+              onClick={addExercise}
+              className="text-xs text-primary hover:text-primary/80 flex items-center gap-1"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Add exercise
+            </button>
+            <button
+              onClick={addSection}
+              className="text-xs text-purple-600 hover:text-purple-500 flex items-center gap-1"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Add section
+            </button>
+          </div>
         </>
       )}
 
@@ -379,7 +462,8 @@ function DayCard({
   }, [entry.id, entry.notes]);
 
   const isDurationOnly = isDurationOnlyEntry(entry);
-  const exCount = entry.exercises?.length ?? 0;
+  const allItems = entry.exercises ?? [];
+  const exCount = allItems.filter((i) => !("kind" in i) || i.kind === "exercise").length;
   const completed = entry.completed === true;
   const completedLabel = formatCompletedAt(entry.completedAt);
   const notesHasContent = notesDraft.trim().length > 0;
@@ -446,20 +530,31 @@ function DayCard({
         </div>
       </div>
 
-      {/* Exercise list expansion */}
-      {expanded && exCount > 0 && (
+      {/* Exercise list expansion (with section headers + per-exercise notes) */}
+      {expanded && allItems.length > 0 && (
         <ul className="mt-2 flex flex-col gap-0.5 pl-1">
-          {entry.exercises!.map((ex) => (
-            <li
-              key={ex.id}
-              className="text-xs text-textSecondary tabular-nums"
-            >
-              <span className="text-textPrimary font-medium">{ex.name}</span>
-              {" — "}
-              {ex.sets} × {ex.reps}
-              {ex.weight_lbs > 0 && ` @ ${ex.weight_lbs} lbs`}
-            </li>
-          ))}
+          {allItems.map((item) =>
+            isSectionItem(item) ? (
+              <li
+                key={item.id}
+                className="text-xs font-bold text-purple-600 pt-1.5 pb-0.5 border-t border-border/40 mt-1 first:mt-0 first:border-0"
+              >
+                {item.title}
+              </li>
+            ) : isExerciseItem(item) ? (
+              <li key={item.id} className="text-xs text-textSecondary tabular-nums">
+                <span className="text-textPrimary font-medium">{item.name}</span>
+                {" — "}
+                {item.sets} × {item.reps}
+                {item.weight_lbs > 0 && ` @ ${item.weight_lbs} lbs`}
+                {item.notes?.trim() && (
+                  <span className="block text-[10px] text-textSecondary italic pl-2">
+                    {item.notes}
+                  </span>
+                )}
+              </li>
+            ) : null
+          )}
         </ul>
       )}
 

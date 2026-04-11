@@ -561,9 +561,12 @@ function WorkoutPlanProgressCard({
               ? entry.duration_mins != null
                 ? `${entry.duration_mins} min`
                 : "Session"
-              : `${entry.exercises?.length ?? 0} exercise${
-                  (entry.exercises?.length ?? 0) === 1 ? "" : "s"
-                }`;
+              : (() => {
+                  const n = (entry.exercises ?? []).filter(
+                    (e) => !("kind" in e) || e.kind === "exercise"
+                  ).length;
+                  return `${n} exercise${n === 1 ? "" : "s"}`;
+                })();
             const href = `/workout/${activeWorkoutPlan.id}/${weekIndex}/${entry.weekday}`;
             return (
               <Link
