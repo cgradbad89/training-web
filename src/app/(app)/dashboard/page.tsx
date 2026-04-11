@@ -511,7 +511,6 @@ function WorkoutPlanProgressCard({
   activeWorkoutPlan,
   weekStart,
 }: WorkoutPlanProgressCardProps) {
-  // Intentionally render nothing if there is no active workout plan.
   if (!activeWorkoutPlan) return null;
 
   const planStart = new Date(activeWorkoutPlan.startDate + "T00:00:00");
@@ -565,10 +564,12 @@ function WorkoutPlanProgressCard({
               : `${entry.exercises?.length ?? 0} exercise${
                   (entry.exercises?.length ?? 0) === 1 ? "" : "s"
                 }`;
+            const href = `/workout/${activeWorkoutPlan.id}/${weekIndex}/${entry.weekday}`;
             return (
-              <div
+              <Link
                 key={entry.id}
-                className={`flex items-center gap-2.5 py-1.5 ${
+                href={href}
+                className={`flex items-center gap-2.5 py-1.5 rounded-lg -mx-1 px-1 hover:bg-surface transition-colors ${
                   isComplete ? "opacity-60" : ""
                 }`}
               >
@@ -592,7 +593,7 @@ function WorkoutPlanProgressCard({
                 <span className="text-xs text-textSecondary shrink-0">
                   {subtitle}
                 </span>
-              </div>
+              </Link>
             );
           })}
         </div>

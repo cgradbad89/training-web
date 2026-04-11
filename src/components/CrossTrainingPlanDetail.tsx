@@ -18,6 +18,7 @@ import React, {
   useLayoutEffect,
   useEffect,
 } from "react";
+import Link from "next/link";
 import {
   Pencil,
   Trash2,
@@ -357,12 +358,15 @@ function DayCard({
   onDelete,
   onUnmatch,
   onNotesChange,
+  detailHref,
 }: {
   entry: PlannedWorkoutEntry;
   onEdit: () => void;
   onDelete: () => void;
   onUnmatch: () => void;
   onNotesChange: (notes: string) => void;
+  /** Link to workout detail page (only for exercise-based sessions). */
+  detailHref: string | null;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [notesOpen, setNotesOpen] = useState(!!entry.notes?.trim());
@@ -494,6 +498,16 @@ function DayCard({
           />
         )}
       </div>
+
+      {/* View Workout link — exercise-based sessions only */}
+      {detailHref && (
+        <Link
+          href={detailHref}
+          className="text-xs text-primary hover:text-primary/80 font-medium mt-2 inline-flex items-center gap-0.5"
+        >
+          View Workout →
+        </Link>
+      )}
     </div>
   );
 }
@@ -800,6 +814,11 @@ export function CrossTrainingPlanDetail({
                       onDelete={() => deleteEntry(entry.id)}
                       onUnmatch={() => unmatchEntry(entry.id)}
                       onNotesChange={(notes) => updateEntryNotes(entry.id, notes)}
+                      detailHref={
+                        !isDurationOnlyEntry(entry) && (entry.exercises?.length ?? 0) > 0
+                          ? `/workout/${plan.id}/${selectedWeekIndex}/${weekday}`
+                          : null
+                      }
                     />
                   )}
                 </div>

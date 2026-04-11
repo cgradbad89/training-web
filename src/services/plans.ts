@@ -2,6 +2,7 @@ import {
   collection,
   doc,
   getDocs,
+  getDoc,
   setDoc,
   deleteDoc,
   writeBatch,
@@ -36,6 +37,20 @@ export async function fetchPlans(uid: string): Promise<Plan[]> {
       createdAt: toDate(data.createdAt).toISOString(),
     } as Plan;
   });
+}
+
+export async function fetchPlan(uid: string, planId: string): Promise<Plan | null> {
+  const snap = await getDoc(doc(db, plansPath(uid), planId));
+  if (!snap.exists()) return null;
+  const data = snap.data();
+  const planType = (data.planType as string | undefined) ?? "running";
+  return {
+    ...data,
+    id: snap.id,
+    planType,
+    startDate: toDate(data.startDate).toISOString().split("T")[0],
+    createdAt: toDate(data.createdAt).toISOString(),
+  } as Plan;
 }
 
 export async function savePlan(uid: string, plan: Plan): Promise<void> {
