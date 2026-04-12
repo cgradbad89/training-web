@@ -85,6 +85,7 @@ export function MileSplitsTable({
             <tr className="text-xs text-textSecondary uppercase tracking-wide border-b border-border">
               <th className="text-left py-2 pr-4 font-medium">Mile</th>
               <th className="text-right py-2 px-4 font-medium">Pace</th>
+              <th className="text-right py-2 px-4 font-medium">Heart Rate</th>
               <th className="text-right py-2 pl-4 font-medium">Efficiency</th>
             </tr>
           </thead>
@@ -101,6 +102,13 @@ export function MileSplitsTable({
                 </td>
                 <td className="py-2.5 px-4 text-right text-textPrimary tabular-nums">
                   {formatPace(split.paceSecPerMile)} /mi
+                </td>
+                <td className="py-2.5 px-4 text-right text-textPrimary tabular-nums">
+                  {split.avgBpm ? (
+                    <span>{Math.round(split.avgBpm)} bpm</span>
+                  ) : (
+                    <span className="text-textSecondary">{"\u2014"}</span>
+                  )}
                 </td>
                 <td className="py-2.5 pl-4 text-right">
                   {split.efficiency != null ? (

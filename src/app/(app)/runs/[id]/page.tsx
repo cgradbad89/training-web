@@ -38,7 +38,14 @@ import {
   distanceBucket,
   driftLevel,
 } from "@/utils/metrics";
-import { computeMileSplits } from "@/utils/mileSplits";
+import { computeMileSplits, type MileSplit } from "@/utils/mileSplits";
+import {
+  collection,
+  getDocs,
+  query,
+  orderBy,
+} from "firebase/firestore";
+import { db } from "@/lib/firebase";
 
 const RunMap = dynamic(() => import("@/components/RunMap"), { ssr: false });
 
@@ -97,6 +104,7 @@ export default function RunDetailPage() {
     {}
   );
   const [override, setOverride] = useState<WorkoutOverride | null>(null);
+  const [perMileHR, setPerMileHR] = useState<Record<number, number>>({});
   const [loading, setLoading] = useState(true);
   const [routeLoading, setRouteLoading] = useState(true);
 
@@ -117,12 +125,17 @@ export default function RunDetailPage() {
 
   // Compute mile splits unconditionally (before early returns) to satisfy Rules of Hooks
   const displayWorkoutForSplits = workout ? applyOverride(workout, override) : null;
-  const mileSplits = useMemo(
-    () =>
-      routePoints.length >= 2 && displayWorkoutForSplits
-        ? computeMileSplits(routePoints, displayWorkoutForSplits.avgHeartRate)
-        : [],
-    [routePoints, displayWorkoutForSplits]
+  const mileSplits = useMemo<MileSplit[]>(
+    () => {
+      if (routePoints.length < 2 || !displayWorkoutForSplits) return [];
+      const computed = computeMileSplits(routePoints, displayWorkoutForSplits.avgHeartRate);
+      // Merge in per-mile HR from iOS-synced subcollection
+      return computed.map((split) => ({
+        ...split,
+        avgBpm: perMileHR[split.mile] ?? undefined,
+      }));
+    },
+    [routePoints, displayWorkoutForSplits, perMileHR]
   );
 
   useEffect(() => {
@@ -146,6 +159,25 @@ export default function RunDetailPage() {
             .then(setRoutePoints)
             .catch(console.error)
             .finally(() => setRouteLoading(false));
+
+          // Fetch per-mile HR from iOS-synced subcollection
+          getDocs(
+            query(
+              collection(db, `users/${uid}/healthWorkouts/${workoutId}/mileSplits`),
+              orderBy("mile", "asc")
+            )
+          )
+            .then((snap) => {
+              const hrMap: Record<number, number> = {};
+              snap.docs.forEach((doc) => {
+                const data = doc.data();
+                if (data.avgBpm && data.sampleCount >= 2) {
+                  hrMap[data.mile as number] = data.avgBpm as number;
+                }
+              });
+              setPerMileHR(hrMap);
+            })
+            .catch(console.error);
         } else {
           setRouteLoading(false);
         }

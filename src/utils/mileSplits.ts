@@ -19,6 +19,8 @@ export interface MileSplit {
   efficiency: number | null;
   /** Whether this is a partial (final) mile */
   isPartial: boolean;
+  /** Average heart rate for this mile from iOS-synced mileSplits subcollection */
+  avgBpm?: number;
 }
 
 // ─── Haversine ──────────────────────────────────────────────────────────────
