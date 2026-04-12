@@ -28,6 +28,7 @@ import {
   isLegacyPilatesPlan,
 } from "@/types/plan";
 import { type HealthWorkout } from "@/types/healthWorkout";
+import { matchPlanToActual, type PlanMatch } from "@/utils/planMatching";
 import { useRouter } from "next/navigation";
 import {
   CheckCircle,
@@ -97,110 +98,6 @@ function endDateForWeeks(startIso: string, weeks: number): string {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
-}
-
-type MatchQuality = "full" | "partial";
-interface PlanMatch {
-  activity: HealthWorkout;
-  quality: MatchQuality;
-}
-
-/**
- * 4-pass plan vs actual matching (no type matching; per-week used-set).
- * Returns a map: entryId → PlanMatch | null
- */
-function matchPlanToActual(
-  plan: RunningPlan,
-  workouts: HealthWorkout[]
-): Map<string, PlanMatch | null> {
-  const runs = workouts.filter((w) => w.isRunLike);
-  const result = new Map<string, PlanMatch | null>();
-
-  function dateOf(e: PlannedRunEntry): string {
-    return toISODate(plannedDate(plan, e));
-  }
-  function withinTolerance(e: PlannedRunEntry, a: HealthWorkout): boolean {
-    return (
-      Math.abs(a.distanceMiles - e.distanceMiles) <=
-      Math.max(0.5, e.distanceMiles * 0.3)
-    );
-  }
-  function withinOneDay(aDate: string, eDate: string): boolean {
-    // DST-safe: compare via UTC date components, not raw milliseconds
-    const [ay, am, ad] = aDate.split("-").map(Number);
-    const [by, bm, bd] = eDate.split("-").map(Number);
-    const diffDays = Math.abs(
-      Math.round((Date.UTC(ay, am - 1, ad) - Date.UTC(by, bm - 1, bd)) / 86400000)
-    );
-    return diffDays <= 1;
-  }
-
-  for (const week of plan.weeks) {
-    const entries = week.entries.filter((e) => e.runType !== "rest");
-    const used = new Set<string>();
-
-    // Pass 1: exact day, distance within tolerance → "full"
-    for (const e of entries) {
-      if (result.has(e.id)) continue;
-      const eDate = dateOf(e);
-      for (const a of runs) {
-        if (used.has(a.workoutId)) continue;
-        if (activityDate(a) !== eDate) continue;
-        if (withinTolerance(e, a)) {
-          result.set(e.id, { activity: a, quality: "full" });
-          used.add(a.workoutId);
-          break;
-        }
-      }
-    }
-
-    // Pass 2: ±1 day, distance within tolerance → "full"
-    for (const e of entries) {
-      if (result.has(e.id)) continue;
-      const eDate = dateOf(e);
-      for (const a of runs) {
-        if (used.has(a.workoutId)) continue;
-        if (!withinOneDay(activityDate(a), eDate)) continue;
-        if (withinTolerance(e, a)) {
-          result.set(e.id, { activity: a, quality: "full" });
-          used.add(a.workoutId);
-          break;
-        }
-      }
-    }
-
-    // Pass 3: exact day, any distance → "partial"
-    for (const e of entries) {
-      if (result.has(e.id)) continue;
-      const eDate = dateOf(e);
-      for (const a of runs) {
-        if (used.has(a.workoutId)) continue;
-        if (activityDate(a) !== eDate) continue;
-        result.set(e.id, { activity: a, quality: "partial" });
-        used.add(a.workoutId);
-        break;
-      }
-    }
-
-    // Pass 4: ±1 day, any distance → "partial"
-    for (const e of entries) {
-      if (result.has(e.id)) continue;
-      const eDate = dateOf(e);
-      for (const a of runs) {
-        if (used.has(a.workoutId)) continue;
-        if (!withinOneDay(activityDate(a), eDate)) continue;
-        result.set(e.id, { activity: a, quality: "partial" });
-        used.add(a.workoutId);
-        break;
-      }
-    }
-
-    for (const e of entries) {
-      if (!result.has(e.id)) result.set(e.id, null);
-    }
-  }
-
-  return result;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────

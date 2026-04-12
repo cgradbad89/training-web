@@ -57,8 +57,59 @@ function withinOneDay(aDate: string, eDate: string): boolean {
   return Math.abs(differenceInCalendarDays(aDate, eDate)) <= 1;
 }
 
+/** ISO week number (week containing Thursday, starts Monday) using UTC components */
+function isoWeekNumber(dateStr: string): number {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  const day = dt.getUTCDay() || 7;
+  dt.setUTCDate(dt.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(dt.getUTCFullYear(), 0, 1));
+  return Math.ceil(((dt.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
+}
+
 /**
- * 4-pass plan vs actual matching (no type matching; per-week used-set).
+ * When multiple entries compete for the same run within ±1 day,
+ * pick the best candidate using tiebreaker rules:
+ *   1. Prefer same/past ISO week over future week
+ *   2. Prefer closest calendar day
+ *   3. Prefer closest planned distance to actual run distance
+ *   4. Prefer earlier planned date as final tiebreaker
+ */
+function pickBestCandidate(
+  candidates: { entry: PlannedRunEntry; eDate: string; diffDays: number }[],
+  runDateStr: string,
+  runDistanceMiles: number
+): { entry: PlannedRunEntry; eDate: string; diffDays: number } | null {
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1) return candidates[0];
+
+  const runWeek = isoWeekNumber(runDateStr);
+
+  // Rule 1: Prefer same/past week over future week
+  const sameOrPast = candidates.filter((c) => isoWeekNumber(c.eDate) <= runWeek);
+  const pool = sameOrPast.length > 0 ? sameOrPast : candidates;
+
+  // Rule 2: Prefer closest calendar day
+  const minDiff = Math.min(...pool.map((c) => c.diffDays));
+  const closest = pool.filter((c) => c.diffDays === minDiff);
+  if (closest.length === 1) return closest[0];
+
+  // Rule 3: Prefer closest planned mileage
+  const withDistDiff = closest.map((c) => ({
+    ...c,
+    distDiff: Math.abs(c.entry.distanceMiles - runDistanceMiles),
+  }));
+  const minDistDiff = Math.min(...withDistDiff.map((c) => c.distDiff));
+  const byDist = withDistDiff.filter((c) => c.distDiff === minDistDiff);
+  if (byDist.length === 1) return byDist[0];
+
+  // Rule 4: Prefer earlier planned date
+  byDist.sort((a, b) => a.eDate.localeCompare(b.eDate));
+  return byDist[0];
+}
+
+/**
+ * 4-pass plan vs actual matching with global used-set and tiebreaker rules.
  * Returns a map: entryId → PlanMatch | null
  */
 export function matchPlanToActual(
@@ -67,70 +118,97 @@ export function matchPlanToActual(
 ): Map<string, PlanMatch | null> {
   const runs = workouts.filter((w) => w.isRunLike);
   const result = new Map<string, PlanMatch | null>();
+  // Global used set — prevents a run from matching entries across different weeks
+  const usedGlobal = new Set<string>();
 
+  // Collect all non-rest entries with their planned dates
+  const allEntries: { entry: PlannedRunEntry; eDate: string }[] = [];
   for (const week of plan.weeks) {
-    const entries = week.entries.filter((e) => e.runType !== "rest");
-    const used = new Set<string>();
-
-    // Pass 1: exact day, distance within tolerance → "full"
-    for (const e of entries) {
-      if (result.has(e.id)) continue;
-      const eDate = toISODate(plannedEntryDate(plan, e));
-      for (const w of runs) {
-        if (used.has(w.workoutId)) continue;
-        if (workoutDate(w) !== eDate) continue;
-        if (withinTolerance(e, w)) {
-          result.set(e.id, { activity: w, quality: "full" });
-          used.add(w.workoutId);
-          break;
-        }
-      }
+    for (const e of week.entries) {
+      if (e.runType === "rest") continue;
+      allEntries.push({ entry: e, eDate: toISODate(plannedEntryDate(plan, e)) });
     }
+  }
 
-    // Pass 2: ±1 day, distance within tolerance → "full"
-    for (const e of entries) {
-      if (result.has(e.id)) continue;
-      const eDate = toISODate(plannedEntryDate(plan, e));
-      for (const w of runs) {
-        if (used.has(w.workoutId)) continue;
-        if (!withinOneDay(workoutDate(w), eDate)) continue;
-        if (withinTolerance(e, w)) {
-          result.set(e.id, { activity: w, quality: "full" });
-          used.add(w.workoutId);
-          break;
-        }
-      }
-    }
-
-    // Pass 3: exact day, any distance → "partial"
-    for (const e of entries) {
-      if (result.has(e.id)) continue;
-      const eDate = toISODate(plannedEntryDate(plan, e));
-      for (const w of runs) {
-        if (used.has(w.workoutId)) continue;
-        if (workoutDate(w) !== eDate) continue;
-        result.set(e.id, { activity: w, quality: "partial" });
-        used.add(w.workoutId);
+  // Pass 1: exact day, distance within tolerance → "full"
+  for (const { entry: e, eDate } of allEntries) {
+    if (result.has(e.id)) continue;
+    for (const w of runs) {
+      if (usedGlobal.has(w.workoutId)) continue;
+      if (workoutDate(w) !== eDate) continue;
+      if (withinTolerance(e, w)) {
+        result.set(e.id, { activity: w, quality: "full" });
+        usedGlobal.add(w.workoutId);
         break;
       }
     }
+  }
 
-    // Pass 4: ±1 day, any distance → "partial"
-    for (const e of entries) {
-      if (result.has(e.id)) continue;
-      const eDate = toISODate(plannedEntryDate(plan, e));
-      for (const w of runs) {
-        if (used.has(w.workoutId)) continue;
-        if (!withinOneDay(workoutDate(w), eDate)) continue;
-        result.set(e.id, { activity: w, quality: "partial" });
-        used.add(w.workoutId);
-        break;
-      }
-    }
+  // Pass 2: ±1 day, distance within tolerance → "full" (with tiebreaker)
+  // Group unmatched entries competing for the same run
+  for (const w of runs) {
+    if (usedGlobal.has(w.workoutId)) continue;
+    const wDate = workoutDate(w);
 
-    for (const e of entries) {
-      if (!result.has(e.id)) result.set(e.id, null);
+    const candidates = allEntries
+      .filter(({ entry: e, eDate }) => {
+        if (result.has(e.id)) return false;
+        if (!withinOneDay(wDate, eDate)) return false;
+        if (!withinTolerance(e, w)) return false;
+        return true;
+      })
+      .map(({ entry, eDate }) => ({
+        entry,
+        eDate,
+        diffDays: Math.abs(differenceInCalendarDays(wDate, eDate)),
+      }));
+
+    const best = pickBestCandidate(candidates, wDate, w.distanceMiles);
+    if (best) {
+      result.set(best.entry.id, { activity: w, quality: "full" });
+      usedGlobal.add(w.workoutId);
     }
+  }
+
+  // Pass 3: exact day, any distance → "partial"
+  for (const { entry: e, eDate } of allEntries) {
+    if (result.has(e.id)) continue;
+    for (const w of runs) {
+      if (usedGlobal.has(w.workoutId)) continue;
+      if (workoutDate(w) !== eDate) continue;
+      result.set(e.id, { activity: w, quality: "partial" });
+      usedGlobal.add(w.workoutId);
+      break;
+    }
+  }
+
+  // Pass 4: ±1 day, any distance → "partial" (with tiebreaker)
+  for (const w of runs) {
+    if (usedGlobal.has(w.workoutId)) continue;
+    const wDate = workoutDate(w);
+
+    const candidates = allEntries
+      .filter(({ entry: e, eDate }) => {
+        if (result.has(e.id)) return false;
+        if (!withinOneDay(wDate, eDate)) return false;
+        return true;
+      })
+      .map(({ entry, eDate }) => ({
+        entry,
+        eDate,
+        diffDays: Math.abs(differenceInCalendarDays(wDate, eDate)),
+      }));
+
+    const best = pickBestCandidate(candidates, wDate, w.distanceMiles);
+    if (best) {
+      result.set(best.entry.id, { activity: w, quality: "partial" });
+      usedGlobal.add(w.workoutId);
+    }
+  }
+
+  // Mark unmatched entries as null
+  for (const { entry: e } of allEntries) {
+    if (!result.has(e.id)) result.set(e.id, null);
   }
 
   return result;
