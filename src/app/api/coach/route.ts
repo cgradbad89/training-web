@@ -98,7 +98,7 @@ function buildSystemPrompt(context: CoachContext): string {
 - Race: ${activeRace.name}
 - Date: ${activeRace.raceDate}
 - Days away: ${activeRace.daysAway}
-- Distance: ${activeRace.distanceLabel ?? 'Half Marathon'}
+- Distance: ${activeRace.distanceLabel ?? 'Unknown'}
 - Target pace: ${activeRace.targetPace ?? '—'} /mi
 - Goal finish time: ${activeRace.goalTime ?? '—'}
 - Predicted finish time: ${activeRace.predictedTime ?? 'Not enough data'}
@@ -188,7 +188,7 @@ ${runs.slice(0, 20).map((r: { date: string; distance: number; pace: string | nul
 `.trim()
     : 'No health metrics data available.'
 
-  return `You are an expert running coach with deep knowledge of half marathon training, periodization, and performance analytics. You have access to a runner's complete training data and race goals.
+  return `You are an expert running coach with deep knowledge of distance running, periodization, and performance analytics. You have access to a runner's complete training data and race goals.
 
 Be specific, actionable, and data-driven in your responses. Reference specific numbers from their data. Keep responses concise but comprehensive — use bullet points for recommendations. Be encouraging but honest about areas needing improvement.
 

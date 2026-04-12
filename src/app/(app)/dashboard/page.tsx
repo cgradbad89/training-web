@@ -60,7 +60,7 @@ import {
   isWorkoutPlan,
   isDurationOnlyEntry,
 } from "@/types/plan";
-import { type HalfMarathonRace, HALF_MARATHON_MILES } from "@/types/race";
+import { type HalfMarathonRace, HALF_MARATHON_MILES, RACE_DISTANCE_LABELS, RACE_DISTANCE_MILES } from "@/types/race";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -645,7 +645,10 @@ function RaceGoalCard({ activeRace }: RaceGoalCardProps) {
     );
   }
 
-  const goalTimeSec = (activeRace.targetPaceSecondsPerMile ?? 0) * HALF_MARATHON_MILES;
+  const raceDistMiles = activeRace.raceDistance === "custom"
+    ? (activeRace.customDistanceMiles ?? HALF_MARATHON_MILES)
+    : (RACE_DISTANCE_MILES[activeRace.raceDistance] ?? HALF_MARATHON_MILES);
+  const goalTimeSec = (activeRace.targetPaceSecondsPerMile ?? 0) * raceDistMiles;
   const days = daysUntil(activeRace.raceDate);
 
   return (
@@ -663,7 +666,7 @@ function RaceGoalCard({ activeRace }: RaceGoalCardProps) {
         )}
       </div>
       <span className="inline-block text-xs bg-primary/10 text-primary font-medium px-2 py-0.5 rounded-full mb-4">
-        Half Marathon
+        {RACE_DISTANCE_LABELS[activeRace.raceDistance] ?? activeRace.raceDistance}
       </span>
 
       <div className="grid grid-cols-2 gap-4">

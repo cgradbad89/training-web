@@ -262,9 +262,9 @@ export default function PlanInsightsPage() {
 
   // Race distance in miles
   const raceDistanceMiles = useMemo(() => {
-    if (!activeRace) return 13.109;
-    if (activeRace.raceDistance === "custom") return activeRace.customDistanceMiles ?? 13.109;
-    return RACE_DISTANCE_MILES[activeRace.raceDistance] ?? 13.109;
+    if (!activeRace) return null;
+    if (activeRace.raceDistance === "custom") return activeRace.customDistanceMiles ?? null;
+    return RACE_DISTANCE_MILES[activeRace.raceDistance] ?? null;
   }, [activeRace]);
 
   // Runs only
@@ -283,6 +283,7 @@ export default function PlanInsightsPage() {
       })),
       56
     );
+    if (!raceDistanceMiles) return null;
     return fitRiegel(efforts, raceDistanceMiles, 0, { min: 0.9, max: 1.3 });
   }, [runs, raceDistanceMiles]);
 
@@ -648,7 +649,7 @@ export default function PlanInsightsPage() {
 
   const raceDistanceLabel = activeRace
     ? RACE_DISTANCE_LABELS[activeRace.raceDistance] ?? activeRace.raceDistance
-    : "Half Marathon";
+    : "Race";
 
   return (
     <div className="flex flex-col gap-6 p-6 lg:p-6 max-w-5xl">
@@ -691,7 +692,7 @@ export default function PlanInsightsPage() {
               <p className="text-xs text-textSecondary">days away</p>
             </div>
           </div>
-          {activeRace.targetPaceSecondsPerMile && activeRace.targetPaceSecondsPerMile > 0 && (
+          {activeRace.targetPaceSecondsPerMile && activeRace.targetPaceSecondsPerMile > 0 && raceDistanceMiles && (
             <p className="text-xs text-textSecondary mt-2">
               Target: {formatPace(activeRace.targetPaceSecondsPerMile)} /mi →{" "}
               {formatRaceTime(activeRace.targetPaceSecondsPerMile * raceDistanceMiles)}
@@ -701,12 +702,14 @@ export default function PlanInsightsPage() {
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <PredictionCard
-          label={raceDistanceLabel + " Prediction"}
-          distanceMiles={raceDistanceMiles}
-          fit={raceFit}
-          targetPace={activeRace?.targetPaceSecondsPerMile}
-        />
+        {raceDistanceMiles && (
+          <PredictionCard
+            label={raceDistanceLabel + " Prediction"}
+            distanceMiles={raceDistanceMiles}
+            fit={raceFit}
+            targetPace={activeRace?.targetPaceSecondsPerMile}
+          />
+        )}
         <PredictionCard
           label="5K Prediction"
           distanceMiles={3.107}
@@ -821,7 +824,7 @@ export default function PlanInsightsPage() {
       )}
 
       {/* ── Half Marathon Readiness ─────────────────────────── */}
-      <SectionHeader icon={Shield} title="Half Marathon Readiness" />
+      <SectionHeader icon={Shield} title={`${raceDistanceLabel} Readiness`} />
 
       <div className="bg-card rounded-2xl border border-border p-6">
         {/* Overall badge */}

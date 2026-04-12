@@ -10,7 +10,9 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks";
 import { signOut } from "@/lib/auth";
 
-const NAV_LINKS = [
+const OWNER_EMAIL = "folstromjohn@gmail.com";
+
+const HUB_NAV_LINKS = [
   { label: "Hub", href: process.env.NEXT_PUBLIC_HUB_URL ?? "#" },
   { label: "Budget", href: "https://budget-web-xi.vercel.app" },
   { label: "Oracle", href: "https://oracle-web-pied.vercel.app" },
@@ -35,17 +37,18 @@ export function HubBanner() {
 
   return (
     <div className="bg-card border-b border-border h-10 flex items-center justify-between px-6 shrink-0">
-      {/* Left: nav links */}
+      {/* Left: nav links (Hub links only visible to owner) */}
       <div className="flex items-center gap-6">
-        {NAV_LINKS.map((link) => (
-          <a
-            key={link.label}
-            href={link.href}
-            className="text-xs font-medium text-textSecondary hover:text-textPrimary transition-colors"
-          >
-            {link.label}
-          </a>
-        ))}
+        {user?.email === OWNER_EMAIL &&
+          HUB_NAV_LINKS.map((link) => (
+            <a
+              key={link.label}
+              href={link.href}
+              className="text-xs font-medium text-textSecondary hover:text-textPrimary transition-colors"
+            >
+              {link.label}
+            </a>
+          ))}
         {/* Training — active, no link */}
         <span className="text-xs font-semibold bg-primary/10 text-primary px-2 py-0.5 rounded">
           Training

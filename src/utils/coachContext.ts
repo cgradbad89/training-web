@@ -44,9 +44,9 @@ function daysBetween(a: Date, b: Date): number {
 }
 
 // Get distance miles for a race
-function getRaceDistanceMiles(race: Race): number {
-  if (race.raceDistance === 'custom') return race.customDistanceMiles ?? 13.109
-  return RACE_MILES[race.raceDistance] ?? 13.109
+function getRaceDistanceMiles(race: Race): number | null {
+  if (race.raceDistance === 'custom') return race.customDistanceMiles ?? null
+  return RACE_MILES[race.raceDistance] ?? null
 }
 
 export function buildCoachContext(
@@ -228,8 +228,10 @@ export function buildCoachContext(
     // Predicted time via Riegel
     const nonExcludedRuns = allRuns.filter(r => !overrides[r.workoutId]?.isExcluded)
     const efforts = buildQualifyingEfforts(nonExcludedRuns, 56)
-    const fit = fitRiegel(efforts, distanceMiles, 3.0, { min: 1.05, max: 1.18 })
-    const predictedSeconds = fit ? predictSeconds(fit, distanceMiles) : null
+    const fit = distanceMiles
+      ? fitRiegel(efforts, distanceMiles, 3.0, { min: 1.05, max: 1.18 })
+      : null
+    const predictedSeconds = fit && distanceMiles ? predictSeconds(fit, distanceMiles) : null
     const predictedTime = predictedSeconds
       ? formatRaceTime(predictedSeconds)
       : null
@@ -240,7 +242,7 @@ export function buildCoachContext(
       : null
 
     // Goal time — computed from target pace * distance
-    const goalTimeSec = activeRace.targetPaceSecondsPerMile
+    const goalTimeSec = activeRace.targetPaceSecondsPerMile && distanceMiles
       ? activeRace.targetPaceSecondsPerMile * distanceMiles
       : null
     const goalTime = goalTimeSec ? formatRaceTime(goalTimeSec) : null
