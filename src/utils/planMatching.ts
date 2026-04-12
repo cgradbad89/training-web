@@ -43,12 +43,18 @@ function withinTolerance(e: PlannedRunEntry, w: HealthWorkout): boolean {
   );
 }
 
+/** DST-safe calendar day difference using local date components */
+function differenceInCalendarDays(a: string, b: string): number {
+  // Parse as local dates (YYYY-MM-DD) to avoid timezone/DST issues
+  const [ay, am, ad] = a.split("-").map(Number);
+  const [by, bm, bd] = b.split("-").map(Number);
+  const aUtcMs = Date.UTC(ay, am - 1, ad);
+  const bUtcMs = Date.UTC(by, bm - 1, bd);
+  return Math.round((aUtcMs - bUtcMs) / 86400000);
+}
+
 function withinOneDay(aDate: string, eDate: string): boolean {
-  return (
-    Math.abs(
-      (new Date(aDate).getTime() - new Date(eDate).getTime()) / 86400000
-    ) <= 1
-  );
+  return Math.abs(differenceInCalendarDays(aDate, eDate)) <= 1;
 }
 
 /**

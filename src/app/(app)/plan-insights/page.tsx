@@ -40,6 +40,7 @@ import {
   riegelConfidenceLabel,
   type RiegelFit,
 } from "@/utils/riegelFit";
+import { matchPlanToActual } from "@/utils/planMatching";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -301,7 +302,7 @@ export default function PlanInsightsPage() {
     return fitRiegel(efforts, 3.107, 0, { min: 0.9, max: 1.3 });
   }, [runs]);
 
-  // Plan adherence — weekly planned vs actual
+  // Plan adherence — weekly planned vs actual (uses ±1 day matching)
   const adherenceData = useMemo<WeekAdherenceData[]>(() => {
     if (!activePlan) return [];
 
@@ -309,26 +310,46 @@ export default function PlanInsightsPage() {
     const now = new Date();
     const currentWeekStart = getWeekStart(now);
 
+    // Use the matching engine so ±1 day tolerance is applied consistently
+    const matchMap = matchPlanToActual(activePlan, runs);
+
     return activePlan.weeks
       .filter((_, idx) => {
         const ws = new Date(planStart);
         ws.setDate(ws.getDate() + idx * 7);
         return ws <= currentWeekStart;
       })
-      .map((week, idx) => {
+      .map((week) => {
+        const runEntries = week.entries.filter((e) => e.runType !== "rest");
+        const planned = runEntries.reduce((s, e) => s + e.distanceMiles, 0);
+
+        // Sum actual miles from matched runs (each run matched at most once)
+        const matchedIds = new Set<string>();
+        let actual = 0;
+        for (const e of runEntries) {
+          const m = matchMap.get(e.id);
+          if (m && !matchedIds.has(m.activity.workoutId)) {
+            actual += m.activity.distanceMiles;
+            matchedIds.add(m.activity.workoutId);
+          }
+        }
+
+        // Also count unmatched runs that fall within the week's date range
+        // (bonus/extra runs not tied to any planned session)
         const ws = new Date(planStart);
-        ws.setDate(ws.getDate() + idx * 7);
+        ws.setDate(ws.getDate() + (week.weekNumber - 1) * 7);
         const we = new Date(ws);
         we.setDate(ws.getDate() + 6);
         we.setHours(23, 59, 59, 999);
 
-        const planned = week.entries.reduce((s, e) => s + e.distanceMiles, 0);
-        const actual = runs
-          .filter((r) => {
-            const d = r.startDate;
-            return d >= ws && d <= we;
-          })
-          .reduce((s, r) => s + r.distanceMiles, 0);
+        for (const r of runs) {
+          if (matchedIds.has(r.workoutId)) continue;
+          if (!r.isRunLike) continue;
+          if (r.startDate >= ws && r.startDate <= we) {
+            actual += r.distanceMiles;
+            matchedIds.add(r.workoutId);
+          }
+        }
 
         return {
           label: `W${week.weekNumber}`,

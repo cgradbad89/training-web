@@ -126,11 +126,13 @@ function matchPlanToActual(
     );
   }
   function withinOneDay(aDate: string, eDate: string): boolean {
-    return (
-      Math.abs(
-        (new Date(aDate).getTime() - new Date(eDate).getTime()) / 86400000
-      ) <= 1
+    // DST-safe: compare via UTC date components, not raw milliseconds
+    const [ay, am, ad] = aDate.split("-").map(Number);
+    const [by, bm, bd] = eDate.split("-").map(Number);
+    const diffDays = Math.abs(
+      Math.round((Date.UTC(ay, am - 1, ad) - Date.UTC(by, bm - 1, bd)) / 86400000)
     );
+    return diffDays <= 1;
   }
 
   for (const week of plan.weeks) {
