@@ -406,14 +406,9 @@ export default function WorkoutsPage() {
   const [dismissedPairKeys, setDismissedPairKeys] = useState<Set<string>>(
     new Set()
   );
-
-  // Load dismissed duplicate pairs from Firestore on mount
-  useEffect(() => {
-    if (!uid) return;
-    fetchDismissedDuplicates(uid)
-      .then(setDismissedPairKeys)
-      .catch(console.error);
-  }, [uid]);
+  // Ref so the onSnapshot callback always reads the latest dismissed set
+  // without needing to recreate the listener.
+  const dismissedRef = useRef<Set<string>>(new Set());
 
   const duplicatePairs = useMemo(
     () => detectDuplicatePairs(allWorkouts),
@@ -439,38 +434,60 @@ export default function WorkoutsPage() {
   const currentYear = new Date().getFullYear();
   const [selectedYear, setSelectedYear] = useState<number>(currentYear);
 
-  // One-time fetch for overrides (user-managed data)
-  const overridesRef = useRef<Record<string, import("@/types/workoutOverride").WorkoutOverride>>({});
-  useEffect(() => {
-    if (!uid) return;
-    fetchAllOverrides(uid)
-      .then((o) => {
-        overridesRef.current = o;
-        setOverrides(o);
-      })
-      .catch(console.error);
-  }, [uid]);
+  // Ref for overrides so the onSnapshot callback always reads the latest
+  const overridesRef = useRef<Record<string, WorkoutOverride>>({});
 
-  // Real-time listener for non-running workouts (isRunLike === false)
+  // Combined effect: fetch overrides + dismissed pairs FIRST, then start
+  // the onSnapshot listener. This eliminates the race condition where the
+  // snapshot fires before overrides/dismissed data is ready.
   useEffect(() => {
     if (!uid) return;
     setLoading(true);
 
-    const unsubscribe = onHealthWorkoutsSnapshot(
-      uid,
-      { limitCount: 500, isRunLike: false },
-      (nonRuns) => {
-        const o = overridesRef.current;
-        setAllWorkouts(nonRuns.filter((w) => !o[w.workoutId]?.isExcluded));
-        setExcludedWorkouts(
-          nonRuns.filter((w) => o[w.workoutId]?.isExcluded === true)
-        );
-        setLoading(false);
-      },
-      () => setLoading(false)
-    );
+    let unsubscribe: (() => void) | null = null;
+    let cancelled = false;
 
-    return () => unsubscribe();
+    Promise.all([
+      fetchAllOverrides(uid),
+      fetchDismissedDuplicates(uid),
+    ])
+      .then(([fetchedOverrides, fetchedDismissed]) => {
+        if (cancelled) return;
+
+        // Populate refs + state with the fetched data
+        overridesRef.current = fetchedOverrides;
+        setOverrides(fetchedOverrides);
+        dismissedRef.current = fetchedDismissed;
+        setDismissedPairKeys(fetchedDismissed);
+
+        // NOW start the real-time listener — overrides and dismissed
+        // data is guaranteed ready before the first snapshot callback.
+        unsubscribe = onHealthWorkoutsSnapshot(
+          uid,
+          { limitCount: 500, isRunLike: false },
+          (nonRuns) => {
+            if (cancelled) return;
+            const o = overridesRef.current;
+            setAllWorkouts(nonRuns.filter((w) => !o[w.workoutId]?.isExcluded));
+            setExcludedWorkouts(
+              nonRuns.filter((w) => o[w.workoutId]?.isExcluded === true)
+            );
+            setLoading(false);
+          },
+          () => {
+            if (!cancelled) setLoading(false);
+          }
+        );
+      })
+      .catch((err) => {
+        console.error("[Workouts] init fetch failed:", err);
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
   }, [uid]);
 
   const availableYears = useMemo(() => {
@@ -543,20 +560,20 @@ export default function WorkoutsPage() {
               onExclude={async () => {
                 if (!uid) return;
                 await excludeWorkout(uid, pair.otfWorkoutId);
-                setOverrides((prev) => ({
-                  ...prev,
-                  [pair.otfWorkoutId]: {
-                    workoutId: pair.otfWorkoutId,
-                    userId: uid,
-                    isExcluded: true,
-                    excludedAt: new Date().toISOString(),
-                    excludedReason: "auto-suggested duplicate",
-                    distanceMilesOverride: null,
-                    durationSecondsOverride: null,
-                    runTypeOverride: null,
-                    updatedAt: new Date().toISOString(),
-                  },
-                }));
+                const newOverride: WorkoutOverride = {
+                  workoutId: pair.otfWorkoutId,
+                  userId: uid,
+                  isExcluded: true,
+                  excludedAt: new Date().toISOString(),
+                  excludedReason: "auto-suggested duplicate",
+                  distanceMilesOverride: null,
+                  durationSecondsOverride: null,
+                  runTypeOverride: null,
+                  updatedAt: new Date().toISOString(),
+                };
+                // Update both state and ref so the snapshot callback stays in sync
+                overridesRef.current = { ...overridesRef.current, [pair.otfWorkoutId]: newOverride };
+                setOverrides((prev) => ({ ...prev, [pair.otfWorkoutId]: newOverride }));
                 setAllWorkouts((prev) =>
                   prev.filter((w) => w.workoutId !== pair.otfWorkoutId)
                 );
@@ -566,7 +583,8 @@ export default function WorkoutsPage() {
                   pair.otfWorkoutId,
                   pair.manualWorkoutId
                 );
-                // Optimistic UI — remove immediately
+                // Optimistic UI — remove immediately, update both state and ref
+                dismissedRef.current = new Set([...dismissedRef.current, key]);
                 setDismissedPairKeys((prev) => new Set([...prev, key]));
                 // Persist to Firestore (fire-and-forget)
                 if (uid) {
