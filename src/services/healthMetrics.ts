@@ -1,11 +1,14 @@
 import {
   collection,
+  doc,
+  getDoc,
   getDocs,
   onSnapshot,
   query,
   orderBy,
   where,
   type Unsubscribe,
+  type Timestamp,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 
@@ -111,4 +114,27 @@ export function onAllHealthMetricsSnapshot(
       onError?.(err);
     }
   );
+}
+
+// ── Hourly Heart Rate ────────────────────────────────────────────────────────
+
+export interface HourlyHeartRate {
+  hourlyAvgBpm: Record<string, number>; // "0"–"23", only hours with data
+  sampleCount: Record<string, number>;
+  updatedAt: Timestamp;
+  periodDays: number;
+}
+
+/**
+ * Fetch the single hourlyHeartRate document (one-time getDoc, not a listener).
+ * Returns null if the document doesn't exist.
+ */
+export async function fetchHourlyHeartRate(
+  uid: string
+): Promise<HourlyHeartRate | null> {
+  const snap = await getDoc(
+    doc(db, `users/${uid}/healthMetrics/hourlyHeartRate`)
+  );
+  if (!snap.exists()) return null;
+  return snap.data() as HourlyHeartRate;
 }

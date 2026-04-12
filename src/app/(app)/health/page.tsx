@@ -5,7 +5,9 @@ import { useAuth } from "@/hooks/useAuth";
 import {
   onHealthMetricsSnapshot,
   onAllHealthMetricsSnapshot,
+  fetchHourlyHeartRate,
   type HealthMetric,
+  type HourlyHeartRate,
 } from "@/services/healthMetrics";
 import {
   LineChart,
@@ -50,6 +52,13 @@ function formatHours(h: number | undefined): string {
   const hrs = Math.floor(h);
   const mins = Math.round((h - hrs) * 60);
   return mins > 0 ? `${hrs}h ${mins}m` : `${hrs}h`;
+}
+
+function formatHour(hour: number): string {
+  if (hour === 0) return "12 AM";
+  if (hour === 12) return "12 PM";
+  if (hour < 12) return `${hour} AM`;
+  return `${hour - 12} PM`;
 }
 
 function getColor(metric: string): string {
@@ -414,6 +423,8 @@ export default function HealthPage() {
 
   const [metrics90, setMetrics90] = useState<HealthMetric[]>([]);
   const [allMetrics, setAllMetrics] = useState<HealthMetric[]>([]);
+  const [hourlyHR, setHourlyHR] = useState<HourlyHeartRate | null>(null);
+  const [hourlyHRLoading, setHourlyHRLoading] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -445,6 +456,16 @@ export default function HealthPage() {
       (err) => console.error("All-time health metrics error:", err)
     );
     return () => unsub();
+  }, [userId]);
+
+  // One-time fetch for hourly heart rate averages
+  useEffect(() => {
+    if (!userId) return;
+    setHourlyHRLoading(true);
+    fetchHourlyHeartRate(userId)
+      .then((data) => setHourlyHR(data))
+      .catch((err) => console.error("Hourly HR fetch error:", err))
+      .finally(() => setHourlyHRLoading(false));
   }, [userId]);
 
   // Most recent day with any data
@@ -508,6 +529,33 @@ export default function HealthPage() {
     [allMetrics]
   );
   const weightAllDomain = useMemo(() => weightDomain(weightAllSeries), [weightAllSeries]);
+
+  // Hourly HR chart data
+  const hourlyHRChartData = useMemo(() => {
+    if (!hourlyHR) return [];
+    return Array.from({ length: 24 }, (_, hour) => ({
+      hour,
+      label: formatHour(hour),
+      bpm: hourlyHR.hourlyAvgBpm[String(hour)] ?? null,
+    })).filter((d): d is { hour: number; label: string; bpm: number } => d.bpm !== null);
+  }, [hourlyHR]);
+
+  const hourlyHRDomain = useMemo((): [number, number] | undefined => {
+    const vals = hourlyHRChartData.map((d) => d.bpm);
+    if (vals.length < 2) return undefined;
+    return [Math.floor(Math.min(...vals) - 3), Math.ceil(Math.max(...vals) + 3)];
+  }, [hourlyHRChartData]);
+
+  const hourlyHRLastSync = useMemo(() => {
+    if (!hourlyHR?.updatedAt) return null;
+    const ts = hourlyHR.updatedAt.toDate();
+    return ts.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  }, [hourlyHR]);
 
   // All-time resting HR — filter outliers, zoom domain
   const { allTimeHRSeries, allTimeHRMin, allTimeHRMax } = useMemo(() => {
@@ -636,7 +684,7 @@ export default function HealthPage() {
           />
         </div>
 
-        <div className="bg-card rounded-2xl border border-border p-4">
+        <div className="bg-card rounded-2xl border border-border p-4 mb-4">
           <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-3">
             Weight — Last 90 Days
           </p>
@@ -648,6 +696,63 @@ export default function HealthPage() {
             yDomain={weight90Domain}
             yTickFormatter={(v) => `${Math.round(v)} lb`}
           />
+        </div>
+
+        {/* Hourly Heart Rate by Time of Day */}
+        <div className="bg-card rounded-2xl border border-border p-4">
+          <div className="mb-3">
+            <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide">
+              Heart Rate by Time of Day
+            </p>
+            <p className="text-xs text-textSecondary mt-0.5">
+              30-day average HR{hourlyHRLastSync ? ` · last sync ${hourlyHRLastSync}` : ""}
+            </p>
+          </div>
+          {hourlyHRLoading ? (
+            <div className="h-[220px] flex items-center justify-center">
+              <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : hourlyHRChartData.length < 2 ? (
+            <div className="h-[220px] flex items-center justify-center">
+              <p className="text-xs text-textSecondary text-center max-w-xs">
+                Heart rate data by time of day will appear after your iOS app syncs
+              </p>
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <LineChart data={hourlyHRChartData} margin={{ top: 4, right: 8, bottom: 0, left: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                <XAxis
+                  dataKey="label"
+                  tick={{ fontSize: 9, fill: "#6b7280" }}
+                  interval={2}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <YAxis
+                  tick={{ fontSize: 9, fill: "#6b7280" }}
+                  tickFormatter={(v: number) => `${Math.round(v)}`}
+                  axisLine={false}
+                  tickLine={false}
+                  width={45}
+                  domain={hourlyHRDomain}
+                />
+                <Tooltip
+                  formatter={(v) => [`${Math.round(Number(v))} bpm`, "Heart Rate"]}
+                  labelFormatter={(label) => `at ${String(label)}`}
+                  contentStyle={{ fontSize: 11, borderRadius: 8 }}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="bpm"
+                  stroke={getColor("hr")}
+                  strokeWidth={2}
+                  dot={false}
+                  activeDot={{ r: 4 }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          )}
         </div>
       </Section>
 
