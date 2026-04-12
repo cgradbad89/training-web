@@ -65,6 +65,18 @@ function formatPaceLabel(secPerMile: number): string {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
 }
 
+function formatTotalTime(totalSeconds: number): string {
+  if (!isFinite(totalSeconds) || totalSeconds <= 0) return "—";
+  const s = Math.round(totalSeconds);
+  const hrs = Math.floor(s / 3600);
+  const mins = Math.floor((s % 3600) / 60);
+  const secs = s % 60;
+  if (hrs > 0) {
+    return `${hrs}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+  }
+  return `${mins}:${String(secs).padStart(2, "0")}`;
+}
+
 // ─── Page ────────────────────────────────────────────────────────────────────
 
 export default function PersonalInsightsPage() {
@@ -94,6 +106,7 @@ export default function PersonalInsightsPage() {
       .catch(console.error)
       .finally(() => setLoading(false));
   }, [uid]);
+
 
   const runs = useMemo(() => workouts.filter((w) => w.isRunLike), [workouts]);
 
@@ -150,11 +163,22 @@ export default function PersonalInsightsPage() {
   // ── Personal Records by Year ────────────────────────────────────────────────
 
   const prBuckets = [
+    { label: "~1 mi", filter: (m: number) => m >= 0.9 && m < 1.15 },
     { label: "1–3 mi", filter: (m: number) => m >= 1.0 && m < 3.0 },
     { label: "3–6 mi", filter: (m: number) => m >= 3.0 && m < 6.0 },
     { label: "6–7 mi", filter: (m: number) => m >= 6.0 && m < 7.0 },
     { label: "7–10 mi", filter: (m: number) => m >= 7.0 && m < 10.0 },
     { label: "10+ mi", filter: (m: number) => m >= 10.0 },
+  ];
+
+  // Specific run distance PRs
+  const specificDistances = [
+    { label: "5K", targetMiles: 3.107, tolerance: 0.3 },
+    { label: "5 Miles", targetMiles: 5.0, tolerance: 0.5 },
+    { label: "10K", targetMiles: 6.214, tolerance: 0.5 },
+    { label: "10 Miles", targetMiles: 10.0, tolerance: 0.75 },
+    { label: "15K", targetMiles: 9.321, tolerance: 0.75 },
+    { label: "Half Marathon", targetMiles: 13.109, tolerance: 1.0 },
   ];
 
   const yearRuns = useMemo(
@@ -175,6 +199,33 @@ export default function PersonalInsightsPage() {
 
         if (qualifying.length === 0) return null;
         return qualifying.reduce((best, cur) => (cur.pace < best.pace ? cur : best));
+      }),
+    [yearRuns]
+  );
+
+  // Specific run distance PRs (fastest avg pace for qualifying runs)
+  const specificPrs = useMemo(
+    () =>
+      specificDistances.map((dist) => {
+        const candidates = yearRuns
+          .filter(
+            (r) =>
+              r.distanceMiles >= dist.targetMiles - dist.tolerance &&
+              r.distanceMiles <= dist.targetMiles + dist.tolerance &&
+              r.durationSeconds > 0
+          )
+          .map((r) => ({
+            pace: r.durationSeconds / r.distanceMiles,
+            totalSeconds: r.durationSeconds,
+            miles: r.distanceMiles,
+            date: r.startDate,
+          }))
+          .filter((r) => isFinite(r.pace) && r.pace > 180 && r.pace < 1200);
+
+        if (candidates.length === 0) return null;
+        return candidates.reduce((best, cur) =>
+          cur.pace < best.pace ? cur : best
+        );
       }),
     [yearRuns]
   );
@@ -332,6 +383,10 @@ export default function PersonalInsightsPage() {
           </button>
         </div>
 
+        {/* Section 1: Mile Range PRs */}
+        <p className="text-xs font-semibold text-textSecondary uppercase tracking-widest mb-3">
+          Best Pace by Distance
+        </p>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -355,6 +410,55 @@ export default function PersonalInsightsPage() {
                         </td>
                         <td className="py-3 text-center text-textSecondary tabular-nums">
                           {pr.miles.toFixed(2)} mi
+                        </td>
+                        <td className="py-3 text-center text-textSecondary">
+                          {pr.date.toLocaleDateString("en-US", {
+                            month: "short",
+                            day: "numeric",
+                          })}
+                        </td>
+                      </>
+                    ) : (
+                      <>
+                        <td className="py-3 text-center text-textSecondary">—</td>
+                        <td className="py-3 text-center text-textSecondary">—</td>
+                        <td className="py-3 text-center text-textSecondary">—</td>
+                      </>
+                    )}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Section 2: Specific Run PRs */}
+        <p className="text-xs font-semibold text-textSecondary uppercase tracking-widest mt-6 mb-3">
+          Specific Runs
+        </p>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border">
+                <th className="text-left py-2 text-textSecondary font-medium">Distance</th>
+                <th className="text-center py-2 text-textSecondary font-medium">Time</th>
+                <th className="text-center py-2 text-textSecondary font-medium">Pace</th>
+                <th className="text-center py-2 text-textSecondary font-medium">Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              {specificDistances.map((dist, idx) => {
+                const pr = specificPrs[idx];
+                return (
+                  <tr key={dist.label} className="border-b border-border/50">
+                    <td className="py-3 text-textSecondary font-medium">{dist.label}</td>
+                    {pr ? (
+                      <>
+                        <td className="py-3 text-center font-semibold text-textPrimary tabular-nums">
+                          {formatTotalTime(pr.totalSeconds)}
+                        </td>
+                        <td className="py-3 text-center text-textSecondary tabular-nums">
+                          {formatPaceLabel(pr.pace)} /mi
                         </td>
                         <td className="py-3 text-center text-textSecondary">
                           {pr.date.toLocaleDateString("en-US", {
