@@ -19,6 +19,7 @@ import { MetricBadge } from "@/components/ui/MetricBadge";
 import { WorkoutTrendsSection } from "@/components/WorkoutTrendsSection";
 import { useAuth } from "@/hooks/useAuth";
 import { fetchHealthWorkouts } from "@/services/healthWorkouts";
+import { fetchRoutePoints, type RoutePoint } from "@/services/routes";
 import { fetchAllOverrides } from "@/services/workoutOverrides";
 import { applyOverride } from "@/types/workoutOverride";
 import { type HealthWorkout } from "@/types/healthWorkout";
@@ -77,6 +78,74 @@ function formatTotalTime(totalSeconds: number): string {
   return `${mins}:${String(secs).padStart(2, "0")}`;
 }
 
+// ─── Fastest Mile Segment ────────────────────────────────────────────────────
+
+const EARTH_RADIUS_MI = 3958.8;
+function toRad(deg: number): number {
+  return (deg * Math.PI) / 180;
+}
+function haversineMi(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * EARTH_RADIUS_MI * Math.asin(Math.sqrt(a));
+}
+
+/** Sliding window: find the fastest 1-mile segment in a route. Returns seconds or null. */
+function fastestMileSegment(points: RoutePoint[]): number | null {
+  if (points.length < 2) return null;
+
+  // Build arrays of cumulative distance (miles) and timestamps (ms)
+  const timestamps: number[] = [];
+  const cumDist: number[] = [0];
+  for (let i = 0; i < points.length; i++) {
+    const ts = new Date(points[i].timestamp).getTime();
+    if (isNaN(ts)) return null;
+    timestamps.push(ts);
+    if (i > 0) {
+      cumDist.push(
+        cumDist[i - 1] +
+          haversineMi(points[i - 1].lat, points[i - 1].lng, points[i].lat, points[i].lng)
+      );
+    }
+  }
+
+  const totalDist = cumDist[cumDist.length - 1];
+  if (totalDist < 1.0) return null; // route shorter than 1 mile
+
+  let bestSeconds: number | null = null;
+  let left = 0;
+
+  for (let right = 1; right < points.length; right++) {
+    while (cumDist[right] - cumDist[left] >= 1.0) {
+      // Distance from left to right >= 1 mile — find exact 1-mile crossing
+      const distFromLeft = cumDist[right] - cumDist[left];
+      const segDist = cumDist[right] - cumDist[right - 1];
+      const overshoot = distFromLeft - 1.0;
+
+      // Interpolate timestamp at the 1-mile mark between right-1 and right
+      let crossingMs: number;
+      if (segDist > 0) {
+        const fraction = 1.0 - overshoot / segDist;
+        crossingMs =
+          timestamps[right - 1] + fraction * (timestamps[right] - timestamps[right - 1]);
+      } else {
+        crossingMs = timestamps[right];
+      }
+
+      const elapsed = (crossingMs - timestamps[left]) / 1000;
+      if (elapsed > 0 && (bestSeconds === null || elapsed < bestSeconds)) {
+        bestSeconds = elapsed;
+      }
+      left++;
+    }
+  }
+
+  return bestSeconds;
+}
+
 // ─── Page ────────────────────────────────────────────────────────────────────
 
 export default function PersonalInsightsPage() {
@@ -91,6 +160,10 @@ export default function PersonalInsightsPage() {
   const [workouts, setWorkouts] = useState<HealthWorkout[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+  // Fastest 1-mile segment from GPS route points, keyed by year
+  const [fastestMileByYear, setFastestMileByYear] = useState<
+    Record<number, { seconds: number; date: Date } | null>
+  >({});
 
   useEffect(() => {
     if (!uid) return;
@@ -109,6 +182,42 @@ export default function PersonalInsightsPage() {
 
 
   const runs = useMemo(() => workouts.filter((w) => w.isRunLike), [workouts]);
+
+  // Compute fastest 1-mile GPS segment for the selected year
+  useEffect(() => {
+    if (!uid || runs.length === 0) return;
+    if (fastestMileByYear[selectedYear] !== undefined) return; // already computed
+
+    const yearRunsWithRoute = runs
+      .filter((r) => r.startDate.getFullYear() === selectedYear && r.hasRoute && r.distanceMiles >= 1.0)
+      .sort((a, b) => b.startDate.getTime() - a.startDate.getTime())
+      .slice(0, 50); // cap for performance
+
+    if (yearRunsWithRoute.length === 0) {
+      setFastestMileByYear((prev) => ({ ...prev, [selectedYear]: null }));
+      return;
+    }
+
+    Promise.all(
+      yearRunsWithRoute.map(async (run) => {
+        try {
+          const points = await fetchRoutePoints(uid, run.workoutId);
+          const secs = fastestMileSegment(points);
+          return secs != null ? { seconds: secs, date: run.startDate } : null;
+        } catch {
+          return null;
+        }
+      })
+    ).then((results) => {
+      const valid = results.filter(
+        (r): r is { seconds: number; date: Date } => r != null && r.seconds > 180 && r.seconds < 1200
+      );
+      const best = valid.length > 0
+        ? valid.reduce((a, b) => (a.seconds < b.seconds ? a : b))
+        : null;
+      setFastestMileByYear((prev) => ({ ...prev, [selectedYear]: best }));
+    });
+  }, [uid, runs, selectedYear, fastestMileByYear]);
 
   // ── Available years ─────────────────────────────────────────────────────────
 
@@ -163,7 +272,6 @@ export default function PersonalInsightsPage() {
   // ── Personal Records by Year ────────────────────────────────────────────────
 
   const prBuckets = [
-    { label: "~1 mi", filter: (m: number) => m >= 0.9 && m < 1.15 },
     { label: "1–3 mi", filter: (m: number) => m >= 1.0 && m < 3.0 },
     { label: "3–6 mi", filter: (m: number) => m >= 3.0 && m < 6.0 },
     { label: "6–7 mi", filter: (m: number) => m >= 6.0 && m < 7.0 },
@@ -171,13 +279,13 @@ export default function PersonalInsightsPage() {
     { label: "10+ mi", filter: (m: number) => m >= 10.0 },
   ];
 
-  // Specific run distance PRs
+  // Specific run distance PRs — ordered shortest to longest
   const specificDistances = [
     { label: "5K", targetMiles: 3.107, tolerance: 0.3 },
     { label: "5 Miles", targetMiles: 5.0, tolerance: 0.5 },
     { label: "10K", targetMiles: 6.214, tolerance: 0.5 },
-    { label: "10 Miles", targetMiles: 10.0, tolerance: 0.75 },
     { label: "15K", targetMiles: 9.321, tolerance: 0.75 },
+    { label: "10 Miles", targetMiles: 10.0, tolerance: 0.75 },
     { label: "Half Marathon", targetMiles: 13.109, tolerance: 1.0 },
   ];
 
@@ -383,21 +491,56 @@ export default function PersonalInsightsPage() {
           </button>
         </div>
 
-        {/* Section 1: Mile Range PRs */}
-        <p className="text-xs font-semibold text-textSecondary uppercase tracking-widest mb-3">
-          Best Pace by Distance
-        </p>
+        {/* Unified PR table with two sections */}
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border">
                 <th className="text-left py-2 text-textSecondary font-medium">Distance</th>
-                <th className="text-center py-2 text-textSecondary font-medium">Best Pace</th>
-                <th className="text-center py-2 text-textSecondary font-medium">Distance</th>
-                <th className="text-center py-2 text-textSecondary font-medium">Date</th>
+                <th className="text-right py-2 text-textSecondary font-medium">Pace</th>
+                <th className="text-right py-2 text-textSecondary font-medium">Time</th>
+                <th className="text-right py-2 text-textSecondary font-medium">Date</th>
               </tr>
             </thead>
             <tbody>
+              {/* Section 1: Best Pace by Distance */}
+              <tr>
+                <td colSpan={4} className="pt-4 pb-1">
+                  <span className="text-xs font-semibold text-textSecondary uppercase tracking-widest">
+                    Best Pace by Distance
+                  </span>
+                </td>
+              </tr>
+
+              {/* 1 Mile — from GPS segments */}
+              {(() => {
+                const mile = fastestMileByYear[selectedYear];
+                return (
+                  <tr className="border-b border-border/50">
+                    <td className="py-3 text-textSecondary font-medium">1 Mile</td>
+                    {mile ? (
+                      <>
+                        <td className="py-3 text-right font-semibold text-textPrimary tabular-nums">
+                          {formatPaceLabel(mile.seconds)} /mi
+                        </td>
+                        <td className="py-3 text-right text-textSecondary tabular-nums">
+                          {formatTotalTime(mile.seconds)}
+                        </td>
+                        <td className="py-3 text-right text-textSecondary text-xs">
+                          {mile.date.toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                        </td>
+                      </>
+                    ) : (
+                      <>
+                        <td className="py-3 text-right text-textSecondary">—</td>
+                        <td className="py-3 text-right text-textSecondary">—</td>
+                        <td className="py-3 text-right text-textSecondary">—</td>
+                      </>
+                    )}
+                  </tr>
+                );
+              })()}
+
               {prBuckets.map((bucket, idx) => {
                 const pr = prs[idx];
                 return (
@@ -405,48 +548,35 @@ export default function PersonalInsightsPage() {
                     <td className="py-3 text-textSecondary font-medium">{bucket.label}</td>
                     {pr ? (
                       <>
-                        <td className="py-3 text-center font-semibold text-textPrimary tabular-nums">
+                        <td className="py-3 text-right font-semibold text-textPrimary tabular-nums">
                           {formatPaceLabel(pr.pace)} /mi
                         </td>
-                        <td className="py-3 text-center text-textSecondary tabular-nums">
-                          {pr.miles.toFixed(2)} mi
+                        <td className="py-3 text-right text-textSecondary tabular-nums">
+                          {formatTotalTime(pr.pace * pr.miles)}
                         </td>
-                        <td className="py-3 text-center text-textSecondary">
-                          {pr.date.toLocaleDateString("en-US", {
-                            month: "short",
-                            day: "numeric",
-                          })}
+                        <td className="py-3 text-right text-textSecondary text-xs">
+                          {pr.date.toLocaleDateString("en-US", { month: "short", day: "numeric" })}
                         </td>
                       </>
                     ) : (
                       <>
-                        <td className="py-3 text-center text-textSecondary">—</td>
-                        <td className="py-3 text-center text-textSecondary">—</td>
-                        <td className="py-3 text-center text-textSecondary">—</td>
+                        <td className="py-3 text-right text-textSecondary">—</td>
+                        <td className="py-3 text-right text-textSecondary">—</td>
+                        <td className="py-3 text-right text-textSecondary">—</td>
                       </>
                     )}
                   </tr>
                 );
               })}
-            </tbody>
-          </table>
-        </div>
 
-        {/* Section 2: Specific Run PRs */}
-        <p className="text-xs font-semibold text-textSecondary uppercase tracking-widest mt-6 mb-3">
-          Specific Runs
-        </p>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border">
-                <th className="text-left py-2 text-textSecondary font-medium">Distance</th>
-                <th className="text-center py-2 text-textSecondary font-medium">Time</th>
-                <th className="text-center py-2 text-textSecondary font-medium">Pace</th>
-                <th className="text-center py-2 text-textSecondary font-medium">Date</th>
+              {/* Section 2: Specific Runs */}
+              <tr>
+                <td colSpan={4} className="pt-6 pb-1">
+                  <span className="text-xs font-semibold text-textSecondary uppercase tracking-widest">
+                    Specific Runs
+                  </span>
+                </td>
               </tr>
-            </thead>
-            <tbody>
               {specificDistances.map((dist, idx) => {
                 const pr = specificPrs[idx];
                 return (
@@ -454,24 +584,21 @@ export default function PersonalInsightsPage() {
                     <td className="py-3 text-textSecondary font-medium">{dist.label}</td>
                     {pr ? (
                       <>
-                        <td className="py-3 text-center font-semibold text-textPrimary tabular-nums">
-                          {formatTotalTime(pr.totalSeconds)}
-                        </td>
-                        <td className="py-3 text-center text-textSecondary tabular-nums">
+                        <td className="py-3 text-right font-semibold text-textPrimary tabular-nums">
                           {formatPaceLabel(pr.pace)} /mi
                         </td>
-                        <td className="py-3 text-center text-textSecondary">
-                          {pr.date.toLocaleDateString("en-US", {
-                            month: "short",
-                            day: "numeric",
-                          })}
+                        <td className="py-3 text-right text-textSecondary tabular-nums">
+                          {formatTotalTime(pr.totalSeconds)}
+                        </td>
+                        <td className="py-3 text-right text-textSecondary text-xs">
+                          {pr.date.toLocaleDateString("en-US", { month: "short", day: "numeric" })}
                         </td>
                       </>
                     ) : (
                       <>
-                        <td className="py-3 text-center text-textSecondary">—</td>
-                        <td className="py-3 text-center text-textSecondary">—</td>
-                        <td className="py-3 text-center text-textSecondary">—</td>
+                        <td className="py-3 text-right text-textSecondary">—</td>
+                        <td className="py-3 text-right text-textSecondary">—</td>
+                        <td className="py-3 text-right text-textSecondary">—</td>
                       </>
                     )}
                   </tr>
