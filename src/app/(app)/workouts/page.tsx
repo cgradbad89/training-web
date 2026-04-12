@@ -23,6 +23,11 @@ import { useAuth } from "@/hooks/useAuth";
 import { onHealthWorkoutsSnapshot } from "@/services/healthWorkouts";
 import { fetchAllOverrides, excludeWorkout } from "@/services/workoutOverrides";
 import { detectDuplicatePairs, type DuplicatePair } from "@/utils/duplicateDetection";
+import {
+  fetchDismissedDuplicates,
+  dismissDuplicate,
+  dismissedPairKey,
+} from "@/services/dismissedDuplicates";
 import { type WorkoutOverride } from "@/types/workoutOverride";
 import { formatDuration } from "@/utils/pace";
 import { weekStart } from "@/utils/dates";
@@ -398,15 +403,17 @@ export default function WorkoutsPage() {
   const [selectedWorkout, setSelectedWorkout] = useState<HealthWorkout | null>(null);
   const [showExcludedModal, setShowExcludedModal] = useState(false);
   const [activeTab, setActiveTab] = useState<TabKey>("all");
-  const [dismissedPairIds, setDismissedPairIds] = useState<Set<string>>(() => {
-    if (typeof window === "undefined") return new Set();
-    try {
-      const stored = localStorage.getItem("dismissedDuplicatePairs");
-      return stored ? new Set(JSON.parse(stored) as string[]) : new Set();
-    } catch {
-      return new Set();
-    }
-  });
+  const [dismissedPairKeys, setDismissedPairKeys] = useState<Set<string>>(
+    new Set()
+  );
+
+  // Load dismissed duplicate pairs from Firestore on mount
+  useEffect(() => {
+    if (!uid) return;
+    fetchDismissedDuplicates(uid)
+      .then(setDismissedPairKeys)
+      .catch(console.error);
+  }, [uid]);
 
   const duplicatePairs = useMemo(
     () => detectDuplicatePairs(allWorkouts),
@@ -417,9 +424,11 @@ export default function WorkoutsPage() {
       duplicatePairs.filter(
         (pair) =>
           !overrides[pair.otfWorkoutId]?.isExcluded &&
-          !dismissedPairIds.has(pair.otfWorkoutId)
+          !dismissedPairKeys.has(
+            dismissedPairKey(pair.otfWorkoutId, pair.manualWorkoutId)
+          )
       ),
-    [duplicatePairs, overrides, dismissedPairIds]
+    [duplicatePairs, overrides, dismissedPairKeys]
   );
 
   useEffect(() => {
@@ -552,18 +561,24 @@ export default function WorkoutsPage() {
                   prev.filter((w) => w.workoutId !== pair.otfWorkoutId)
                 );
               }}
-              onDismiss={() =>
-                setDismissedPairIds((prev) => {
-                  const updated = new Set([...prev, pair.otfWorkoutId]);
-                  try {
-                    localStorage.setItem(
-                      "dismissedDuplicatePairs",
-                      JSON.stringify([...updated])
-                    );
-                  } catch { /* ignore */ }
-                  return updated;
-                })
-              }
+              onDismiss={() => {
+                const key = dismissedPairKey(
+                  pair.otfWorkoutId,
+                  pair.manualWorkoutId
+                );
+                // Optimistic UI — remove immediately
+                setDismissedPairKeys((prev) => new Set([...prev, key]));
+                // Persist to Firestore (fire-and-forget)
+                if (uid) {
+                  dismissDuplicate(
+                    uid,
+                    pair.otfWorkoutId,
+                    pair.manualWorkoutId
+                  ).catch((err) =>
+                    console.error("[Workouts] dismiss write failed:", err)
+                  );
+                }
+              }}
             />
           ))}
         </div>
