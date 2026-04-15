@@ -587,71 +587,86 @@ export default function RunsPage() {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  // One-time fetch for shoes, assignments, and overrides (user-managed data)
+  // Refs to hold latest shoes/assignments for use inside the snapshot callback
+  // without re-subscribing the listener every time shoes/assignments change.
+  const shoesRef = useRef<RunningShoe[]>([]);
+  const assignmentsRef = useRef<Record<string, string | null>>({});
+
+  // Fetch shoes, assignments, and overrides BEFORE starting the snapshot listener.
+  // This prevents the race condition where the snapshot fires before shoe data is
+  // loaded, causing "Unassigned" on first render.
   useEffect(() => {
     if (!uid) return;
+    setLoading(true);
+
+    let unsubscribe: (() => void) | null = null;
+    let cancelled = false;
+
     Promise.all([
       fetchShoes(uid),
       fetchManualShoeAssignmentsMap(uid),
       fetchAllOverrides(uid),
     ])
       .then(([fetchedShoes, assignments, fetchedOverrides]) => {
-        setShoes(fetchedShoes);
-        setOverrides(fetchedOverrides);
-        // Store raw assignments — merged with auto-assign in the snapshot callback
+        if (cancelled) return;
+
+        // Populate refs so snapshot callback always sees current data
         shoesRef.current = fetchedShoes;
         assignmentsRef.current = assignments;
-      })
-      .catch(console.error);
-  }, [uid]);
 
-  // Refs to hold latest shoes/assignments for use inside the snapshot callback
-  // without re-subscribing the listener every time shoes/assignments change.
-  const shoesRef = useRef<RunningShoe[]>([]);
-  const assignmentsRef = useRef<Record<string, string | null>>({});
+        // Also set state for UI that renders shoe data independently
+        setShoes(fetchedShoes);
+        setOverrides(fetchedOverrides);
 
-  // Real-time listener for healthWorkouts — updates when iOS syncs a new run
-  useEffect(() => {
-    if (!uid) return;
-    setLoading(true);
+        // NOW start the snapshot listener — guaranteed to see shoe data
+        unsubscribe = onHealthWorkoutsSnapshot(
+          uid,
+          { limitCount: 500 },
+          (wkts) => {
+            if (cancelled) return;
+            const runs = wkts.filter((w) => w.isRunLike);
+            setAllRuns(runs);
 
-    const unsubscribe = onHealthWorkoutsSnapshot(
-      uid,
-      { limitCount: 500 },
-      (wkts) => {
-        const runs = wkts.filter((w) => w.isRunLike);
-        setAllRuns(runs);
+            // Recompute auto-assignments whenever the run list changes
+            const autoAssigned = evaluateAutoAssignRules(
+              runs,
+              shoesRef.current,
+              assignmentsRef.current
+            );
+            setManualAssignments({ ...autoAssigned, ...assignmentsRef.current });
 
-        // Recompute auto-assignments whenever the run list changes
-        const autoAssigned = evaluateAutoAssignRules(
-          runs,
-          shoesRef.current,
-          assignmentsRef.current
-        );
-        setManualAssignments({ ...autoAssigned, ...assignmentsRef.current });
+            setLoading(false);
 
-        setLoading(false);
-
-        // Background prefetch — most recent 20 runs with routes
-        setTimeout(() => {
-          const recentWithRoutes = runs
-            .filter((a) => a.hasRoute)
-            .sort(
-              (a, b) =>
-                new Date(b.startDate).getTime() -
-                new Date(a.startDate).getTime()
-            )
-            .slice(0, 20)
-            .map((a) => a.workoutId);
-          if (recentWithRoutes.length > 0 && uid) {
-            prefetchRoutes(uid, recentWithRoutes).catch(() => {});
+            // Background prefetch — most recent 20 runs with routes
+            setTimeout(() => {
+              const recentWithRoutes = runs
+                .filter((a) => a.hasRoute)
+                .sort(
+                  (a, b) =>
+                    new Date(b.startDate).getTime() -
+                    new Date(a.startDate).getTime()
+                )
+                .slice(0, 20)
+                .map((a) => a.workoutId);
+              if (recentWithRoutes.length > 0 && uid) {
+                prefetchRoutes(uid, recentWithRoutes).catch(() => {});
+              }
+            }, 500);
+          },
+          () => {
+            if (!cancelled) setLoading(false);
           }
-        }, 500);
-      },
-      () => setLoading(false)
-    );
+        );
+      })
+      .catch((err) => {
+        console.error(err);
+        if (!cancelled) setLoading(false);
+      });
 
-    return () => unsubscribe();
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
   }, [uid]);
 
   const activeShoes = useMemo(
