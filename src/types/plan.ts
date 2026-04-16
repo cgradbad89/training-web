@@ -35,6 +35,35 @@ export interface RunningPlan {
   updatedAt: string;
 }
 
+// ─── Workout category ────────────────────────────────────────────────────────
+
+export type WorkoutCategory =
+  | 'strength'      // Strength Training
+  | 'orangetheory'  // Orange Theory
+  | 'cycling'       // Cycling
+  | 'pilates'       // Pilates
+  | 'yoga'          // Yoga
+  | 'hiit'          // HIIT
+
+export const WORKOUT_CATEGORY_LABELS: Record<WorkoutCategory, string> = {
+  strength: 'Strength Training',
+  orangetheory: 'Orange Theory',
+  cycling: 'Cycling',
+  pilates: 'Pilates',
+  yoga: 'Yoga',
+  hiit: 'HIIT',
+}
+
+/** HealthKit activityType strings that match each category (raw, mixed-case). */
+export const WORKOUT_CATEGORY_HK_TYPES: Record<WorkoutCategory, string[]> = {
+  strength: ['traditionalStrengthTraining', 'functionalStrengthTraining', 'coreTraining'],
+  orangetheory: [], // manual complete only — no auto-match
+  cycling: ['cycling', 'indoorCycling'],
+  pilates: ['pilates', 'mindAndBody', 'mind_and_body'],
+  yoga: ['yoga'],
+  hiit: ['highIntensityIntervalTraining', 'crossTraining'],
+}
+
 // ─── Workout plan types (unified — includes former Pilates) ─────────────────
 
 /**
@@ -125,6 +154,8 @@ export interface PlannedWorkoutEntry {
   exercises?: ExerciseItem[];
   /** Duration for duration-only sessions (e.g. pilates, yoga, cardio). */
   duration_mins?: number;
+  /** Category used for category-aware auto-matching. Optional for backward compat. */
+  category?: WorkoutCategory;
   completed?: boolean;
   completedAt?: string;
 }

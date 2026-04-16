@@ -18,6 +18,7 @@ import {
   type PlannedWorkoutEntry,
   isWorkoutPlan,
   isDurationOnlyEntry,
+  WORKOUT_CATEGORY_HK_TYPES,
 } from "@/types/plan";
 import { updatePlan } from "@/services/plans";
 
@@ -50,6 +51,30 @@ export function isStrengthLikeActivity(w: HealthWorkout): boolean {
   if (w.isRunLike) return false;
   if (isPilatesActivity(w)) return false;
   return true;
+}
+
+// ─── Category-aware predicate ────────────────────────────────────────────────
+
+type MatchPredicate = ((workout: HealthWorkout) => boolean) | 'manual' | 'legacy';
+
+/**
+ * Returns the match predicate for a session.
+ *
+ * - Sessions with a category use category-specific HK type matching.
+ * - OTF sessions return 'manual' — auto-match is skipped entirely.
+ * - Sessions without a category return 'legacy' — use old behavior.
+ */
+function getMatchPredicate(session: PlannedWorkoutEntry): MatchPredicate {
+  if (session.category) {
+    if (session.category === 'orangetheory') return 'manual';
+    const hkTypes = WORKOUT_CATEGORY_HK_TYPES[session.category];
+    return (workout: HealthWorkout) =>
+      !workout.isRunLike &&
+      hkTypes.some(
+        (t) => t.toLowerCase() === workout.activityType.toLowerCase().trim()
+      );
+  }
+  return 'legacy';
 }
 
 // ─── Date helpers ───────────────────────────────────────────────────────────
@@ -144,12 +169,16 @@ export async function autoMatchCrossTrainingSessions(
         const candidates = byDate.get(key);
         if (!candidates || candidates.length === 0) return entry;
 
-        // Pick the predicate based on session flavor. Duration-only
-        // sessions (former Pilates) match yoga/mind-body; everything
-        // else matches strength-like.
-        const predicate = isDurationOnlyEntry(entry)
-          ? isPilatesActivity
-          : isStrengthLikeActivity;
+        // Determine predicate: category-aware, OTF manual-only, or legacy.
+        const matchPredicate = getMatchPredicate(entry);
+        if (matchPredicate === 'manual') return entry; // OTF — skip auto-match
+
+        const predicate: (w: HealthWorkout) => boolean =
+          matchPredicate === 'legacy'
+            ? isDurationOnlyEntry(entry)
+              ? isPilatesActivity
+              : isStrengthLikeActivity
+            : matchPredicate;
 
         const matchIdx = candidates.findIndex(predicate);
         if (matchIdx === -1) return entry;

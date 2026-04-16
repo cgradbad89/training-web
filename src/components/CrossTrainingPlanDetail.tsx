@@ -42,16 +42,31 @@ import {
   type PlanExercise,
   type ExerciseItem,
   type PlanWorkoutWeek,
+  type WorkoutCategory,
   isDurationOnlyEntry,
   isExerciseItem,
   isSectionItem,
   normalizeExerciseItem,
+  WORKOUT_CATEGORY_LABELS,
 } from "@/types/plan";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { deepCopyWorkoutEntry, deepCopyWorkoutWeek } from "@/utils/planCopy";
 
 const DAY_ABBREVS = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
 const DAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+const CATEGORY_ORDER: WorkoutCategory[] = [
+  "strength", "orangetheory", "cycling", "pilates", "yoga", "hiit",
+];
+
+const CATEGORY_COLORS: Record<WorkoutCategory, { active: string; hover: string }> = {
+  strength:     { active: "bg-blue-600 text-white border-blue-600",    hover: "hover:bg-blue-50 hover:border-blue-400" },
+  orangetheory: { active: "bg-orange-500 text-white border-orange-500", hover: "hover:bg-orange-50 hover:border-orange-400" },
+  cycling:      { active: "bg-green-600 text-white border-green-600",   hover: "hover:bg-green-50 hover:border-green-400" },
+  pilates:      { active: "bg-purple-500 text-white border-purple-500", hover: "hover:bg-purple-50 hover:border-purple-400" },
+  yoga:         { active: "bg-teal-500 text-white border-teal-500",     hover: "hover:bg-teal-50 hover:border-teal-400" },
+  hiit:         { active: "bg-red-500 text-white border-red-500",       hover: "hover:bg-red-50 hover:border-red-400" },
+};
 
 // ─── Date helpers ────────────────────────────────────────────────────────────
 
@@ -137,13 +152,15 @@ function AutoTextarea({
 
 interface EntryEditorProps {
   entry: PlannedWorkoutEntry;
+  isNew: boolean;
   onSave: (entry: PlannedWorkoutEntry) => void;
   onCancel: () => void;
 }
 
-function EntryEditor({ entry, onSave, onCancel }: EntryEditorProps) {
+function EntryEditor({ entry, isNew, onSave, onCancel }: EntryEditorProps) {
   const [label, setLabel] = useState(entry.label ?? "");
   const [notes, setNotes] = useState(entry.notes ?? "");
+  const [category, setCategory] = useState<WorkoutCategory | null>(entry.category ?? null);
   const [items, setItems] = useState<ExerciseItem[]>(() => {
     return (entry.exercises ?? []).map((raw) =>
       normalizeExerciseItem(raw as unknown as Record<string, unknown>)
@@ -216,6 +233,7 @@ function EntryEditor({ entry, onSave, onCancel }: EntryEditorProps) {
         notes: trimmedNotes,
         exercises: [],
         duration_mins: isNaN(dur) ? undefined : dur,
+        category: category ?? undefined,
       });
     } else {
       const cleaned = items.filter((item) =>
@@ -230,9 +248,12 @@ function EntryEditor({ entry, onSave, onCancel }: EntryEditorProps) {
         notes: trimmedNotes,
         exercises: cleaned,
         duration_mins: undefined,
+        category: category ?? undefined,
       });
     }
   }
+
+  const saveBlocked = isNew && category === null;
 
   return (
     <div className="bg-surface rounded-xl p-4 mx-3 mb-2 border border-border">
@@ -260,6 +281,35 @@ function EntryEditor({ entry, onSave, onCancel }: EntryEditorProps) {
         >
           Duration
         </button>
+      </div>
+
+      {/* Category picker */}
+      <div className="mb-3">
+        <div className="flex flex-wrap gap-1.5">
+          {CATEGORY_ORDER.map((cat) => {
+            const colors = CATEGORY_COLORS[cat];
+            const selected = category === cat;
+            return (
+              <button
+                key={cat}
+                type="button"
+                onClick={() => setCategory(selected ? null : cat)}
+                className={`px-2.5 py-1 rounded-full text-xs font-semibold border transition-colors ${
+                  selected
+                    ? colors.active
+                    : `bg-card text-textSecondary border-border ${colors.hover}`
+                }`}
+              >
+                {WORKOUT_CATEGORY_LABELS[cat]}
+              </button>
+            );
+          })}
+        </div>
+        {saveBlocked && (
+          <p className="text-xs text-amber-600 mt-1.5">
+            Select a category to enable auto-match
+          </p>
+        )}
       </div>
 
       {/* Label */}
@@ -424,7 +474,8 @@ function EntryEditor({ entry, onSave, onCancel }: EntryEditorProps) {
         </button>
         <button
           onClick={handleSave}
-          className="flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-white bg-primary rounded-lg hover:bg-primary/90 transition-colors"
+          disabled={saveBlocked}
+          className="flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-white bg-primary rounded-lg hover:bg-primary/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
           <Check className="w-3 h-3" /> Save
         </button>
@@ -440,6 +491,7 @@ function DayCard({
   onEdit,
   onDelete,
   onUnmatch,
+  onMarkComplete,
   onNotesChange,
   onCopyDay,
   detailHref,
@@ -448,6 +500,7 @@ function DayCard({
   onEdit: () => void;
   onDelete: () => void;
   onUnmatch: () => void;
+  onMarkComplete: () => void;
   onNotesChange: (notes: string) => void;
   onCopyDay: () => void;
   detailHref: string | null;
@@ -511,6 +564,15 @@ function DayCard({
               title="Unmatch this session"
             >
               Unmatch
+            </button>
+          )}
+          {entry.category === "orangetheory" && !completed && (
+            <button
+              onClick={onMarkComplete}
+              className="text-[10px] text-orange-600 hover:text-orange-700 border border-orange-300 rounded px-1.5 py-0.5 font-medium"
+              title="Mark this OTF session complete"
+            >
+              ✓ Mark Complete
             </button>
           )}
           <button
@@ -608,6 +670,12 @@ function DayCard({
           View Workout →
         </Link>
       )}
+
+      {!entry.category && (
+        <p className="text-[10px] text-amber-600 mt-1.5">
+          ⚠ Add category to enable auto-match
+        </p>
+      )}
     </div>
   );
 }
@@ -704,6 +772,15 @@ export function CrossTrainingPlanDetail({
   function updateEntryNotes(id: string, notes: string) {
     const next = sortedEntries.map((e) =>
       e.id === id ? { ...e, notes: notes.trim() || undefined } : e
+    );
+    updateWeekEntries(next);
+  }
+
+  function markEntryComplete(id: string) {
+    const next = sortedEntries.map((e) =>
+      e.id === id
+        ? { ...e, completed: true, completedAt: new Date().toISOString() }
+        : e
     );
     updateWeekEntries(next);
   }
@@ -1080,6 +1157,7 @@ export function CrossTrainingPlanDetail({
                       onEdit={() => setEditingDay(weekday)}
                       onDelete={() => deleteEntry(entry.id)}
                       onUnmatch={() => unmatchEntry(entry.id)}
+                      onMarkComplete={() => markEntryComplete(entry.id)}
                       onNotesChange={(notes) => updateEntryNotes(entry.id, notes)}
                       onCopyDay={() => openCopyDayPicker(weekday)}
                       detailHref={
@@ -1095,6 +1173,7 @@ export function CrossTrainingPlanDetail({
                   <div className="pb-2">
                     <EntryEditor
                       entry={entry ?? newEntryFor(weekday)}
+                      isNew={!entry}
                       onSave={saveEntry}
                       onCancel={() => setEditingDay(null)}
                     />
