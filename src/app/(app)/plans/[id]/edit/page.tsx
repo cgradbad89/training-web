@@ -5,6 +5,7 @@ import { useRouter, useParams } from "next/navigation";
 import { ChevronDown, ChevronUp, Pencil, X, Check, Plus, Copy } from "lucide-react";
 
 import { useAuth } from "@/hooks/useAuth";
+import { useUnsavedChanges } from "@/hooks/useUnsavedChanges";
 import { fetchPlans, updatePlan, createPlan } from "@/services/plans";
 import { fetchHealthWorkouts } from "@/services/healthWorkouts";
 import {
@@ -273,6 +274,8 @@ interface WeekAccordionProps {
     toWeekIndex: number,
     toWeekday: number
   ) => void;
+  /** Whether the plan-level edit mode is active. */
+  isEditingPlan: boolean;
 }
 
 function WeekAccordion({
@@ -284,6 +287,7 @@ function WeekAccordion({
   onUpdateWeek,
   onCopyWeekTo,
   onCopyDayToWeek,
+  isEditingPlan,
 }: WeekAccordionProps) {
   const week = plan.weeks[weekIndex];
   const [editingDay, setEditingDay] = useState<number | null>(null);
@@ -451,25 +455,27 @@ function WeekAccordion({
           </div>
         </button>
 
-        {/* Copy week button */}
+        {/* Copy week button — edit mode only */}
         <div className="relative shrink-0 flex items-center gap-2">
           {flashText && (
             <span className="text-xs text-success font-medium whitespace-nowrap">
               {flashText}
             </span>
           )}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setCopyWeekOpen((v) => !v);
-            }}
-            disabled={plan.weeks.length <= 1}
-            title="Copy this week to another week"
-            className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg border border-border text-textSecondary hover:text-textPrimary hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed"
-          >
-            <Copy className="w-3 h-3" />
-            Copy week →
-          </button>
+          {isEditingPlan && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setCopyWeekOpen((v) => !v);
+              }}
+              disabled={plan.weeks.length <= 1}
+              title="Copy this week to another week"
+              className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg border border-border text-textSecondary hover:text-textPrimary hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              <Copy className="w-3 h-3" />
+              Copy week →
+            </button>
+          )}
           {copyWeekOpen && plan.weeks.length > 1 && (
             <div className="absolute right-0 top-full mt-1 z-10 bg-card border border-border rounded-lg shadow-lg py-1 min-w-[160px] max-h-64 overflow-y-auto">
               <div className="text-[10px] font-bold uppercase tracking-wide text-textSecondary px-3 py-1">
@@ -514,29 +520,29 @@ function WeekAccordion({
               <div
                 key={weekday}
                 className={weekday < 7 ? "border-b border-border" : ""}
-                draggable={!!entry && !isEditing}
-                onDragStart={(e) => {
+                draggable={!!entry && !isEditing && isEditingPlan}
+                onDragStart={isEditingPlan ? (e) => {
                   if (!entry) return;
                   e.dataTransfer.setData("weekday", String(weekday));
                   e.dataTransfer.effectAllowed = "move";
                   setDraggingDay(weekday);
-                }}
-                onDragOver={(e) => {
+                } : undefined}
+                onDragOver={isEditingPlan ? (e) => {
                   e.preventDefault();
                   e.dataTransfer.dropEffect = "move";
                   setDragOverDay(weekday);
-                }}
-                onDrop={(e) => {
+                } : undefined}
+                onDrop={isEditingPlan ? (e) => {
                   e.preventDefault();
                   const fromWeekday = parseInt(e.dataTransfer.getData("weekday"), 10);
                   if (!isNaN(fromWeekday)) handleMoveDay(fromWeekday, weekday);
                   setDraggingDay(null);
                   setDragOverDay(null);
-                }}
-                onDragEnd={() => {
+                } : undefined}
+                onDragEnd={isEditingPlan ? () => {
                   setDraggingDay(null);
                   setDragOverDay(null);
-                }}
+                } : undefined}
               >
                 {/* Day row */}
                 <div
@@ -565,13 +571,15 @@ function WeekAccordion({
                       <span className="text-sm text-textSecondary italic flex-1">
                         Rest
                       </span>
-                      <button
-                        onClick={() => setEditingDay(weekday)}
-                        className="text-xs text-primary hover:text-primary/80 opacity-0 group-hover:opacity-100 transition-opacity"
-                      >
-                        <Plus className="w-3.5 h-3.5 inline mr-0.5" />
-                        Add Run
-                      </button>
+                      {isEditingPlan && (
+                        <button
+                          onClick={() => setEditingDay(weekday)}
+                          className="text-xs text-primary hover:text-primary/80 opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          <Plus className="w-3.5 h-3.5 inline mr-0.5" />
+                          Add Run
+                        </button>
+                      )}
                     </>
                   ) : (
                     // Planned entry
@@ -604,35 +612,37 @@ function WeekAccordion({
                           </span>
                         )}
                       </div>
-                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                        {/* Copy day button */}
-                        <button
-                          onClick={() => {
-                            setCopyDaySource(weekday);
-                            setCopyDayTargetWeek(null);
-                            setCopyDayTargetWeekday(null);
-                          }}
-                          className="text-[10px] text-textSecondary hover:text-primary border border-border rounded px-1.5 py-0.5 flex items-center gap-0.5"
-                          title="Copy day to another week"
-                        >
-                          <Copy className="w-2.5 h-2.5" />
-                          Copy
-                        </button>
-                        <button
-                          onClick={() => setEditingDay(weekday)}
-                          className="p-1 rounded hover:bg-border text-textSecondary hover:text-textPrimary"
-                          title="Edit entry"
-                        >
-                          <Pencil className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => deleteEntry(entry.id)}
-                          className="p-1 rounded hover:bg-red-100 text-textSecondary hover:text-danger"
-                          title="Delete entry"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
+                      {isEditingPlan && (
+                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                          {/* Copy day button */}
+                          <button
+                            onClick={() => {
+                              setCopyDaySource(weekday);
+                              setCopyDayTargetWeek(null);
+                              setCopyDayTargetWeekday(null);
+                            }}
+                            className="text-[10px] text-textSecondary hover:text-primary border border-border rounded px-1.5 py-0.5 flex items-center gap-0.5"
+                            title="Copy day to another week"
+                          >
+                            <Copy className="w-2.5 h-2.5" />
+                            Copy
+                          </button>
+                          <button
+                            onClick={() => setEditingDay(weekday)}
+                            className="p-1 rounded hover:bg-border text-textSecondary hover:text-textPrimary"
+                            title="Edit entry"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => deleteEntry(entry.id)}
+                            className="p-1 rounded hover:bg-red-100 text-textSecondary hover:text-danger"
+                            title="Delete entry"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
                     </>
                   )}
                 </div>
@@ -807,6 +817,7 @@ export default function PlanEditPage() {
   const params = useParams();
   const planId = typeof params.id === "string" ? params.id : null;
 
+  const [isEditing, setIsEditing] = useState(false);
   const [plan, setPlan] = useState<RunningPlan | null>(null);
   const [activities, setActivities] = useState<HealthWorkout[]>([]);
   const [loading, setLoading] = useState(true);
@@ -827,6 +838,9 @@ export default function PlanEditPage() {
   const [copyPlanName, setCopyPlanName] = useState("");
   const [copyPlanSaving, setCopyPlanSaving] = useState(false);
   const [copyPlanFlash, setCopyPlanFlash] = useState<string | null>(null);
+
+  const { showNavWarning, confirmNav, cancelNav, guardNavigation } =
+    useUnsavedChanges(isEditing);
 
   useEffect(() => {
     if (!user || !planId) return;
@@ -1015,7 +1029,7 @@ export default function PlanEditPage() {
         <div className="flex items-center gap-4 px-4 py-3 max-w-4xl mx-auto w-full">
           {/* Back */}
           <button
-            onClick={() => router.back()}
+            onClick={() => guardNavigation(() => router.back())}
             className="text-sm text-textSecondary hover:text-textPrimary flex items-center gap-1 shrink-0"
           >
             ← Back to Plans
@@ -1057,6 +1071,13 @@ export default function PlanEditPage() {
                 {copyPlanFlash}
               </span>
             )}
+            {/* Edit / Done toggle */}
+            <button
+              onClick={() => setIsEditing((v) => !v)}
+              className="text-sm px-3 py-1.5 rounded-lg border border-border text-textSecondary hover:text-textPrimary hover:bg-surface"
+            >
+              {isEditing ? "Done" : "Edit"}
+            </button>
             {/* Copy plan */}
             <button
               onClick={() => {
@@ -1116,9 +1137,21 @@ export default function PlanEditPage() {
             onUpdateWeek={handleUpdateWeek}
             onCopyWeekTo={handleCopyWeek}
             onCopyDayToWeek={handleCopyDay}
+            isEditingPlan={isEditing}
           />
         ))}
       </div>
+
+      {/* Navigation warning */}
+      <ConfirmDialog
+        isOpen={showNavWarning}
+        title="Exit edit mode?"
+        message="You're currently in edit mode. Your changes have been auto-saved."
+        confirmLabel="Exit Edit Mode"
+        confirmVariant="primary"
+        onConfirm={confirmNav}
+        onCancel={cancelNav}
+      />
 
       {/* Copy plan modal */}
       {copyPlanOpen && (

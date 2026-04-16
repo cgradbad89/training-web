@@ -35,6 +35,7 @@ import {
   ChevronRight,
   Copy,
 } from "lucide-react";
+import { useUnsavedChanges } from "@/hooks/useUnsavedChanges";
 
 import {
   type WorkoutPlan,
@@ -495,6 +496,7 @@ function DayCard({
   onNotesChange,
   onCopyDay,
   detailHref,
+  isEditingPlan,
 }: {
   entry: PlannedWorkoutEntry;
   onEdit: () => void;
@@ -504,6 +506,7 @@ function DayCard({
   onNotesChange: (notes: string) => void;
   onCopyDay: () => void;
   detailHref: string | null;
+  isEditingPlan: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [notesOpen, setNotesOpen] = useState(!!entry.notes?.trim());
@@ -575,28 +578,32 @@ function DayCard({
               ✓ Mark Complete
             </button>
           )}
-          <button
-            onClick={onCopyDay}
-            className="text-[10px] text-textSecondary hover:text-primary border border-border rounded px-1.5 py-0.5 flex items-center gap-0.5"
-            title="Copy day to another week"
-          >
-            <Copy className="w-2.5 h-2.5" />
-            Copy
-          </button>
-          <button
-            onClick={onEdit}
-            className="p-1 rounded hover:bg-surface text-textSecondary hover:text-textPrimary"
-            title="Edit"
-          >
-            <Pencil className="w-3.5 h-3.5" />
-          </button>
-          <button
-            onClick={onDelete}
-            className="p-1 rounded hover:bg-red-100 text-textSecondary hover:text-danger"
-            title="Remove"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
+          {isEditingPlan && (
+            <>
+              <button
+                onClick={onCopyDay}
+                className="text-[10px] text-textSecondary hover:text-primary border border-border rounded px-1.5 py-0.5 flex items-center gap-0.5"
+                title="Copy day to another week"
+              >
+                <Copy className="w-2.5 h-2.5" />
+                Copy
+              </button>
+              <button
+                onClick={onEdit}
+                className="p-1 rounded hover:bg-surface text-textSecondary hover:text-textPrimary"
+                title="Edit"
+              >
+                <Pencil className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={onDelete}
+                className="p-1 rounded hover:bg-red-100 text-textSecondary hover:text-danger"
+                title="Remove"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </>
+          )}
         </div>
       </div>
 
@@ -627,38 +634,57 @@ function DayCard({
         </ul>
       )}
 
-      <div className="mt-2">
-        <button
-          onClick={() => setNotesOpen((v) => !v)}
-          className="text-xs text-textSecondary hover:text-textPrimary flex items-center gap-1"
+      {/* Category display (view mode) */}
+      {!isEditingPlan && entry.category && (
+        <span
+          className={`mt-1.5 inline-flex text-[10px] px-2 py-0.5 rounded-full border font-semibold ${CATEGORY_COLORS[entry.category].active}`}
         >
-          {notesHasContent ? (
-            <>
-              <span>Notes {notesOpen ? "▴" : "▾"}</span>
-              {!notesOpen && notesFirstLine && (
-                <span className="italic text-textSecondary truncate max-w-[200px]">
-                  — {notesFirstLine}
-                </span>
+          {WORKOUT_CATEGORY_LABELS[entry.category]}
+        </span>
+      )}
+
+      <div className="mt-2">
+        {!isEditingPlan ? (
+          // View mode: read-only notes text
+          notesHasContent && (
+            <p className="text-xs text-textSecondary italic">{notesDraft}</p>
+          )
+        ) : (
+          // Edit mode: interactive notes toggle + textarea
+          <>
+            <button
+              onClick={() => setNotesOpen((v) => !v)}
+              className="text-xs text-textSecondary hover:text-textPrimary flex items-center gap-1"
+            >
+              {notesHasContent ? (
+                <>
+                  <span>Notes {notesOpen ? "▴" : "▾"}</span>
+                  {!notesOpen && notesFirstLine && (
+                    <span className="italic text-textSecondary truncate max-w-[200px]">
+                      — {notesFirstLine}
+                    </span>
+                  )}
+                </>
+              ) : (
+                <span className="opacity-70">＋ Add notes</span>
               )}
-            </>
-          ) : (
-            <span className="opacity-70">＋ Add notes</span>
-          )}
-        </button>
-        {notesOpen && (
-          <AutoTextarea
-            value={notesDraft}
-            onChange={setNotesDraft}
-            placeholder="Free-form instructions (e.g. Superset sets 1-3, rest 90s)"
-            minHeight="4rem"
-            maxLength={1000}
-            onBlur={() => {
-              if (notesDraft !== (entry.notes ?? "")) {
-                onNotesChange(notesDraft);
-              }
-            }}
-            className="mt-1.5"
-          />
+            </button>
+            {notesOpen && (
+              <AutoTextarea
+                value={notesDraft}
+                onChange={setNotesDraft}
+                placeholder="Free-form instructions (e.g. Superset sets 1-3, rest 90s)"
+                minHeight="4rem"
+                maxLength={1000}
+                onBlur={() => {
+                  if (notesDraft !== (entry.notes ?? "")) {
+                    onNotesChange(notesDraft);
+                  }
+                }}
+                className="mt-1.5"
+              />
+            )}
+          </>
         )}
       </div>
 
@@ -671,7 +697,7 @@ function DayCard({
         </Link>
       )}
 
-      {!entry.category && (
+      {isEditingPlan && !entry.category && (
         <p className="text-[10px] text-amber-600 mt-1.5">
           ⚠ Add category to enable auto-match
         </p>
@@ -699,9 +725,12 @@ export function CrossTrainingPlanDetail({
   onCopyPlan,
   saving,
 }: CrossTrainingPlanDetailProps) {
+  const [isEditMode, setIsEditMode] = useState(false);
   const [selectedWeekIndex, setSelectedWeekIndex] = useState(0);
   const [editingDay, setEditingDay] = useState<number | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+
+  const { showNavWarning, confirmNav, cancelNav } = useUnsavedChanges(isEditMode);
 
   // Copy-week UI state
   const [copyWeekOpen, setCopyWeekOpen] = useState(false);
@@ -973,6 +1002,16 @@ export function CrossTrainingPlanDetail({
               Set Active
             </button>
           )}
+          {/* Edit / Done toggle */}
+          <button
+            onClick={() => {
+              setIsEditMode((v) => !v);
+              if (isEditMode) setEditingDay(null);
+            }}
+            className="text-sm px-3 py-1.5 rounded-lg border border-border text-textSecondary hover:text-textPrimary hover:bg-surface"
+          >
+            {isEditMode ? "Done" : "Edit"}
+          </button>
           {/* Copy plan button */}
           <button
             onClick={() => {
@@ -1018,20 +1057,22 @@ export function CrossTrainingPlanDetail({
         </div>
 
         <div className="flex items-center gap-1 shrink-0 relative">
-          {/* Copy week button */}
-          <button
-            onClick={() => setCopyWeekOpen((v) => !v)}
-            disabled={plan.weeks.length <= 1}
-            title={
-              plan.weeks.length <= 1
-                ? "No other weeks to copy to"
-                : "Copy this week to another week"
-            }
-            className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg border border-border text-textSecondary hover:text-textPrimary hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed"
-          >
-            <Copy className="w-3 h-3" />
-            Copy week →
-          </button>
+          {/* Copy week button — edit mode only */}
+          {isEditMode && (
+            <button
+              onClick={() => setCopyWeekOpen((v) => !v)}
+              disabled={plan.weeks.length <= 1}
+              title={
+                plan.weeks.length <= 1
+                  ? "No other weeks to copy to"
+                  : "Copy this week to another week"
+              }
+              className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg border border-border text-textSecondary hover:text-textPrimary hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              <Copy className="w-3 h-3" />
+              Copy week →
+            </button>
+          )}
           {copyFlashText && (
             <span className="text-xs text-success font-medium ml-1 whitespace-nowrap">
               {copyFlashText}
@@ -1081,7 +1122,7 @@ export function CrossTrainingPlanDetail({
         <div className="rounded-xl border border-border overflow-hidden bg-card">
           {[1, 2, 3, 4, 5, 6, 7].map((weekday) => {
             const entry = sortedEntries.find((e) => e.weekday === weekday);
-            const isEditing = editingDay === weekday;
+            const isDayEditing = editingDay === weekday;
             const isDragging = draggingDay === weekday;
             const isDragOver = dragOverDay === weekday;
             const date = dayDate(plan.startDate, selectedWeekIndex, weekday);
@@ -1094,29 +1135,29 @@ export function CrossTrainingPlanDetail({
               <div
                 key={weekday}
                 className={weekday < 7 ? "border-b border-border" : ""}
-                draggable={!!entry && !isEditing}
-                onDragStart={(e) => {
+                draggable={!!entry && !isDayEditing && isEditMode}
+                onDragStart={isEditMode ? (e) => {
                   if (!entry) return;
                   e.dataTransfer.setData("weekday", String(weekday));
                   e.dataTransfer.effectAllowed = "move";
                   setDraggingDay(weekday);
-                }}
-                onDragOver={(e) => {
+                } : undefined}
+                onDragOver={isEditMode ? (e) => {
                   e.preventDefault();
                   e.dataTransfer.dropEffect = "move";
                   setDragOverDay(weekday);
-                }}
-                onDrop={(e) => {
+                } : undefined}
+                onDrop={isEditMode ? (e) => {
                   e.preventDefault();
                   const fromWeekday = parseInt(e.dataTransfer.getData("weekday"), 10);
                   if (!isNaN(fromWeekday)) handleMoveDay(fromWeekday, weekday);
                   setDraggingDay(null);
                   setDragOverDay(null);
-                }}
-                onDragEnd={() => {
+                } : undefined}
+                onDragEnd={isEditMode ? () => {
                   setDraggingDay(null);
                   setDragOverDay(null);
-                }}
+                } : undefined}
               >
                 <div
                   className={`flex items-start gap-3 py-2 px-3 hover:bg-surface/50 group min-h-[52px] transition-all ${
@@ -1132,7 +1173,7 @@ export function CrossTrainingPlanDetail({
                     </div>
                   </div>
 
-                  {isEditing ? (
+                  {isDayEditing ? (
                     <div className="flex-1 min-w-0 pt-1">
                       <span className="text-sm text-textSecondary italic">
                         {entry ? "Editing…" : "Adding session…"}
@@ -1143,13 +1184,15 @@ export function CrossTrainingPlanDetail({
                       <span className="text-sm text-textSecondary italic flex-1 pt-1">
                         Rest
                       </span>
-                      <button
-                        onClick={() => setEditingDay(weekday)}
-                        className="text-xs text-primary hover:text-primary/80 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5 pt-1"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        Add Session
-                      </button>
+                      {isEditMode && (
+                        <button
+                          onClick={() => setEditingDay(weekday)}
+                          className="text-xs text-primary hover:text-primary/80 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5 pt-1"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          Add Session
+                        </button>
+                      )}
                     </>
                   ) : (
                     <DayCard
@@ -1165,11 +1208,12 @@ export function CrossTrainingPlanDetail({
                           ? `/workout/${plan.id}/${selectedWeekIndex}/${weekday}`
                           : null
                       }
+                      isEditingPlan={isEditMode}
                     />
                   )}
                 </div>
 
-                {isEditing && (
+                {isDayEditing && (
                   <div className="pb-2">
                     <EntryEditor
                       entry={entry ?? newEntryFor(weekday)}
@@ -1186,6 +1230,17 @@ export function CrossTrainingPlanDetail({
       </div>
 
       {/* ── Dialogs ── */}
+
+      {/* Navigation warning */}
+      <ConfirmDialog
+        isOpen={showNavWarning}
+        title="Exit edit mode?"
+        message="You're currently in edit mode. Your changes have been auto-saved."
+        confirmLabel="Exit Edit Mode"
+        confirmVariant="primary"
+        onConfirm={confirmNav}
+        onCancel={cancelNav}
+      />
 
       {/* Delete plan */}
       <ConfirmDialog
