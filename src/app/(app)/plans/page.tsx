@@ -11,6 +11,7 @@ import {
   deletePlan,
   setActivePlan,
 } from "@/services/plans";
+import { deepCopyRunningPlan, deepCopyWorkoutPlan } from "@/utils/planCopy";
 import { fetchHealthWorkouts } from "@/services/healthWorkouts";
 import { autoMatchCrossTrainingSessions } from "@/services/autoMatch";
 import { DEFAULT_HALF_MARATHON_PLAN } from "@/lib/seedData";
@@ -283,6 +284,11 @@ export default function PlansPage() {
   const [startDateInput, setStartDateInput] = useState("");
   const [endDateInput, setEndDateInput] = useState("");
 
+  // Copy plan modal (running plans — workout plan copy is handled inside CrossTrainingPlanDetail)
+  const [showCopyRunningPlanModal, setShowCopyRunningPlanModal] = useState(false);
+  const [copyRunningPlanName, setCopyRunningPlanName] = useState("");
+  const [copyPlanFlash, setCopyPlanFlash] = useState<string | null>(null);
+
   const weekTabsRef = useRef<HTMLDivElement>(null);
 
   const selectedPlan = plans.find((p) => p.id === selectedPlanId) ?? null;
@@ -432,24 +438,43 @@ export default function PlansPage() {
     }
   }
 
-  async function handleDuplicate() {
-    if (!user || !selectedPlan) return;
-    if (!isRunningPlan(selectedPlan)) return; // duplicate currently running-only
+  function openCopyRunningPlanModal() {
+    if (!selectedPlan || !isRunningPlan(selectedPlan)) return;
+    setCopyRunningPlanName(`${selectedPlan.name} (copy)`);
+    setShowCopyRunningPlanModal(true);
+  }
+
+  async function handleCopyRunningPlan() {
+    if (!user || !selectedPlan || !isRunningPlan(selectedPlan)) return;
+    const name = copyRunningPlanName.trim();
+    if (!name) return;
     setSaving(true);
     try {
-      const plan = await createPlan<RunningPlan>(user.uid, {
-        name: `${selectedPlan.name} (Copy)`,
-        planType: "running",
-        startDate: selectedPlan.startDate,
-        isActive: false,
-        isBuiltInDefault: false,
-        weeks: JSON.parse(JSON.stringify(selectedPlan.weeks)) as PlanWeek[],
-      });
+      const plan = await createPlan<RunningPlan>(
+        user.uid,
+        deepCopyRunningPlan(selectedPlan, name)
+      );
       setPlans((prev) => [...prev, plan]);
       setSelectedPlanId(plan.id);
+      setShowCopyRunningPlanModal(false);
+      setCopyRunningPlanName("");
+      setCopyPlanFlash(`✓ Copied as "${plan.name}"`);
+      setTimeout(() => setCopyPlanFlash(null), 3000);
     } finally {
       setSaving(false);
     }
+  }
+
+  async function handleCopyWorkoutPlan(newName: string) {
+    if (!user || !selectedPlan || !isWorkoutPlan(selectedPlan)) return;
+    const plan = await createPlan<WorkoutPlan>(
+      user.uid,
+      deepCopyWorkoutPlan(selectedPlan, newName)
+    );
+    setPlans((prev) => [...prev, plan]);
+    setSelectedPlanId(plan.id);
+    setCopyPlanFlash(`✓ Copied as "${plan.name}"`);
+    setTimeout(() => setCopyPlanFlash(null), 3000);
   }
 
   /**
@@ -644,6 +669,7 @@ export default function PlansPage() {
               }
             }}
             onSetActive={() => handleSetActive(selectedPlan.id)}
+            onCopyPlan={handleCopyWorkoutPlan}
             saving={saving}
           />
         )}
@@ -750,12 +776,13 @@ export default function PlansPage() {
                   Edit Plan
                 </button>
                 <button
-                  onClick={handleDuplicate}
+                  onClick={openCopyRunningPlanModal}
                   disabled={saving}
-                  title="Duplicate plan"
-                  className="p-1.5 rounded-lg hover:bg-surface text-textSecondary hover:text-textPrimary disabled:opacity-50"
+                  title="Copy plan"
+                  className="flex items-center gap-1 text-sm px-2.5 py-1.5 rounded-lg border border-border text-textSecondary hover:text-textPrimary hover:bg-surface disabled:opacity-50"
                 >
-                  <Copy className="w-4 h-4" />
+                  <Copy className="w-3.5 h-3.5" />
+                  Copy plan
                 </button>
                 <button
                   onClick={() => {
@@ -1132,6 +1159,57 @@ export default function PlansPage() {
         onCancel={() => setConfirmDelete(false)}
         loading={saving}
       />
+
+      {/* Copy running plan modal */}
+      {showCopyRunningPlanModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !saving) setShowCopyRunningPlanModal(false);
+          }}
+        >
+          <div className="bg-card rounded-2xl shadow-xl border border-border w-full max-w-xs p-5">
+            <h3 className="font-bold text-textPrimary text-sm mb-4">Copy plan</h3>
+            <label className="block text-xs font-semibold text-textSecondary mb-1.5">
+              New plan name
+            </label>
+            <input
+              type="text"
+              value={copyRunningPlanName}
+              onChange={(e) => setCopyRunningPlanName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void handleCopyRunningPlan();
+                if (e.key === "Escape" && !saving) setShowCopyRunningPlanModal(false);
+              }}
+              className="w-full text-sm border border-border rounded-lg px-3 py-2 bg-card text-textPrimary mb-4"
+              autoFocus
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setShowCopyRunningPlanModal(false)}
+                disabled={saving}
+                className="px-4 py-2 rounded-xl border border-border text-sm text-textSecondary hover:bg-surface transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void handleCopyRunningPlan()}
+                disabled={!copyRunningPlanName.trim() || saving}
+                className="px-4 py-2 rounded-xl bg-primary text-white text-sm font-medium hover:bg-primary/90 disabled:opacity-40 transition-colors"
+              >
+                {saving ? "Copying…" : "Copy plan"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Copy plan success flash (running plans — shown in header area) */}
+      {copyPlanFlash && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-success text-white text-sm font-medium px-4 py-2 rounded-xl shadow-lg">
+          {copyPlanFlash}
+        </div>
+      )}
     </div>
   );
 }

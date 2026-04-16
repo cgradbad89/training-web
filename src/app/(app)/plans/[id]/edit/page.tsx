@@ -2,10 +2,10 @@
 
 import { useEffect, useState, useRef } from "react";
 import { useRouter, useParams } from "next/navigation";
-import { ChevronDown, ChevronUp, Pencil, X, Check, Plus } from "lucide-react";
+import { ChevronDown, ChevronUp, Pencil, X, Check, Plus, Copy } from "lucide-react";
 
 import { useAuth } from "@/hooks/useAuth";
-import { fetchPlans, updatePlan } from "@/services/plans";
+import { fetchPlans, updatePlan, createPlan } from "@/services/plans";
 import { fetchHealthWorkouts } from "@/services/healthWorkouts";
 import {
   type RunningPlan,
@@ -17,8 +17,10 @@ import {
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { formatPace, parsePaceString } from "@/utils/pace";
 import { matchWeekRuns, type WeekMatchResult } from "@/utils/planMatching";
+import { deepCopyRunEntry, deepCopyRunWeek, deepCopyRunningPlan } from "@/utils/planCopy";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// ─── Constants ─────────────────────────────────────────────────────────────────
 
 const RUN_TYPE_STYLES: Record<
   PlanRunType,
@@ -32,6 +34,7 @@ const RUN_TYPE_STYLES: Record<
 };
 
 const DAY_ABBREVS = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
+const DAY_SHORT   = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 const RUN_TYPES_OPTIONS: { value: PlanRunType; label: string }[] = [
   { value: "outdoor",   label: "Outdoor"   },
@@ -40,14 +43,7 @@ const RUN_TYPES_OPTIONS: { value: PlanRunType; label: string }[] = [
   { value: "longRun",   label: "Long Run"  },
 ];
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function toISODate(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
+// ─── Helpers ───────────────────────────────────────────────────────────────────
 
 function dayDate(plan: RunningPlan, weekIndex: number, weekday: number): Date {
   const [year, month, day] = plan.startDate.split("-").map(Number);
@@ -83,7 +79,7 @@ function currentWeekIndex(plan: RunningPlan): number {
   return Math.max(0, Math.min(diff, plan.weeks.length - 1));
 }
 
-// ─── RunTypeBadge ─────────────────────────────────────────────────────────────
+// ─── RunTypeBadge ──────────────────────────────────────────────────────────────
 
 function RunTypeBadge({ type }: { type: PlanRunType }) {
   const s = RUN_TYPE_STYLES[type];
@@ -94,7 +90,7 @@ function RunTypeBadge({ type }: { type: PlanRunType }) {
   );
 }
 
-// ─── WeekStatusBadge ──────────────────────────────────────────────────────────
+// ─── WeekStatusBadge ───────────────────────────────────────────────────────────
 
 function WeekStatusBadge({ result }: { result: WeekMatchResult }) {
   if (result.status === "upcoming") return null;
@@ -116,7 +112,7 @@ function WeekStatusBadge({ result }: { result: WeekMatchResult }) {
   );
 }
 
-// ─── Entry Form ───────────────────────────────────────────────────────────────
+// ─── Entry Form ────────────────────────────────────────────────────────────────
 
 interface EntryFormProps {
   initial: Partial<PlannedRunEntry>;
@@ -146,7 +142,6 @@ function EntryForm({ initial, weekday, weekIndex, onSave, onCancel }: EntryFormP
     if (isNaN(dist) || dist <= 0) return;
     const hr = targetHeartRate ? parseInt(targetHeartRate, 10) : null;
 
-    // Parse pace — store raw input as paceTarget (display string like "9:30")
     const parsedPace = parsePaceString(paceInput.trim());
     const paceTarget = parsedPace
       ? formatPace(parsedPace)
@@ -186,7 +181,7 @@ function EntryForm({ initial, weekday, weekIndex, onSave, onCancel }: EntryFormP
         ))}
       </div>
 
-      {/* Fields — 2-col on desktop */}
+      {/* Fields */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-3">
         <div className="md:col-span-2">
           <input
@@ -242,7 +237,6 @@ function EntryForm({ initial, weekday, weekIndex, onSave, onCancel }: EntryFormP
         </div>
       </div>
 
-      {/* Actions */}
       <div className="flex justify-end gap-2">
         <button
           onClick={onCancel}
@@ -261,7 +255,7 @@ function EntryForm({ initial, weekday, weekIndex, onSave, onCancel }: EntryFormP
   );
 }
 
-// ─── WeekAccordion ────────────────────────────────────────────────────────────
+// ─── WeekAccordion ─────────────────────────────────────────────────────────────
 
 interface WeekAccordionProps {
   plan: RunningPlan;
@@ -270,6 +264,15 @@ interface WeekAccordionProps {
   onToggle: () => void;
   activities: HealthWorkout[];
   onUpdateWeek: (weekIndex: number, entries: PlannedRunEntry[]) => void;
+  /** Copy current week's entries to target week (replaces target). */
+  onCopyWeekTo: (fromWeekIndex: number, toWeekIndex: number) => void;
+  /** Copy a single day to another week/weekday. */
+  onCopyDayToWeek: (
+    fromWeekIndex: number,
+    fromWeekday: number,
+    toWeekIndex: number,
+    toWeekday: number
+  ) => void;
 }
 
 function WeekAccordion({
@@ -279,15 +282,42 @@ function WeekAccordion({
   onToggle,
   activities,
   onUpdateWeek,
+  onCopyWeekTo,
+  onCopyDayToWeek,
 }: WeekAccordionProps) {
   const week = plan.weeks[weekIndex];
   const [editingDay, setEditingDay] = useState<number | null>(null);
+
+  // Drag-and-drop
+  const [draggingDay, setDraggingDay] = useState<number | null>(null);
+  const [dragOverDay, setDragOverDay] = useState<number | null>(null);
+  const [swapConfirm, setSwapConfirm] = useState<{ from: number; to: number } | null>(null);
+
+  // Copy day picker
+  const [copyDaySource, setCopyDaySource] = useState<number | null>(null);
+  const [copyDayTargetWeek, setCopyDayTargetWeek] = useState<number | null>(null);
+  const [copyDayTargetWeekday, setCopyDayTargetWeekday] = useState<number | null>(null);
+  const [copyDayOverwriteConfirm, setCopyDayOverwriteConfirm] = useState<{
+    targetWeekIndex: number;
+    targetWeekday: number;
+  } | null>(null);
+
+  // Copy week picker
+  const [copyWeekOpen, setCopyWeekOpen] = useState(false);
+
+  // Flash message
+  const [flashText, setFlashText] = useState<string | null>(null);
 
   const matchResult = matchWeekRuns(plan, weekIndex, activities);
   const plannedMiles = weekPlannedMiles(week);
   const dateRange = weekDateRange(plan, weekIndex);
 
   const entries = [...(week.entries ?? [])].sort((a, b) => a.weekday - b.weekday);
+
+  function showFlash(msg: string) {
+    setFlashText(msg);
+    setTimeout(() => setFlashText(null), 2000);
+  }
 
   function saveEntry(updated: PlannedRunEntry) {
     const exists = entries.find((e) => e.id === updated.id);
@@ -302,31 +332,167 @@ function WeekAccordion({
     onUpdateWeek(weekIndex, entries.filter((e) => e.id !== entryId));
   }
 
+  // ── Drag-and-drop ──────────────────────────────────────────────────────
+
+  function handleMoveDay(fromWeekday: number, toWeekday: number) {
+    if (fromWeekday === toWeekday) return;
+    const fromEntry = entries.find((e) => e.weekday === fromWeekday);
+    const toEntry = entries.find(
+      (e) => e.weekday === toWeekday && e.runType !== "rest"
+    );
+
+    if (!fromEntry) return;
+
+    if (!toEntry) {
+      const next = entries
+        .map((e) =>
+          e.id === fromEntry.id
+            ? { ...e, weekday: toWeekday, dayOfWeek: toWeekday - 1 }
+            : e
+        )
+        .sort((a, b) => a.weekday - b.weekday);
+      onUpdateWeek(weekIndex, next);
+    } else {
+      setSwapConfirm({ from: fromWeekday, to: toWeekday });
+    }
+  }
+
+  function executeSwap(from: number, to: number) {
+    const fromEntry = entries.find((e) => e.weekday === from);
+    const toEntry = entries.find((e) => e.weekday === to && e.runType !== "rest");
+    if (!fromEntry || !toEntry) return;
+
+    const next = entries
+      .map((e) => {
+        if (e.id === fromEntry.id) return { ...e, weekday: to, dayOfWeek: to - 1 };
+        if (e.id === toEntry.id) return { ...e, weekday: from, dayOfWeek: from - 1 };
+        return e;
+      })
+      .sort((a, b) => a.weekday - b.weekday);
+    onUpdateWeek(weekIndex, next);
+    setSwapConfirm(null);
+  }
+
+  // ── Copy day ───────────────────────────────────────────────────────────
+
+  function handleCopyDayConfirm() {
+    if (
+      copyDaySource == null ||
+      copyDayTargetWeek == null ||
+      copyDayTargetWeekday == null
+    )
+      return;
+
+    const targetWeek = plan.weeks[copyDayTargetWeek];
+    const existingTarget = targetWeek?.entries.find(
+      (e) => e.weekday === copyDayTargetWeekday && e.runType !== "rest"
+    );
+
+    if (existingTarget) {
+      setCopyDayOverwriteConfirm({
+        targetWeekIndex: copyDayTargetWeek,
+        targetWeekday: copyDayTargetWeekday,
+      });
+    } else {
+      executeCopyDay(copyDaySource, copyDayTargetWeek, copyDayTargetWeekday);
+    }
+  }
+
+  function executeCopyDay(
+    sourceWeekday: number,
+    targetWeekIndex: number,
+    targetWeekday: number
+  ) {
+    onCopyDayToWeek(weekIndex, sourceWeekday, targetWeekIndex, targetWeekday);
+    const weekNum = plan.weeks[targetWeekIndex]?.weekNumber ?? targetWeekIndex + 1;
+    const dayLabel = DAY_SHORT[targetWeekday - 1] ?? String(targetWeekday);
+    showFlash(`✓ Copied to Week ${weekNum} · ${dayLabel}`);
+    setCopyDaySource(null);
+    setCopyDayTargetWeek(null);
+    setCopyDayTargetWeekday(null);
+    setCopyDayOverwriteConfirm(null);
+  }
+
+  // ── Copy week ──────────────────────────────────────────────────────────
+
+  function handleCopyWeekTo(targetWeekIndex: number) {
+    onCopyWeekTo(weekIndex, targetWeekIndex);
+    const targetWeekNum = plan.weeks[targetWeekIndex]?.weekNumber ?? targetWeekIndex + 1;
+    showFlash(`✓ Week ${week.weekNumber} copied to Week ${targetWeekNum}`);
+    setCopyWeekOpen(false);
+  }
+
+  // ── Render ─────────────────────────────────────────────────────────────
+
   return (
     <div className="rounded-xl border border-border overflow-hidden mb-3 bg-card">
       {/* Accordion header */}
-      <button
-        onClick={onToggle}
-        className="w-full flex items-center gap-3 px-4 py-3 bg-card hover:bg-surface transition-colors text-left"
-      >
-        <div className="flex-1">
-          <span className="text-sm font-semibold text-textPrimary">
-            Week {week.weekNumber}
-          </span>
-          <span className="ml-2 text-xs text-textSecondary">{dateRange}</span>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <span className="text-xs font-semibold text-textPrimary tabular-nums">
-            {plannedMiles.toFixed(1)} mi
-          </span>
-          <WeekStatusBadge result={matchResult} />
-          {isExpanded ? (
-            <ChevronUp className="w-4 h-4 text-textSecondary" />
-          ) : (
-            <ChevronDown className="w-4 h-4 text-textSecondary" />
+      <div className="w-full flex items-center gap-3 px-4 py-3 bg-card hover:bg-surface transition-colors">
+        <button
+          onClick={onToggle}
+          className="flex-1 flex items-center gap-3 text-left"
+        >
+          <div className="flex-1">
+            <span className="text-sm font-semibold text-textPrimary">
+              Week {week.weekNumber}
+            </span>
+            <span className="ml-2 text-xs text-textSecondary">{dateRange}</span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="text-xs font-semibold text-textPrimary tabular-nums">
+              {plannedMiles.toFixed(1)} mi
+            </span>
+            <WeekStatusBadge result={matchResult} />
+            {isExpanded ? (
+              <ChevronUp className="w-4 h-4 text-textSecondary" />
+            ) : (
+              <ChevronDown className="w-4 h-4 text-textSecondary" />
+            )}
+          </div>
+        </button>
+
+        {/* Copy week button */}
+        <div className="relative shrink-0 flex items-center gap-2">
+          {flashText && (
+            <span className="text-xs text-success font-medium whitespace-nowrap">
+              {flashText}
+            </span>
+          )}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setCopyWeekOpen((v) => !v);
+            }}
+            disabled={plan.weeks.length <= 1}
+            title="Copy this week to another week"
+            className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg border border-border text-textSecondary hover:text-textPrimary hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            <Copy className="w-3 h-3" />
+            Copy week →
+          </button>
+          {copyWeekOpen && plan.weeks.length > 1 && (
+            <div className="absolute right-0 top-full mt-1 z-10 bg-card border border-border rounded-lg shadow-lg py-1 min-w-[160px] max-h-64 overflow-y-auto">
+              <div className="text-[10px] font-bold uppercase tracking-wide text-textSecondary px-3 py-1">
+                Copy to week…
+              </div>
+              {plan.weeks.map((w, i) =>
+                i === weekIndex ? null : (
+                  <button
+                    key={w.weekNumber}
+                    onClick={() => handleCopyWeekTo(i)}
+                    className="w-full text-left px-3 py-1.5 text-xs text-textPrimary hover:bg-surface flex items-center justify-between"
+                  >
+                    <span>Week {w.weekNumber}</span>
+                    {w.entries.length > 0 && (
+                      <span className="text-textSecondary text-[10px]">will overwrite</span>
+                    )}
+                  </button>
+                )
+              )}
+            </div>
           )}
         </div>
-      </button>
+      </div>
 
       {/* Accordion body */}
       {isExpanded && (
@@ -336,6 +502,8 @@ function WeekAccordion({
               (e) => e.weekday === weekday && e.runType !== "rest"
             );
             const isEditing = editingDay === weekday;
+            const isDragging = draggingDay === weekday;
+            const isDragOver = dragOverDay === weekday;
             const date = dayDate(plan, weekIndex, weekday);
             const dateLabel = date.toLocaleDateString("en-US", {
               month: "short",
@@ -346,9 +514,36 @@ function WeekAccordion({
               <div
                 key={weekday}
                 className={weekday < 7 ? "border-b border-border" : ""}
+                draggable={!!entry && !isEditing}
+                onDragStart={(e) => {
+                  if (!entry) return;
+                  e.dataTransfer.setData("weekday", String(weekday));
+                  e.dataTransfer.effectAllowed = "move";
+                  setDraggingDay(weekday);
+                }}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                  setDragOverDay(weekday);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const fromWeekday = parseInt(e.dataTransfer.getData("weekday"), 10);
+                  if (!isNaN(fromWeekday)) handleMoveDay(fromWeekday, weekday);
+                  setDraggingDay(null);
+                  setDragOverDay(null);
+                }}
+                onDragEnd={() => {
+                  setDraggingDay(null);
+                  setDragOverDay(null);
+                }}
               >
                 {/* Day row */}
-                <div className="flex items-center gap-3 py-3 px-4 bg-card hover:bg-surface/50 group min-h-[52px]">
+                <div
+                  className={`flex items-center gap-3 py-3 px-4 bg-card hover:bg-surface/50 group min-h-[52px] transition-all ${
+                    isDragging ? "opacity-50" : ""
+                  } ${isDragOver ? "ring-2 ring-inset ring-blue-400 bg-blue-50/30" : ""}`}
+                >
                   {/* Left: day + date */}
                   <div className="w-14 shrink-0">
                     <div className="text-xs font-bold text-textSecondary">
@@ -410,6 +605,19 @@ function WeekAccordion({
                         )}
                       </div>
                       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                        {/* Copy day button */}
+                        <button
+                          onClick={() => {
+                            setCopyDaySource(weekday);
+                            setCopyDayTargetWeek(null);
+                            setCopyDayTargetWeekday(null);
+                          }}
+                          className="text-[10px] text-textSecondary hover:text-primary border border-border rounded px-1.5 py-0.5 flex items-center gap-0.5"
+                          title="Copy day to another week"
+                        >
+                          <Copy className="w-2.5 h-2.5" />
+                          Copy
+                        </button>
                         <button
                           onClick={() => setEditingDay(weekday)}
                           className="p-1 rounded hover:bg-border text-textSecondary hover:text-textPrimary"
@@ -446,11 +654,152 @@ function WeekAccordion({
           })}
         </div>
       )}
+
+      {/* ── Dialogs ── */}
+
+      {/* Swap confirm */}
+      <ConfirmDialog
+        isOpen={swapConfirm !== null}
+        title="Swap these two days?"
+        message={
+          swapConfirm
+            ? `${DAY_SHORT[swapConfirm.from - 1]} and ${DAY_SHORT[swapConfirm.to - 1]} both have runs. Swap them?`
+            : ""
+        }
+        confirmLabel="Swap"
+        confirmVariant="primary"
+        onConfirm={() => {
+          if (swapConfirm) executeSwap(swapConfirm.from, swapConfirm.to);
+        }}
+        onCancel={() => setSwapConfirm(null)}
+      />
+
+      {/* Copy-day overwrite confirm */}
+      <ConfirmDialog
+        isOpen={copyDayOverwriteConfirm !== null}
+        title="Overwrite existing run?"
+        message={
+          copyDayOverwriteConfirm
+            ? `Week ${
+                (plan.weeks[copyDayOverwriteConfirm.targetWeekIndex]?.weekNumber ??
+                  copyDayOverwriteConfirm.targetWeekIndex + 1)
+              } · ${DAY_SHORT[copyDayOverwriteConfirm.targetWeekday - 1]} already has a run. Overwrite it?`
+            : ""
+        }
+        confirmLabel="Overwrite"
+        confirmVariant="primary"
+        onConfirm={() => {
+          if (copyDaySource != null && copyDayOverwriteConfirm) {
+            executeCopyDay(
+              copyDaySource,
+              copyDayOverwriteConfirm.targetWeekIndex,
+              copyDayOverwriteConfirm.targetWeekday
+            );
+          }
+        }}
+        onCancel={() => setCopyDayOverwriteConfirm(null)}
+      />
+
+      {/* Copy-day picker modal */}
+      {copyDaySource !== null && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setCopyDaySource(null);
+              setCopyDayTargetWeek(null);
+              setCopyDayTargetWeekday(null);
+            }
+          }}
+        >
+          <div className="bg-card rounded-2xl shadow-xl border border-border w-full max-w-xs p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-bold text-textPrimary text-sm">
+                Copy {DAY_SHORT[copyDaySource - 1]} to…
+              </h3>
+              <button
+                onClick={() => {
+                  setCopyDaySource(null);
+                  setCopyDayTargetWeek(null);
+                  setCopyDayTargetWeekday(null);
+                }}
+                className="p-1 rounded hover:bg-surface text-textSecondary"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <label className="block text-xs font-semibold text-textSecondary mb-1.5">
+              Week
+            </label>
+            <select
+              value={copyDayTargetWeek ?? ""}
+              onChange={(e) => {
+                const v = e.target.value;
+                setCopyDayTargetWeek(v === "" ? null : parseInt(v, 10));
+                setCopyDayTargetWeekday(null);
+              }}
+              className="w-full text-sm border border-border rounded-lg px-3 py-2 bg-card text-textPrimary mb-4"
+            >
+              <option value="">Select week…</option>
+              {plan.weeks.map((w, i) => (
+                <option key={i} value={i}>
+                  Week {w.weekNumber}
+                  {i === weekIndex ? " (current)" : ""}
+                </option>
+              ))}
+            </select>
+
+            {copyDayTargetWeek !== null && (
+              <>
+                <label className="block text-xs font-semibold text-textSecondary mb-1.5">
+                  Day
+                </label>
+                <div className="grid grid-cols-7 gap-1 mb-4">
+                  {[1, 2, 3, 4, 5, 6, 7].map((wd) => (
+                    <button
+                      key={wd}
+                      onClick={() => setCopyDayTargetWeekday(wd)}
+                      className={`py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                        copyDayTargetWeekday === wd
+                          ? "bg-primary text-white"
+                          : "bg-surface text-textSecondary hover:bg-border"
+                      }`}
+                    >
+                      {DAY_SHORT[wd - 1]}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => {
+                  setCopyDaySource(null);
+                  setCopyDayTargetWeek(null);
+                  setCopyDayTargetWeekday(null);
+                }}
+                className="px-4 py-2 rounded-xl border border-border text-sm text-textSecondary hover:bg-surface transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCopyDayConfirm}
+                disabled={copyDayTargetWeek === null || copyDayTargetWeekday === null}
+                className="px-4 py-2 rounded-xl bg-primary text-white text-sm font-medium hover:bg-primary/90 disabled:opacity-40 transition-colors"
+              >
+                Copy
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
+// ─── Page ──────────────────────────────────────────────────────────────────────
 
 export default function PlanEditPage() {
   const { user } = useAuth();
@@ -470,8 +819,14 @@ export default function PlanEditPage() {
   const [nameInput, setNameInput] = useState("");
   const nameRef = useRef<HTMLInputElement>(null);
 
-  // Accordion state — current week expanded by default
+  // Accordion state
   const [expandedWeeks, setExpandedWeeks] = useState<Set<number>>(new Set());
+
+  // Copy plan modal
+  const [copyPlanOpen, setCopyPlanOpen] = useState(false);
+  const [copyPlanName, setCopyPlanName] = useState("");
+  const [copyPlanSaving, setCopyPlanSaving] = useState(false);
+  const [copyPlanFlash, setCopyPlanFlash] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user || !planId) return;
@@ -483,15 +838,12 @@ export default function PlanEditPage() {
       .then(([plans, acts]) => {
         const found = plans.find((p) => p.id === planId);
         if (!found || !isRunningPlan(found)) {
-          // This editor only handles running plans. Cross-training plans
-          // are edited inline on the main plans page.
           setNotFound(true);
           return;
         }
         setPlan(found);
         setNameInput(found.name);
         setActivities(acts);
-        // Expand current week by default
         const idx = currentWeekIndex(found);
         setExpandedWeeks(new Set([idx]));
       })
@@ -526,11 +878,62 @@ export default function PlanEditPage() {
     }
   }
 
+  /** Update a single week's entries and autosave. */
   async function handleUpdateWeek(weekIndex: number, entries: PlannedRunEntry[]) {
     if (!user || !plan) return;
     const newWeeks = plan.weeks.map((w, i) =>
       i === weekIndex ? { ...w, entries } : w
     );
+    const updated = { ...plan, weeks: newWeeks };
+    setPlan(updated);
+    try {
+      await updatePlan(user.uid, updated);
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  /** Copy all entries from one week to another. */
+  async function handleCopyWeek(fromWeekIndex: number, toWeekIndex: number) {
+    if (!user || !plan) return;
+    const sourceWeek = plan.weeks[fromWeekIndex];
+    if (!sourceWeek) return;
+
+    const copiedWeek = deepCopyRunWeek(sourceWeek, toWeekIndex);
+
+    const newWeeks = plan.weeks.map((w, i) =>
+      i === toWeekIndex ? { ...w, entries: copiedWeek.entries } : w
+    );
+    const updated = { ...plan, weeks: newWeeks };
+    setPlan(updated);
+    try {
+      await updatePlan(user.uid, updated);
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  /** Copy a single day from one week/weekday to another week/weekday. */
+  async function handleCopyDay(
+    fromWeekIndex: number,
+    fromWeekday: number,
+    toWeekIndex: number,
+    toWeekday: number
+  ) {
+    if (!user || !plan) return;
+    const sourceWeek = plan.weeks[fromWeekIndex];
+    const sourceEntry = sourceWeek?.entries.find(
+      (e) => e.weekday === fromWeekday && e.runType !== "rest"
+    );
+    if (!sourceEntry) return;
+
+    const copied = deepCopyRunEntry(sourceEntry, toWeekIndex, toWeekday);
+
+    const newWeeks = plan.weeks.map((w, i) => {
+      if (i !== toWeekIndex) return w;
+      const filtered = w.entries.filter((e) => e.weekday !== toWeekday);
+      return { ...w, entries: [...filtered, copied] };
+    });
     const updated = { ...plan, weeks: newWeeks };
     setPlan(updated);
     try {
@@ -551,6 +954,28 @@ export default function PlanEditPage() {
       console.error(e);
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleCopyPlan() {
+    if (!user || !plan || copyPlanSaving) return;
+    const name = copyPlanName.trim();
+    if (!name) return;
+    setCopyPlanSaving(true);
+    try {
+      const newPlan = await createPlan<RunningPlan>(
+        user.uid,
+        deepCopyRunningPlan(plan, name)
+      );
+      setCopyPlanOpen(false);
+      setCopyPlanName("");
+      setCopyPlanFlash(`✓ Copied as "${newPlan.name}"`);
+      setTimeout(() => setCopyPlanFlash(null), 3000);
+      router.push(`/plans/${newPlan.id}/edit`);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setCopyPlanSaving(false);
     }
   }
 
@@ -625,14 +1050,35 @@ export default function PlanEditPage() {
             )}
           </div>
 
-          {/* Save All */}
-          <button
-            onClick={handleSaveAll}
-            disabled={saving}
-            className="text-sm font-semibold text-primary hover:text-primary/80 shrink-0 disabled:opacity-50"
-          >
-            {savedFlash ? "Saved ✓" : saving ? "Saving…" : "Save All"}
-          </button>
+          {/* Right actions */}
+          <div className="flex items-center gap-2 shrink-0">
+            {copyPlanFlash && (
+              <span className="text-xs text-success font-medium whitespace-nowrap">
+                {copyPlanFlash}
+              </span>
+            )}
+            {/* Copy plan */}
+            <button
+              onClick={() => {
+                setCopyPlanName(`${plan.name} (copy)`);
+                setCopyPlanOpen(true);
+              }}
+              disabled={saving}
+              title="Copy plan"
+              className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg border border-border text-textSecondary hover:text-textPrimary hover:bg-surface disabled:opacity-50"
+            >
+              <Copy className="w-3 h-3" />
+              Copy plan
+            </button>
+            {/* Save All */}
+            <button
+              onClick={handleSaveAll}
+              disabled={saving}
+              className="text-sm font-semibold text-primary hover:text-primary/80 disabled:opacity-50"
+            >
+              {savedFlash ? "Saved ✓" : saving ? "Saving…" : "Save All"}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -668,9 +1114,55 @@ export default function PlanEditPage() {
             onToggle={() => toggleWeek(idx)}
             activities={activities}
             onUpdateWeek={handleUpdateWeek}
+            onCopyWeekTo={handleCopyWeek}
+            onCopyDayToWeek={handleCopyDay}
           />
         ))}
       </div>
+
+      {/* Copy plan modal */}
+      {copyPlanOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !copyPlanSaving) setCopyPlanOpen(false);
+          }}
+        >
+          <div className="bg-card rounded-2xl shadow-xl border border-border w-full max-w-xs p-5">
+            <h3 className="font-bold text-textPrimary text-sm mb-4">Copy plan</h3>
+            <label className="block text-xs font-semibold text-textSecondary mb-1.5">
+              New plan name
+            </label>
+            <input
+              type="text"
+              value={copyPlanName}
+              onChange={(e) => setCopyPlanName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void handleCopyPlan();
+                if (e.key === "Escape" && !copyPlanSaving) setCopyPlanOpen(false);
+              }}
+              className="w-full text-sm border border-border rounded-lg px-3 py-2 bg-card text-textPrimary mb-4"
+              autoFocus
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setCopyPlanOpen(false)}
+                disabled={copyPlanSaving}
+                className="px-4 py-2 rounded-xl border border-border text-sm text-textSecondary hover:bg-surface transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void handleCopyPlan()}
+                disabled={!copyPlanName.trim() || copyPlanSaving}
+                className="px-4 py-2 rounded-xl bg-primary text-white text-sm font-medium hover:bg-primary/90 disabled:opacity-40 transition-colors"
+              >
+                {copyPlanSaving ? "Copying…" : "Copy plan"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -9,6 +9,12 @@
  *     cardio, etc. This replaced the former standalone Pilates plan type.
  *
  * All edits are autosaved via the onUpdate callback.
+ *
+ * Features:
+ *   - Drag-to-move days within a week (HTML5 drag API)
+ *   - Copy day to any week/weekday
+ *   - Copy week to another week (existing)
+ *   - Copy entire plan with a new name
  */
 
 import React, {
@@ -42,10 +48,12 @@ import {
   normalizeExerciseItem,
 } from "@/types/plan";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { deepCopyWorkoutEntry, deepCopyWorkoutWeek } from "@/utils/planCopy";
 
 const DAY_ABBREVS = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
+const DAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-// ─── Date helpers ───────────────────────────────────────────────────────────
+// ─── Date helpers ────────────────────────────────────────────────────────────
 
 function dayDate(startDate: string, weekIndex: number, weekday: number): Date {
   const [year, month, day] = startDate.split("-").map(Number);
@@ -77,7 +85,7 @@ function formatCompletedAt(iso?: string): string | null {
   );
 }
 
-// ─── Auto-expanding textarea ────────────────────────────────────────────────
+// ─── Auto-expanding textarea ─────────────────────────────────────────────────
 
 interface AutoTextareaProps {
   value: string;
@@ -101,7 +109,6 @@ function AutoTextarea({
   onBlur,
 }: AutoTextareaProps) {
   const ref = useRef<HTMLTextAreaElement>(null);
-  // Resize to fit content on every value change
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -126,7 +133,7 @@ function AutoTextarea({
   );
 }
 
-// ─── Entry editor (unified: exercise-based OR duration-only) ───────────────
+// ─── Entry editor (unified: exercise-based OR duration-only) ─────────────────
 
 interface EntryEditorProps {
   entry: PlannedWorkoutEntry;
@@ -138,7 +145,6 @@ function EntryEditor({ entry, onSave, onCancel }: EntryEditorProps) {
   const [label, setLabel] = useState(entry.label ?? "");
   const [notes, setNotes] = useState(entry.notes ?? "");
   const [items, setItems] = useState<ExerciseItem[]>(() => {
-    // Normalize legacy items that lack a `kind` field.
     return (entry.exercises ?? []).map((raw) =>
       normalizeExerciseItem(raw as unknown as Record<string, unknown>)
     );
@@ -149,7 +155,6 @@ function EntryEditor({ entry, onSave, onCancel }: EntryEditorProps) {
   const [mode, setMode] = useState<"exercises" | "duration">(() =>
     isDurationOnlyEntry(entry) ? "duration" : "exercises"
   );
-  // Track which exercise ids have notes expanded
   const [notesOpen, setNotesOpen] = useState<Set<string>>(() => {
     const ids = new Set<string>();
     for (const item of items) {
@@ -213,7 +218,6 @@ function EntryEditor({ entry, onSave, onCancel }: EntryEditorProps) {
         duration_mins: isNaN(dur) ? undefined : dur,
       });
     } else {
-      // Keep sections + filter empty exercise names
       const cleaned = items.filter((item) =>
         isSectionItem(item)
           ? item.title.trim().length > 0
@@ -293,7 +297,6 @@ function EntryEditor({ entry, onSave, onCancel }: EntryEditorProps) {
             )}
             {items.map((item) =>
               isSectionItem(item) ? (
-                /* ── Section header row ── */
                 <div
                   key={item.id}
                   className="flex items-center gap-1.5 bg-purple-50 rounded-lg px-2 py-1.5 -mx-0.5"
@@ -314,7 +317,6 @@ function EntryEditor({ entry, onSave, onCancel }: EntryEditorProps) {
                   </button>
                 </div>
               ) : isExerciseItem(item) ? (
-                /* ── Exercise row ── */
                 <div key={item.id} className="flex flex-col gap-1">
                   <div className="flex items-center gap-1.5">
                     <input
@@ -365,7 +367,6 @@ function EntryEditor({ entry, onSave, onCancel }: EntryEditorProps) {
                       <X className="w-3.5 h-3.5" />
                     </button>
                   </div>
-                  {/* Per-exercise notes toggle */}
                   {notesOpen.has(item.id) ? (
                     <input
                       type="text"
@@ -406,7 +407,6 @@ function EntryEditor({ entry, onSave, onCancel }: EntryEditorProps) {
         </>
       )}
 
-      {/* Quick notes — optional single-line */}
       <AutoTextarea
         value={notes}
         onChange={setNotes}
@@ -433,7 +433,7 @@ function EntryEditor({ entry, onSave, onCancel }: EntryEditorProps) {
   );
 }
 
-// ─── Day card (unified) ─────────────────────────────────────────────────────
+// ─── Day card ────────────────────────────────────────────────────────────────
 
 function DayCard({
   entry,
@@ -441,6 +441,7 @@ function DayCard({
   onDelete,
   onUnmatch,
   onNotesChange,
+  onCopyDay,
   detailHref,
 }: {
   entry: PlannedWorkoutEntry;
@@ -448,14 +449,13 @@ function DayCard({
   onDelete: () => void;
   onUnmatch: () => void;
   onNotesChange: (notes: string) => void;
-  /** Link to workout detail page (only for exercise-based sessions). */
+  onCopyDay: () => void;
   detailHref: string | null;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [notesOpen, setNotesOpen] = useState(!!entry.notes?.trim());
   const [notesDraft, setNotesDraft] = useState(entry.notes ?? "");
 
-  // Keep local draft in sync if the parent prop changes (e.g. after a copy-week)
   useEffect(() => {
     setNotesDraft(entry.notes ?? "");
     setNotesOpen(!!entry.notes?.trim());
@@ -514,6 +514,14 @@ function DayCard({
             </button>
           )}
           <button
+            onClick={onCopyDay}
+            className="text-[10px] text-textSecondary hover:text-primary border border-border rounded px-1.5 py-0.5 flex items-center gap-0.5"
+            title="Copy day to another week"
+          >
+            <Copy className="w-2.5 h-2.5" />
+            Copy
+          </button>
+          <button
             onClick={onEdit}
             className="p-1 rounded hover:bg-surface text-textSecondary hover:text-textPrimary"
             title="Edit"
@@ -530,7 +538,6 @@ function DayCard({
         </div>
       </div>
 
-      {/* Exercise list expansion (with section headers + per-exercise notes) */}
       {expanded && allItems.length > 0 && (
         <ul className="mt-2 flex flex-col gap-0.5 pl-1">
           {allItems.map((item) =>
@@ -558,7 +565,6 @@ function DayCard({
         </ul>
       )}
 
-      {/* Collapsible per-day notes */}
       <div className="mt-2">
         <button
           onClick={() => setNotesOpen((v) => !v)}
@@ -594,7 +600,6 @@ function DayCard({
         )}
       </div>
 
-      {/* View Workout link — exercise-based sessions only */}
       {detailHref && (
         <Link
           href={detailHref}
@@ -607,13 +612,14 @@ function DayCard({
   );
 }
 
-// ─── Plan detail component ─────────────────────────────────────────────────
+// ─── Plan detail component ────────────────────────────────────────────────────
 
 interface CrossTrainingPlanDetailProps {
   plan: WorkoutPlan;
   onUpdate: (plan: WorkoutPlan) => void | Promise<void>;
   onDelete: () => void;
   onSetActive: () => void;
+  onCopyPlan: (newName: string) => Promise<void>;
   saving: boolean;
 }
 
@@ -622,6 +628,7 @@ export function CrossTrainingPlanDetail({
   onUpdate,
   onDelete,
   onSetActive,
+  onCopyPlan,
   saving,
 }: CrossTrainingPlanDetailProps) {
   const [selectedWeekIndex, setSelectedWeekIndex] = useState(0);
@@ -631,6 +638,25 @@ export function CrossTrainingPlanDetail({
   // Copy-week UI state
   const [copyWeekOpen, setCopyWeekOpen] = useState(false);
   const [copyFlashText, setCopyFlashText] = useState<string | null>(null);
+
+  // Drag-and-drop state
+  const [draggingDay, setDraggingDay] = useState<number | null>(null);
+  const [dragOverDay, setDragOverDay] = useState<number | null>(null);
+  const [swapConfirm, setSwapConfirm] = useState<{ from: number; to: number } | null>(null);
+
+  // Copy-day state
+  const [copyDaySource, setCopyDaySource] = useState<number | null>(null);
+  const [copyDayTargetWeek, setCopyDayTargetWeek] = useState<number | null>(null);
+  const [copyDayTargetWeekday, setCopyDayTargetWeekday] = useState<number | null>(null);
+  const [copyDayOverwriteConfirm, setCopyDayOverwriteConfirm] = useState<{
+    targetWeekIndex: number;
+    targetWeekday: number;
+  } | null>(null);
+
+  // Copy-plan state
+  const [copyPlanOpen, setCopyPlanOpen] = useState(false);
+  const [copyPlanName, setCopyPlanName] = useState("");
+  const [copyPlanSaving, setCopyPlanSaving] = useState(false);
 
   const week = plan.weeks[selectedWeekIndex];
   const dateRange = useMemo(
@@ -643,7 +669,7 @@ export function CrossTrainingPlanDetail({
     return [...week.entries].sort((a, b) => a.weekday - b.weekday);
   }, [week]);
 
-  // ── Update helpers ─────────────────────────────────────────────────────
+  // ── Update helpers ──────────────────────────────────────────────────────
 
   function updateWeekEntries(nextEntries: PlannedWorkoutEntry[]) {
     const updatedWeeks: PlanWorkoutWeek[] = plan.weeks.map((w, i) =>
@@ -693,26 +719,17 @@ export function CrossTrainingPlanDetail({
     };
   }
 
-  /**
-   * Deep copy the current week's entries into the target week, reassigning
-   * weekIndex and generating fresh UUIDs for every entry and nested
-   * exercise. Clears completed flags on the copies.
-   */
+  // ── Copy week ───────────────────────────────────────────────────────────
+
   function copyWeekTo(targetWeekIndex: number) {
     if (targetWeekIndex === selectedWeekIndex) return;
     if (targetWeekIndex < 0 || targetWeekIndex >= plan.weeks.length) return;
 
-    const copiedEntries: PlannedWorkoutEntry[] = sortedEntries.map((e) => ({
-      ...e,
-      id: crypto.randomUUID(),
-      weekIndex: targetWeekIndex,
-      completed: false,
-      completedAt: undefined,
-      exercises: (e.exercises ?? []).map((ex) => ({
-        ...ex,
-        id: crypto.randomUUID(),
-      })),
-    }));
+    const copiedWeek = deepCopyWorkoutWeek(
+      { weekNumber: week.weekNumber, entries: sortedEntries, notes: week.notes },
+      targetWeekIndex
+    );
+    const copiedEntries = copiedWeek.entries;
 
     const updatedWeeks: PlanWorkoutWeek[] = plan.weeks.map((w, i) =>
       i === targetWeekIndex ? { ...w, entries: copiedEntries } : w
@@ -725,7 +742,120 @@ export function CrossTrainingPlanDetail({
     setTimeout(() => setCopyFlashText(null), 2000);
   }
 
-  // ── Render ─────────────────────────────────────────────────────────────
+  // ── Drag-and-drop ───────────────────────────────────────────────────────
+
+  function handleMoveDay(fromWeekday: number, toWeekday: number) {
+    if (fromWeekday === toWeekday) return;
+    const fromEntry = sortedEntries.find((e) => e.weekday === fromWeekday);
+    const toEntry = sortedEntries.find((e) => e.weekday === toWeekday);
+
+    if (!fromEntry) return;
+
+    if (!toEntry) {
+      // Move to empty slot
+      const next = sortedEntries
+        .map((e) =>
+          e.id === fromEntry.id
+            ? { ...e, weekday: toWeekday, dayOfWeek: toWeekday - 1 }
+            : e
+        )
+        .sort((a, b) => a.weekday - b.weekday);
+      updateWeekEntries(next);
+    } else {
+      // Both slots occupied — confirm swap
+      setSwapConfirm({ from: fromWeekday, to: toWeekday });
+    }
+  }
+
+  function executeSwap(from: number, to: number) {
+    const fromEntry = sortedEntries.find((e) => e.weekday === from);
+    const toEntry = sortedEntries.find((e) => e.weekday === to);
+    if (!fromEntry || !toEntry) return;
+
+    const next = sortedEntries
+      .map((e) => {
+        if (e.id === fromEntry.id) return { ...e, weekday: to, dayOfWeek: to - 1 };
+        if (e.id === toEntry.id) return { ...e, weekday: from, dayOfWeek: from - 1 };
+        return e;
+      })
+      .sort((a, b) => a.weekday - b.weekday);
+    updateWeekEntries(next);
+    setSwapConfirm(null);
+  }
+
+  // ── Copy day ────────────────────────────────────────────────────────────
+
+  function openCopyDayPicker(sourceWeekday: number) {
+    setCopyDaySource(sourceWeekday);
+    setCopyDayTargetWeek(null);
+    setCopyDayTargetWeekday(null);
+  }
+
+  function executeCopyDay(
+    sourceWeekday: number,
+    targetWeekIndex: number,
+    targetWeekday: number
+  ) {
+    const sourceEntry = sortedEntries.find((e) => e.weekday === sourceWeekday);
+    if (!sourceEntry) return;
+
+    const copied = deepCopyWorkoutEntry(sourceEntry, targetWeekIndex, targetWeekday);
+
+    const updatedWeeks = plan.weeks.map((w, i) => {
+      if (i !== targetWeekIndex) return w;
+      const filtered = w.entries.filter((e) => e.weekday !== targetWeekday);
+      return { ...w, entries: [...filtered, copied] };
+    });
+    onUpdate({ ...plan, weeks: updatedWeeks });
+
+    const weekNum = plan.weeks[targetWeekIndex]?.weekNumber ?? targetWeekIndex + 1;
+    const dayLabel = DAY_SHORT[targetWeekday - 1] ?? String(targetWeekday);
+    setCopyFlashText(`✓ Copied to Week ${weekNum} · ${dayLabel}`);
+    setCopyDaySource(null);
+    setCopyDayTargetWeek(null);
+    setCopyDayTargetWeekday(null);
+    setTimeout(() => setCopyFlashText(null), 2000);
+  }
+
+  function handleCopyDayConfirm() {
+    if (
+      copyDaySource == null ||
+      copyDayTargetWeek == null ||
+      copyDayTargetWeekday == null
+    )
+      return;
+
+    const targetWeek = plan.weeks[copyDayTargetWeek];
+    const existingTarget = targetWeek?.entries.find(
+      (e) => e.weekday === copyDayTargetWeekday
+    );
+
+    if (existingTarget) {
+      setCopyDayOverwriteConfirm({
+        targetWeekIndex: copyDayTargetWeek,
+        targetWeekday: copyDayTargetWeekday,
+      });
+    } else {
+      executeCopyDay(copyDaySource, copyDayTargetWeek, copyDayTargetWeekday);
+    }
+  }
+
+  // ── Copy plan ───────────────────────────────────────────────────────────
+
+  async function handleCopyPlan() {
+    const name = copyPlanName.trim();
+    if (!name || copyPlanSaving) return;
+    setCopyPlanSaving(true);
+    try {
+      await onCopyPlan(name);
+      setCopyPlanOpen(false);
+      setCopyPlanName("");
+    } finally {
+      setCopyPlanSaving(false);
+    }
+  }
+
+  // ── Render ──────────────────────────────────────────────────────────────
 
   return (
     <div className="flex flex-col h-full">
@@ -756,7 +886,7 @@ export function CrossTrainingPlanDetail({
             {plan.weeks.length} weeks
           </p>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
           {!plan.isActive && (
             <button
               onClick={onSetActive}
@@ -766,6 +896,19 @@ export function CrossTrainingPlanDetail({
               Set Active
             </button>
           )}
+          {/* Copy plan button */}
+          <button
+            onClick={() => {
+              setCopyPlanName(`${plan.name} (copy)`);
+              setCopyPlanOpen(true);
+            }}
+            disabled={saving}
+            title="Copy plan"
+            className="flex items-center gap-1 text-sm px-2.5 py-1.5 rounded-lg border border-border text-textSecondary hover:text-textPrimary hover:bg-surface disabled:opacity-50"
+          >
+            <Copy className="w-3.5 h-3.5" />
+            Copy plan
+          </button>
           <button
             onClick={() => setConfirmDelete(true)}
             disabled={saving}
@@ -862,6 +1005,8 @@ export function CrossTrainingPlanDetail({
           {[1, 2, 3, 4, 5, 6, 7].map((weekday) => {
             const entry = sortedEntries.find((e) => e.weekday === weekday);
             const isEditing = editingDay === weekday;
+            const isDragging = draggingDay === weekday;
+            const isDragOver = dragOverDay === weekday;
             const date = dayDate(plan.startDate, selectedWeekIndex, weekday);
             const dateLabel = date.toLocaleDateString("en-US", {
               month: "short",
@@ -872,8 +1017,35 @@ export function CrossTrainingPlanDetail({
               <div
                 key={weekday}
                 className={weekday < 7 ? "border-b border-border" : ""}
+                draggable={!!entry && !isEditing}
+                onDragStart={(e) => {
+                  if (!entry) return;
+                  e.dataTransfer.setData("weekday", String(weekday));
+                  e.dataTransfer.effectAllowed = "move";
+                  setDraggingDay(weekday);
+                }}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                  setDragOverDay(weekday);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const fromWeekday = parseInt(e.dataTransfer.getData("weekday"), 10);
+                  if (!isNaN(fromWeekday)) handleMoveDay(fromWeekday, weekday);
+                  setDraggingDay(null);
+                  setDragOverDay(null);
+                }}
+                onDragEnd={() => {
+                  setDraggingDay(null);
+                  setDragOverDay(null);
+                }}
               >
-                <div className="flex items-start gap-3 py-2 px-3 hover:bg-surface/50 group min-h-[52px]">
+                <div
+                  className={`flex items-start gap-3 py-2 px-3 hover:bg-surface/50 group min-h-[52px] transition-all ${
+                    isDragging ? "opacity-50" : ""
+                  } ${isDragOver ? "ring-2 ring-inset ring-blue-400 bg-blue-50/30" : ""}`}
+                >
                   <div className="w-14 shrink-0 pt-1">
                     <div className="text-xs font-bold text-textSecondary">
                       {DAY_ABBREVS[weekday - 1]}
@@ -909,6 +1081,7 @@ export function CrossTrainingPlanDetail({
                       onDelete={() => deleteEntry(entry.id)}
                       onUnmatch={() => unmatchEntry(entry.id)}
                       onNotesChange={(notes) => updateEntryNotes(entry.id, notes)}
+                      onCopyDay={() => openCopyDayPicker(weekday)}
                       detailHref={
                         !isDurationOnlyEntry(entry) && (entry.exercises?.length ?? 0) > 0
                           ? `/workout/${plan.id}/${selectedWeekIndex}/${weekday}`
@@ -933,6 +1106,9 @@ export function CrossTrainingPlanDetail({
         </div>
       </div>
 
+      {/* ── Dialogs ── */}
+
+      {/* Delete plan */}
       <ConfirmDialog
         isOpen={confirmDelete}
         title="Delete this plan?"
@@ -946,6 +1122,196 @@ export function CrossTrainingPlanDetail({
         onCancel={() => setConfirmDelete(false)}
         loading={saving}
       />
+
+      {/* Swap confirm */}
+      <ConfirmDialog
+        isOpen={swapConfirm !== null}
+        title="Swap these two days?"
+        message={
+          swapConfirm
+            ? `${DAY_SHORT[swapConfirm.from - 1]} and ${DAY_SHORT[swapConfirm.to - 1]} both have sessions. Swap them?`
+            : ""
+        }
+        confirmLabel="Swap"
+        confirmVariant="primary"
+        onConfirm={() => {
+          if (swapConfirm) executeSwap(swapConfirm.from, swapConfirm.to);
+        }}
+        onCancel={() => setSwapConfirm(null)}
+      />
+
+      {/* Copy-day overwrite confirm */}
+      <ConfirmDialog
+        isOpen={copyDayOverwriteConfirm !== null}
+        title="Overwrite existing session?"
+        message={
+          copyDayOverwriteConfirm
+            ? `Week ${
+                (plan.weeks[copyDayOverwriteConfirm.targetWeekIndex]?.weekNumber ??
+                  copyDayOverwriteConfirm.targetWeekIndex + 1)
+              } · ${DAY_SHORT[copyDayOverwriteConfirm.targetWeekday - 1]} already has a session. Overwrite it?`
+            : ""
+        }
+        confirmLabel="Overwrite"
+        confirmVariant="primary"
+        onConfirm={() => {
+          if (copyDaySource != null && copyDayOverwriteConfirm) {
+            executeCopyDay(
+              copyDaySource,
+              copyDayOverwriteConfirm.targetWeekIndex,
+              copyDayOverwriteConfirm.targetWeekday
+            );
+            setCopyDayOverwriteConfirm(null);
+          }
+        }}
+        onCancel={() => setCopyDayOverwriteConfirm(null)}
+      />
+
+      {/* Copy-day picker modal */}
+      {copyDaySource !== null && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setCopyDaySource(null);
+              setCopyDayTargetWeek(null);
+              setCopyDayTargetWeekday(null);
+            }
+          }}
+        >
+          <div className="bg-card rounded-2xl shadow-xl border border-border w-full max-w-xs p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-bold text-textPrimary text-sm">
+                Copy {DAY_SHORT[copyDaySource - 1]} to…
+              </h3>
+              <button
+                onClick={() => {
+                  setCopyDaySource(null);
+                  setCopyDayTargetWeek(null);
+                  setCopyDayTargetWeekday(null);
+                }}
+                className="p-1 rounded hover:bg-surface text-textSecondary"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Step 1: pick week */}
+            <label className="block text-xs font-semibold text-textSecondary mb-1.5">
+              Week
+            </label>
+            <select
+              value={copyDayTargetWeek ?? ""}
+              onChange={(e) => {
+                const v = e.target.value;
+                setCopyDayTargetWeek(v === "" ? null : parseInt(v, 10));
+                setCopyDayTargetWeekday(null);
+              }}
+              className="w-full text-sm border border-border rounded-lg px-3 py-2 bg-card text-textPrimary mb-4"
+            >
+              <option value="">Select week…</option>
+              {plan.weeks.map((w, i) => (
+                <option key={i} value={i}>
+                  Week {w.weekNumber}
+                  {i === selectedWeekIndex ? " (current)" : ""}
+                </option>
+              ))}
+            </select>
+
+            {/* Step 2: pick weekday */}
+            {copyDayTargetWeek !== null && (
+              <>
+                <label className="block text-xs font-semibold text-textSecondary mb-1.5">
+                  Day
+                </label>
+                <div className="grid grid-cols-7 gap-1 mb-4">
+                  {[1, 2, 3, 4, 5, 6, 7].map((wd) => (
+                    <button
+                      key={wd}
+                      onClick={() => setCopyDayTargetWeekday(wd)}
+                      className={`py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                        copyDayTargetWeekday === wd
+                          ? "bg-primary text-white"
+                          : "bg-surface text-textSecondary hover:bg-border"
+                      }`}
+                    >
+                      {DAY_SHORT[wd - 1]}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => {
+                  setCopyDaySource(null);
+                  setCopyDayTargetWeek(null);
+                  setCopyDayTargetWeekday(null);
+                }}
+                className="px-4 py-2 rounded-xl border border-border text-sm text-textSecondary hover:bg-surface transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCopyDayConfirm}
+                disabled={copyDayTargetWeek === null || copyDayTargetWeekday === null}
+                className="px-4 py-2 rounded-xl bg-primary text-white text-sm font-medium hover:bg-primary/90 disabled:opacity-40 transition-colors"
+              >
+                Copy
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Copy-plan modal */}
+      {copyPlanOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !copyPlanSaving) {
+              setCopyPlanOpen(false);
+            }
+          }}
+        >
+          <div className="bg-card rounded-2xl shadow-xl border border-border w-full max-w-xs p-5">
+            <h3 className="font-bold text-textPrimary text-sm mb-4">
+              Copy plan
+            </h3>
+            <label className="block text-xs font-semibold text-textSecondary mb-1.5">
+              New plan name
+            </label>
+            <input
+              type="text"
+              value={copyPlanName}
+              onChange={(e) => setCopyPlanName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void handleCopyPlan();
+                if (e.key === "Escape" && !copyPlanSaving) setCopyPlanOpen(false);
+              }}
+              className="w-full text-sm border border-border rounded-lg px-3 py-2 bg-card text-textPrimary mb-4"
+              autoFocus
+            />
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setCopyPlanOpen(false)}
+                disabled={copyPlanSaving}
+                className="px-4 py-2 rounded-xl border border-border text-sm text-textSecondary hover:bg-surface transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void handleCopyPlan()}
+                disabled={!copyPlanName.trim() || copyPlanSaving}
+                className="px-4 py-2 rounded-xl bg-primary text-white text-sm font-medium hover:bg-primary/90 disabled:opacity-40 transition-colors"
+              >
+                {copyPlanSaving ? "Copying…" : "Copy plan"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
