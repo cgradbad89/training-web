@@ -55,18 +55,21 @@ export function isStrengthLikeActivity(w: HealthWorkout): boolean {
 
 // ─── Category-aware predicate ────────────────────────────────────────────────
 
-type MatchPredicate = ((workout: HealthWorkout) => boolean) | 'manual' | 'legacy';
+type MatchPredicate = ((workout: HealthWorkout) => boolean) | 'legacy';
 
 /**
  * Returns the match predicate for a session.
  *
  * - Sessions with a category use category-specific HK type matching.
- * - OTF sessions return 'manual' — auto-match is skipped entirely.
+ * - OTF sessions match any non-running workout (OTF logs inconsistently).
  * - Sessions without a category return 'legacy' — use old behavior.
  */
 function getMatchPredicate(session: PlannedWorkoutEntry): MatchPredicate {
   if (session.category) {
-    if (session.category === 'orangetheory') return 'manual';
+    if (session.category === 'orangetheory') {
+      // Match any non-running workout — OTF logs inconsistently
+      return (workout: HealthWorkout) => !workout.isRunLike;
+    }
     const hkTypes = WORKOUT_CATEGORY_HK_TYPES[session.category];
     return (workout: HealthWorkout) =>
       !workout.isRunLike &&
@@ -169,9 +172,8 @@ export async function autoMatchCrossTrainingSessions(
         const candidates = byDate.get(key);
         if (!candidates || candidates.length === 0) return entry;
 
-        // Determine predicate: category-aware, OTF manual-only, or legacy.
+        // Determine predicate: category-aware or legacy.
         const matchPredicate = getMatchPredicate(entry);
-        if (matchPredicate === 'manual') return entry; // OTF — skip auto-match
 
         const predicate: (w: HealthWorkout) => boolean =
           matchPredicate === 'legacy'

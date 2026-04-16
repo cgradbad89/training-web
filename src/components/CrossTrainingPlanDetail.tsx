@@ -566,11 +566,11 @@ function DayCard({
               Unmatch
             </button>
           )}
-          {entry.category === "orangetheory" && !completed && (
+          {!completed && (
             <button
               onClick={onMarkComplete}
               className="text-[10px] text-orange-600 hover:text-orange-700 border border-orange-300 rounded px-1.5 py-0.5 font-medium"
-              title="Mark this OTF session complete"
+              title="Mark this session complete"
             >
               ✓ Mark Complete
             </button>
