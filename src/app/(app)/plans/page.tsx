@@ -14,7 +14,7 @@ import {
 import { deepCopyRunningPlan, deepCopyWorkoutPlan } from "@/utils/planCopy";
 import { fetchHealthWorkouts } from "@/services/healthWorkouts";
 import { autoMatchCrossTrainingSessions } from "@/services/autoMatch";
-import { DEFAULT_HALF_MARATHON_PLAN } from "@/lib/seedData";
+import { DEFAULT_HALF_MARATHON_PLAN, seedSeptHMPlan } from "@/lib/seedData";
 import {
   type Plan,
   type PlanType,
@@ -331,6 +331,20 @@ export default function PlansPage() {
           DEFAULT_HALF_MARATHON_PLAN
         );
         finalPlans = [seeded];
+      }
+
+      // One-time seed: September 2026 half marathon plan. Only seeds if no
+      // existing plan's name contains "Sept 2026" (idempotent — safe to rerun).
+      const hasSeptPlan = finalPlans.some((p) =>
+        p.name.toLowerCase().includes("sept 2026")
+      );
+      if (!hasSeptPlan) {
+        try {
+          const { plan: septPlan } = await seedSeptHMPlan(user.uid);
+          finalPlans = [...finalPlans, septPlan];
+        } catch (err) {
+          console.error("[SeedSeptHMPlan] error", err);
+        }
       }
 
       // Phase 2: auto-match cross-training plan sessions to HealthKit workouts.

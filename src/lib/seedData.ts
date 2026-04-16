@@ -1,4 +1,6 @@
 import { type RunningPlan, type PlannedRunEntry, type PlanRunType } from "@/types";
+import { createPlan } from "@/services/plans";
+import { fetchRaces, createRace } from "@/services/races";
 
 function entry(
   weekIndex: number,
@@ -135,3 +137,333 @@ export const DEFAULT_HALF_MARATHON_PLAN: Omit<RunningPlan, "id" | "createdAt" | 
     entries,
   })),
 };
+
+// ─── September 2026 Half Marathon Plan ───────────────────────────────────────
+//
+// 16-week plan targeting a 9:30–9:45 /mi half marathon on 2026-09-06.
+// Week 1 begins Monday 2026-05-18.
+// Parsed from the training CSV. OFF/rest days are omitted (no entry record).
+
+/** Convert a mm:ss pace string like "11:00" to seconds per mile (660). */
+function paceStringToSeconds(mmss: string): number {
+  const [mStr, sStr] = mmss.split(":");
+  const m = Number(mStr);
+  const s = Number(sStr);
+  return m * 60 + s;
+}
+
+/** Convert seconds-per-mile back to mm:ss string. Rounds to nearest second. */
+function secondsToPaceString(total: number): string {
+  const rounded = Math.round(total);
+  const m = Math.floor(rounded / 60);
+  const s = rounded % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+/** Midpoint of two mm:ss paces, returned as { seconds, mmss }. */
+function paceMidpoint(
+  a: string,
+  b: string
+): { seconds: number; mmss: string } {
+  const seconds = (paceStringToSeconds(a) + paceStringToSeconds(b)) / 2;
+  return { seconds, mmss: secondsToPaceString(seconds) };
+}
+
+/** Exact pace from a single mm:ss string. */
+function paceExact(a: string): { seconds: number; mmss: string } {
+  const seconds = paceStringToSeconds(a);
+  return { seconds, mmss: secondsToPaceString(seconds) };
+}
+
+function sept(
+  weekIndex: number,
+  weekday: number,
+  distanceMiles: number,
+  runType: PlanRunType,
+  pace: { seconds: number; mmss: string },
+  description: string,
+  notes: string | null = null
+): PlannedRunEntry {
+  return {
+    id: `sept-hm-w${weekIndex}-d${weekday}`,
+    weekIndex,
+    weekday,
+    dayOfWeek: weekday - 1,
+    distanceMiles,
+    runType,
+    paceTarget: pace.mmss,
+    targetPaceSecondsPerMile: pace.seconds,
+    description,
+    notes: notes ?? undefined,
+    targetHeartRate: null,
+  };
+}
+
+/**
+ * Flat list of all PlannedRunEntry records for the September 2026 half
+ * marathon plan. OFF days are intentionally absent.
+ */
+export const SEPT_HM_PLAN_ENTRIES: PlannedRunEntry[] = [
+  // Week 1 (Re-Entry) — starts Mon 2026-05-18, ~14 mi
+  sept(0, 1, 2.5, "outdoor", paceMidpoint("11:00", "11:15"),
+    "2.5 miles easy"),
+  sept(0, 2, 3.0, "outdoor", paceExact("11:00"),
+    "3 miles easy + 4x15s strides"),
+  sept(0, 4, 3.0, "outdoor", paceMidpoint("11:00", "11:15"),
+    "3 miles easy"),
+  sept(0, 6, 5.5, "longRun", paceMidpoint("10:50", "11:10"),
+    "5.5 miles easy"),
+
+  // Week 2 (Re-Entry) — ~16 mi
+  sept(1, 1, 3.0, "outdoor", paceMidpoint("10:50", "11:10"),
+    "3 miles easy"),
+  sept(1, 2, 3.5, "outdoor", paceExact("10:50"),
+    "3.5 miles easy + 4x20s strides"),
+  sept(1, 4, 3.0, "outdoor", paceMidpoint("10:50", "11:10"),
+    "3 miles easy"),
+  sept(1, 6, 6.5, "longRun", paceMidpoint("10:45", "11:00"),
+    "6.5 miles easy"),
+
+  // Week 3 (Re-Entry) — ~18 mi
+  sept(2, 1, 3.0, "outdoor", paceMidpoint("10:45", "11:10"),
+    "3 miles easy"),
+  sept(2, 2, 4.0, "outdoor", paceExact("10:45"),
+    "4 miles easy + 5x20s strides"),
+  sept(2, 3, 3.0, "outdoor", paceMidpoint("10:45", "11:10"),
+    "3 miles easy"),
+  sept(2, 4, 3.0, "outdoor", paceMidpoint("10:45", "11:10"),
+    "3 miles easy"),
+  sept(2, 6, 7.0, "longRun", paceMidpoint("10:40", "11:00"),
+    "7 miles easy"),
+
+  // Week 4 (Base Build) — ~20 mi
+  sept(3, 1, 3.0, "outdoor", paceMidpoint("10:45", "11:15"),
+    "3 miles easy"),
+  sept(3, 2, 4.0, "outdoor", paceMidpoint("10:00", "10:10"),
+    "2 easy + 2 @ tempo"),
+  sept(3, 3, 3.0, "outdoor", paceMidpoint("10:45", "11:15"),
+    "3 miles easy"),
+  sept(3, 4, 4.0, "outdoor", paceMidpoint("10:45", "11:15"),
+    "4 miles easy"),
+  sept(3, 6, 8.0, "longRun", paceMidpoint("10:40", "10:55"),
+    "8 miles"),
+
+  // Week 5 (Base Build) — ~22 mi
+  sept(4, 1, 3.0, "outdoor", paceMidpoint("10:45", "11:15"),
+    "3 miles easy"),
+  sept(4, 2, 5.0, "outdoor", paceMidpoint("9:55", "10:05"),
+    "2 easy + 3 @ tempo"),
+  sept(4, 3, 3.0, "outdoor", paceMidpoint("10:45", "11:15"),
+    "3 miles easy"),
+  sept(4, 4, 4.0, "outdoor", paceMidpoint("10:45", "11:15"),
+    "4 miles easy"),
+  sept(4, 6, 9.0, "longRun", paceMidpoint("10:35", "10:50"),
+    "9 miles"),
+
+  // Week 6 (Cutback) — ~18 mi
+  sept(5, 1, 3.0, "outdoor", paceMidpoint("10:45", "11:15"),
+    "3 miles easy"),
+  sept(5, 2, 4.0, "outdoor", paceExact("10:00"),
+    "2 easy + 2 @ tempo"),
+  sept(5, 3, 3.0, "outdoor", paceMidpoint("10:45", "11:15"),
+    "3 miles easy"),
+  sept(5, 4, 3.0, "outdoor", paceMidpoint("10:45", "11:15"),
+    "3 miles easy"),
+  sept(5, 6, 7.0, "longRun", paceMidpoint("10:40", "11:00"),
+    "7 miles easy"),
+
+  // Week 7 (Build) — ~24 mi
+  sept(6, 1, 3.0, "outdoor", paceMidpoint("10:45", "11:15"),
+    "3 miles easy"),
+  sept(6, 2, 5.5, "outdoor", paceExact("9:50"),
+    "2 easy + 3.5 @ tempo"),
+  sept(6, 3, 3.0, "outdoor", paceMidpoint("10:45", "11:15"),
+    "3 miles easy"),
+  sept(6, 4, 4.0, "outdoor", paceMidpoint("10:15", "10:30"),
+    "4 miles steady"),
+  sept(6, 6, 9.5, "longRun", paceMidpoint("10:30", "10:50"),
+    "9.5 miles"),
+
+  // Week 8 (Build) — ~26 mi
+  sept(7, 1, 3.0, "outdoor", paceMidpoint("10:45", "11:15"),
+    "3 miles easy"),
+  sept(7, 2, 5.0, "outdoor", paceMidpoint("9:35", "9:45"),
+    "2 easy + 4x6 min hard + 2 min jog"),
+  sept(7, 3, 3.0, "outdoor", paceMidpoint("10:45", "11:15"),
+    "3 miles easy"),
+  sept(7, 4, 4.0, "outdoor", paceMidpoint("10:45", "11:15"),
+    "4 miles easy"),
+  sept(7, 6, 10.0, "longRun", paceMidpoint("10:30", "10:50"),
+    "10 miles"),
+
+  // Week 9 (Build) — ~28 mi
+  sept(8, 1, 3.0, "outdoor", paceMidpoint("10:45", "11:15"),
+    "3 miles easy"),
+  sept(8, 2, 6.0, "outdoor", paceExact("9:45"),
+    "2 easy + 4 @ tempo"),
+  sept(8, 3, 4.0, "outdoor", paceMidpoint("10:45", "11:15"),
+    "4 miles easy"),
+  sept(8, 4, 5.0, "outdoor", paceMidpoint("10:45", "11:15"),
+    "5 miles easy"),
+  sept(8, 6, 10.5, "longRun", paceMidpoint("10:30", "10:50"),
+    "10.5 miles"),
+
+  // Week 10 (Cutback) — ~20 mi
+  sept(9, 1, 3.0, "outdoor", paceMidpoint("10:45", "11:15"),
+    "3 miles easy"),
+  sept(9, 2, 4.5, "outdoor", paceMidpoint("9:45", "9:55"),
+    "2 easy + 2.5 @ tempo"),
+  sept(9, 3, 3.0, "outdoor", paceMidpoint("10:45", "11:15"),
+    "3 miles easy"),
+  sept(9, 4, 4.0, "outdoor", paceMidpoint("10:45", "11:15"),
+    "4 miles easy"),
+  sept(9, 6, 8.0, "longRun", paceMidpoint("10:40", "11:00"),
+    "8 miles easy"),
+
+  // Week 11 (Peak) — ~30 mi
+  sept(10, 1, 3.0, "outdoor", paceMidpoint("10:45", "11:15"),
+    "3 miles easy"),
+  sept(10, 2, 8.0, "outdoor", paceMidpoint("9:30", "9:40"),
+    "2 easy + 3x2 miles hard"),
+  sept(10, 3, 4.0, "outdoor", paceMidpoint("10:45", "11:15"),
+    "4 miles easy"),
+  sept(10, 4, 5.0, "outdoor", paceMidpoint("10:10", "10:25"),
+    "5 miles steady"),
+  sept(10, 6, 11.0, "longRun", paceMidpoint("10:30", "10:50"),
+    "11 miles (last 2 @ 9:45)", "Last 2 miles @ 9:45"),
+
+  // Week 12 (Peak) — ~32 mi
+  sept(11, 1, 3.0, "outdoor", paceMidpoint("10:45", "11:15"),
+    "3 miles easy"),
+  sept(11, 2, 7.0, "outdoor", paceExact("9:35"),
+    "2 easy + 5 @ tempo"),
+  sept(11, 3, 4.0, "outdoor", paceMidpoint("10:45", "11:15"),
+    "4 miles easy"),
+  sept(11, 4, 5.0, "outdoor", paceMidpoint("10:45", "11:15"),
+    "5 miles easy"),
+  sept(11, 6, 12.0, "longRun", paceMidpoint("10:30", "10:50"),
+    "12 miles (last 3 @ 9:40)", "Last 3 miles @ 9:40"),
+
+  // Week 13 (Peak) — ~30 mi
+  sept(12, 1, 3.0, "outdoor", paceMidpoint("10:45", "11:15"),
+    "3 miles easy"),
+  sept(12, 2, 5.0, "outdoor", paceMidpoint("9:25", "9:35"),
+    "2 easy + 5x5 min hard + 2 min jog"),
+  sept(12, 3, 4.0, "outdoor", paceMidpoint("10:45", "11:15"),
+    "4 miles easy"),
+  sept(12, 4, 5.0, "outdoor", paceMidpoint("10:45", "11:15"),
+    "5 miles easy"),
+  sept(12, 6, 12.5, "longRun", paceMidpoint("10:30", "10:50"),
+    "12-13 miles (last 3 @ 9:35)", "Last 3 miles @ 9:35"),
+
+  // Week 14 (Sharpen) — ~25 mi
+  sept(13, 1, 3.0, "outdoor", paceMidpoint("10:45", "11:15"),
+    "3 miles easy"),
+  sept(13, 2, 6.0, "outdoor", paceMidpoint("9:30", "9:40"),
+    "2 easy + 4 @ race pace"),
+  sept(13, 3, 3.0, "outdoor", paceMidpoint("10:45", "11:15"),
+    "3 miles easy"),
+  sept(13, 4, 4.0, "outdoor", paceMidpoint("10:45", "11:15"),
+    "4 miles easy"),
+  sept(13, 6, 10.0, "longRun", paceMidpoint("10:30", "10:50"),
+    "10 miles (last 2 @ RP)", "Last 2 miles @ RP (9:35)"),
+
+  // Week 15 (Pre-Taper) — ~20 mi
+  sept(14, 1, 3.0, "outdoor", paceMidpoint("10:45", "11:15"),
+    "3 miles easy"),
+  sept(14, 2, 5.0, "outdoor", paceMidpoint("9:30", "9:40"),
+    "2 easy + 3 @ race pace"),
+  sept(14, 3, 3.0, "outdoor", paceMidpoint("10:45", "11:15"),
+    "3 miles easy"),
+  sept(14, 4, 3.0, "outdoor", paceMidpoint("10:45", "11:15"),
+    "3 miles easy"),
+  sept(14, 6, 8.0, "longRun", paceMidpoint("10:35", "10:50"),
+    "8 miles easy"),
+
+  // Week 16 (Taper + Race) — ~16 + race
+  sept(15, 1, 2.5, "outdoor", paceMidpoint("10:45", "11:15"),
+    "2.5 miles easy"),
+  sept(15, 2, 2.0, "outdoor", paceExact("10:45"),
+    "2 miles easy + 4x20s strides"),
+  sept(15, 3, 2.0, "outdoor", paceMidpoint("10:45", "11:15"),
+    "2 miles easy"),
+  sept(15, 4, 2.0, "outdoor", paceMidpoint("10:45", "11:15"),
+    "2 miles easy"),
+  sept(15, 7, 13.1, "longRun", paceMidpoint("9:30", "9:45"),
+    "Half Marathon — 13.1 miles",
+    "Goal: 9:30–9:45 /mi — linked to September Half Marathon race"),
+];
+
+/** Group a flat entry list into PlanWeek[] for the given week count. */
+function groupEntriesIntoWeeks(
+  entries: PlannedRunEntry[],
+  numberOfWeeks: number
+): { weekNumber: number; entries: PlannedRunEntry[] }[] {
+  const weeks: { weekNumber: number; entries: PlannedRunEntry[] }[] = [];
+  for (let i = 0; i < numberOfWeeks; i++) {
+    weeks.push({ weekNumber: i + 1, entries: [] });
+  }
+  for (const e of entries) {
+    if (e.weekIndex < 0 || e.weekIndex >= numberOfWeeks) continue;
+    weeks[e.weekIndex].entries.push(e);
+  }
+  return weeks;
+}
+
+/**
+ * Seed the September 2026 half marathon training plan for a user and link
+ * it to a matching Race record (created if none exists close to 2026-09-06).
+ *
+ * - Does NOT mark the plan active (user switches manually after their April race).
+ * - Idempotent at the call site: the Plans page checks for an existing plan
+ *   named "Sept 2026" before calling this.
+ */
+export async function seedSeptHMPlan(userId: string): Promise<{
+  plan: RunningPlan;
+  raceId: string;
+  raceCreated: boolean;
+}> {
+  // ── Race linkage ────────────────────────────────────────────────────────
+  const RACE_DATE = "2026-09-06";
+  const TARGET_PACE_SECONDS = 578; // midpoint of 9:30 (570s) and 9:45 (585s), rounded
+
+  let raceId: string;
+  let raceCreated = false;
+
+  const existingRaces = await fetchRaces(userId);
+  // Match within ±3 days of the target date, distance = halfMarathon
+  const targetDate = new Date(RACE_DATE + "T00:00:00").getTime();
+  const THREE_DAYS = 3 * 24 * 3600 * 1000;
+  const match = existingRaces.find((r) => {
+    if (r.raceDistance !== "halfMarathon") return false;
+    const d = new Date(r.raceDate + "T00:00:00").getTime();
+    return Math.abs(d - targetDate) <= THREE_DAYS;
+  });
+
+  if (match) {
+    raceId = match.id;
+  } else {
+    raceId = await createRace(userId, {
+      name: "September Half Marathon",
+      raceDate: RACE_DATE,
+      raceDistance: "halfMarathon",
+      targetPaceSecondsPerMile: TARGET_PACE_SECONDS,
+      isActive: false,
+    });
+    raceCreated = true;
+  }
+
+  // ── Plan ────────────────────────────────────────────────────────────────
+  const numberOfWeeks = 16;
+  const plan = await createPlan<RunningPlan>(userId, {
+    name: "Half Marathon — Sept 2026 (Sub 9:45)",
+    planType: "running",
+    startDate: "2026-05-18",
+    isActive: false,
+    isBuiltInDefault: false,
+    linkedRaceId: raceId,
+    weeks: groupEntriesIntoWeeks(SEPT_HM_PLAN_ENTRIES, numberOfWeeks),
+  });
+
+  return { plan, raceId, raceCreated };
+}

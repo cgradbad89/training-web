@@ -9,6 +9,8 @@ export interface PlannedRunEntry {
   dayOfWeek: number;   // 0=Mon … 6=Sun (legacy alias, weekday - 1)
   distanceMiles: number;
   paceTarget?: string; // e.g. "10:30"
+  /** Pace target expressed as seconds per mile. Optional companion to paceTarget. */
+  targetPaceSecondsPerMile?: number;
   runType?: PlanRunType;
   description?: string;
   notes?: string;
@@ -31,6 +33,8 @@ export interface RunningPlan {
   weeks: PlanWeek[];
   isActive: boolean;
   isBuiltInDefault?: boolean;
+  /** Optional link to a race in users/{uid}/halfMarathonRaces */
+  linkedRaceId?: string;
   createdAt: string;
   updatedAt: string;
 }
