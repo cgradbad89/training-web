@@ -44,6 +44,7 @@ import {
   Dumbbell,
   Footprints,
 } from "lucide-react";
+import { CalendarView } from "@/components/CalendarView";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -273,6 +274,7 @@ export default function PlansPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [mobileView, setMobileView] = useState<"list" | "detail">("list");
+  const [pageView, setPageView] = useState<"plans" | "calendar">("plans");
 
   const [showTypePicker, setShowTypePicker] = useState(false);
   const [pendingPlanType, setPendingPlanType] = useState<PlanType | null>(null);
@@ -586,7 +588,39 @@ export default function PlansPage() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] overflow-hidden">
+    <div className="flex flex-col h-[calc(100vh-4rem)] overflow-hidden">
+      {/* ── Tab toggle ──────────────────────────────────────────────────── */}
+      <div className="px-4 py-2 border-b border-border bg-card shrink-0 flex items-center gap-2">
+        {(["plans", "calendar"] as const).map((v) => (
+          <button
+            key={v}
+            onClick={() => setPageView(v)}
+            className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors capitalize ${
+              pageView === v
+                ? "bg-primary text-white"
+                : "text-textSecondary hover:text-textPrimary"
+            }`}
+          >
+            {v === "plans" ? "Plans" : "Calendar"}
+          </button>
+        ))}
+      </div>
+
+      {pageView === "calendar" ? (
+        <CalendarView
+          plans={plans.filter(
+            (p): p is RunningPlan | WorkoutPlan =>
+              isRunningPlan(p) || isWorkoutPlan(p)
+          )}
+          onRunningEventClick={(planId, weekIndex) => {
+            setPageView("plans");
+            setSelectedPlanId(planId);
+            setSelectedWeekIndex(weekIndex);
+            setMobileView("detail");
+          }}
+        />
+      ) : (
+      <div className="flex flex-1 overflow-hidden">
       {/* ── Left Panel: Plan List ────────────────────────────────────────── */}
       <div className={`${mobileView === "detail" ? "hidden lg:flex" : "flex"} w-full lg:w-64 shrink-0 border-r border-border bg-card flex-col`}>
         <div className="p-4 border-b border-border flex items-center justify-between">
@@ -1021,6 +1055,8 @@ export default function PlansPage() {
           </div>
         ) : null}
       </div>
+      </div>
+      )}
 
       {/* ── Modals ─────────────────────────────────────────────────────── */}
 
