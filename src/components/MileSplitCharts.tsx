@@ -82,7 +82,7 @@ function PaceBarChart({ splits }: { splits: MileSplit[] }) {
             width={52}
           />
           <Tooltip content={<PaceTooltip />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
-          <Bar dataKey="pace" radius={[6, 6, 0, 0]} fill="var(--color-primary, #3b82f6)" />
+          <Bar dataKey="pace" radius={[6, 6, 0, 0]} fill="var(--color-chart-pace)" />
         </BarChart>
       </ResponsiveContainer>
     </div>
@@ -168,9 +168,9 @@ function HRLineChart({ splits }: { splits: MileSplit[] }) {
           <Line
             type="monotone"
             dataKey="bpm"
-            stroke="#dc2626"
+            stroke="var(--color-chart-hr)"
             strokeWidth={2}
-            dot={{ r: 4, fill: "#dc2626" }}
+            dot={{ r: 4, fill: 'var(--color-chart-hr)' }}
             activeDot={{ r: 6 }}
           />
         </LineChart>

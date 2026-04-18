@@ -63,17 +63,17 @@ function formatHour(hour: number): string {
 
 function getColor(metric: string): string {
   const colors: Record<string, string> = {
-    weight: "#2563eb",
-    bmi: "#7c3aed",
-    hr: "#dc2626",
-    steps: "#16a34a",
-    exercise: "#ea580c",
-    calories: "#d97706",
-    stand: "#0891b2",
-    sleep: "#6366f1",
-    brush: "#0d9488",
+    weight:   "var(--color-chart-primary)",
+    bmi:      "var(--color-chart-secondary)",
+    hr:       "var(--color-chart-hr)",
+    steps:    "var(--color-chart-success)",
+    exercise: "var(--color-chart-orange)",
+    calories: "var(--color-chart-warning)",
+    stand:    "var(--color-chart-cyan)",
+    sleep:    "var(--color-recovery)",
+    brush:    "var(--color-chart-teal)",
   };
-  return colors[metric] ?? "#2563eb";
+  return colors[metric] ?? "var(--color-chart-primary)";
 }
 
 /** Filter out bad weight readings below 155 lb */
@@ -218,7 +218,7 @@ function KpiCard({
   const sb = statusBg(status);
   const iconColor = status !== "neutral" ? sc : color;
   const iconBg =
-    status !== "neutral" ? sb : `${color}18`;
+    status !== "neutral" ? sb : `color-mix(in srgb, ${color} 10%, transparent)`;
 
   return (
     <div
@@ -307,17 +307,17 @@ function TrendChart({
     return (
       <ResponsiveContainer width="100%" height={112}>
         <BarChart data={filtered} margin={chartMargin}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--color-chart-grid)" />
           <XAxis
             dataKey="date"
-            tick={{ fontSize: 9, fill: "#6b7280" }}
+            tick={{ fontSize: 9, fill: 'var(--color-chart-axis)' }}
             tickFormatter={formatDate}
             interval="preserveStartEnd"
             axisLine={false}
             tickLine={false}
           />
           <YAxis
-            tick={{ fontSize: 9, fill: "#6b7280" }}
+            tick={{ fontSize: 9, fill: 'var(--color-chart-axis)' }}
             tickFormatter={yFmt}
             axisLine={false}
             tickLine={false}
@@ -327,7 +327,15 @@ function TrendChart({
           <Tooltip
             formatter={(v) => [fmt(Number(v)), label]}
             labelFormatter={(v) => formatDate(String(v))}
-            contentStyle={{ fontSize: 11, borderRadius: 8 }}
+            contentStyle={{
+              fontSize: 11,
+              borderRadius: 8,
+              backgroundColor: 'var(--color-chart-tooltip-bg)',
+              border: '1px solid var(--color-border)',
+              color: 'var(--color-textPrimary)',
+            }}
+            labelStyle={{ color: 'var(--color-textSecondary)' }}
+            itemStyle={{ color: 'var(--color-textPrimary)' }}
           />
           {refValue && (
             <ReferenceLine
@@ -352,17 +360,17 @@ function TrendChart({
   return (
     <ResponsiveContainer width="100%" height={112}>
       <LineChart data={filtered} margin={chartMargin}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--color-chart-grid)" />
         <XAxis
           dataKey="date"
-          tick={{ fontSize: 9, fill: "#6b7280" }}
+          tick={{ fontSize: 9, fill: 'var(--color-chart-axis)' }}
           tickFormatter={formatDate}
           interval="preserveStartEnd"
           axisLine={false}
           tickLine={false}
         />
         <YAxis
-          tick={{ fontSize: 9, fill: "#6b7280" }}
+          tick={{ fontSize: 9, fill: 'var(--color-chart-axis)' }}
           tickFormatter={fmt}
           axisLine={false}
           tickLine={false}
@@ -372,7 +380,15 @@ function TrendChart({
         <Tooltip
           formatter={(v) => [fmt(Number(v)), label]}
           labelFormatter={(v) => formatDate(String(v))}
-          contentStyle={{ fontSize: 11, borderRadius: 8 }}
+          contentStyle={{
+            fontSize: 11,
+            borderRadius: 8,
+            backgroundColor: 'var(--color-chart-tooltip-bg)',
+            border: '1px solid var(--color-border)',
+            color: 'var(--color-textPrimary)',
+          }}
+          labelStyle={{ color: 'var(--color-textSecondary)' }}
+          itemStyle={{ color: 'var(--color-textPrimary)' }}
         />
         {refValue && (
           <ReferenceLine
@@ -721,16 +737,16 @@ export default function HealthPage() {
           ) : (
             <ResponsiveContainer width="100%" height={220}>
               <LineChart data={hourlyHRChartData} margin={{ top: 4, right: 8, bottom: 0, left: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--color-chart-grid)" />
                 <XAxis
                   dataKey="label"
-                  tick={{ fontSize: 9, fill: "#6b7280" }}
+                  tick={{ fontSize: 9, fill: 'var(--color-chart-axis)' }}
                   interval={2}
                   axisLine={false}
                   tickLine={false}
                 />
                 <YAxis
-                  tick={{ fontSize: 9, fill: "#6b7280" }}
+                  tick={{ fontSize: 9, fill: 'var(--color-chart-axis)' }}
                   tickFormatter={(v: number) => `${Math.round(v)}`}
                   axisLine={false}
                   tickLine={false}
@@ -740,7 +756,15 @@ export default function HealthPage() {
                 <Tooltip
                   formatter={(v) => [`${Math.round(Number(v))} bpm`, "Heart Rate"]}
                   labelFormatter={(label) => `at ${String(label)}`}
-                  contentStyle={{ fontSize: 11, borderRadius: 8 }}
+                  contentStyle={{
+                    fontSize: 11,
+                    borderRadius: 8,
+                    backgroundColor: 'var(--color-chart-tooltip-bg)',
+                    border: '1px solid var(--color-border)',
+                    color: 'var(--color-textPrimary)',
+                  }}
+                  labelStyle={{ color: 'var(--color-textSecondary)' }}
+                  itemStyle={{ color: 'var(--color-textPrimary)' }}
                 />
                 <Line
                   type="monotone"

@@ -183,18 +183,26 @@ function PlanAdherenceChart({ data }: { data: WeekAdherenceData[] }) {
               `${Number(v).toFixed(1)} mi`,
               name === "planned" ? "Planned" : "Actual",
             ]}
-            contentStyle={{ fontSize: 12 }}
+            contentStyle={{
+              fontSize: 12,
+              backgroundColor: 'var(--color-chart-tooltip-bg)',
+              border: '1px solid var(--color-border)',
+              borderRadius: '0.375rem',
+              color: 'var(--color-textPrimary)',
+            }}
+            labelStyle={{ color: 'var(--color-textSecondary)' }}
+            itemStyle={{ color: 'var(--color-textPrimary)' }}
           />
-          <Bar dataKey="planned" fill="#93c5fd" radius={[4, 4, 0, 0]} name="planned" />
-          <Bar dataKey="actual" fill="#2563eb" radius={[4, 4, 0, 0]} name="actual" />
+          <Bar dataKey="planned" fill="var(--color-chart-primary-muted)" radius={[4, 4, 0, 0]} name="planned" />
+          <Bar dataKey="actual" fill="var(--color-chart-primary)" radius={[4, 4, 0, 0]} name="actual" />
         </BarChart>
       </ResponsiveContainer>
       <div className="flex items-center gap-4 mt-3 text-xs text-textSecondary">
         <span className="flex items-center gap-1">
-          <span className="inline-block w-3 h-3 rounded bg-[#93c5fd]" /> Planned
+          <span className="inline-block w-3 h-3 rounded" style={{ backgroundColor: 'var(--color-chart-primary-muted)' }} /> Planned
         </span>
         <span className="flex items-center gap-1">
-          <span className="inline-block w-3 h-3 rounded bg-[#2563eb]" /> Actual
+          <span className="inline-block w-3 h-3 rounded" style={{ backgroundColor: 'var(--color-chart-primary)' }} /> Actual
         </span>
       </div>
     </Card>

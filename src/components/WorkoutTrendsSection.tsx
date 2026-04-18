@@ -408,13 +408,13 @@ export function WorkoutTrendsSection({
               <Bar
                 dataKey="workout"
                 stackId="a"
-                fill="#a855f7"
+                fill="var(--color-chart-secondary)"
                 radius={[0, 0, 0, 0]}
               />
               <Bar
                 dataKey="pilates"
                 stackId="a"
-                fill="#14b8a6"
+                fill="var(--color-chart-teal)"
                 radius={[6, 6, 0, 0]}
               />
             </BarChart>
@@ -481,9 +481,9 @@ export function WorkoutTrendsSection({
                       <Line
                         type="monotone"
                         dataKey="weight"
-                        stroke="#a855f7"
+                        stroke="var(--color-chart-secondary)"
                         strokeWidth={2}
-                        dot={{ r: 4, fill: "#a855f7", strokeWidth: 0 }}
+                        dot={{ r: 4, fill: 'var(--color-chart-secondary)', strokeWidth: 0 }}
                         activeDot={{ r: 6 }}
                       />
                     </LineChart>
@@ -529,9 +529,9 @@ export function WorkoutTrendsSection({
               <Line
                 type="monotone"
                 dataKey="volume"
-                stroke="#a855f7"
+                stroke="var(--color-chart-secondary)"
                 strokeWidth={2}
-                dot={{ r: 4, fill: "#a855f7", strokeWidth: 0 }}
+                dot={{ r: 4, fill: 'var(--color-chart-secondary)', strokeWidth: 0 }}
                 activeDot={{ r: 6 }}
                 connectNulls
               />

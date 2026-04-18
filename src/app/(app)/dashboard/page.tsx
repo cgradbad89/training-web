@@ -983,13 +983,21 @@ export default function DashboardPage() {
               />
               <Tooltip
                 formatter={(v) => [`${Number(v).toFixed(1)} mi`, "Miles"]}
-                contentStyle={{ fontSize: 12 }}
+                contentStyle={{
+                  fontSize: 12,
+                  backgroundColor: 'var(--color-chart-tooltip-bg)',
+                  border: '1px solid var(--color-border)',
+                  borderRadius: '0.375rem',
+                  color: 'var(--color-textPrimary)',
+                }}
+                labelStyle={{ color: 'var(--color-textSecondary)' }}
+                itemStyle={{ color: 'var(--color-textPrimary)' }}
               />
               <Bar dataKey="miles" radius={[4, 4, 0, 0]}>
                 {weeklyMileageData.map((entry, i) => (
                   <Cell
                     key={i}
-                    fill={entry.isCurrentWeek ? "#2563eb" : "#93c5fd"}
+                    fill={entry.isCurrentWeek ? 'var(--color-chart-primary)' : 'var(--color-chart-primary-muted)'}
                   />
                 ))}
               </Bar>

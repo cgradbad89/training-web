@@ -645,7 +645,15 @@ export default function PersonalInsightsPage() {
               <Tooltip
                 formatter={(v) => [formatPaceLabel(Number(v)) + " /mi"]}
                 labelFormatter={(l) => `Week of ${l}`}
-                contentStyle={{ fontSize: 12 }}
+                contentStyle={{
+                  fontSize: 12,
+                  backgroundColor: 'var(--color-chart-tooltip-bg)',
+                  border: '1px solid var(--color-border)',
+                  borderRadius: '0.375rem',
+                  color: 'var(--color-textPrimary)',
+                }}
+                labelStyle={{ color: 'var(--color-textSecondary)' }}
+                itemStyle={{ color: 'var(--color-textPrimary)' }}
               />
               <Legend
                 wrapperStyle={{ fontSize: 11 }}
@@ -656,7 +664,7 @@ export default function PersonalInsightsPage() {
               <Line
                 type="monotone"
                 dataKey="short"
-                stroke="#f97316"
+                stroke="var(--color-chart-orange)"
                 strokeWidth={2}
                 dot={{ r: 3 }}
                 connectNulls
@@ -665,7 +673,7 @@ export default function PersonalInsightsPage() {
               <Line
                 type="monotone"
                 dataKey="medium"
-                stroke="#2563eb"
+                stroke="var(--color-chart-primary)"
                 strokeWidth={2}
                 dot={{ r: 3 }}
                 connectNulls
@@ -674,7 +682,7 @@ export default function PersonalInsightsPage() {
               <Line
                 type="monotone"
                 dataKey="long"
-                stroke="#16a34a"
+                stroke="var(--color-chart-success)"
                 strokeWidth={2}
                 dot={{ r: 3 }}
                 connectNulls

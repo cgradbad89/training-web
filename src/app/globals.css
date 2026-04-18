@@ -25,6 +25,21 @@
   --color-warning-raw:  #ca8a04; /* yellow-600 */
   --color-danger-raw:   #dc2626; /* red-600   */
   --color-recovery-raw: #6366f1; /* indigo-500 — for "deload" load badge */
+
+  /* ── Chart color tokens (light) ─────────────────────────────── */
+  --color-chart-primary-raw:        #2563eb; /* blue-600 — main data series */
+  --color-chart-primary-muted-raw:  #93c5fd; /* blue-300 — inactive/background bars */
+  --color-chart-secondary-raw:      #7c3aed; /* violet-700 — workout data */
+  --color-chart-secondary-muted-raw:#c4b5fd; /* violet-300 */
+  --color-chart-hr-raw:             #dc2626; /* red-600 — heart rate */
+  --color-chart-success-raw:        #16a34a; /* green-600 — positive data */
+  --color-chart-warning-raw:        #d97706; /* amber-600 — caution data */
+  --color-chart-orange-raw:         #f97316; /* orange-500 — short runs / exercise */
+  --color-chart-teal-raw:           #14b8a6; /* teal-500 — pilates / brush */
+  --color-chart-cyan-raw:           #0891b2; /* cyan-600 — stand hours */
+  --color-chart-grid-raw:           #e5e7eb; /* gray-200 — gridlines */
+  --color-chart-axis-raw:           #6b7280; /* gray-500 — axis labels */
+  --color-chart-tooltip-bg-raw:     #ffffff; /* tooltip background */
 }
 
 @media (prefers-color-scheme: dark) {
@@ -46,6 +61,21 @@
     --color-warning-raw:  #eab308; /* yellow-500 */
     --color-danger-raw:   #ef4444; /* red-500   */
     --color-recovery-raw: #818cf8; /* indigo-400 */
+
+    /* ── Chart color tokens (dark overrides) ──────────────────── */
+    --color-chart-primary-raw:        #60a5fa; /* blue-400 — brighter on dark bg */
+    --color-chart-primary-muted-raw:  #1e3a5f; /* deep navy — inactive bars */
+    --color-chart-secondary-raw:      #a78bfa; /* violet-400 */
+    --color-chart-secondary-muted-raw:#3b1f6e; /* deep violet */
+    --color-chart-hr-raw:             #f87171; /* red-400 */
+    --color-chart-success-raw:        #4ade80; /* green-400 */
+    --color-chart-warning-raw:        #fbbf24; /* amber-400 */
+    --color-chart-orange-raw:         #fb923c; /* orange-400 */
+    --color-chart-teal-raw:           #2dd4bf; /* teal-400 */
+    --color-chart-cyan-raw:           #22d3ee; /* cyan-400 */
+    --color-chart-grid-raw:           #334155; /* slate-700 */
+    --color-chart-axis-raw:           #94a3b8; /* slate-400 */
+    --color-chart-tooltip-bg-raw:     #1e293b; /* slate-800 */
   }
 }
 
@@ -70,6 +100,22 @@
   --color-warning:  var(--color-warning-raw);
   --color-danger:   var(--color-danger-raw);
   --color-recovery: var(--color-recovery-raw);
+
+  /* Chart color tokens — referenced directly in Recharts color props */
+  --color-chart-primary:        var(--color-chart-primary-raw);
+  --color-chart-primary-muted:  var(--color-chart-primary-muted-raw);
+  --color-chart-secondary:      var(--color-chart-secondary-raw);
+  --color-chart-secondary-muted:var(--color-chart-secondary-muted-raw);
+  --color-chart-pace:           var(--color-chart-primary-raw); /* alias */
+  --color-chart-hr:             var(--color-chart-hr-raw);
+  --color-chart-success:        var(--color-chart-success-raw);
+  --color-chart-warning:        var(--color-chart-warning-raw);
+  --color-chart-orange:         var(--color-chart-orange-raw);
+  --color-chart-teal:           var(--color-chart-teal-raw);
+  --color-chart-cyan:           var(--color-chart-cyan-raw);
+  --color-chart-grid:           var(--color-chart-grid-raw);
+  --color-chart-axis:           var(--color-chart-axis-raw);
+  --color-chart-tooltip-bg:     var(--color-chart-tooltip-bg-raw);
 }
 
 body {
