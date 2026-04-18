@@ -1,8 +1,52 @@
 @import "tailwindcss";
 
+/*
+ * Tailwind v4 reads design tokens from the `@theme` block below. Those
+ * tokens reference regular CSS variables defined in `:root`, and the
+ * dark-mode override block re-points the :root variables — which means
+ * every utility class like `bg-card`, `text-textPrimary`, `border-border`
+ * automatically flips to the dark palette without any component edits.
+ */
+
 :root {
+  /* ── Light-mode design system tokens (defaults) ─────────────── */
   --background: #ffffff;
   --foreground: #111827;
+
+  --color-textPrimary-raw:   #111827; /* gray-900 */
+  --color-textSecondary-raw: #6b7280; /* gray-500 */
+
+  --color-card-raw:    #ffffff;
+  --color-surface-raw: #f9fafb; /* gray-50 */
+  --color-border-raw:  #e5e7eb; /* gray-200 */
+
+  --color-primary-raw:  #2563eb; /* blue-600  */
+  --color-success-raw:  #16a34a; /* green-600 */
+  --color-warning-raw:  #ca8a04; /* yellow-600 */
+  --color-danger-raw:   #dc2626; /* red-600   */
+  --color-recovery-raw: #6366f1; /* indigo-500 — for "deload" load badge */
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* ── Dark-mode token overrides ────────────────────────────── */
+    --background: #0f172a; /* slate-900 */
+    --foreground: #f1f5f9; /* slate-100 */
+
+    --color-textPrimary-raw:   #f1f5f9; /* slate-100 */
+    --color-textSecondary-raw: #94a3b8; /* slate-400 — ~5:1 on card */
+
+    --color-card-raw:    #1e293b; /* slate-800 */
+    --color-surface-raw: #0f172a; /* slate-900 (matches page background) */
+    --color-border-raw:  #334155; /* slate-700 */
+
+    /* Brighter brand/status colors for legibility on dark cards */
+    --color-primary-raw:  #3b82f6; /* blue-500  */
+    --color-success-raw:  #22c55e; /* green-500 */
+    --color-warning-raw:  #eab308; /* yellow-500 */
+    --color-danger-raw:   #ef4444; /* red-500   */
+    --color-recovery-raw: #818cf8; /* indigo-400 */
+  }
 }
 
 @theme inline {
@@ -11,26 +55,21 @@
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 
-  /* ── Design system tokens ─────────────────────────────────── */
-  --color-textPrimary:   #111827; /* gray-900 */
-  --color-textSecondary: #6b7280; /* gray-500 */
+  /* Utility classes like bg-card resolve to these — pointed at the
+     raw light/dark variables above so one prefers-color-scheme switch
+     cascades through the whole app. */
+  --color-textPrimary:   var(--color-textPrimary-raw);
+  --color-textSecondary: var(--color-textSecondary-raw);
 
-  --color-card:    #ffffff;
-  --color-surface: #f9fafb; /* gray-50 */
-  --color-border:  #e5e7eb; /* gray-200 */
+  --color-card:    var(--color-card-raw);
+  --color-surface: var(--color-surface-raw);
+  --color-border:  var(--color-border-raw);
 
-  --color-primary:  #2563eb; /* blue-600  */
-  --color-success:  #16a34a; /* green-600 */
-  --color-warning:  #ca8a04; /* yellow-600 */
-  --color-danger:   #dc2626; /* red-600   */
-  --color-recovery: #6366f1; /* indigo-500 — for "deload" load badge */
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0f172a;
-    --foreground: #f1f5f9;
-  }
+  --color-primary:  var(--color-primary-raw);
+  --color-success:  var(--color-success-raw);
+  --color-warning:  var(--color-warning-raw);
+  --color-danger:   var(--color-danger-raw);
+  --color-recovery: var(--color-recovery-raw);
 }
 
 body {
