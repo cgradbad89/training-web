@@ -27,6 +27,7 @@ import { WeekNavigator } from "@/components/layout/WeekNavigator";
 import { MetricBadge } from "@/components/ui/MetricBadge";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { WeekCalendar } from "@/components/WeekCalendar";
 import { useAuth } from "@/hooks/useAuth";
 import { onHealthWorkoutsSnapshot } from "@/services/healthWorkouts";
 import { prefetchRoutes } from "@/utils/routeCache";
@@ -47,7 +48,6 @@ import {
 import {
   weekStart as getWeekStart,
   weekEnd as getWeekEnd,
-  formatShortDate,
   isSameWeek,
 } from "@/utils/dates";
 import { type HealthWorkout } from "@/types/healthWorkout";
@@ -399,13 +399,13 @@ function PlanProgressCard({ activePlan, workouts, weekStart, weekEnd }: PlanProg
   if (!activePlan) {
     return (
       <Card>
-        <CardTitle>Training Plan</CardTitle>
+        <CardTitle>Running Plan</CardTitle>
         <EmptyState
-          title="No active plan"
+          title="No active running plan"
           description="Create a training plan to track your weekly targets."
           action={
             <Link href="/plans" className="text-sm text-primary hover:underline">
-              Create Plan →
+              Go to Plans →
             </Link>
           }
         />
@@ -431,7 +431,7 @@ function PlanProgressCard({ activePlan, workouts, weekStart, weekEnd }: PlanProg
 
   return (
     <Card>
-      <CardTitle>Training Plan</CardTitle>
+      <CardTitle>Running Plan</CardTitle>
       <p className="text-sm font-semibold text-textPrimary mb-0.5">{activePlan.name}</p>
       <p className="text-xs text-textSecondary mb-4">
         Week {planWeek ? planWeek.weekNumber : "—"} of {activePlan.weeks.length}
@@ -511,7 +511,22 @@ function WorkoutPlanProgressCard({
   activeWorkoutPlan,
   weekStart,
 }: WorkoutPlanProgressCardProps) {
-  if (!activeWorkoutPlan) return null;
+  if (!activeWorkoutPlan) {
+    return (
+      <Card>
+        <CardTitle>Workout Plan</CardTitle>
+        <EmptyState
+          title="No active workout plan"
+          description="Create a workout plan to track your weekly sessions."
+          action={
+            <Link href="/plans" className="text-sm text-primary hover:underline">
+              Go to Plans →
+            </Link>
+          }
+        />
+      </Card>
+    );
+  }
 
   const planStart = new Date(activeWorkoutPlan.startDate + "T00:00:00");
   const weekIndex = Math.floor(
@@ -633,11 +648,11 @@ function RaceGoalCard({ activeRace }: RaceGoalCardProps) {
       <Card>
         <CardTitle>Race Goal</CardTitle>
         <EmptyState
-          title="No active race"
-          description="Add a half marathon goal to track your target pace."
+          title="No upcoming race"
+          description="Add a race goal to track your target pace."
           action={
             <Link href="/races" className="text-sm text-primary hover:underline">
-              Add Race →
+              Go to Races →
             </Link>
           }
         />
@@ -856,19 +871,11 @@ export default function DashboardPage() {
 
   // ─── KPI data ────────────────────────────────────────────────────────────────
 
-  const thisWeekRuns = useMemo(
-    () => workouts.filter((w) => w.isRunLike && isInWeek(w, selectedWeekStart, selectedWeekEnd)),
-    [workouts, selectedWeekStart, selectedWeekEnd]
-  );
-
-  const actualMiles = useMemo(
-    () => thisWeekRuns.reduce((s, w) => s + w.distanceMiles, 0),
-    [thisWeekRuns]
-  );
-
-  const weekRunCount = thisWeekRuns.length;
-
-  const { fourWeekAvg, weeklyMileageData } = useMemo(() => {
+  // 8-week mileage trend data — drives the bar chart below the calendar.
+  // (Previously also computed fourWeekAvg / actual / planned counts for the
+  // KPI strip; those tiles were removed in the two-column redesign because
+  // their info now lives in Training Load, Running Plan, and Race Goal.)
+  const weeklyMileageData = useMemo(() => {
     const allRuns = workouts.filter((w) => w.isRunLike);
     const runsByWeek = new Map<string, number>();
     allRuns.forEach((run) => {
@@ -878,7 +885,7 @@ export default function DashboardPage() {
       runsByWeek.set(key, (runsByWeek.get(key) ?? 0) + run.distanceMiles);
     });
 
-    const data = Array.from({ length: 8 }, (_, i) => {
+    return Array.from({ length: 8 }, (_, i) => {
       const weekDate = new Date(selectedWeekStart);
       weekDate.setDate(weekDate.getDate() - (7 - i) * 7);
       const key = weekDate.toISOString().split("T")[0];
@@ -887,27 +894,7 @@ export default function DashboardPage() {
       const label = weekDate.toLocaleDateString("en-US", { month: "short", day: "numeric" });
       return { label, miles, isCurrentWeek, key };
     });
-
-    const recentWeeks = data.slice(3, 7).map((w) => w.miles);
-    const avg =
-      recentWeeks.length > 0
-        ? recentWeeks.reduce((a, b) => a + b, 0) / recentWeeks.length
-        : 0;
-
-    return { fourWeekAvg: avg, weeklyMileageData: data };
   }, [workouts, selectedWeekStart]);
-
-  const plannedRunCount = useMemo(() => {
-    if (!activePlan) return 0;
-    const planStart = new Date(activePlan.startDate);
-    const weekIndex = Math.floor(
-      (selectedWeekStart.getTime() - planStart.getTime()) / (7 * 24 * 60 * 60 * 1000)
-    );
-    if (weekIndex < 0 || weekIndex >= activePlan.weeks.length) return 0;
-    return activePlan.weeks[weekIndex].entries.filter((e) => e.distanceMiles > 0).length;
-  }, [activePlan, selectedWeekStart]);
-
-  const daysUntilRaceCount = activeRace ? Math.max(0, daysUntil(activeRace.raceDate)) : 0;
 
   if (loading) {
     return (
@@ -933,80 +920,17 @@ export default function DashboardPage() {
         plannedMiles={plannedMiles}
       />
 
-      {/* ── Weekly KPI Row ──────────────────────────────────── */}
-      <div className="grid grid-cols-3 gap-4">
-
-        {/* KPI 1 — Weekly Mileage vs 4-week average */}
-        <div className="bg-card rounded-2xl border border-border p-4">
-          <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-1">
-            vs Recent Avg
-          </p>
-          <p className="text-2xl font-bold text-textPrimary">
-            {actualMiles.toFixed(1)}
-            <span className="text-sm font-normal text-textSecondary ml-1">mi</span>
-          </p>
-          <p className="text-xs text-textSecondary mt-1">
-            {fourWeekAvg > 0 ? (
-              <>
-                {actualMiles >= fourWeekAvg ? (
-                  <span className="text-success">
-                    +{(actualMiles - fourWeekAvg).toFixed(1)} above
-                  </span>
-                ) : (
-                  <span className="text-textSecondary">
-                    {(fourWeekAvg - actualMiles).toFixed(1)} below
-                  </span>
-                )}
-                {" "}4-wk avg ({fourWeekAvg.toFixed(1)} mi/wk)
-              </>
-            ) : (
-              "—"
-            )}
-          </p>
-        </div>
-
-        {/* KPI 2 — Runs this week vs plan */}
-        <div className="bg-card rounded-2xl border border-border p-4">
-          <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-1">
-            Runs This Week
-          </p>
-          <p className="text-2xl font-bold text-textPrimary">
-            {weekRunCount}
-            {plannedRunCount > 0 && (
-              <span className="text-sm font-normal text-textSecondary ml-1">
-                / {plannedRunCount} planned
-              </span>
-            )}
-          </p>
-          <p className="text-xs text-textSecondary mt-1">
-            {weekRunCount >= plannedRunCount && plannedRunCount > 0 ? (
-              <span className="text-success">On track</span>
-            ) : weekRunCount > 0 ? (
-              `${plannedRunCount - weekRunCount} remaining`
-            ) : (
-              "No runs logged yet"
-            )}
-          </p>
-        </div>
-
-        {/* KPI 3 — Days until race */}
-        <div className="bg-card rounded-2xl border border-border p-4">
-          <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-1">
-            Race Countdown
-          </p>
-          {activeRace ? (
-            <>
-              <p className="text-2xl font-bold text-textPrimary">
-                {daysUntilRaceCount}
-                <span className="text-sm font-normal text-textSecondary ml-1">days</span>
-              </p>
-              <p className="text-xs text-textSecondary mt-1 truncate">{activeRace.name}</p>
-            </>
-          ) : (
-            <p className="text-2xl font-bold text-textSecondary">—</p>
-          )}
-        </div>
-      </div>
+      {/* Week calendar — current week's planned sessions, no navigation controls */}
+      <section>
+        <WeekCalendar
+          plans={[
+            ...(activePlan ? [activePlan] : []),
+            ...(activeWorkoutPlan ? [activeWorkoutPlan] : []),
+          ]}
+          actualRuns={workouts}
+          weekStart={selectedWeekStart}
+        />
+      </section>
 
       {/* ── 8-Week Mileage Trend ────────────────────────────── */}
       {weeklyMileageData.length > 0 && (
@@ -1043,36 +967,33 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Row 3: Two-column layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
-        {/* Left column (3/5) */}
-        <div className="lg:col-span-3 flex flex-col gap-5">
-          <WorkoutSummaryCard
-            workouts={workouts}
-            weekStart={selectedWeekStart}
-            weekEnd={selectedWeekEnd}
-          />
-        </div>
-
-        {/* Right column (2/5) */}
-        <div className="lg:col-span-2 flex flex-col gap-5">
-          <PlanProgressCard
-            activePlan={activePlan}
-            workouts={workouts}
-            weekStart={selectedWeekStart}
-            weekEnd={selectedWeekEnd}
-          />
-          <WorkoutPlanProgressCard
-            activeWorkoutPlan={activeWorkoutPlan}
-            weekStart={selectedWeekStart}
-          />
-          <ThisWeekRunsCard
-            workouts={workouts}
-            weekStart={selectedWeekStart}
-          />
-          <RaceGoalCard activeRace={activeRace} />
-          <TrainingLoadCard workouts={workouts} />
-        </div>
+      {/* ── Two-column tile grid ───────────────────────────────────────────
+        Tiles flow left-to-right then wrap. With 2 cols on md+ this puts
+        Running on the left, Workout on the right, etc. With 1 col on
+        mobile they stack in interleaved order: Running plan, Workout plan,
+        Runs, Workouts, Race, Load. */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <PlanProgressCard
+          activePlan={activePlan}
+          workouts={workouts}
+          weekStart={selectedWeekStart}
+          weekEnd={selectedWeekEnd}
+        />
+        <WorkoutPlanProgressCard
+          activeWorkoutPlan={activeWorkoutPlan}
+          weekStart={selectedWeekStart}
+        />
+        <ThisWeekRunsCard
+          workouts={workouts}
+          weekStart={selectedWeekStart}
+        />
+        <WorkoutSummaryCard
+          workouts={workouts}
+          weekStart={selectedWeekStart}
+          weekEnd={selectedWeekEnd}
+        />
+        <RaceGoalCard activeRace={activeRace} />
+        <TrainingLoadCard workouts={workouts} />
       </div>
     </div>
   );
