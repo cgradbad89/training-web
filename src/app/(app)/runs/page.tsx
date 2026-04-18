@@ -379,115 +379,125 @@ function RunRow({
     : null;
 
   return (
-    <div onClick={onRowClick} className="flex items-center gap-3 py-3 px-4 hover:bg-surface rounded-xl transition-colors group cursor-pointer">
-      {/* Col 1: Date */}
-      <div className="flex flex-col items-center w-9 shrink-0 select-none">
-        <span className="text-[10px] font-semibold text-textSecondary leading-none">{dayAbbrev}</span>
-        <span className="text-sm font-bold text-textPrimary leading-tight">{dayNum}</span>
-      </div>
+    <div onClick={onRowClick} className="py-3 px-4 hover:bg-surface rounded-xl transition-colors group cursor-pointer">
+      <div className="flex items-center gap-3">
+        {/* Col 1: Date */}
+        <div className="flex flex-col items-center w-9 shrink-0 select-none">
+          <span className="text-[10px] font-semibold text-textSecondary leading-none">{dayAbbrev}</span>
+          <span className="text-sm font-bold text-textPrimary leading-tight">{dayNum}</span>
+        </div>
 
-      {/* Col 2: Run info */}
-      <div className="flex flex-col min-w-0 flex-1 gap-0.5">
-        <div className="flex items-center gap-1.5">
-          <span className="text-sm font-medium text-textPrimary truncate max-w-[180px]">
-            {run.displayType}
-          </span>
-          {isDuplicate && (
-            <span className="text-warning" title="Possible duplicate — click to view and exclude if needed">
-              <AlertTriangle size={12} />
+        {/* Col 2: Run info */}
+        <div className="flex flex-col min-w-0 flex-1 gap-0.5">
+          <div className="flex items-center gap-1.5">
+            <span className="text-sm font-medium text-textPrimary truncate max-w-[180px]">
+              {run.displayType}
             </span>
+            {isDuplicate && (
+              <span className="text-warning" title="Possible duplicate — click to view and exclude if needed">
+                <AlertTriangle size={12} />
+              </span>
+            )}
+          </div>
+          {/* Tag: sm+ only — on mobile it renders below the row */}
+          <span className={`hidden sm:inline-block self-start text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${RUN_TAG_STYLES[tag]}`}>
+            {RUN_TAG_LABELS[tag]}
+          </span>
+        </div>
+
+        {/* Col 3: Distance */}
+        <div className="w-16 shrink-0 text-sm font-semibold text-textPrimary tabular-nums text-right">
+          {formatMiles(run.distanceMiles)} mi
+        </div>
+
+        {/* Col 4: Pace */}
+        <div className="w-20 shrink-0 text-sm text-textPrimary tabular-nums text-right">
+          {getPaceDisplay(run)}
+        </div>
+
+        {/* Col 5: Heart Rate — hidden on mobile to prevent overflow */}
+        <div className="hidden sm:block w-16 shrink-0 text-sm text-textSecondary tabular-nums text-right">
+          {run.avgHeartRate ? `${Math.round(run.avgHeartRate)} bpm` : "—"}
+        </div>
+
+        {/* Col 6: Duration — hidden on mobile */}
+        <div className="hidden lg:block w-16 shrink-0 text-sm text-textSecondary tabular-nums text-right">
+          {formatDuration(run.durationSeconds)}
+        </div>
+
+        {/* Col 7: Efficiency */}
+        <div className="shrink-0">
+          <MetricBadge
+            label="Eff"
+            value={displayScoreStr}
+            level={displayScoreStr === "—" ? "neutral" : effBadgeLevel}
+          />
+        </div>
+
+        {/* Col 8: Shoe — hidden on mobile to prevent overflow */}
+        <div className="hidden sm:block relative shrink-0 w-28" data-shoe-dropdown="true" onClick={(e) => e.stopPropagation()}>
+          {shoeName ? (
+            <button
+              onClick={onToggleDropdown}
+              data-shoe-dropdown="true"
+              className="text-xs bg-success/10 text-success px-2 py-0.5 rounded-full hover:bg-success/20 transition-colors"
+            >
+              {shoeName}
+            </button>
+          ) : (
+            <button
+              onClick={onToggleDropdown}
+              data-shoe-dropdown="true"
+              className="text-xs text-textSecondary hover:text-primary cursor-pointer transition-colors"
+            >
+              — assign
+            </button>
+          )}
+
+          {isDropdownOpen && shoes.length > 0 && (
+            <div
+              data-shoe-dropdown="true"
+              className="absolute right-0 top-full mt-1 bg-card border border-border rounded-xl shadow-lg z-50 min-w-[160px] py-1"
+            >
+              {shoes.map((shoe) => {
+                const name = shoe.name || `${shoe.brand} ${shoe.model}`.trim();
+                return (
+                  <button
+                    key={shoe.id}
+                    onClick={() => onAssign(shoe.id)}
+                    data-shoe-dropdown="true"
+                    className={`w-full text-left px-4 py-2 text-sm hover:bg-surface cursor-pointer transition-colors ${
+                      assignedShoeId === shoe.id
+                        ? "font-semibold text-primary"
+                        : "text-textPrimary"
+                    }`}
+                  >
+                    {name}
+                  </button>
+                );
+              })}
+              <div className="border-t border-border my-1" />
+              <button
+                onClick={() => onAssign(null)}
+                data-shoe-dropdown="true"
+                className={`w-full text-left px-4 py-2 text-sm hover:bg-surface cursor-pointer transition-colors ${
+                  !assignedShoeId
+                    ? "font-semibold text-primary"
+                    : "text-textSecondary"
+                }`}
+              >
+                Unassigned
+              </button>
+            </div>
           )}
         </div>
-        <span className={`self-start text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${RUN_TAG_STYLES[tag]}`}>
+      </div>
+
+      {/* Tag: mobile only — sits below the data row, aligned with Col 2 */}
+      <div className="sm:hidden mt-0.5 ml-12">
+        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${RUN_TAG_STYLES[tag]}`}>
           {RUN_TAG_LABELS[tag]}
         </span>
-      </div>
-
-      {/* Col 3: Distance */}
-      <div className="w-16 shrink-0 text-sm font-semibold text-textPrimary tabular-nums text-right">
-        {formatMiles(run.distanceMiles)} mi
-      </div>
-
-      {/* Col 4: Pace */}
-      <div className="w-20 shrink-0 text-sm text-textPrimary tabular-nums text-right">
-        {getPaceDisplay(run)}
-      </div>
-
-      {/* Col 5: Heart Rate */}
-      <div className="w-16 shrink-0 text-sm text-textSecondary tabular-nums text-right">
-        {run.avgHeartRate ? `${Math.round(run.avgHeartRate)} bpm` : "—"}
-      </div>
-
-      {/* Col 6: Duration — hidden on mobile */}
-      <div className="hidden lg:block w-16 shrink-0 text-sm text-textSecondary tabular-nums text-right">
-        {formatDuration(run.durationSeconds)}
-      </div>
-
-      {/* Col 7: Efficiency */}
-      <div className="shrink-0">
-        <MetricBadge
-          label="Eff"
-          value={displayScoreStr}
-          level={displayScoreStr === "—" ? "neutral" : effBadgeLevel}
-        />
-      </div>
-
-      {/* Col 8: Shoe */}
-      <div className="relative shrink-0 w-28" data-shoe-dropdown="true" onClick={(e) => e.stopPropagation()}>
-        {shoeName ? (
-          <button
-            onClick={onToggleDropdown}
-            data-shoe-dropdown="true"
-            className="text-xs bg-success/10 text-success px-2 py-0.5 rounded-full hover:bg-success/20 transition-colors"
-          >
-            {shoeName}
-          </button>
-        ) : (
-          <button
-            onClick={onToggleDropdown}
-            data-shoe-dropdown="true"
-            className="text-xs text-textSecondary hover:text-primary cursor-pointer transition-colors"
-          >
-            — assign
-          </button>
-        )}
-
-        {isDropdownOpen && shoes.length > 0 && (
-          <div
-            data-shoe-dropdown="true"
-            className="absolute right-0 top-full mt-1 bg-card border border-border rounded-xl shadow-lg z-50 min-w-[160px] py-1"
-          >
-            {shoes.map((shoe) => {
-              const name = shoe.name || `${shoe.brand} ${shoe.model}`.trim();
-              return (
-                <button
-                  key={shoe.id}
-                  onClick={() => onAssign(shoe.id)}
-                  data-shoe-dropdown="true"
-                  className={`w-full text-left px-4 py-2 text-sm hover:bg-surface cursor-pointer transition-colors ${
-                    assignedShoeId === shoe.id
-                      ? "font-semibold text-primary"
-                      : "text-textPrimary"
-                  }`}
-                >
-                  {name}
-                </button>
-              );
-            })}
-            <div className="border-t border-border my-1" />
-            <button
-              onClick={() => onAssign(null)}
-              data-shoe-dropdown="true"
-              className={`w-full text-left px-4 py-2 text-sm hover:bg-surface cursor-pointer transition-colors ${
-                !assignedShoeId
-                  ? "font-semibold text-primary"
-                  : "text-textSecondary"
-              }`}
-            >
-              Unassigned
-            </button>
-          </div>
-        )}
       </div>
     </div>
   );
