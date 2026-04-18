@@ -22,7 +22,7 @@
 
   --color-primary-raw:  #2563eb; /* blue-600  */
   --color-success-raw:  #16a34a; /* green-600 */
-  --color-warning-raw:  #ca8a04; /* yellow-600 */
+  --color-warning-raw:  #d97706; /* amber-600 — darkened from yellow-600 for WCAG AA 3:1 on white */
   --color-danger-raw:   #dc2626; /* red-600   */
   --color-recovery-raw: #6366f1; /* indigo-500 — for "deload" load badge */
 
@@ -93,9 +93,9 @@
     --color-level-good:       #713f12;
     --color-level-good-text:  #fbbf24;
     --color-level-fair:       #7c2d12;
-    --color-level-fair-text:  #fb923c;
+    --color-level-fair-text:  #fdba74; /* orange-300 — lightened from orange-400 for WCAG AA 4.5:1 */
     --color-level-poor:       #7f1d1d;
-    --color-level-poor-text:  #f87171;
+    --color-level-poor-text:  #fca5a5; /* red-300 — lightened from red-400 for WCAG AA 4.5:1 */
   }
 }
 
