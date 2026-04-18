@@ -203,7 +203,7 @@ function ShoeCard({ shoe, activities, assignments, onEdit, onManageRuns }: ShoeC
           <span
             className={`text-xs font-semibold px-2.5 py-1 rounded-full ${
               shoe.isRetired
-                ? "bg-gray-100 text-gray-500"
+                ? "bg-surface text-textSecondary"
                 : "bg-success/10 text-success"
             }`}
           >
@@ -490,6 +490,7 @@ function AddEditShoeModal({
           <button
             type="button"
             onClick={() => set("isRetired", !form.isRetired)}
+            // TODO: review for dark mode — bg-gray-400 toggle-off state not in token table
             className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors
               ${form.isRetired ? "bg-gray-400" : "bg-primary"}`}
           >
@@ -725,6 +726,7 @@ function AddEditRuleModal({
           <button
             type="button"
             onClick={() => set("isEnabled", !form.isEnabled)}
+            // TODO: review for dark mode — bg-gray-300 toggle-off state not in token table
             className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors
               ${form.isEnabled ? "bg-primary" : "bg-gray-300"}`}
           >
@@ -823,6 +825,7 @@ function AutoAssignRulesSection({
               {/* Enabled toggle */}
               <button
                 onClick={() => onToggleRule({ rule, shoe })}
+                // TODO: review for dark mode — bg-gray-300 toggle-off state not in token table
                 className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors
                   ${rule.isEnabled ? "bg-primary" : "bg-gray-300"}`}
                 aria-label={rule.isEnabled ? "Disable rule" : "Enable rule"}

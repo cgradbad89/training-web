@@ -14,7 +14,7 @@ const sizeClasses = {
 export function LoadingSpinner({ size = "md", className = "" }: LoadingSpinnerProps) {
   return (
     <div
-      className={`rounded-full border-gray-200 border-t-blue-600 animate-spin ${sizeClasses[size]} ${className}`}
+      className={`rounded-full border-border border-t-primary animate-spin ${sizeClasses[size]} ${className}`}
       role="status"
       aria-label="Loading"
     />

@@ -268,6 +268,7 @@ export default function WorkoutDetailPage() {
 
         {/* Progress bar */}
         <div className="h-1.5 bg-surface rounded-full overflow-hidden border border-border">
+          {/* TODO: review for dark mode — bg-purple-500 is workout plan brand accent color */}
           <div
             className="h-full bg-purple-500 rounded-full transition-all duration-300"
             style={{
@@ -280,6 +281,7 @@ export default function WorkoutDetailPage() {
         <div className="bg-card rounded-2xl border border-border p-6 flex-1 flex flex-col gap-5">
           <div>
             {sectionForExercise.has(ex.id) && (
+              // TODO: review for dark mode — text-purple-600 workout section accent
               <p className="text-xs font-semibold text-purple-600 uppercase tracking-wide mb-1">
                 {sectionForExercise.get(ex.id)}
               </p>
@@ -470,6 +472,7 @@ export default function WorkoutDetailPage() {
             {allItems.map((item) => {
               if (isSectionItem(item)) {
                 return (
+                  // TODO: review for dark mode — bg-purple-50/text-purple-600 workout section accent
                   <div
                     key={item.id}
                     className="px-4 py-2.5 bg-purple-50"

@@ -12,12 +12,12 @@ interface StatBlockProps {
 export function StatBlock({ label, value, unit, sublabel, className = "" }: StatBlockProps) {
   return (
     <div className={`flex flex-col gap-0.5 ${className}`}>
-      <span className="text-xs text-gray-500 uppercase tracking-wide">{label}</span>
+      <span className="text-xs text-textSecondary uppercase tracking-wide">{label}</span>
       <div className="flex items-baseline gap-1">
         <span className="text-2xl font-bold tabular-nums text-textPrimary">{value}</span>
-        {unit && <span className="text-sm text-gray-500">{unit}</span>}
+        {unit && <span className="text-sm text-textSecondary">{unit}</span>}
       </div>
-      {sublabel && <span className="text-xs text-gray-400">{sublabel}</span>}
+      {sublabel && <span className="text-xs text-textSecondary">{sublabel}</span>}
     </div>
   );
 }

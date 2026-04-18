@@ -54,7 +54,7 @@ export default function LoginPage() {
         <button
           onClick={handleSignIn}
           disabled={signingIn}
-          className="mt-8 w-full bg-white border border-border shadow-sm rounded-xl py-3 flex items-center justify-center gap-3 text-sm font-medium text-textPrimary hover:bg-surface transition-colors disabled:opacity-60"
+          className="mt-8 w-full bg-card border border-border shadow-sm rounded-xl py-3 flex items-center justify-center gap-3 text-sm font-medium text-textPrimary hover:bg-surface transition-colors disabled:opacity-60"
         >
           <svg width="20" height="20" viewBox="0 0 48 48" aria-hidden="true">
             <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>

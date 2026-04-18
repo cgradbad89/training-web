@@ -22,15 +22,15 @@ export function ActivityCard({ activity, onClick }: ActivityCardProps) {
       tabIndex={onClick ? 0 : undefined}
       onClick={onClick}
       onKeyDown={onClick ? (e) => e.key === "Enter" && onClick() : undefined}
-      className={`bg-white rounded-xl p-4 shadow-sm border border-gray-100 flex flex-col gap-2 ${
+      className={`bg-card rounded-xl p-4 shadow-sm border border-border flex flex-col gap-2 ${
         onClick ? "cursor-pointer hover:shadow-md transition-shadow" : ""
       }`}
     >
       <div className="flex items-start justify-between">
         <div>
-          <p className="text-xs text-gray-500">{dateLabel}</p>
-          <p className="font-semibold text-gray-900 leading-tight">{activity.name}</p>
-          <p className="text-xs text-gray-400">{activityTypeLabel(activity.type)}</p>
+          <p className="text-xs text-textSecondary">{dateLabel}</p>
+          <p className="font-semibold text-textPrimary leading-tight">{activity.name}</p>
+          <p className="text-xs text-textSecondary">{activityTypeLabel(activity.type)}</p>
         </div>
         <div className="text-right">
           <p className="text-lg font-bold tabular-nums">{formatMiles(activity.distance_miles)}</p>
@@ -39,20 +39,20 @@ export function ActivityCard({ activity, onClick }: ActivityCardProps) {
       </div>
 
       <div className="flex gap-4 flex-wrap text-sm">
-        <div className="text-gray-600">
-          <span className="text-gray-400 text-xs">Pace </span>
+        <div className="text-textSecondary">
+          <span className="text-textSecondary text-xs">Pace </span>
           {activity.pace_min_per_mile}
-          <span className="text-gray-400 text-xs"> /mi</span>
+          <span className="text-textSecondary text-xs"> /mi</span>
         </div>
-        <div className="text-gray-600">
-          <span className="text-gray-400 text-xs">Time </span>
+        <div className="text-textSecondary">
+          <span className="text-textSecondary text-xs">Time </span>
           {formatDuration(activity.moving_time_s)}
         </div>
         {activity.avg_heartrate && (
-          <div className="text-gray-600">
-            <span className="text-gray-400 text-xs">HR </span>
+          <div className="text-textSecondary">
+            <span className="text-textSecondary text-xs">HR </span>
             {Math.round(activity.avg_heartrate)}
-            <span className="text-gray-400 text-xs"> bpm</span>
+            <span className="text-textSecondary text-xs"> bpm</span>
           </div>
         )}
       </div>

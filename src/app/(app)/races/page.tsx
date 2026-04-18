@@ -265,7 +265,7 @@ function RaceCard({
         </button>
         <button
           onClick={() => onDelete(race)}
-          className="p-2 rounded-lg hover:bg-red-50 text-textSecondary hover:text-danger"
+          className="p-2 rounded-lg hover:bg-danger/10 text-textSecondary hover:text-danger"
           title="Delete"
         >
           <Trash2 className="w-4 h-4" />
@@ -562,7 +562,8 @@ function RaceModal({ editing, activities, onSave, onClose, saving }: RaceModalPr
                 form.setAsGoalRace ? "bg-success" : "bg-border"
               }`}
             >
-              <span
+              {/* TODO: review for dark mode — bg-white toggle knob is intentional hardware-like design */}
+            <span
                 className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${
                   form.setAsGoalRace ? "translate-x-5" : "translate-x-1"
                 }`}
