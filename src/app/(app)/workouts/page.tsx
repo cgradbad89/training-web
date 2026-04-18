@@ -90,6 +90,9 @@ function getIcon(w: HealthWorkout): IconComponent {
   }
 }
 
+// TODO: review for dark mode — category pills use per-activity brand hues
+// (Strength=blue, HIIT=orange, Yoga=purple, etc.) rather than theme tokens,
+// so they stay identifiable but lack proper dark-mode contrast.
 function getTypeBadge(w: HealthWorkout): { label: string; cls: string } {
   const dt = w.displayType.toLowerCase();
   switch (w.activityType) {

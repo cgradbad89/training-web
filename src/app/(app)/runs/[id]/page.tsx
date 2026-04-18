@@ -565,7 +565,7 @@ export default function RunDetailPage() {
             unit={displayWorkout.calories ? "kcal" : undefined}
           />
           <div className="flex flex-col gap-0.5">
-            <span className="text-xs text-gray-500 uppercase tracking-wide">
+            <span className="text-xs text-textSecondary uppercase tracking-wide">
               Efficiency
             </span>
             <MetricBadge
@@ -575,7 +575,7 @@ export default function RunDetailPage() {
             />
           </div>
           <div className="flex flex-col gap-0.5">
-            <span className="text-xs text-gray-500 uppercase tracking-wide">
+            <span className="text-xs text-textSecondary uppercase tracking-wide">
               HR Drift
             </span>
             <MetricBadge

@@ -832,12 +832,12 @@ export default function PlanInsightsPage() {
           <span
             className={`px-3 py-1 rounded-full text-sm font-bold ${
               overallReadiness.status === "onTrack"
-                ? "bg-green-100 text-green-700"
+                ? "bg-success/10 text-success"
                 : overallReadiness.status === "building"
-                  ? "bg-yellow-100 text-yellow-700"
+                  ? "bg-warning/10 text-warning"
                   : overallReadiness.status === "needsWork"
-                    ? "bg-red-100 text-red-700"
-                    : "bg-gray-100 text-gray-500"
+                    ? "bg-danger/10 text-danger"
+                    : "bg-surface text-textSecondary"
             }`}
           >
             {overallReadiness.label}
@@ -857,12 +857,12 @@ export default function PlanInsightsPage() {
                   <span
                     className={`w-2 h-2 rounded-full ${
                       indicator.status === "onTrack"
-                        ? "bg-green-500"
+                        ? "bg-success"
                         : indicator.status === "building"
-                          ? "bg-yellow-500"
+                          ? "bg-warning"
                           : indicator.status === "needsWork"
-                            ? "bg-red-500"
-                            : "bg-gray-300"
+                            ? "bg-danger"
+                            : "bg-border"
                     }`}
                   />
                   <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide">
