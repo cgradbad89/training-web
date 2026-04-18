@@ -647,12 +647,12 @@ export default function RouteDrawModal({
         {/* Map */}
         <div className="relative flex-1 min-h-[50vh]">
           {loadError ? (
-            <div className="absolute inset-0 flex items-center justify-center bg-gray-100 text-sm text-gray-500">
+            <div className="absolute inset-0 flex items-center justify-center bg-surface text-sm text-textSecondary">
               Failed to load map
             </div>
           ) : !isLoaded || !center ? (
-            <div className="absolute inset-0 flex items-center justify-center bg-gray-100">
-              <div className="w-5 h-5 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
+            <div className="absolute inset-0 flex items-center justify-center bg-surface">
+              <div className="w-5 h-5 rounded-full border-2 border-primary border-t-transparent animate-spin" />
             </div>
           ) : (
             <GoogleMap
@@ -731,6 +731,7 @@ export default function RouteDrawModal({
 
           {/* Shift-held indicator */}
           {shiftHeld && mapReady && (
+            // TODO: map overlay — intentionally amber for contrast over map tiles
             <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[999] bg-amber-500/95 text-white text-xs font-semibold px-3 py-1.5 rounded-full shadow-lg pointer-events-none">
               Straight-line mode (Shift)
             </div>

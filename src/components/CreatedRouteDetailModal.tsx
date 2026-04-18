@@ -284,12 +284,12 @@ export function CreatedRouteDetailModal({
           {/* Map */}
           <div className="relative w-full h-[60vh] max-h-[520px] shrink-0">
             {loadError ? (
-              <div className="w-full h-full flex items-center justify-center bg-gray-100 text-sm text-gray-500">
+              <div className="w-full h-full flex items-center justify-center bg-surface text-sm text-textSecondary">
                 Failed to load map
               </div>
             ) : !isLoaded ? (
-              <div className="w-full h-full flex items-center justify-center bg-gray-100">
-                <div className="w-5 h-5 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
+              <div className="w-full h-full flex items-center justify-center bg-surface">
+                <div className="w-5 h-5 rounded-full border-2 border-primary border-t-transparent animate-spin" />
               </div>
             ) : (
               <GoogleMap

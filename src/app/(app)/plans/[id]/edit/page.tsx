@@ -23,6 +23,10 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
+// TODO: review for dark mode — run-type pills use per-type brand hues
+// (Outdoor=green, Treadmill=blue, OTF=orange, LongRun=purple, Rest=gray)
+// as visual identifiers, not theme tokens. Needs a dark-mode-aware
+// palette design pass.
 const RUN_TYPE_STYLES: Record<
   PlanRunType,
   { bg: string; text: string; label: string }
@@ -101,10 +105,10 @@ function WeekStatusBadge({ result }: { result: WeekMatchResult }) {
 
   const cls =
     status === "met"
-      ? "bg-green-100 text-green-700"
+      ? "bg-success/10 text-success"
       : status === "partial"
-      ? "bg-yellow-100 text-yellow-700"
-      : "bg-gray-100 text-gray-500";
+      ? "bg-warning/10 text-warning"
+      : "bg-surface text-textSecondary";
 
   return (
     <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${cls}`}>
@@ -548,7 +552,7 @@ function WeekAccordion({
                 <div
                   className={`flex items-center gap-3 py-3 px-4 bg-card hover:bg-surface/50 group min-h-[52px] transition-all ${
                     isDragging ? "opacity-50" : ""
-                  } ${isDragOver ? "ring-2 ring-inset ring-blue-400 bg-blue-50/30" : ""}`}
+                  } ${isDragOver ? "ring-2 ring-inset ring-primary bg-primary/10" : ""}`}
                 >
                   {/* Left: day + date */}
                   <div className="w-14 shrink-0">
@@ -636,7 +640,7 @@ function WeekAccordion({
                           </button>
                           <button
                             onClick={() => deleteEntry(entry.id)}
-                            className="p-1 rounded hover:bg-red-100 text-textSecondary hover:text-danger"
+                            className="p-1 rounded hover:bg-danger/10 text-textSecondary hover:text-danger"
                             title="Delete entry"
                           >
                             <X className="w-3.5 h-3.5" />
@@ -1116,7 +1120,7 @@ export default function PlanEditPage() {
             className={`font-medium px-2 py-0.5 rounded-full ${
               plan.isActive
                 ? "bg-success/10 text-success"
-                : "bg-gray-100 text-gray-500"
+                : "bg-surface text-textSecondary"
             }`}
           >
             {plan.isActive ? "Active" : "Inactive"}

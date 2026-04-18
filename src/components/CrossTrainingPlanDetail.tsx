@@ -60,6 +60,9 @@ const CATEGORY_ORDER: WorkoutCategory[] = [
   "strength", "orangetheory", "cycling", "pilates", "yoga", "hiit",
 ];
 
+// TODO: review for dark mode — category pills use per-activity brand hues
+// (Strength=blue, OTF=orange, Cycling=green, etc.) as visual identifiers,
+// not theme tokens. Needs a dark-mode-aware palette design pass.
 const CATEGORY_COLORS: Record<WorkoutCategory, { active: string; hover: string }> = {
   strength:     { active: "bg-blue-600 text-white border-blue-600",    hover: "hover:bg-blue-50 hover:border-blue-400" },
   orangetheory: { active: "bg-orange-500 text-white border-orange-500", hover: "hover:bg-orange-50 hover:border-orange-400" },
@@ -307,7 +310,7 @@ function EntryEditor({ entry, isNew, onSave, onCancel }: EntryEditorProps) {
           })}
         </div>
         {saveBlocked && (
-          <p className="text-xs text-amber-600 mt-1.5">
+          <p className="text-xs text-warning mt-1.5">
             Select a category to enable auto-match
           </p>
         )}
@@ -347,6 +350,11 @@ function EntryEditor({ entry, isNew, onSave, onCancel }: EntryEditorProps) {
               </p>
             )}
             {items.map((item) =>
+              // TODO: review for dark mode — section/label/"Exercises" UI uses a
+              // purple accent palette (bg-purple-50, text-purple-600/700) as an
+              // intentional visual divider, and the "Apply OTF" button at L578
+              // uses orange as an OTF brand accent. These are accent colors, not
+              // theme tokens; need a design pass to choose dark-mode variants.
               isSectionItem(item) ? (
                 <div
                   key={item.id}
@@ -361,7 +369,7 @@ function EntryEditor({ entry, isNew, onSave, onCancel }: EntryEditorProps) {
                   />
                   <button
                     onClick={() => removeItem(item.id)}
-                    className="p-1 rounded hover:bg-red-100 text-textSecondary hover:text-danger shrink-0"
+                    className="p-1 rounded hover:bg-danger/10 text-textSecondary hover:text-danger shrink-0"
                     title="Remove section"
                   >
                     <X className="w-3.5 h-3.5" />
@@ -412,7 +420,7 @@ function EntryEditor({ entry, isNew, onSave, onCancel }: EntryEditorProps) {
                     <span className="text-xs text-textSecondary">lbs</span>
                     <button
                       onClick={() => removeItem(item.id)}
-                      className="p-1 rounded hover:bg-red-100 text-textSecondary hover:text-danger"
+                      className="p-1 rounded hover:bg-danger/10 text-textSecondary hover:text-danger"
                       title="Remove exercise"
                     >
                       <X className="w-3.5 h-3.5" />
@@ -597,7 +605,7 @@ function DayCard({
               </button>
               <button
                 onClick={onDelete}
-                className="p-1 rounded hover:bg-red-100 text-textSecondary hover:text-danger"
+                className="p-1 rounded hover:bg-danger/10 text-textSecondary hover:text-danger"
                 title="Remove"
               >
                 <X className="w-3.5 h-3.5" />
@@ -698,7 +706,7 @@ function DayCard({
       )}
 
       {isEditingPlan && !entry.category && (
-        <p className="text-[10px] text-amber-600 mt-1.5">
+        <p className="text-[10px] text-warning mt-1.5">
           ⚠ Add category to enable auto-match
         </p>
       )}
@@ -1029,7 +1037,7 @@ export function CrossTrainingPlanDetail({
             onClick={() => setConfirmDelete(true)}
             disabled={saving}
             title="Delete plan"
-            className="p-1.5 rounded-lg hover:bg-red-50 text-textSecondary hover:text-danger disabled:opacity-50"
+            className="p-1.5 rounded-lg hover:bg-danger/10 text-textSecondary hover:text-danger disabled:opacity-50"
           >
             <Trash2 className="w-4 h-4" />
           </button>
@@ -1162,7 +1170,7 @@ export function CrossTrainingPlanDetail({
                 <div
                   className={`flex items-start gap-3 py-2 px-3 hover:bg-surface/50 group min-h-[52px] transition-all ${
                     isDragging ? "opacity-50" : ""
-                  } ${isDragOver ? "ring-2 ring-inset ring-blue-400 bg-blue-50/30" : ""}`}
+                  } ${isDragOver ? "ring-2 ring-inset ring-primary bg-primary/10" : ""}`}
                 >
                   <div className="w-14 shrink-0 pt-1">
                     <div className="text-xs font-bold text-textSecondary">
