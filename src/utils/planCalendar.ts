@@ -1,4 +1,6 @@
 import type { RunningPlan, WorkoutPlan, WorkoutCategory } from "@/types/plan";
+import { matchPlanToActual } from "@/utils/planMatching";
+import type { HealthWorkout } from "@/types/healthWorkout";
 
 export interface CalendarEvent {
   date: Date;
@@ -31,7 +33,8 @@ function sessionDate(startDate: string, weekIndex: number, dayIndex: number): Da
 }
 
 export function buildCalendarEvents(
-  plans: (RunningPlan | WorkoutPlan)[]
+  plans: (RunningPlan | WorkoutPlan)[],
+  actualRuns: HealthWorkout[] = []
 ): CalendarEvent[] {
   const events: CalendarEvent[] = [];
 
@@ -59,6 +62,7 @@ export function buildCalendarEvents(
         }
       }
     } else {
+      const matchMap = matchPlanToActual(plan, actualRuns);
       for (const week of plan.weeks) {
         for (const entry of week.entries) {
           if (entry.runType === "rest") continue;
@@ -76,7 +80,7 @@ export function buildCalendarEvents(
             weekday: entry.weekday,
             label,
             distanceMiles: entry.distanceMiles,
-            completed: false,
+            completed: matchMap.get(entry.id) != null,
             isRestDay: false,
           });
         }

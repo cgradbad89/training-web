@@ -612,6 +612,7 @@ export default function PlansPage() {
             (p): p is RunningPlan | WorkoutPlan =>
               isRunningPlan(p) || isWorkoutPlan(p)
           )}
+          actualRuns={activities}
           onRunningEventClick={(planId, weekIndex) => {
             setPageView("plans");
             setSelectedPlanId(planId);

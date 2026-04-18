@@ -4,6 +4,7 @@ import React, { useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { RunningPlan, WorkoutPlan, WorkoutCategory } from "@/types/plan";
+import type { HealthWorkout } from "@/types/healthWorkout";
 import { buildCalendarEvents, type CalendarEvent } from "@/utils/planCalendar";
 import { weekStart } from "@/utils/dates";
 
@@ -200,10 +201,11 @@ function MonthGrid({
 
 interface CalendarViewProps {
   plans: (RunningPlan | WorkoutPlan)[];
+  actualRuns?: HealthWorkout[];
   onRunningEventClick?: (planId: string, weekIndex: number) => void;
 }
 
-export function CalendarView({ plans, onRunningEventClick }: CalendarViewProps) {
+export function CalendarView({ plans, actualRuns = [], onRunningEventClick }: CalendarViewProps) {
   const router = useRouter();
 
   const [calView, setCalView] = useState<"week" | "month">("week");
@@ -212,7 +214,7 @@ export function CalendarView({ plans, onRunningEventClick }: CalendarViewProps) 
     getMonthStart(new Date())
   );
 
-  const events = useMemo(() => buildCalendarEvents(plans), [plans]);
+  const events = useMemo(() => buildCalendarEvents(plans, actualRuns), [plans, actualRuns]);
 
   const hasActivePlans = plans.some((p) => p.isActive);
 
