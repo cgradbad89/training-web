@@ -80,6 +80,27 @@ function daysUntil(dateStr: string): number {
   return Math.ceil(diff / (1000 * 60 * 60 * 24));
 }
 
+/**
+ * Compute the Race Goal countdown badge content.
+ *   - past race          → null (badge hidden)
+ *   - day of the race    → { primary: "Today!" }
+ *   - 1–29 days out      → { primary: "N days" }
+ *   - 30+ days out       → { primary: "N month(s)", secondary: "N days" }
+ */
+function raceCountdown(
+  dateStr: string
+): { primary: string; secondary: string | null } | null {
+  const days = daysUntil(dateStr);
+  if (days < 0) return null;
+  if (days === 0) return { primary: "Today!", secondary: null };
+  if (days < 30) return { primary: `${days} days`, secondary: null };
+  const months = Math.round(days / 30.44);
+  return {
+    primary: `${months} month${months > 1 ? "s" : ""}`,
+    secondary: `${days} days`,
+  };
+}
+
 function formatRaceDate(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString("en-US", {
     weekday: "short",
@@ -664,21 +685,31 @@ function RaceGoalCard({ activeRace }: RaceGoalCardProps) {
     ? (activeRace.customDistanceMiles ?? HALF_MARATHON_MILES)
     : (RACE_DISTANCE_MILES[activeRace.raceDistance] ?? HALF_MARATHON_MILES);
   const goalTimeSec = (activeRace.targetPaceSecondsPerMile ?? 0) * raceDistMiles;
-  const days = daysUntil(activeRace.raceDate);
+  const countdown = raceCountdown(activeRace.raceDate);
 
   return (
     <Card>
-      <CardTitle>Race Goal</CardTitle>
+      <div className="flex justify-between items-start mb-4">
+        <h2 className="text-sm font-semibold uppercase tracking-widest text-textSecondary">
+          Race Goal
+        </h2>
+        {countdown && (
+          <div className="text-right">
+            <div className="text-xl font-bold text-textPrimary tabular-nums leading-tight">
+              {countdown.primary}
+            </div>
+            {countdown.secondary && (
+              <div className="text-xs text-textSecondary tabular-nums">
+                {countdown.secondary}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       <p className="text-lg font-semibold text-textPrimary mb-1">{activeRace.name}</p>
       <div className="flex items-center gap-2 mb-1">
         <p className="text-xs text-textSecondary">{formatRaceDate(activeRace.raceDate)}</p>
-        {days > 0 && (
-          <span className="text-xs text-textSecondary">({days} days)</span>
-        )}
-        {days <= 0 && (
-          <span className="text-xs text-success">(Race day!)</span>
-        )}
       </div>
       <span className="inline-block text-xs bg-primary/10 text-primary font-medium px-2 py-0.5 rounded-full mb-4">
         {RACE_DISTANCE_LABELS[activeRace.raceDistance] ?? activeRace.raceDistance}
