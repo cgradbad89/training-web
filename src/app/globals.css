@@ -40,6 +40,16 @@
   --color-chart-grid-raw:           #e5e7eb; /* gray-200 — gridlines */
   --color-chart-axis-raw:           #6b7280; /* gray-500 — axis labels */
   --color-chart-tooltip-bg-raw:     #ffffff; /* tooltip background */
+
+  /* Semantic level badge tokens */
+  --color-level-great:      #dcfce7;
+  --color-level-great-text: #15803d;
+  --color-level-good:       #fef9c3;
+  --color-level-good-text:  #a16207;
+  --color-level-fair:       #ffedd5;
+  --color-level-fair-text:  #c2410c;
+  --color-level-poor:       #fee2e2;
+  --color-level-poor-text:  #b91c1c;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -76,6 +86,16 @@
     --color-chart-grid-raw:           #334155; /* slate-700 */
     --color-chart-axis-raw:           #94a3b8; /* slate-400 */
     --color-chart-tooltip-bg-raw:     #1e293b; /* slate-800 */
+
+    /* Semantic level badge tokens — dark overrides */
+    --color-level-great:      #14532d;
+    --color-level-great-text: #4ade80;
+    --color-level-good:       #713f12;
+    --color-level-good-text:  #fbbf24;
+    --color-level-fair:       #7c2d12;
+    --color-level-fair-text:  #fb923c;
+    --color-level-poor:       #7f1d1d;
+    --color-level-poor-text:  #f87171;
   }
 }
 

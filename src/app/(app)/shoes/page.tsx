@@ -490,12 +490,11 @@ function AddEditShoeModal({
           <button
             type="button"
             onClick={() => set("isRetired", !form.isRetired)}
-            // TODO: review for dark mode — bg-gray-400 toggle-off state not in token table
             className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors
-              ${form.isRetired ? "bg-gray-400" : "bg-primary"}`}
+              ${form.isRetired ? "bg-border" : "bg-primary"}`}
           >
             <span
-              className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform
+              className={`inline-block h-4 w-4 rounded-full bg-card shadow transition-transform
                 ${form.isRetired ? "translate-x-6" : "translate-x-1"}`}
             />
           </button>
@@ -726,12 +725,11 @@ function AddEditRuleModal({
           <button
             type="button"
             onClick={() => set("isEnabled", !form.isEnabled)}
-            // TODO: review for dark mode — bg-gray-300 toggle-off state not in token table
             className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors
-              ${form.isEnabled ? "bg-primary" : "bg-gray-300"}`}
+              ${form.isEnabled ? "bg-primary" : "bg-border"}`}
           >
             <span
-              className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform
+              className={`inline-block h-4 w-4 rounded-full bg-card shadow transition-transform
                 ${form.isEnabled ? "translate-x-6" : "translate-x-1"}`}
             />
           </button>
@@ -825,13 +823,12 @@ function AutoAssignRulesSection({
               {/* Enabled toggle */}
               <button
                 onClick={() => onToggleRule({ rule, shoe })}
-                // TODO: review for dark mode — bg-gray-300 toggle-off state not in token table
                 className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors
-                  ${rule.isEnabled ? "bg-primary" : "bg-gray-300"}`}
+                  ${rule.isEnabled ? "bg-primary" : "bg-border"}`}
                 aria-label={rule.isEnabled ? "Disable rule" : "Enable rule"}
               >
                 <span
-                  className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow transition-transform
+                  className={`inline-block h-3.5 w-3.5 rounded-full bg-card shadow transition-transform
                     ${rule.isEnabled ? "translate-x-[18px]" : "translate-x-0.5"}`}
                 />
               </button>

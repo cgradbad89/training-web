@@ -562,9 +562,8 @@ function RaceModal({ editing, activities, onSave, onClose, saving }: RaceModalPr
                 form.setAsGoalRace ? "bg-success" : "bg-border"
               }`}
             >
-              {/* TODO: review for dark mode — bg-white toggle knob is intentional hardware-like design */}
-            <span
-                className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${
+              <span
+                className={`absolute top-1 w-4 h-4 rounded-full bg-card shadow transition-transform ${
                   form.setAsGoalRace ? "translate-x-5" : "translate-x-1"
                 }`}
               />
