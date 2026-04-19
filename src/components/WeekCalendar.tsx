@@ -127,7 +127,9 @@ export function WeekCalendar({
       return;
     }
     if (event.planType === "workout") {
-      router.push(`/workout/${event.planId}/${event.weekIndex}/${event.weekday}`);
+      router.push(
+        `/workout/${event.planId}/${event.weekIndex}/${event.weekday}/${event.sessionIndex}`
+      );
     } else {
       router.push("/plans");
     }

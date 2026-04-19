@@ -10,6 +10,13 @@ export interface CalendarEvent {
   weekIndex: number;
   dayIndex: number;   // 0-6, Mon=0, Sun=6
   weekday: number;    // 1-7, Mon=1, Sun=7 (used for /workout route navigation)
+  /**
+   * Index of this event within the same-weekday group of its plan. 0 for
+   * single-session days; 0/1/2/... when multiple sessions share the day.
+   * Used to disambiguate the /workout/{planId}/{weekIndex}/{weekday}/{N}
+   * route when more than one session lives on the same calendar day.
+   */
+  sessionIndex: number;
   label: string;
   distanceMiles?: number;
   category?: WorkoutCategory;
@@ -42,10 +49,16 @@ export function buildCalendarEvents(
     if (!plan.isActive) continue;
 
     if (plan.planType === "workout") {
+      // Track per-weekday counters so each emitted event gets a stable
+      // sessionIndex matching its position in the same-weekday group.
+      const counters = new Map<string, number>();
       for (const week of plan.weeks) {
         for (const entry of week.entries) {
           if (entry.type === "rest") continue;
           const dayIndex = entry.weekday - 1;
+          const key = `${entry.weekIndex}-${entry.weekday}`;
+          const sessionIndex = counters.get(key) ?? 0;
+          counters.set(key, sessionIndex + 1);
           events.push({
             date: sessionDate(plan.startDate, entry.weekIndex, dayIndex),
             planId: plan.id,
@@ -54,6 +67,7 @@ export function buildCalendarEvents(
             weekIndex: entry.weekIndex,
             dayIndex,
             weekday: entry.weekday,
+            sessionIndex,
             label: entry.label ?? "Workout",
             category: entry.category,
             completed: entry.completed ?? false,
@@ -63,10 +77,14 @@ export function buildCalendarEvents(
       }
     } else {
       const matchMap = matchPlanToActual(plan, actualRuns);
+      const counters = new Map<string, number>();
       for (const week of plan.weeks) {
         for (const entry of week.entries) {
           if (entry.runType === "rest") continue;
           const dayIndex = entry.weekday - 1;
+          const key = `${entry.weekIndex}-${entry.weekday}`;
+          const sessionIndex = counters.get(key) ?? 0;
+          counters.set(key, sessionIndex + 1);
           const label =
             entry.description ??
             (entry.runType ? (RUN_TYPE_LABELS[entry.runType] ?? entry.runType) : "Run");
@@ -78,6 +96,7 @@ export function buildCalendarEvents(
             weekIndex: entry.weekIndex,
             dayIndex,
             weekday: entry.weekday,
+            sessionIndex,
             label,
             distanceMiles: entry.distanceMiles,
             completed: matchMap.get(entry.id) != null,

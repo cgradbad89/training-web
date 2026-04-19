@@ -294,7 +294,12 @@ function WeekAccordion({
   isEditingPlan,
 }: WeekAccordionProps) {
   const week = plan.weeks[weekIndex];
-  const [editingDay, setEditingDay] = useState<number | null>(null);
+  // Editing state — null when nothing is being edited. Either editing an
+  // existing entry (entryId set) or adding a new entry to a day (newEntry true).
+  type EditingState =
+    | { weekday: number; entryId: string; newEntry?: undefined }
+    | { weekday: number; entryId?: undefined; newEntry: true };
+  const [editingDay, setEditingDay] = useState<EditingState | null>(null);
 
   // Drag-and-drop
   const [draggingDay, setDraggingDay] = useState<number | null>(null);
@@ -344,17 +349,20 @@ function WeekAccordion({
 
   function handleMoveDay(fromWeekday: number, toWeekday: number) {
     if (fromWeekday === toWeekday) return;
-    const fromEntry = entries.find((e) => e.weekday === fromWeekday);
-    const toEntry = entries.find(
+    const fromEntries = entries.filter(
+      (e) => e.weekday === fromWeekday && e.runType !== "rest"
+    );
+    const toEntries = entries.filter(
       (e) => e.weekday === toWeekday && e.runType !== "rest"
     );
 
-    if (!fromEntry) return;
+    if (fromEntries.length === 0) return;
 
-    if (!toEntry) {
+    if (toEntries.length === 0) {
+      // Move ALL runs on the source weekday into the empty target weekday.
       const next = entries
         .map((e) =>
-          e.id === fromEntry.id
+          e.weekday === fromWeekday && e.runType !== "rest"
             ? { ...e, weekday: toWeekday, dayOfWeek: toWeekday - 1 }
             : e
         )
@@ -366,14 +374,19 @@ function WeekAccordion({
   }
 
   function executeSwap(from: number, to: number) {
-    const fromEntry = entries.find((e) => e.weekday === from);
-    const toEntry = entries.find((e) => e.weekday === to && e.runType !== "rest");
-    if (!fromEntry || !toEntry) return;
+    const fromEntries = entries.filter(
+      (e) => e.weekday === from && e.runType !== "rest"
+    );
+    const toEntries = entries.filter(
+      (e) => e.weekday === to && e.runType !== "rest"
+    );
+    if (fromEntries.length === 0 || toEntries.length === 0) return;
 
     const next = entries
       .map((e) => {
-        if (e.id === fromEntry.id) return { ...e, weekday: to, dayOfWeek: to - 1 };
-        if (e.id === toEntry.id) return { ...e, weekday: from, dayOfWeek: from - 1 };
+        if (e.runType === "rest") return e;
+        if (e.weekday === from) return { ...e, weekday: to,   dayOfWeek: to   - 1 };
+        if (e.weekday === to)   return { ...e, weekday: from, dayOfWeek: from - 1 };
         return e;
       })
       .sort((a, b) => a.weekday - b.weekday);
@@ -392,11 +405,11 @@ function WeekAccordion({
       return;
 
     const targetWeek = plan.weeks[copyDayTargetWeek];
-    const existingTarget = targetWeek?.entries.find(
+    const hasExistingTarget = !!targetWeek?.entries.some(
       (e) => e.weekday === copyDayTargetWeekday && e.runType !== "rest"
     );
 
-    if (existingTarget) {
+    if (hasExistingTarget) {
       setCopyDayOverwriteConfirm({
         targetWeekIndex: copyDayTargetWeek,
         targetWeekday: copyDayTargetWeekday,
@@ -508,12 +521,17 @@ function WeekAccordion({
       {isExpanded && (
         <div className="border-t border-border">
           {[1, 2, 3, 4, 5, 6, 7].map((weekday) => {
-            const entry = entries.find(
+            // All non-rest runs scheduled on this weekday. Multi-session days
+            // are now possible, so this list can be 0, 1, or many.
+            const dayEntries = entries.filter(
               (e) => e.weekday === weekday && e.runType !== "rest"
             );
-            const isEditing = editingDay === weekday;
-            const isDragging = draggingDay === weekday;
-            const isDragOver = dragOverDay === weekday;
+            const hasEntries  = dayEntries.length > 0;
+            const isMulti     = dayEntries.length > 1;
+            const editingState = editingDay?.weekday === weekday ? editingDay : null;
+            const isAddingNew = editingState?.newEntry === true;
+            const isDragging  = draggingDay === weekday;
+            const isDragOver  = dragOverDay === weekday;
             const date = dayDate(plan, weekIndex, weekday);
             const dateLabel = date.toLocaleDateString("en-US", {
               month: "short",
@@ -524,9 +542,9 @@ function WeekAccordion({
               <div
                 key={weekday}
                 className={weekday < 7 ? "border-b border-border" : ""}
-                draggable={!!entry && !isEditing && isEditingPlan}
+                draggable={hasEntries && !editingState && isEditingPlan}
                 onDragStart={isEditingPlan ? (e) => {
-                  if (!entry) return;
+                  if (!hasEntries) return;
                   e.dataTransfer.setData("weekday", String(weekday));
                   e.dataTransfer.effectAllowed = "move";
                   setDraggingDay(weekday);
@@ -550,26 +568,19 @@ function WeekAccordion({
               >
                 {/* Day row */}
                 <div
-                  className={`flex items-center gap-3 py-3 px-4 bg-card hover:bg-surface/50 group min-h-[52px] transition-all ${
+                  className={`flex items-start gap-3 py-3 px-4 bg-card hover:bg-surface/50 group min-h-[52px] transition-all ${
                     isDragging ? "opacity-50" : ""
                   } ${isDragOver ? "ring-2 ring-inset ring-primary bg-primary/10" : ""}`}
                 >
                   {/* Left: day + date */}
-                  <div className="w-14 shrink-0">
+                  <div className="w-14 shrink-0 pt-0.5">
                     <div className="text-xs font-bold text-textSecondary">
                       {DAY_ABBREVS[weekday - 1]}
                     </div>
                     <div className="text-xs text-textSecondary">{dateLabel}</div>
                   </div>
 
-                  {isEditing ? (
-                    <>
-                      <div className="flex-1" />
-                      <span className="text-sm text-textSecondary italic">
-                        {entry ? "Editing…" : "Adding run…"}
-                      </span>
-                    </>
-                  ) : !entry ? (
+                  {!hasEntries && !isAddingNew ? (
                     // Rest day
                     <>
                       <span className="text-sm text-textSecondary italic flex-1">
@@ -577,7 +588,7 @@ function WeekAccordion({
                       </span>
                       {isEditingPlan && (
                         <button
-                          onClick={() => setEditingDay(weekday)}
+                          onClick={() => setEditingDay({ weekday, newEntry: true })}
                           className="text-xs text-primary hover:text-primary/80 opacity-0 group-hover:opacity-100 transition-opacity"
                         >
                           <Plus className="w-3.5 h-3.5 inline mr-0.5" />
@@ -586,76 +597,137 @@ function WeekAccordion({
                       )}
                     </>
                   ) : (
-                    // Planned entry
-                    <>
-                      <div className="flex-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 min-w-0">
-                        {entry.runType && entry.runType !== "rest" && (
-                          <RunTypeBadge type={entry.runType} />
-                        )}
-                        {entry.description && (
-                          <span className="text-sm text-textSecondary">
-                            {entry.description}
-                          </span>
-                        )}
-                        <span className="text-sm font-semibold text-textPrimary tabular-nums">
-                          {entry.distanceMiles.toFixed(1)} mi
-                        </span>
-                        {entry.paceTarget && (
-                          <span className="text-sm text-textSecondary">
-                            @ {entry.paceTarget}/mi
-                          </span>
-                        )}
-                        {entry.targetHeartRate && (
-                          <span className="text-xs text-textSecondary">
-                            HR: {entry.targetHeartRate} bpm
-                          </span>
-                        )}
-                        {entry.notes && (
-                          <span className="text-xs text-textSecondary italic">
-                            {entry.notes}
-                          </span>
-                        )}
-                      </div>
-                      {isEditingPlan && (
-                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                          {/* Copy day button */}
-                          <button
-                            onClick={() => {
-                              setCopyDaySource(weekday);
-                              setCopyDayTargetWeek(null);
-                              setCopyDayTargetWeekday(null);
-                            }}
-                            className="text-[10px] text-textSecondary hover:text-primary border border-border rounded px-1.5 py-0.5 flex items-center gap-0.5"
-                            title="Copy day to another week"
+                    // One or more planned entries on this day, stacked.
+                    <div className="flex-1 min-w-0 flex flex-col gap-2">
+                      {dayEntries.map((entry, idx) => {
+                        const isThisEditing =
+                          editingState?.entryId === entry.id;
+                        if (isThisEditing) {
+                          return (
+                            <div
+                              key={entry.id}
+                              className="text-sm text-textSecondary italic"
+                            >
+                              {isMulti && (
+                                <span className="text-[10px] font-bold uppercase tracking-wide text-textSecondary/80 mr-2">
+                                  Run {idx + 1}
+                                </span>
+                              )}
+                              Editing…
+                            </div>
+                          );
+                        }
+                        return (
+                          <div
+                            key={entry.id}
+                            className={`flex items-center gap-2 ${
+                              isMulti && idx > 0
+                                ? "pt-2 border-t border-border/40"
+                                : ""
+                            }`}
                           >
-                            <Copy className="w-2.5 h-2.5" />
-                            Copy
-                          </button>
-                          <button
-                            onClick={() => setEditingDay(weekday)}
-                            className="p-1 rounded hover:bg-border text-textSecondary hover:text-textPrimary"
-                            title="Edit entry"
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => deleteEntry(entry.id)}
-                            className="p-1 rounded hover:bg-danger/10 text-textSecondary hover:text-danger"
-                            title="Delete entry"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
+                            {isMulti && (
+                              <span className="text-[10px] font-bold uppercase tracking-wide text-textSecondary/80 w-12 shrink-0">
+                                Run {idx + 1}
+                              </span>
+                            )}
+                            <div className="flex-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 min-w-0">
+                              {entry.runType && entry.runType !== "rest" && (
+                                <RunTypeBadge type={entry.runType} />
+                              )}
+                              {entry.description && (
+                                <span className="text-sm text-textSecondary">
+                                  {entry.description}
+                                </span>
+                              )}
+                              <span className="text-sm font-semibold text-textPrimary tabular-nums">
+                                {entry.distanceMiles.toFixed(1)} mi
+                              </span>
+                              {entry.paceTarget && (
+                                <span className="text-sm text-textSecondary">
+                                  @ {entry.paceTarget}/mi
+                                </span>
+                              )}
+                              {entry.targetHeartRate && (
+                                <span className="text-xs text-textSecondary">
+                                  HR: {entry.targetHeartRate} bpm
+                                </span>
+                              )}
+                              {entry.notes && (
+                                <span className="text-xs text-textSecondary italic">
+                                  {entry.notes}
+                                </span>
+                              )}
+                            </div>
+                            {isEditingPlan && (
+                              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                                {/* Copy day button — only on first entry to
+                                    keep the row hover area clean. Copies the
+                                    entire day's runs. */}
+                                {idx === 0 && (
+                                  <button
+                                    onClick={() => {
+                                      setCopyDaySource(weekday);
+                                      setCopyDayTargetWeek(null);
+                                      setCopyDayTargetWeekday(null);
+                                    }}
+                                    className="text-[10px] text-textSecondary hover:text-primary border border-border rounded px-1.5 py-0.5 flex items-center gap-0.5"
+                                    title="Copy day to another week"
+                                  >
+                                    <Copy className="w-2.5 h-2.5" />
+                                    Copy
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() =>
+                                    setEditingDay({ weekday, entryId: entry.id })
+                                  }
+                                  className="p-1 rounded hover:bg-border text-textSecondary hover:text-textPrimary"
+                                  title="Edit entry"
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => deleteEntry(entry.id)}
+                                  className="p-1 rounded hover:bg-danger/10 text-textSecondary hover:text-danger"
+                                  title="Delete entry"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+
+                      {/* Add another run on this day */}
+                      {isEditingPlan && hasEntries && !isAddingNew && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setEditingDay({ weekday, newEntry: true })
+                          }
+                          className="self-start text-xs text-primary hover:text-primary/80 flex items-center gap-0.5 pt-1"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          Add Run
+                        </button>
                       )}
-                    </>
+                    </div>
                   )}
                 </div>
 
                 {/* Inline entry form */}
-                {isEditing && (
+                {editingState && (
                   <div className="pb-2">
                     <EntryForm
-                      initial={entry ?? {}}
+                      initial={
+                        editingState.newEntry
+                          ? {}
+                          : dayEntries.find(
+                              (e) => e.id === editingState.entryId
+                            ) ?? {}
+                      }
                       weekday={weekday}
                       weekIndex={weekIndex}
                       onSave={saveEntry}
@@ -931,7 +1003,10 @@ export default function PlanEditPage() {
     }
   }
 
-  /** Copy a single day from one week/weekday to another week/weekday. */
+  /**
+   * Copy ALL non-rest entries on a source weekday to another week/weekday.
+   * The target weekday's existing non-rest entries are replaced.
+   */
   async function handleCopyDay(
     fromWeekIndex: number,
     fromWeekday: number,
@@ -940,17 +1015,23 @@ export default function PlanEditPage() {
   ) {
     if (!user || !plan) return;
     const sourceWeek = plan.weeks[fromWeekIndex];
-    const sourceEntry = sourceWeek?.entries.find(
+    const sourceEntries = (sourceWeek?.entries ?? []).filter(
       (e) => e.weekday === fromWeekday && e.runType !== "rest"
     );
-    if (!sourceEntry) return;
+    if (sourceEntries.length === 0) return;
 
-    const copied = deepCopyRunEntry(sourceEntry, toWeekIndex, toWeekday);
+    const copied = sourceEntries.map((e) =>
+      deepCopyRunEntry(e, toWeekIndex, toWeekday)
+    );
 
     const newWeeks = plan.weeks.map((w, i) => {
       if (i !== toWeekIndex) return w;
-      const filtered = w.entries.filter((e) => e.weekday !== toWeekday);
-      return { ...w, entries: [...filtered, copied] };
+      // Drop all existing non-rest entries on the target weekday, keep
+      // any explicit "rest" entries unchanged.
+      const filtered = w.entries.filter(
+        (e) => !(e.weekday === toWeekday && e.runType !== "rest")
+      );
+      return { ...w, entries: [...filtered, ...copied] };
     });
     const updated = { ...plan, weeks: newWeeks };
     setPlan(updated);

@@ -735,7 +735,12 @@ export function CrossTrainingPlanDetail({
 }: CrossTrainingPlanDetailProps) {
   const [isEditMode, setIsEditMode] = useState(false);
   const [selectedWeekIndex, setSelectedWeekIndex] = useState(0);
-  const [editingDay, setEditingDay] = useState<number | null>(null);
+  // Editing state — null when no day is being edited. Either editing an
+  // existing entry (entryId set) or adding a new one to a day (newEntry true).
+  type EditingState =
+    | { weekday: number; entryId: string; newEntry?: undefined }
+    | { weekday: number; entryId?: undefined; newEntry: true };
+  const [editingDay, setEditingDay] = useState<EditingState | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const { showNavWarning, confirmNav, cancelNav } = useUnsavedChanges(isEditMode);
@@ -860,36 +865,36 @@ export function CrossTrainingPlanDetail({
 
   function handleMoveDay(fromWeekday: number, toWeekday: number) {
     if (fromWeekday === toWeekday) return;
-    const fromEntry = sortedEntries.find((e) => e.weekday === fromWeekday);
-    const toEntry = sortedEntries.find((e) => e.weekday === toWeekday);
+    const fromEntries = sortedEntries.filter((e) => e.weekday === fromWeekday);
+    const toEntries   = sortedEntries.filter((e) => e.weekday === toWeekday);
 
-    if (!fromEntry) return;
+    if (fromEntries.length === 0) return;
 
-    if (!toEntry) {
-      // Move to empty slot
+    if (toEntries.length === 0) {
+      // Move ALL sessions on the source day into the empty target day.
       const next = sortedEntries
         .map((e) =>
-          e.id === fromEntry.id
+          e.weekday === fromWeekday
             ? { ...e, weekday: toWeekday, dayOfWeek: toWeekday - 1 }
             : e
         )
         .sort((a, b) => a.weekday - b.weekday);
       updateWeekEntries(next);
     } else {
-      // Both slots occupied — confirm swap
+      // Both slots occupied — confirm swap of the entire same-weekday groups
       setSwapConfirm({ from: fromWeekday, to: toWeekday });
     }
   }
 
   function executeSwap(from: number, to: number) {
-    const fromEntry = sortedEntries.find((e) => e.weekday === from);
-    const toEntry = sortedEntries.find((e) => e.weekday === to);
-    if (!fromEntry || !toEntry) return;
+    const fromEntries = sortedEntries.filter((e) => e.weekday === from);
+    const toEntries   = sortedEntries.filter((e) => e.weekday === to);
+    if (fromEntries.length === 0 || toEntries.length === 0) return;
 
     const next = sortedEntries
       .map((e) => {
-        if (e.id === fromEntry.id) return { ...e, weekday: to, dayOfWeek: to - 1 };
-        if (e.id === toEntry.id) return { ...e, weekday: from, dayOfWeek: from - 1 };
+        if (e.weekday === from) return { ...e, weekday: to,   dayOfWeek: to   - 1 };
+        if (e.weekday === to)   return { ...e, weekday: from, dayOfWeek: from - 1 };
         return e;
       })
       .sort((a, b) => a.weekday - b.weekday);
@@ -910,15 +915,18 @@ export function CrossTrainingPlanDetail({
     targetWeekIndex: number,
     targetWeekday: number
   ) {
-    const sourceEntry = sortedEntries.find((e) => e.weekday === sourceWeekday);
-    if (!sourceEntry) return;
+    // Copy ALL sessions on the source weekday into the target weekday.
+    const sourceEntries = sortedEntries.filter((e) => e.weekday === sourceWeekday);
+    if (sourceEntries.length === 0) return;
 
-    const copied = deepCopyWorkoutEntry(sourceEntry, targetWeekIndex, targetWeekday);
+    const copied = sourceEntries.map((e) =>
+      deepCopyWorkoutEntry(e, targetWeekIndex, targetWeekday)
+    );
 
     const updatedWeeks = plan.weeks.map((w, i) => {
       if (i !== targetWeekIndex) return w;
       const filtered = w.entries.filter((e) => e.weekday !== targetWeekday);
-      return { ...w, entries: [...filtered, copied] };
+      return { ...w, entries: [...filtered, ...copied] };
     });
     onUpdate({ ...plan, weeks: updatedWeeks });
 
@@ -940,11 +948,11 @@ export function CrossTrainingPlanDetail({
       return;
 
     const targetWeek = plan.weeks[copyDayTargetWeek];
-    const existingTarget = targetWeek?.entries.find(
+    const hasExistingTarget = !!targetWeek?.entries.some(
       (e) => e.weekday === copyDayTargetWeekday
     );
 
-    if (existingTarget) {
+    if (hasExistingTarget) {
       setCopyDayOverwriteConfirm({
         targetWeekIndex: copyDayTargetWeek,
         targetWeekday: copyDayTargetWeekday,
@@ -1129,10 +1137,17 @@ export function CrossTrainingPlanDetail({
       <div className="flex-1 overflow-y-auto p-4">
         <div className="rounded-xl border border-border overflow-hidden bg-card">
           {[1, 2, 3, 4, 5, 6, 7].map((weekday) => {
-            const entry = sortedEntries.find((e) => e.weekday === weekday);
-            const isDayEditing = editingDay === weekday;
-            const isDragging = draggingDay === weekday;
-            const isDragOver = dragOverDay === weekday;
+            // All non-rest sessions on this weekday. With multi-session days
+            // enabled, this can be 0, 1, or many.
+            const daySessions = sortedEntries.filter(
+              (e) => e.weekday === weekday && e.type !== "rest"
+            );
+            const hasSessions = daySessions.length > 0;
+            const isMulti     = daySessions.length > 1;
+            const editingState = editingDay?.weekday === weekday ? editingDay : null;
+            const isAddingNew = editingState?.newEntry === true;
+            const isDragging  = draggingDay === weekday;
+            const isDragOver  = dragOverDay === weekday;
             const date = dayDate(plan.startDate, selectedWeekIndex, weekday);
             const dateLabel = date.toLocaleDateString("en-US", {
               month: "short",
@@ -1143,9 +1158,9 @@ export function CrossTrainingPlanDetail({
               <div
                 key={weekday}
                 className={weekday < 7 ? "border-b border-border" : ""}
-                draggable={!!entry && !isDayEditing && isEditMode}
+                draggable={hasSessions && !editingState && isEditMode}
                 onDragStart={isEditMode ? (e) => {
-                  if (!entry) return;
+                  if (!hasSessions) return;
                   e.dataTransfer.setData("weekday", String(weekday));
                   e.dataTransfer.effectAllowed = "move";
                   setDraggingDay(weekday);
@@ -1181,20 +1196,14 @@ export function CrossTrainingPlanDetail({
                     </div>
                   </div>
 
-                  {isDayEditing ? (
-                    <div className="flex-1 min-w-0 pt-1">
-                      <span className="text-sm text-textSecondary italic">
-                        {entry ? "Editing…" : "Adding session…"}
-                      </span>
-                    </div>
-                  ) : !entry || entry.type === "rest" ? (
+                  {!hasSessions && !isAddingNew ? (
                     <>
                       <span className="text-sm text-textSecondary italic flex-1 pt-1">
                         Rest
                       </span>
                       {isEditMode && (
                         <button
-                          onClick={() => setEditingDay(weekday)}
+                          onClick={() => setEditingDay({ weekday, newEntry: true })}
                           className="text-xs text-primary hover:text-primary/80 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-0.5 pt-1"
                         >
                           <Plus className="w-3.5 h-3.5" />
@@ -1203,29 +1212,89 @@ export function CrossTrainingPlanDetail({
                       )}
                     </>
                   ) : (
-                    <DayCard
-                      entry={entry}
-                      onEdit={() => setEditingDay(weekday)}
-                      onDelete={() => deleteEntry(entry.id)}
-                      onUnmatch={() => unmatchEntry(entry.id)}
-                      onMarkComplete={() => markEntryComplete(entry.id)}
-                      onNotesChange={(notes) => updateEntryNotes(entry.id, notes)}
-                      onCopyDay={() => openCopyDayPicker(weekday)}
-                      detailHref={
-                        !isDurationOnlyEntry(entry) && (entry.exercises?.length ?? 0) > 0
-                          ? `/workout/${plan.id}/${selectedWeekIndex}/${weekday}`
-                          : null
-                      }
-                      isEditingPlan={isEditMode}
-                    />
+                    <div className="flex-1 min-w-0 flex flex-col gap-2 pt-0.5">
+                      {daySessions.map((entry, idx) => {
+                        const isThisEditing =
+                          editingState?.entryId === entry.id;
+                        if (isThisEditing) {
+                          return (
+                            <div key={entry.id} className="text-sm text-textSecondary italic">
+                              {isMulti && (
+                                <span className="text-[10px] font-bold uppercase tracking-wide text-textSecondary/80 mr-2">
+                                  Session {idx + 1}
+                                </span>
+                              )}
+                              Editing…
+                            </div>
+                          );
+                        }
+                        return (
+                          <div
+                            key={entry.id}
+                            className={
+                              isMulti && idx > 0
+                                ? "pt-2 border-t border-border/40"
+                                : ""
+                            }
+                          >
+                            {isMulti && (
+                              <p className="text-[10px] font-bold uppercase tracking-wide text-textSecondary/80 mb-1">
+                                Session {idx + 1}
+                              </p>
+                            )}
+                            <DayCard
+                              entry={entry}
+                              onEdit={() =>
+                                setEditingDay({ weekday, entryId: entry.id })
+                              }
+                              onDelete={() => deleteEntry(entry.id)}
+                              onUnmatch={() => unmatchEntry(entry.id)}
+                              onMarkComplete={() => markEntryComplete(entry.id)}
+                              onNotesChange={(notes) =>
+                                updateEntryNotes(entry.id, notes)
+                              }
+                              onCopyDay={() => openCopyDayPicker(weekday)}
+                              detailHref={
+                                !isDurationOnlyEntry(entry) &&
+                                (entry.exercises?.length ?? 0) > 0
+                                  ? `/workout/${plan.id}/${selectedWeekIndex}/${weekday}/${idx}`
+                                  : null
+                              }
+                              isEditingPlan={isEditMode}
+                            />
+                          </div>
+                        );
+                      })}
+
+                      {/* Add-another-session row (always visible in edit mode
+                          when this day already has ≥1 session) */}
+                      {isEditMode && hasSessions && !isAddingNew && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setEditingDay({ weekday, newEntry: true })
+                          }
+                          className="self-start text-xs text-primary hover:text-primary/80 flex items-center gap-0.5 pt-1"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          Add Session
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
 
-                {isDayEditing && (
+                {editingState && (
                   <div className="pb-2">
                     <EntryEditor
-                      entry={entry ?? newEntryFor(weekday)}
-                      isNew={!entry}
+                      entry={
+                        editingState.newEntry
+                          ? newEntryFor(weekday)
+                          : daySessions.find(
+                              (e) => e.id === editingState.entryId
+                            ) ?? newEntryFor(weekday)
+                      }
+                      isNew={!!editingState.newEntry}
                       onSave={saveEntry}
                       onCancel={() => setEditingDay(null)}
                     />

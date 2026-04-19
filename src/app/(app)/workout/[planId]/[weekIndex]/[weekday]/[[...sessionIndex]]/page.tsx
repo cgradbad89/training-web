@@ -66,6 +66,16 @@ export default function WorkoutDetailPage() {
   const planId = params.planId as string;
   const weekIndex = parseInt(params.weekIndex as string, 10);
   const weekday = parseInt(params.weekday as string, 10);
+  // Optional catch-all segment: undefined when the URL has no extra
+  // segments (existing /workout/abc/0/3 links), or [N] when /workout/abc/0/3/N.
+  // Fall back to 0 so the route remains backward compatible.
+  const rawSessionIndex = params.sessionIndex;
+  const sessionIndex = (() => {
+    const seg = Array.isArray(rawSessionIndex) ? rawSessionIndex[0] : rawSessionIndex;
+    if (typeof seg !== "string") return 0;
+    const n = parseInt(seg, 10);
+    return Number.isFinite(n) && n >= 0 ? n : 0;
+  })();
 
   const [plan, setPlan] = useState<WorkoutPlan | null>(null);
   const [loading, setLoading] = useState(true);
@@ -93,16 +103,20 @@ export default function WorkoutDetailPage() {
       .finally(() => setLoading(false));
   }, [uid, planId]);
 
-  // Derive session
-  const session: PlannedWorkoutEntry | null = (() => {
-    if (!plan) return null;
+  // Derive session — pick the Nth workout entry on this weekday.
+  // Multi-session days are now possible, so resolve via filter+index.
+  // If sessionIndex is out of bounds, fall back to the first session
+  // (matches the documented backward-compat default of 0).
+  const sessionsOnDay = (() => {
+    if (!plan) return [];
     const week = plan.weeks[weekIndex];
-    if (!week) return null;
-    const entry = week.entries.find(
+    if (!week) return [];
+    return week.entries.filter(
       (e) => e.weekday === weekday && e.type === "workout"
     );
-    return entry ?? null;
   })();
+  const session: PlannedWorkoutEntry | null =
+    sessionsOnDay[sessionIndex] ?? sessionsOnDay[0] ?? null;
 
   // All items in the session (exercises + section headers).
   // Normalize legacy items that lack the `kind` discriminator.

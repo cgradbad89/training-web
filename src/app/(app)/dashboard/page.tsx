@@ -562,6 +562,24 @@ function WorkoutPlanProgressCard({
     .filter((e): e is PlannedWorkoutEntry => e.type === "workout")
     .sort((a, b) => a.weekday - b.weekday);
 
+  // Track the within-weekday index for each session so the workout follow-along
+  // route can pick the right entry on multi-session days.
+  const sessionIndexByEntryId = new Map<string, number>();
+  const totalOnDayByEntryId = new Map<string, number>();
+  {
+    const counters = new Map<number, number>();
+    const totals = new Map<number, number>();
+    for (const e of sessionEntries) {
+      totals.set(e.weekday, (totals.get(e.weekday) ?? 0) + 1);
+    }
+    for (const e of sessionEntries) {
+      const next = counters.get(e.weekday) ?? 0;
+      sessionIndexByEntryId.set(e.id, next);
+      totalOnDayByEntryId.set(e.id, totals.get(e.weekday) ?? 1);
+      counters.set(e.weekday, next + 1);
+    }
+  }
+
   const completedCount = sessionEntries.filter(
     (e) => e.completed === true
   ).length;
@@ -603,7 +621,8 @@ function WorkoutPlanProgressCard({
                   ).length;
                   return `${n} exercise${n === 1 ? "" : "s"}`;
                 })();
-            const href = `/workout/${activeWorkoutPlan.id}/${weekIndex}/${entry.weekday}`;
+            const sIdx = sessionIndexByEntryId.get(entry.id) ?? 0;
+            const href = `/workout/${activeWorkoutPlan.id}/${weekIndex}/${entry.weekday}/${sIdx}`;
             return (
               <Link
                 key={entry.id}
@@ -627,6 +646,12 @@ function WorkoutPlanProgressCard({
                   {dayLabel}
                 </span>
                 <span className="text-sm text-textPrimary flex-1 truncate">
+                  {(totalOnDayByEntryId.get(entry.id) ?? 1) > 1 && (
+                    <span className="text-textSecondary">
+                      Session {sIdx + 1}
+                      {" · "}
+                    </span>
+                  )}
                   {entry.label ?? "Workout"}
                 </span>
                 <span className="text-xs text-textSecondary shrink-0">

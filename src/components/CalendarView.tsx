@@ -153,7 +153,9 @@ export function CalendarView({ plans, actualRuns = [], onRunningEventClick }: Ca
 
   function handleEventClick(event: CalendarEvent) {
     if (event.planType === "workout") {
-      router.push(`/workout/${event.planId}/${event.weekIndex}/${event.weekday}`);
+      router.push(
+        `/workout/${event.planId}/${event.weekIndex}/${event.weekday}/${event.sessionIndex}`
+      );
     } else if (onRunningEventClick) {
       onRunningEventClick(event.planId, event.weekIndex);
     } else {
