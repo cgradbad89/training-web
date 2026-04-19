@@ -1,14 +1,6 @@
 "use client";
 
 import React, { useState, useEffect, useMemo } from "react";
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  Tooltip,
-  Cell,
-  ResponsiveContainer,
-} from "recharts";
 import Link from "next/link";
 import {
   Dumbbell,
@@ -32,7 +24,10 @@ import { useAuth } from "@/hooks/useAuth";
 import { onHealthWorkoutsSnapshot } from "@/services/healthWorkouts";
 import { prefetchRoutes } from "@/utils/routeCache";
 import { fetchPlans } from "@/services/plans";
-import { fetchRaces } from "@/services/races";
+import {
+  fetchHealthMetricsRange,
+  type HealthMetric,
+} from "@/services/healthMetrics";
 
 import {
   efficiencyDisplayScore,
@@ -60,54 +55,17 @@ import {
   isWorkoutPlan,
   isDurationOnlyEntry,
 } from "@/types/plan";
-import { type HalfMarathonRace, HALF_MARATHON_MILES, RACE_DISTANCE_LABELS, RACE_DISTANCE_MILES } from "@/types/race";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-function formatFinishTime(seconds: number): string {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = Math.round(seconds % 60);
-  return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-}
-
-function daysUntil(dateStr: string): number {
-  const target = new Date(dateStr);
-  const now = new Date();
-  const diff = target.getTime() - now.getTime();
-  return Math.ceil(diff / (1000 * 60 * 60 * 24));
-}
-
-/**
- * Compute the Race Goal countdown badge content.
- *   - past race          → null (badge hidden)
- *   - day of the race    → { primary: "Today!" }
- *   - 1–29 days out      → { primary: "N days" }
- *   - 30+ days out       → { primary: "N month(s)", secondary: "N days" }
- */
-function raceCountdown(
-  dateStr: string
-): { primary: string; secondary: string | null } | null {
-  const days = daysUntil(dateStr);
-  if (days < 0) return null;
-  if (days === 0) return { primary: "Today!", secondary: null };
-  if (days < 30) return { primary: `${days} days`, secondary: null };
-  const months = Math.round(days / 30.44);
-  return {
-    primary: `${months} month${months > 1 ? "s" : ""}`,
-    secondary: `${days} days`,
-  };
-}
-
-function formatRaceDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleDateString("en-US", {
-    weekday: "short",
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
+/** Local-date "YYYY-MM-DD" string (matches the healthMetrics doc `date` field). */
+function toIsoDate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 function getWorkoutLocalDate(w: HealthWorkout): Date {
@@ -682,78 +640,79 @@ function WorkoutPlanProgressCard({
   );
 }
 
-// ─── Race Goal ────────────────────────────────────────────────────────────────
+// ─── Health KPIs Row ──────────────────────────────────────────────────────────
 
-interface RaceGoalCardProps {
-  activeRace: HalfMarathonRace | null;
+interface HealthKpisRowProps {
+  metrics: HealthMetric[];
 }
 
-function RaceGoalCard({ activeRace }: RaceGoalCardProps) {
-  if (!activeRace) {
-    return (
-      <Card>
-        <CardTitle>Race Goal</CardTitle>
-        <EmptyState
-          title="No upcoming race"
-          description="Add a race goal to track your target pace."
-          action={
-            <Link href="/races" className="text-sm text-primary hover:underline">
-              Go to Races →
-            </Link>
-          }
-        />
-      </Card>
-    );
-  }
+/**
+ * Five tiles in a horizontal row showing the per-day average for the
+ * selected week's healthMetrics: Steps, Exercise Mins, Move Calories,
+ * Stand Hours, Sleep Hours. Neutral display only — goal-driven coloring
+ * lives on the Health page.
+ */
+function HealthKpisRow({ metrics }: HealthKpisRowProps) {
+  const weeklyAvg = (field: keyof HealthMetric): number | null => {
+    const values = metrics
+      .map((m) => m[field])
+      .filter((v): v is number => typeof v === "number" && v > 0);
+    if (values.length === 0) return null;
+    return values.reduce((a, b) => a + b, 0) / values.length;
+  };
 
-  const raceDistMiles = activeRace.raceDistance === "custom"
-    ? (activeRace.customDistanceMiles ?? HALF_MARATHON_MILES)
-    : (RACE_DISTANCE_MILES[activeRace.raceDistance] ?? HALF_MARATHON_MILES);
-  const goalTimeSec = (activeRace.targetPaceSecondsPerMile ?? 0) * raceDistMiles;
-  const countdown = raceCountdown(activeRace.raceDate);
+  const tiles: { label: string; value: string }[] = [
+    {
+      label: "Steps",
+      value: (() => {
+        const v = weeklyAvg("steps");
+        return v == null ? "—" : Math.round(v).toLocaleString();
+      })(),
+    },
+    {
+      label: "Exercise Mins",
+      value: (() => {
+        const v = weeklyAvg("exercise_mins");
+        return v == null ? "—" : `${Math.round(v)} min`;
+      })(),
+    },
+    {
+      label: "Move Calories",
+      value: (() => {
+        const v = weeklyAvg("move_calories");
+        return v == null ? "—" : `${Math.round(v)} kcal`;
+      })(),
+    },
+    {
+      label: "Stand Hours",
+      value: (() => {
+        const v = weeklyAvg("stand_hours");
+        return v == null ? "—" : `${v.toFixed(1)} hrs`;
+      })(),
+    },
+    {
+      label: "Sleep Hours",
+      value: (() => {
+        const v = weeklyAvg("sleep_total_hours");
+        return v == null ? "—" : `${v.toFixed(1)} hrs`;
+      })(),
+    },
+  ];
 
   return (
     <Card>
-      <div className="flex justify-between items-start mb-4">
-        <h2 className="text-sm font-semibold uppercase tracking-widest text-textSecondary">
-          Race Goal
-        </h2>
-        {countdown && (
-          <div className="text-right">
-            <div className="text-xl font-bold text-textPrimary tabular-nums leading-tight">
-              {countdown.primary}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+        {tiles.map((t) => (
+          <div key={t.label} className="flex flex-col gap-0.5">
+            <div className="text-2xl font-bold text-textPrimary tabular-nums leading-tight">
+              {t.value}
             </div>
-            {countdown.secondary && (
-              <div className="text-xs text-textSecondary tabular-nums">
-                {countdown.secondary}
-              </div>
-            )}
+            <span className="text-xs text-textPrimary">{t.label}</span>
+            <span className="text-[10px] text-textSecondary uppercase tracking-wide">
+              avg/day
+            </span>
           </div>
-        )}
-      </div>
-
-      <p className="text-lg font-semibold text-textPrimary mb-1">{activeRace.name}</p>
-      <div className="flex items-center gap-2 mb-1">
-        <p className="text-xs text-textSecondary">{formatRaceDate(activeRace.raceDate)}</p>
-      </div>
-      <span className="inline-block text-xs bg-primary/10 text-primary font-medium px-2 py-0.5 rounded-full mb-4">
-        {RACE_DISTANCE_LABELS[activeRace.raceDistance] ?? activeRace.raceDistance}
-      </span>
-
-      <div className="grid grid-cols-2 gap-4">
-        <div className="flex flex-col gap-0.5">
-          <span className="text-xs text-textSecondary">Target Pace</span>
-          <span className="text-2xl font-bold text-textPrimary tabular-nums">
-            {formatPace(activeRace.targetPaceSecondsPerMile ?? 0)}
-            <span className="text-sm font-normal text-textSecondary"> /mi</span>
-          </span>
-        </div>
-        <div className="flex flex-col gap-0.5">
-          <span className="text-xs text-textSecondary">Goal Time</span>
-          <span className="text-2xl font-bold text-textPrimary tabular-nums">
-            {formatFinishTime(goalTimeSec)}
-          </span>
-        </div>
+        ))}
       </div>
     </Card>
   );
@@ -862,24 +821,45 @@ export default function DashboardPage() {
   const [activeWorkoutPlan, setActiveWorkoutPlan] = useState<WorkoutPlan | null>(
     null
   );
-  const [activeRace, setActiveRace] = useState<HalfMarathonRace | null>(null);
+  const [weekMetrics, setWeekMetrics] = useState<HealthMetric[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // One-time fetch for plans and races (user-managed data, not iOS-synced)
+  // One-time fetch for plans (user-managed data, not iOS-synced).
+  // Race data was previously fetched here for the now-removed RaceGoalCard.
   useEffect(() => {
     if (!uid) return;
-    Promise.all([fetchPlans(uid), fetchRaces(uid)])
-      .then(([plans, races]) => {
+    fetchPlans(uid)
+      .then((plans) => {
         const runningPlans = plans.filter(isRunningPlan);
         setActivePlan(runningPlans.find((p) => p.isActive) ?? null);
         const workoutPlansList = plans.filter(isWorkoutPlan);
         setActiveWorkoutPlan(
           workoutPlansList.find((p) => p.isActive) ?? null
         );
-        setActiveRace(races.find((r) => r.isActive) ?? null);
       })
       .catch(console.error);
   }, [uid]);
+
+  // Fetch healthMetrics for the selected week's date range. Re-runs whenever
+  // the user navigates to a different week. One-time getDocs per range —
+  // no live snapshot, since this row is summary data.
+  useEffect(() => {
+    if (!uid) return;
+    const fromIso = toIsoDate(selectedWeekStart);
+    const toIso = toIsoDate(selectedWeekEnd);
+    let cancelled = false;
+    fetchHealthMetricsRange(uid, fromIso, toIso)
+      .then((m) => {
+        if (!cancelled) setWeekMetrics(m);
+      })
+      .catch((err) => {
+        console.error("[fetchHealthMetricsRange]", err);
+        if (!cancelled) setWeekMetrics([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [uid, selectedWeekStart, selectedWeekEnd]);
 
   // Real-time listener for healthWorkouts — updates when iOS syncs
   useEffect(() => {
@@ -927,31 +907,6 @@ export default function DashboardPage() {
 
   // ─── KPI data ────────────────────────────────────────────────────────────────
 
-  // 8-week mileage trend data — drives the bar chart below the calendar.
-  // (Previously also computed fourWeekAvg / actual / planned counts for the
-  // KPI strip; those tiles were removed in the two-column redesign because
-  // their info now lives in Training Load, Running Plan, and Race Goal.)
-  const weeklyMileageData = useMemo(() => {
-    const allRuns = workouts.filter((w) => w.isRunLike);
-    const runsByWeek = new Map<string, number>();
-    allRuns.forEach((run) => {
-      const d = getWorkoutLocalDate(run);
-      const ws = getWeekStart(d);
-      const key = ws.toISOString().split("T")[0];
-      runsByWeek.set(key, (runsByWeek.get(key) ?? 0) + run.distanceMiles);
-    });
-
-    return Array.from({ length: 8 }, (_, i) => {
-      const weekDate = new Date(selectedWeekStart);
-      weekDate.setDate(weekDate.getDate() - (7 - i) * 7);
-      const key = weekDate.toISOString().split("T")[0];
-      const miles = runsByWeek.get(key) ?? 0;
-      const isCurrentWeek = i === 7;
-      const label = weekDate.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-      return { label, miles, isCurrentWeek, key };
-    });
-  }, [workouts, selectedWeekStart]);
-
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -965,8 +920,14 @@ export default function DashboardPage() {
       {/* Page title */}
       <h1 className="text-2xl font-bold text-textPrimary">This Week</h1>
 
-      {/* Row 1: Week Navigator */}
-      <WeekNavigator weekStart={selectedWeekStart} onChange={setSelectedWeekStart} />
+      {/* Row 1: Week Navigator — allow past & future navigation; "Today" pill
+          auto-appears when not on the current week. */}
+      <WeekNavigator
+        weekStart={selectedWeekStart}
+        onChange={setSelectedWeekStart}
+        disableFuture={false}
+        showTodayReset
+      />
 
       {/* Row 2: Weekly Stats Bar */}
       <WeeklyStatsBar
@@ -976,7 +937,10 @@ export default function DashboardPage() {
         plannedMiles={plannedMiles}
       />
 
-      {/* Week calendar — current week's planned sessions, no navigation controls */}
+      {/* Row 3: Health KPIs for the selected week (per-day averages) */}
+      <HealthKpisRow metrics={weekMetrics} />
+
+      {/* Week calendar — tracks the selected week via weekStart prop */}
       <section>
         <WeekCalendar
           plans={[
@@ -988,54 +952,11 @@ export default function DashboardPage() {
         />
       </section>
 
-      {/* ── 8-Week Mileage Trend ────────────────────────────── */}
-      {weeklyMileageData.length > 0 && (
-        <div className="bg-card rounded-2xl border border-border p-4">
-          <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-3">
-            Weekly Mileage — Last 8 Weeks
-          </p>
-          <ResponsiveContainer width="100%" height={80}>
-            <BarChart
-              data={weeklyMileageData}
-              barSize={20}
-              margin={{ top: 4, right: 0, bottom: 0, left: 0 }}
-            >
-              <XAxis
-                dataKey="label"
-                tick={{ fontSize: 10 }}
-                axisLine={false}
-                tickLine={false}
-              />
-              <Tooltip
-                formatter={(v) => [`${Number(v).toFixed(1)} mi`, "Miles"]}
-                contentStyle={{
-                  fontSize: 12,
-                  backgroundColor: 'var(--color-chart-tooltip-bg)',
-                  border: '1px solid var(--color-border)',
-                  borderRadius: '0.375rem',
-                  color: 'var(--color-textPrimary)',
-                }}
-                labelStyle={{ color: 'var(--color-textSecondary)' }}
-                itemStyle={{ color: 'var(--color-textPrimary)' }}
-              />
-              <Bar dataKey="miles" radius={[4, 4, 0, 0]}>
-                {weeklyMileageData.map((entry, i) => (
-                  <Cell
-                    key={i}
-                    fill={entry.isCurrentWeek ? 'var(--color-chart-primary)' : 'var(--color-chart-primary-muted)'}
-                  />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      )}
-
       {/* ── Two-column tile grid ───────────────────────────────────────────
         Tiles flow left-to-right then wrap. With 2 cols on md+ this puts
         Running on the left, Workout on the right, etc. With 1 col on
         mobile they stack in interleaved order: Running plan, Workout plan,
-        Runs, Workouts, Race, Load. */}
+        Runs, Workouts, Load. */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <PlanProgressCard
           activePlan={activePlan}
@@ -1056,7 +977,6 @@ export default function DashboardPage() {
           weekStart={selectedWeekStart}
           weekEnd={selectedWeekEnd}
         />
-        <RaceGoalCard activeRace={activeRace} />
         <TrainingLoadCard workouts={workouts} />
       </div>
     </div>

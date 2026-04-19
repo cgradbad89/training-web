@@ -49,6 +49,28 @@ export async function fetchHealthMetrics(
   return snap.docs.map((d) => d.data() as HealthMetric);
 }
 
+/**
+ * Fetch all healthMetrics documents whose `date` field falls within the
+ * inclusive [fromDate, toDate] range. Both bounds are ISO date strings
+ * ("YYYY-MM-DD"). Used by the This Week dashboard to compute per-week
+ * health KPI averages without subscribing to the full collection.
+ */
+export async function fetchHealthMetricsRange(
+  uid: string,
+  fromDate: string,
+  toDate: string
+): Promise<HealthMetric[]> {
+  const snap = await getDocs(
+    query(
+      collection(db, `users/${uid}/healthMetrics`),
+      where("date", ">=", fromDate),
+      where("date", "<=", toDate),
+      orderBy("date", "asc")
+    )
+  );
+  return snap.docs.map((d) => d.data() as HealthMetric);
+}
+
 export async function fetchAllHealthMetrics(
   uid: string
 ): Promise<HealthMetric[]> {
