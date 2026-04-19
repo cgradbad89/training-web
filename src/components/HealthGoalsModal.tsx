@@ -40,14 +40,34 @@ interface FormState {
   stepsGoal: string;
   stepsWarningPct: string;
   stepsDangerPct: string;
+  // Exercise mins (higher better)
+  exerciseMinsGoal: string;
+  exerciseMinsWarningPct: string;
+  exerciseMinsDangerPct: string;
+  // Move calories (higher better)
+  moveCaloriesGoal: string;
+  moveCaloriesWarningPct: string;
+  moveCaloriesDangerPct: string;
+  // Stand hours (higher better)
+  standHoursGoal: string;
+  standHoursWarningPct: string;
+  standHoursDangerPct: string;
   // Sleep
   sleepGoal: string;
   sleepWarningPct: string;
   sleepDangerPct: string;
+  // Awake mins (lower better)
+  awakeMinsGoal: string;
+  awakeMinsWarningPct: string;
+  awakeMinsDangerPct: string;
   // Brushing
   brushingGoal: string;
   brushingWarningPct: string;
   brushingDangerPct: string;
+  // Avg brush mins (higher better)
+  avgBrushMinsGoal: string;
+  avgBrushMinsWarningPct: string;
+  avgBrushMinsDangerPct: string;
 }
 
 function emptyForm(): FormState {
@@ -56,8 +76,13 @@ function emptyForm(): FormState {
     bmiMin: "", bmiMax: "", bmiWarningPct: "", bmiDangerPct: "",
     restingHRGoal: "", restingHRWarningPct: "", restingHRDangerPct: "",
     stepsGoal: "", stepsWarningPct: "", stepsDangerPct: "",
+    exerciseMinsGoal: "", exerciseMinsWarningPct: "", exerciseMinsDangerPct: "",
+    moveCaloriesGoal: "", moveCaloriesWarningPct: "", moveCaloriesDangerPct: "",
+    standHoursGoal: "", standHoursWarningPct: "", standHoursDangerPct: "",
     sleepGoal: "", sleepWarningPct: "", sleepDangerPct: "",
+    awakeMinsGoal: "", awakeMinsWarningPct: "", awakeMinsDangerPct: "",
     brushingGoal: "", brushingWarningPct: "", brushingDangerPct: "",
+    avgBrushMinsGoal: "", avgBrushMinsWarningPct: "", avgBrushMinsDangerPct: "",
   };
 }
 
@@ -95,6 +120,31 @@ function formFromGoals(goals: HealthGoals | null): FormState {
     f.brushingGoal       = String(goals.brushing.goal);
     f.brushingWarningPct = goals.brushing.warningPct != null ? String(goals.brushing.warningPct) : "";
     f.brushingDangerPct  = goals.brushing.dangerPct  != null ? String(goals.brushing.dangerPct)  : "";
+  }
+  if (goals.exerciseMins) {
+    f.exerciseMinsGoal       = String(goals.exerciseMins.goal);
+    f.exerciseMinsWarningPct = goals.exerciseMins.warningPct != null ? String(goals.exerciseMins.warningPct) : "";
+    f.exerciseMinsDangerPct  = goals.exerciseMins.dangerPct  != null ? String(goals.exerciseMins.dangerPct)  : "";
+  }
+  if (goals.moveCalories) {
+    f.moveCaloriesGoal       = String(goals.moveCalories.goal);
+    f.moveCaloriesWarningPct = goals.moveCalories.warningPct != null ? String(goals.moveCalories.warningPct) : "";
+    f.moveCaloriesDangerPct  = goals.moveCalories.dangerPct  != null ? String(goals.moveCalories.dangerPct)  : "";
+  }
+  if (goals.standHours) {
+    f.standHoursGoal       = String(goals.standHours.goal);
+    f.standHoursWarningPct = goals.standHours.warningPct != null ? String(goals.standHours.warningPct) : "";
+    f.standHoursDangerPct  = goals.standHours.dangerPct  != null ? String(goals.standHours.dangerPct)  : "";
+  }
+  if (goals.awakeMins) {
+    f.awakeMinsGoal       = String(goals.awakeMins.goal);
+    f.awakeMinsWarningPct = goals.awakeMins.warningPct != null ? String(goals.awakeMins.warningPct) : "";
+    f.awakeMinsDangerPct  = goals.awakeMins.dangerPct  != null ? String(goals.awakeMins.dangerPct)  : "";
+  }
+  if (goals.avgBrushMins) {
+    f.avgBrushMinsGoal       = String(goals.avgBrushMins.goal);
+    f.avgBrushMinsWarningPct = goals.avgBrushMins.warningPct != null ? String(goals.avgBrushMins.warningPct) : "";
+    f.avgBrushMinsDangerPct  = goals.avgBrushMins.dangerPct  != null ? String(goals.avgBrushMins.dangerPct)  : "";
   }
   return f;
 }
@@ -150,6 +200,17 @@ function buildGoalsFromForm(f: FormState): HealthGoals {
   if (slp) goals.sleep = slp;
   const brh  = single(f.brushingGoal, f.brushingWarningPct, f.brushingDangerPct);
   if (brh) goals.brushing = brh;
+
+  const exm = single(f.exerciseMinsGoal, f.exerciseMinsWarningPct, f.exerciseMinsDangerPct);
+  if (exm) goals.exerciseMins = exm;
+  const mcal = single(f.moveCaloriesGoal, f.moveCaloriesWarningPct, f.moveCaloriesDangerPct);
+  if (mcal) goals.moveCalories = mcal;
+  const stnd = single(f.standHoursGoal, f.standHoursWarningPct, f.standHoursDangerPct);
+  if (stnd) goals.standHours = stnd;
+  const awk = single(f.awakeMinsGoal, f.awakeMinsWarningPct, f.awakeMinsDangerPct);
+  if (awk) goals.awakeMins = awk;
+  const abm = single(f.avgBrushMinsGoal, f.avgBrushMinsWarningPct, f.avgBrushMinsDangerPct);
+  if (abm) goals.avgBrushMins = abm;
 
   return goals;
 }
@@ -500,6 +561,77 @@ export function HealthGoalsModal({
               />
             </div>
 
+            <div className="mt-5">
+              <p className="text-sm font-medium text-textPrimary mb-1">
+                Exercise Minutes
+              </p>
+              <div className="flex items-center gap-2 text-sm text-textSecondary">
+                Goal
+                <NumberField
+                  value={form.exerciseMinsGoal}
+                  onChange={setField("exerciseMinsGoal")}
+                  placeholder="45"
+                />
+                mins or above
+              </div>
+              <AdvancedThresholds
+                shown={parseNum(form.exerciseMinsGoal) != null}
+                warningValue={form.exerciseMinsWarningPct}
+                dangerValue={form.exerciseMinsDangerPct}
+                onWarningChange={setField("exerciseMinsWarningPct")}
+                onDangerChange={setField("exerciseMinsDangerPct")}
+                warningLabel="Warning if below"
+                dangerLabel="Danger if below"
+              />
+            </div>
+
+            <div className="mt-5">
+              <p className="text-sm font-medium text-textPrimary mb-1">
+                Move Calories
+              </p>
+              <div className="flex items-center gap-2 text-sm text-textSecondary">
+                Goal
+                <NumberField
+                  value={form.moveCaloriesGoal}
+                  onChange={setField("moveCaloriesGoal")}
+                  placeholder="800"
+                  className="w-24"
+                />
+                kcal or above
+              </div>
+              <AdvancedThresholds
+                shown={parseNum(form.moveCaloriesGoal) != null}
+                warningValue={form.moveCaloriesWarningPct}
+                dangerValue={form.moveCaloriesDangerPct}
+                onWarningChange={setField("moveCaloriesWarningPct")}
+                onDangerChange={setField("moveCaloriesDangerPct")}
+                warningLabel="Warning if below"
+                dangerLabel="Danger if below"
+              />
+            </div>
+
+            <div className="mt-5">
+              <p className="text-sm font-medium text-textPrimary mb-1">Stand Hours</p>
+              <div className="flex items-center gap-2 text-sm text-textSecondary">
+                Goal
+                <NumberField
+                  value={form.standHoursGoal}
+                  onChange={setField("standHoursGoal")}
+                  placeholder="12"
+                />
+                hours or above
+              </div>
+              <AdvancedThresholds
+                shown={parseNum(form.standHoursGoal) != null}
+                warningValue={form.standHoursWarningPct}
+                dangerValue={form.standHoursDangerPct}
+                onWarningChange={setField("standHoursWarningPct")}
+                onDangerChange={setField("standHoursDangerPct")}
+                warningLabel="Warning if below"
+                dangerLabel="Danger if below"
+              />
+            </div>
+
             {/* RECOVERY */}
             <GroupHeading>Recovery</GroupHeading>
 
@@ -527,6 +659,28 @@ export function HealthGoalsModal({
             </div>
 
             <div className="mt-5">
+              <p className="text-sm font-medium text-textPrimary mb-1">Awake Time</p>
+              <div className="flex items-center gap-2 text-sm text-textSecondary">
+                Goal
+                <NumberField
+                  value={form.awakeMinsGoal}
+                  onChange={setField("awakeMinsGoal")}
+                  placeholder="20"
+                />
+                mins or below
+              </div>
+              <AdvancedThresholds
+                shown={parseNum(form.awakeMinsGoal) != null}
+                warningValue={form.awakeMinsWarningPct}
+                dangerValue={form.awakeMinsDangerPct}
+                onWarningChange={setField("awakeMinsWarningPct")}
+                onDangerChange={setField("awakeMinsDangerPct")}
+                warningLabel="Warning if above"
+                dangerLabel="Danger if above"
+              />
+            </div>
+
+            <div className="mt-5">
               <p className="text-sm font-medium text-textPrimary mb-1">Brushing</p>
               <div className="flex items-center gap-2 text-sm text-textSecondary">
                 Goal
@@ -544,6 +698,31 @@ export function HealthGoalsModal({
                 dangerValue={form.brushingDangerPct}
                 onWarningChange={setField("brushingWarningPct")}
                 onDangerChange={setField("brushingDangerPct")}
+                warningLabel="Warning if below"
+                dangerLabel="Danger if below"
+              />
+            </div>
+
+            <div className="mt-5">
+              <p className="text-sm font-medium text-textPrimary mb-1">
+                Avg Brush Duration
+              </p>
+              <div className="flex items-center gap-2 text-sm text-textSecondary">
+                Goal
+                <NumberField
+                  value={form.avgBrushMinsGoal}
+                  onChange={setField("avgBrushMinsGoal")}
+                  step="0.1"
+                  placeholder="2"
+                />
+                mins or above
+              </div>
+              <AdvancedThresholds
+                shown={parseNum(form.avgBrushMinsGoal) != null}
+                warningValue={form.avgBrushMinsWarningPct}
+                dangerValue={form.avgBrushMinsDangerPct}
+                onWarningChange={setField("avgBrushMinsWarningPct")}
+                onDangerChange={setField("avgBrushMinsDangerPct")}
                 warningLabel="Warning if below"
                 dangerLabel="Danger if below"
               />

@@ -180,6 +180,16 @@ export interface HealthGoals {
   sleep?: MetricGoal;
   /** Higher-is-better, sessions per day. */
   brushing?: MetricGoal;
+  /** Higher-is-better, daily active minutes. */
+  exerciseMins?: MetricGoal;
+  /** Higher-is-better, active calories burned per day. */
+  moveCalories?: MetricGoal;
+  /** Higher-is-better, stand hours per day. */
+  standHours?: MetricGoal;
+  /** Lower-is-better, minutes awake during sleep. */
+  awakeMins?: MetricGoal;
+  /** Higher-is-better, average brushing duration in minutes. */
+  avgBrushMins?: MetricGoal;
   updatedAt?: Timestamp;
 }
 

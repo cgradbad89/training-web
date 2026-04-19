@@ -606,6 +606,53 @@ export default function HealthPage() {
     ? `Goal: ≥${goals.brushing.goal}/day`
     : undefined;
 
+  // ── Five remaining metrics (extended schema) ──────────────────────────
+  const exerciseStatus: GoalStatus = statusOrNeutral(goals?.exerciseMins, (g) =>
+    today?.exercise_mins !== undefined
+      ? evaluateMetricGoal(today.exercise_mins, g.goal, "higher", g.warningPct, g.dangerPct)
+      : "neutral"
+  );
+  const exerciseGoalText = goals?.exerciseMins
+    ? `Goal: ≥${goals.exerciseMins.goal} mins`
+    : undefined;
+
+  const moveCalStatus: GoalStatus = statusOrNeutral(goals?.moveCalories, (g) =>
+    today?.move_calories !== undefined
+      ? evaluateMetricGoal(today.move_calories, g.goal, "higher", g.warningPct, g.dangerPct)
+      : "neutral"
+  );
+  const moveCalGoalText = goals?.moveCalories
+    ? `Goal: ≥${Math.round(goals.moveCalories.goal).toLocaleString()} kcal`
+    : undefined;
+
+  const standStatus: GoalStatus = statusOrNeutral(goals?.standHours, (g) =>
+    today?.stand_hours !== undefined
+      ? evaluateMetricGoal(today.stand_hours, g.goal, "higher", g.warningPct, g.dangerPct)
+      : "neutral"
+  );
+  const standGoalText = goals?.standHours
+    ? `Goal: ≥${goals.standHours.goal} hrs`
+    : undefined;
+
+  // Awake mins — lower is better
+  const awakeStatus: GoalStatus = statusOrNeutral(goals?.awakeMins, (g) =>
+    today?.sleep_awake_mins !== undefined
+      ? evaluateMetricGoal(today.sleep_awake_mins, g.goal, "lower", g.warningPct, g.dangerPct)
+      : "neutral"
+  );
+  const awakeGoalText = goals?.awakeMins
+    ? `Goal: ≤${goals.awakeMins.goal} mins`
+    : undefined;
+
+  const avgBrushStatus: GoalStatus = statusOrNeutral(goals?.avgBrushMins, (g) =>
+    today?.brush_avg_duration_mins !== undefined
+      ? evaluateMetricGoal(today.brush_avg_duration_mins, g.goal, "higher", g.warningPct, g.dangerPct)
+      : "neutral"
+  );
+  const avgBrushGoalText = goals?.avgBrushMins
+    ? `Goal: ≥${goals.avgBrushMins.goal} mins`
+    : undefined;
+
   // Last synced
   const lastSynced = today?.syncedAt
     ? new Date(today.syncedAt).toLocaleString("en-US", {
@@ -820,7 +867,9 @@ export default function HealthPage() {
             today={today?.exercise_mins}
             avg7={a7("exercise_mins")}
             avg30={a30("exercise_mins")}
-            formatter={(v) => (v ? `${Math.round(v)} min` : "—")}
+            formatter={(v) => (v !== undefined ? `${Math.round(v)} min` : "—")}
+            status={exerciseStatus}
+            goalText={exerciseGoalText}
           />
           <KpiCard
             icon={Zap}
@@ -829,7 +878,9 @@ export default function HealthPage() {
             today={today?.move_calories}
             avg7={a7("move_calories")}
             avg30={a30("move_calories")}
-            formatter={(v) => (v ? `${Math.round(v)} kcal` : "—")}
+            formatter={(v) => (v !== undefined ? `${Math.round(v)} kcal` : "—")}
+            status={moveCalStatus}
+            goalText={moveCalGoalText}
           />
           <KpiCard
             icon={PersonStanding}
@@ -838,7 +889,9 @@ export default function HealthPage() {
             today={today?.stand_hours}
             avg7={a7("stand_hours")}
             avg30={a30("stand_hours")}
-            formatter={(v) => (v ? `${Math.round(v)}h` : "—")}
+            formatter={(v) => (v !== undefined ? `${Math.round(v)}h` : "—")}
+            status={standStatus}
+            goalText={standGoalText}
           />
         </div>
 
@@ -904,7 +957,9 @@ export default function HealthPage() {
             today={today?.sleep_awake_mins}
             avg7={a7("sleep_awake_mins")}
             avg30={a30("sleep_awake_mins")}
-            formatter={(v) => (v ? `${Math.round(v)} min` : "—")}
+            formatter={(v) => (v !== undefined ? `${Math.round(v)} min` : "—")}
+            status={awakeStatus}
+            goalText={awakeGoalText}
           />
         </div>
 
@@ -933,7 +988,11 @@ export default function HealthPage() {
             today={today?.brush_count}
             avg7={a7("brush_count")}
             avg30={a30("brush_count")}
-            formatter={(v) => (v ? `${v.toFixed(1)}x` : "—")}
+            // Use !== undefined so a real 0 value (no brushing yet today)
+            // renders "0.0x" alongside its danger-colored tile rather than
+            // showing "—" — which previously created a confusing colored-but-
+            // dashless display when today's brush_count was 0.
+            formatter={(v) => (v !== undefined ? `${v.toFixed(1)}x` : "—")}
             status={brushingStatus}
             goalText={brushingGoalText}
           />
@@ -944,7 +1003,9 @@ export default function HealthPage() {
             today={today?.brush_avg_duration_mins}
             avg7={a7("brush_avg_duration_mins")}
             avg30={a30("brush_avg_duration_mins")}
-            formatter={(v) => (v ? `${v.toFixed(1)} min` : "—")}
+            formatter={(v) => (v !== undefined ? `${v.toFixed(1)} min` : "—")}
+            status={avgBrushStatus}
+            goalText={avgBrushGoalText}
           />
         </div>
 
