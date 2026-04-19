@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import {
   onHealthMetricsSnapshot,
@@ -35,6 +35,7 @@ import {
   RefreshCw,
   PersonStanding,
   Target,
+  Check,
 } from "lucide-react";
 import { HealthGoalsModal } from "@/components/HealthGoalsModal";
 import {
@@ -91,6 +92,47 @@ function isValidWeight(w: number | undefined): w is number {
   return w !== undefined && w >= 155;
 }
 
+// ── Selectable KPIs ────────────────────────────────────────────────────────
+//
+// Section → list of KPI field names (HealthMetric keys). Drives both the
+// "All / None" buttons per section and the conditional graph areas below
+// each section's tile grid.
+
+const BODY_KPIS     = ["weight_lbs", "bmi", "resting_hr"] as const;
+const ACTIVITY_KPIS = ["steps", "exercise_mins", "move_calories", "stand_hours"] as const;
+const RECOVERY_KPIS = [
+  "sleep_total_hours",
+  "sleep_awake_mins",
+  "brush_count",
+  "brush_avg_duration_mins",
+] as const;
+
+const DEFAULT_SELECTED: readonly string[] = [
+  "weight_lbs",
+  "resting_hr",
+  "steps",
+  "sleep_total_hours",
+  "brush_count",
+];
+
+const KPI_SELECTION_STORAGE_KEY = "health_selected_kpis";
+
+function loadInitialSelectedKpis(): Set<string> {
+  if (typeof window === "undefined") return new Set(DEFAULT_SELECTED);
+  try {
+    const stored = window.localStorage.getItem(KPI_SELECTION_STORAGE_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored) as unknown;
+      if (Array.isArray(parsed)) {
+        return new Set(parsed.filter((v): v is string => typeof v === "string"));
+      }
+    }
+  } catch {
+    // localStorage unavailable / quota / parse error → fall back to defaults
+  }
+  return new Set(DEFAULT_SELECTED);
+}
+
 // ── Goal-driven status colors ────────────────────────────────────────────────
 //
 // Hardcoded thresholds were removed in favor of the user-defined HealthGoals
@@ -127,6 +169,8 @@ function KpiCard({
   formatter,
   status = "neutral",
   goalText,
+  selected = false,
+  onToggle,
 }: {
   icon: React.ComponentType<{
     className?: string;
@@ -141,6 +185,11 @@ function KpiCard({
   status?: GoalStatus;
   /** Optional goal summary shown beneath the today value (e.g. "Goal: 170–176 lbs"). */
   goalText?: string;
+  /** True when this KPI's chart is currently shown in its section's graph area. */
+  selected?: boolean;
+  /** Optional click handler to toggle chart visibility. When omitted, the
+   * tile is non-interactive (back-compat for any callers not opting in). */
+  onToggle?: () => void;
 }) {
   const sc = statusColor(status);
   const sb = statusBg(status);
@@ -148,14 +197,46 @@ function KpiCard({
   const iconBg =
     status !== "neutral" ? sb : `color-mix(in srgb, ${color} 10%, transparent)`;
 
+  const interactive = !!onToggle;
+  // Selected/unselected only changes presentation when the tile is interactive.
+  // Status border colors (success/warning/danger) win over the selection ring
+  // because they convey goal state — but we still add the ring on selection
+  // for visual confirmation, layered on top.
+
   return (
     <div
-      className="bg-card rounded-2xl border border-border p-4"
+      className={`relative bg-card rounded-2xl border border-border p-4 transition-colors ${
+        interactive ? "cursor-pointer" : ""
+      } ${selected ? "ring-2 ring-primary" : ""}`}
       style={{
         borderColor: status !== "neutral" ? sc : undefined,
-        backgroundColor: status !== "neutral" ? sb : undefined,
+        backgroundColor:
+          selected && status === "neutral"
+            ? "color-mix(in srgb, var(--color-primary) 5%, transparent)"
+            : status !== "neutral"
+              ? sb
+              : undefined,
       }}
+      onClick={interactive ? onToggle : undefined}
+      role={interactive ? "button" : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      aria-pressed={interactive ? selected : undefined}
+      onKeyDown={
+        interactive
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onToggle?.();
+              }
+            }
+          : undefined
+      }
     >
+      {selected && (
+        <div className="absolute top-1 right-1 w-4 h-4 rounded-full bg-primary text-white text-[10px] flex items-center justify-center">
+          <Check className="w-2.5 h-2.5" strokeWidth={3} />
+        </div>
+      )}
       <div className="flex items-center gap-2 mb-3">
         <div
           className="w-8 h-8 rounded-xl flex items-center justify-center"
@@ -348,17 +429,62 @@ function TrendChart({
 
 function Section({
   title,
+  actions,
   children,
 }: {
   title: string;
+  actions?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <div className="mb-8">
-      <h2 className="text-xs font-semibold text-textSecondary uppercase tracking-widest mb-4">
-        {title}
-      </h2>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-xs font-semibold text-textSecondary uppercase tracking-widest">
+          {title}
+        </h2>
+        {actions}
+      </div>
       {children}
+    </div>
+  );
+}
+
+/** Card chrome around a chart in the graph area below a section's tiles. */
+function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="bg-card rounded-2xl border border-border p-4">
+      <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-3">
+        {title}
+      </p>
+      {children}
+    </div>
+  );
+}
+
+/** Per-section "All / None" controls in the section header. */
+function SectionActions({
+  onSelectAll,
+  onClear,
+}: {
+  onSelectAll: () => void;
+  onClear: () => void;
+}) {
+  return (
+    <div className="flex gap-3 text-xs text-textSecondary">
+      <button
+        type="button"
+        onClick={onSelectAll}
+        className="hover:text-primary transition-colors"
+      >
+        All
+      </button>
+      <button
+        type="button"
+        onClick={onClear}
+        className="hover:text-danger transition-colors"
+      >
+        None
+      </button>
     </div>
   );
 }
@@ -385,6 +511,51 @@ export default function HealthPage() {
       .then(setGoals)
       .catch((err) => console.error("Health goals fetch error:", err));
   }, [userId]);
+
+  // ── KPI graph selection (persisted in localStorage) ────────────────────
+  const [selectedKpis, setSelectedKpis] = useState<Set<string>>(
+    () => loadInitialSelectedKpis()
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(
+        KPI_SELECTION_STORAGE_KEY,
+        JSON.stringify([...selectedKpis])
+      );
+    } catch {
+      // localStorage unavailable / quota — silent
+    }
+  }, [selectedKpis]);
+
+  const toggleKpi = useCallback((field: string) => {
+    setSelectedKpis((prev) => {
+      const next = new Set(prev);
+      if (next.has(field)) next.delete(field);
+      else next.add(field);
+      return next;
+    });
+  }, []);
+
+  const selectAllInSection = useCallback((fields: readonly string[]) => {
+    setSelectedKpis((prev) => {
+      const next = new Set(prev);
+      for (const f of fields) next.add(f);
+      return next;
+    });
+  }, []);
+
+  const clearSection = useCallback((fields: readonly string[]) => {
+    setSelectedKpis((prev) => {
+      const next = new Set(prev);
+      for (const f of fields) next.delete(f);
+      return next;
+    });
+  }, []);
+
+  const sectionAnyActive = (fields: readonly string[]) =>
+    fields.some((f) => selectedKpis.has(f));
 
   // Real-time listener for last-90-days health metrics
   useEffect(() => {
@@ -726,9 +897,17 @@ export default function HealthPage() {
         </div>
       </div>
 
-      {/* ── Body Metrics ─────────────────────────────────────────── */}
-      <Section title="Body">
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
+      {/* ── Body ─────────────────────────────────────────────────── */}
+      <Section
+        title="Body"
+        actions={
+          <SectionActions
+            onSelectAll={() => selectAllInSection(BODY_KPIS)}
+            onClear={() => clearSection(BODY_KPIS)}
+          />
+        }
+      >
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
           <KpiCard
             icon={Scale}
             label="Weight"
@@ -739,6 +918,8 @@ export default function HealthPage() {
             formatter={(v) => (v ? `${v.toFixed(1)} lb` : "—")}
             status={weightStatus}
             goalText={weightGoalText}
+            selected={selectedKpis.has("weight_lbs")}
+            onToggle={() => toggleKpi("weight_lbs")}
           />
           <KpiCard
             icon={TrendingUp}
@@ -750,6 +931,8 @@ export default function HealthPage() {
             formatter={(v) => (v ? v.toFixed(1) : "—")}
             status={bmiStatus}
             goalText={bmiGoalText}
+            selected={selectedKpis.has("bmi")}
+            onToggle={() => toggleKpi("bmi")}
           />
           <KpiCard
             icon={Heart}
@@ -761,94 +944,128 @@ export default function HealthPage() {
             formatter={(v) => (v ? `${Math.round(v)} bpm` : "—")}
             status={hrStatus}
             goalText={hrGoalText}
+            selected={selectedKpis.has("resting_hr")}
+            onToggle={() => toggleKpi("resting_hr")}
           />
         </div>
 
-        <div className="bg-card rounded-2xl border border-border p-4 mb-4">
-          <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-3">
-            Weight — Last 90 Days
-          </p>
-          <TrendChart
-            data={weight90Series}
-            label="Weight"
-            color={getColor("weight")}
-            formatter={(v) => `${v.toFixed(1)} lb`}
-            yDomain={weight90Domain}
-            yTickFormatter={(v) => `${Math.round(v)} lb`}
-            refValue={goals?.weight?.goal}
-            refLabel={goals?.weight ? `Goal ${goals.weight.goal} lbs` : undefined}
-          />
-        </div>
-
-        {/* Hourly Heart Rate by Time of Day */}
-        <div className="bg-card rounded-2xl border border-border p-4">
-          <div className="mb-3">
-            <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide">
-              Heart Rate by Time of Day
-            </p>
-            <p className="text-xs text-textSecondary mt-0.5">
-              30-day average HR{hourlyHRLastSync ? ` · last sync ${hourlyHRLastSync}` : ""}
-            </p>
+        {sectionAnyActive(BODY_KPIS) && (
+          <div className="flex flex-col gap-4 transition-all duration-200">
+            {selectedKpis.has("weight_lbs") && (
+              <ChartCard title="Weight — Last 90 Days">
+                <TrendChart
+                  data={weight90Series}
+                  label="Weight"
+                  color={getColor("weight")}
+                  formatter={(v) => `${v.toFixed(1)} lb`}
+                  yDomain={weight90Domain}
+                  yTickFormatter={(v) => `${Math.round(v)} lb`}
+                  refValue={goals?.weight?.goal}
+                  refLabel={goals?.weight ? `Goal ${goals.weight.goal} lbs` : undefined}
+                />
+              </ChartCard>
+            )}
+            {selectedKpis.has("bmi") && (
+              <ChartCard title="BMI — Last 90 Days">
+                <TrendChart
+                  data={toChartSeries("bmi")}
+                  label="BMI"
+                  color={getColor("bmi")}
+                  formatter={(v) => v.toFixed(1)}
+                />
+              </ChartCard>
+            )}
+            {selectedKpis.has("resting_hr") && (
+              <>
+                <ChartCard title="Resting HR — Last 90 Days">
+                  <TrendChart
+                    data={toChartSeries("resting_hr")}
+                    label="Resting HR"
+                    color={getColor("hr")}
+                    formatter={(v) => `${Math.round(v)} bpm`}
+                  />
+                </ChartCard>
+                <div className="bg-card rounded-2xl border border-border p-4">
+                  <div className="mb-3">
+                    <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide">
+                      Heart Rate by Time of Day
+                    </p>
+                    <p className="text-xs text-textSecondary mt-0.5">
+                      30-day average HR
+                      {hourlyHRLastSync ? ` · last sync ${hourlyHRLastSync}` : ""}
+                    </p>
+                  </div>
+                  {hourlyHRLoading ? (
+                    <div className="h-[220px] flex items-center justify-center">
+                      <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                    </div>
+                  ) : hourlyHRChartData.length < 2 ? (
+                    <div className="h-[220px] flex items-center justify-center">
+                      <p className="text-xs text-textSecondary text-center max-w-xs">
+                        Heart rate data by time of day will appear after your iOS app syncs
+                      </p>
+                    </div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height={220}>
+                      <LineChart data={hourlyHRChartData} margin={{ top: 4, right: 8, bottom: 0, left: 8 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="var(--color-chart-grid)" />
+                        <XAxis
+                          dataKey="label"
+                          tick={{ fontSize: 9, fill: "var(--color-chart-axis)" }}
+                          interval={2}
+                          axisLine={false}
+                          tickLine={false}
+                        />
+                        <YAxis
+                          tick={{ fontSize: 9, fill: "var(--color-chart-axis)" }}
+                          tickFormatter={(v: number) => `${Math.round(v)}`}
+                          axisLine={false}
+                          tickLine={false}
+                          width={45}
+                          domain={hourlyHRDomain}
+                        />
+                        <Tooltip
+                          formatter={(v) => [`${Math.round(Number(v))} bpm`, "Heart Rate"]}
+                          labelFormatter={(label) => `at ${String(label)}`}
+                          contentStyle={{
+                            fontSize: 11,
+                            borderRadius: 8,
+                            backgroundColor: "var(--color-chart-tooltip-bg)",
+                            border: "1px solid var(--color-border)",
+                            color: "var(--color-textPrimary)",
+                          }}
+                          labelStyle={{ color: "var(--color-textSecondary)" }}
+                          itemStyle={{ color: "var(--color-textPrimary)" }}
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="bpm"
+                          stroke={getColor("hr")}
+                          strokeWidth={2}
+                          dot={false}
+                          activeDot={{ r: 4 }}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  )}
+                </div>
+              </>
+            )}
           </div>
-          {hourlyHRLoading ? (
-            <div className="h-[220px] flex items-center justify-center">
-              <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-            </div>
-          ) : hourlyHRChartData.length < 2 ? (
-            <div className="h-[220px] flex items-center justify-center">
-              <p className="text-xs text-textSecondary text-center max-w-xs">
-                Heart rate data by time of day will appear after your iOS app syncs
-              </p>
-            </div>
-          ) : (
-            <ResponsiveContainer width="100%" height={220}>
-              <LineChart data={hourlyHRChartData} margin={{ top: 4, right: 8, bottom: 0, left: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--color-chart-grid)" />
-                <XAxis
-                  dataKey="label"
-                  tick={{ fontSize: 9, fill: 'var(--color-chart-axis)' }}
-                  interval={2}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <YAxis
-                  tick={{ fontSize: 9, fill: 'var(--color-chart-axis)' }}
-                  tickFormatter={(v: number) => `${Math.round(v)}`}
-                  axisLine={false}
-                  tickLine={false}
-                  width={45}
-                  domain={hourlyHRDomain}
-                />
-                <Tooltip
-                  formatter={(v) => [`${Math.round(Number(v))} bpm`, "Heart Rate"]}
-                  labelFormatter={(label) => `at ${String(label)}`}
-                  contentStyle={{
-                    fontSize: 11,
-                    borderRadius: 8,
-                    backgroundColor: 'var(--color-chart-tooltip-bg)',
-                    border: '1px solid var(--color-border)',
-                    color: 'var(--color-textPrimary)',
-                  }}
-                  labelStyle={{ color: 'var(--color-textSecondary)' }}
-                  itemStyle={{ color: 'var(--color-textPrimary)' }}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="bpm"
-                  stroke={getColor("hr")}
-                  strokeWidth={2}
-                  dot={false}
-                  activeDot={{ r: 4 }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          )}
-        </div>
+        )}
       </Section>
 
       {/* ── Activity ─────────────────────────────────────────────── */}
-      <Section title="Activity">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      <Section
+        title="Activity"
+        actions={
+          <SectionActions
+            onSelectAll={() => selectAllInSection(ACTIVITY_KPIS)}
+            onClear={() => clearSection(ACTIVITY_KPIS)}
+          />
+        }
+      >
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
           <KpiCard
             icon={Footprints}
             label="Steps"
@@ -859,6 +1076,8 @@ export default function HealthPage() {
             formatter={(v) => (v ? Math.round(v).toLocaleString() : "—")}
             status={stepsStatus}
             goalText={stepsGoalText}
+            selected={selectedKpis.has("steps")}
+            onToggle={() => toggleKpi("steps")}
           />
           <KpiCard
             icon={Clock}
@@ -870,6 +1089,8 @@ export default function HealthPage() {
             formatter={(v) => (v !== undefined ? `${Math.round(v)} min` : "—")}
             status={exerciseStatus}
             goalText={exerciseGoalText}
+            selected={selectedKpis.has("exercise_mins")}
+            onToggle={() => toggleKpi("exercise_mins")}
           />
           <KpiCard
             icon={Zap}
@@ -881,6 +1102,8 @@ export default function HealthPage() {
             formatter={(v) => (v !== undefined ? `${Math.round(v)} kcal` : "—")}
             status={moveCalStatus}
             goalText={moveCalGoalText}
+            selected={selectedKpis.has("move_calories")}
+            onToggle={() => toggleKpi("move_calories")}
           />
           <KpiCard
             icon={PersonStanding}
@@ -892,53 +1115,96 @@ export default function HealthPage() {
             formatter={(v) => (v !== undefined ? `${Math.round(v)}h` : "—")}
             status={standStatus}
             goalText={standGoalText}
+            selected={selectedKpis.has("stand_hours")}
+            onToggle={() => toggleKpi("stand_hours")}
           />
         </div>
 
-        <div className="bg-card rounded-2xl border border-border p-4 mb-4">
-          <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-3">
-            Daily Steps — Last 90 Days
-          </p>
-          <TrendChart
-            data={toChartSeries("steps")}
-            label="Steps"
-            color={getColor("steps")}
-            formatter={(v) => Math.round(v).toLocaleString()}
-            refValue={goals?.steps?.goal}
-            refLabel={
-              goals?.steps
-                ? `Goal ${Math.round(goals.steps.goal).toLocaleString()}`
-                : undefined
-            }
-            type="bar"
-          />
-        </div>
-
-        <div className="bg-card rounded-2xl border border-border p-4">
-          <div className="flex items-center justify-between mb-3">
-            <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide">
-              Stand Hours — Last 90 Days
-            </p>
-            <p className="text-sm font-semibold text-textPrimary">
-              Today:{" "}
-              {today?.stand_hours !== undefined
-                ? `${today.stand_hours}h`
-                : "—"}
-            </p>
+        {sectionAnyActive(ACTIVITY_KPIS) && (
+          <div className="flex flex-col gap-4 transition-all duration-200">
+            {selectedKpis.has("steps") && (
+              <ChartCard title="Daily Steps — Last 90 Days">
+                <TrendChart
+                  data={toChartSeries("steps")}
+                  label="Steps"
+                  color={getColor("steps")}
+                  formatter={(v) => Math.round(v).toLocaleString()}
+                  refValue={goals?.steps?.goal}
+                  refLabel={
+                    goals?.steps
+                      ? `Goal ${Math.round(goals.steps.goal).toLocaleString()}`
+                      : undefined
+                  }
+                  type="bar"
+                />
+              </ChartCard>
+            )}
+            {selectedKpis.has("exercise_mins") && (
+              <ChartCard title="Exercise Mins — Last 90 Days">
+                <TrendChart
+                  data={toChartSeries("exercise_mins")}
+                  label="Exercise"
+                  color={getColor("exercise")}
+                  formatter={(v) => `${Math.round(v)} min`}
+                  refValue={goals?.exerciseMins?.goal}
+                  refLabel={
+                    goals?.exerciseMins
+                      ? `Goal ${goals.exerciseMins.goal} min`
+                      : undefined
+                  }
+                  type="bar"
+                />
+              </ChartCard>
+            )}
+            {selectedKpis.has("move_calories") && (
+              <ChartCard title="Move Calories — Last 90 Days">
+                <TrendChart
+                  data={toChartSeries("move_calories")}
+                  label="Move Calories"
+                  color={getColor("calories")}
+                  formatter={(v) => `${Math.round(v)} kcal`}
+                  refValue={goals?.moveCalories?.goal}
+                  refLabel={
+                    goals?.moveCalories
+                      ? `Goal ${Math.round(goals.moveCalories.goal)} kcal`
+                      : undefined
+                  }
+                  type="bar"
+                />
+              </ChartCard>
+            )}
+            {selectedKpis.has("stand_hours") && (
+              <ChartCard title="Stand Hours — Last 90 Days">
+                <TrendChart
+                  data={toChartSeries("stand_hours")}
+                  label="Stand Hours"
+                  color={getColor("stand")}
+                  formatter={(v) => `${Math.round(v)}h`}
+                  refValue={goals?.standHours?.goal}
+                  refLabel={
+                    goals?.standHours
+                      ? `Goal ${goals.standHours.goal}h`
+                      : undefined
+                  }
+                  type="bar"
+                />
+              </ChartCard>
+            )}
           </div>
-          <TrendChart
-            data={toChartSeries("stand_hours")}
-            label="Stand Hours"
-            color={getColor("stand")}
-            formatter={(v) => `${Math.round(v)}h`}
-            type="bar"
-          />
-        </div>
+        )}
       </Section>
 
-      {/* ── Sleep ────────────────────────────────────────────────── */}
-      <Section title="Sleep">
-        <div className="grid grid-cols-2 gap-4 mb-6">
+      {/* ── Recovery (Sleep + Oral Care combined) ───────────────── */}
+      <Section
+        title="Recovery"
+        actions={
+          <SectionActions
+            onSelectAll={() => selectAllInSection(RECOVERY_KPIS)}
+            onClear={() => clearSection(RECOVERY_KPIS)}
+          />
+        }
+      >
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
           <KpiCard
             icon={Moon}
             label="Total Sleep"
@@ -949,6 +1215,8 @@ export default function HealthPage() {
             formatter={(v) => formatHours(v)}
             status={sleepStatus}
             goalText={sleepGoalText}
+            selected={selectedKpis.has("sleep_total_hours")}
+            onToggle={() => toggleKpi("sleep_total_hours")}
           />
           <KpiCard
             icon={Moon}
@@ -960,27 +1228,9 @@ export default function HealthPage() {
             formatter={(v) => (v !== undefined ? `${Math.round(v)} min` : "—")}
             status={awakeStatus}
             goalText={awakeGoalText}
+            selected={selectedKpis.has("sleep_awake_mins")}
+            onToggle={() => toggleKpi("sleep_awake_mins")}
           />
-        </div>
-
-        <div className="bg-card rounded-2xl border border-border p-4">
-          <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-3">
-            Sleep Duration — Last 90 Days
-          </p>
-          <TrendChart
-            data={toChartSeries("sleep_total_hours")}
-            label="Sleep"
-            color={getColor("sleep")}
-            formatter={(v) => formatHours(v)}
-            refValue={goals?.sleep?.goal}
-            refLabel={goals?.sleep ? `Goal ${goals.sleep.goal}h` : undefined}
-          />
-        </div>
-      </Section>
-
-      {/* ── Oral Care ────────────────────────────────────────────── */}
-      <Section title="Oral Care">
-        <div className="grid grid-cols-2 gap-4 mb-6">
           <KpiCard
             icon={SmilePlus}
             label="Brushing Sessions"
@@ -995,6 +1245,8 @@ export default function HealthPage() {
             formatter={(v) => (v !== undefined ? `${v.toFixed(1)}x` : "—")}
             status={brushingStatus}
             goalText={brushingGoalText}
+            selected={selectedKpis.has("brush_count")}
+            onToggle={() => toggleKpi("brush_count")}
           />
           <KpiCard
             icon={Clock}
@@ -1006,23 +1258,72 @@ export default function HealthPage() {
             formatter={(v) => (v !== undefined ? `${v.toFixed(1)} min` : "—")}
             status={avgBrushStatus}
             goalText={avgBrushGoalText}
+            selected={selectedKpis.has("brush_avg_duration_mins")}
+            onToggle={() => toggleKpi("brush_avg_duration_mins")}
           />
         </div>
 
-        <div className="bg-card rounded-2xl border border-border p-4">
-          <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-3">
-            Daily Brushing Sessions — Last 90 Days
-          </p>
-          <TrendChart
-            data={toChartSeries("brush_count")}
-            label="Sessions"
-            color={getColor("brush")}
-            formatter={(v) => `${v.toFixed(1)}x`}
-            refValue={goals?.brushing?.goal}
-            refLabel={goals?.brushing ? `Goal ${goals.brushing.goal}x` : undefined}
-            type="bar"
-          />
-        </div>
+        {sectionAnyActive(RECOVERY_KPIS) && (
+          <div className="flex flex-col gap-4 transition-all duration-200">
+            {selectedKpis.has("sleep_total_hours") && (
+              <ChartCard title="Sleep Duration — Last 90 Days">
+                <TrendChart
+                  data={toChartSeries("sleep_total_hours")}
+                  label="Sleep"
+                  color={getColor("sleep")}
+                  formatter={(v) => formatHours(v)}
+                  refValue={goals?.sleep?.goal}
+                  refLabel={goals?.sleep ? `Goal ${goals.sleep.goal}h` : undefined}
+                />
+              </ChartCard>
+            )}
+            {selectedKpis.has("sleep_awake_mins") && (
+              <ChartCard title="Awake Time — Last 90 Days">
+                <TrendChart
+                  data={toChartSeries("sleep_awake_mins")}
+                  label="Awake"
+                  color="#6b7280"
+                  formatter={(v) => `${Math.round(v)} min`}
+                  refValue={goals?.awakeMins?.goal}
+                  refLabel={
+                    goals?.awakeMins
+                      ? `Goal ≤${goals.awakeMins.goal} min`
+                      : undefined
+                  }
+                />
+              </ChartCard>
+            )}
+            {selectedKpis.has("brush_count") && (
+              <ChartCard title="Daily Brushing Sessions — Last 90 Days">
+                <TrendChart
+                  data={toChartSeries("brush_count")}
+                  label="Sessions"
+                  color={getColor("brush")}
+                  formatter={(v) => `${v.toFixed(1)}x`}
+                  refValue={goals?.brushing?.goal}
+                  refLabel={goals?.brushing ? `Goal ${goals.brushing.goal}x` : undefined}
+                  type="bar"
+                />
+              </ChartCard>
+            )}
+            {selectedKpis.has("brush_avg_duration_mins") && (
+              <ChartCard title="Avg Brush Duration — Last 90 Days">
+                <TrendChart
+                  data={toChartSeries("brush_avg_duration_mins")}
+                  label="Avg Brush"
+                  color={getColor("brush")}
+                  formatter={(v) => `${v.toFixed(1)} min`}
+                  refValue={goals?.avgBrushMins?.goal}
+                  refLabel={
+                    goals?.avgBrushMins
+                      ? `Goal ${goals.avgBrushMins.goal} min`
+                      : undefined
+                  }
+                />
+              </ChartCard>
+            )}
+          </div>
+        )}
       </Section>
 
       {/* Health Goals modal — set/edit/clear all goals */}
