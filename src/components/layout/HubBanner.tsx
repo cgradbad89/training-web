@@ -14,9 +14,10 @@ const OWNER_EMAIL = "folstromjohn@gmail.com";
 
 const HUB_NAV_LINKS = [
   { label: "Hub", href: process.env.NEXT_PUBLIC_HUB_URL ?? "#" },
-  { label: "Budget", href: "https://budget-web-xi.vercel.app" },
-  { label: "Oracle", href: "https://oracle-web-pied.vercel.app" },
-  { label: "DC Catz", href: "https://dc-catz.vercel.app" },
+  { label: "Budget", href: "https://budget-web-rose.vercel.app/" },
+  { label: "Oracle", href: "https://oracle-web-pied.vercel.app/" },
+  { label: "DC Catz", href: "https://dc-catz.vercel.app/" },
+  { label: "Recipes", href: "https://mea-recipes.vercel.app/recipes" },
 ];
 
 export function HubBanner() {
