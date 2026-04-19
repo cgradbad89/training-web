@@ -1,11 +1,14 @@
 import {
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
   onSnapshot,
   query,
   orderBy,
+  serverTimestamp,
+  setDoc,
   where,
   type Unsubscribe,
   type Timestamp,
@@ -137,4 +140,77 @@ export async function fetchHourlyHeartRate(
   );
   if (!snap.exists()) return null;
   return snap.data() as HourlyHeartRate;
+}
+
+// ── Health Goals ─────────────────────────────────────────────────────────────
+
+/** Single-direction metric goal (resting HR, steps, sleep, brushing). */
+export interface MetricGoal {
+  goal: number;
+  /** % deviation from goal that triggers warning (default 5). */
+  warningPct?: number;
+  /** % deviation from goal that triggers danger (default 15). */
+  dangerPct?: number;
+}
+
+/** Weight goal — target weight ± a tolerance band counted as success. */
+export interface WeightGoal {
+  goal: number;
+  tolerance: number;
+  warningPct?: number;
+  dangerPct?: number;
+}
+
+/** BMI goal — a min/max range counted as success. */
+export interface BMIGoal {
+  min: number;
+  max: number;
+  warningPct?: number;
+  dangerPct?: number;
+}
+
+export interface HealthGoals {
+  weight?: WeightGoal;
+  bmi?: BMIGoal;
+  /** Lower-is-better. */
+  restingHR?: MetricGoal;
+  /** Higher-is-better. */
+  steps?: MetricGoal;
+  /** Higher-is-better, hours. */
+  sleep?: MetricGoal;
+  /** Higher-is-better, sessions per day. */
+  brushing?: MetricGoal;
+  updatedAt?: Timestamp;
+}
+
+const HEALTH_GOALS_DOC = (uid: string) =>
+  doc(db, `users/${uid}/settings/healthGoals`);
+
+/** Fetch the single healthGoals document. Returns null if not yet created. */
+export async function fetchHealthGoals(uid: string): Promise<HealthGoals | null> {
+  const snap = await getDoc(HEALTH_GOALS_DOC(uid));
+  if (!snap.exists()) return null;
+  return snap.data() as HealthGoals;
+}
+
+/**
+ * Save (replace) the healthGoals document. Strips undefined values so
+ * Firestore doesn't choke on them — undefined fields effectively clear that
+ * metric's goal on next read.
+ */
+export async function saveHealthGoals(
+  uid: string,
+  goals: HealthGoals
+): Promise<void> {
+  // JSON round-trip drops undefined keys (Firestore rejects undefined).
+  const cleaned = JSON.parse(JSON.stringify(goals)) as HealthGoals;
+  await setDoc(HEALTH_GOALS_DOC(uid), {
+    ...cleaned,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+/** Delete all goals (used by the modal's "Clear All Goals" action). */
+export async function clearHealthGoals(uid: string): Promise<void> {
+  await deleteDoc(HEALTH_GOALS_DOC(uid));
 }

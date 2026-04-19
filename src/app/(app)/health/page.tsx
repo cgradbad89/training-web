@@ -6,6 +6,8 @@ import {
   onHealthMetricsSnapshot,
   onAllHealthMetricsSnapshot,
   fetchHourlyHeartRate,
+  fetchHealthGoals,
+  type HealthGoals,
   type HealthMetric,
   type HourlyHeartRate,
 } from "@/services/healthMetrics";
@@ -32,7 +34,15 @@ import {
   TrendingUp,
   RefreshCw,
   PersonStanding,
+  Target,
 } from "lucide-react";
+import { HealthGoalsModal } from "@/components/HealthGoalsModal";
+import {
+  evaluateMetricGoal,
+  evaluateWeightGoal,
+  evaluateBMIGoal,
+  type GoalStatus,
+} from "@/utils/goalEvaluation";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -81,112 +91,27 @@ function isValidWeight(w: number | undefined): w is number {
   return w !== undefined && w >= 155;
 }
 
-// ── Conditional status colors ────────────────────────────────────────────────
+// ── Goal-driven status colors ────────────────────────────────────────────────
+//
+// Hardcoded thresholds were removed in favor of the user-defined HealthGoals
+// system. A KPI without a configured goal renders as "neutral" (no coloring).
+// See src/utils/goalEvaluation.ts and src/components/HealthGoalsModal.tsx.
 
-type MetricStatus = "green" | "yellow" | "red" | "neutral";
-
-function getStatus(
-  metric: keyof HealthMetric,
-  value: number | undefined | null
-): MetricStatus {
-  if (value === undefined || value === null || !isFinite(value))
-    return "neutral";
-
-  switch (metric) {
-    // Weight: ≤170 green, ≤173 yellow, >173 red
-    case "weight_lbs":
-      if (value <= 170) return "green";
-      if (value <= 173) return "yellow";
-      return "red";
-
-    // BMI: ≤24.9 green, ≤26 yellow, >26 red
-    case "bmi":
-      if (value <= 24.9) return "green";
-      if (value <= 26) return "yellow";
-      return "red";
-
-    // Resting HR: ≤67 green, ≤73 yellow (68-73 range), >73 red
-    case "resting_hr":
-      if (value <= 67) return "green";
-      if (value <= 73) return "yellow";
-      return "red";
-
-    // Steps: ≥10000 green, ≥7000 yellow, <7000 red
-    case "steps":
-      if (value >= 10000) return "green";
-      if (value >= 7000) return "yellow";
-      return "red";
-
-    // Exercise mins: ≥45 green, ≥30 yellow, <30 red
-    case "exercise_mins":
-      if (value >= 45) return "green";
-      if (value >= 30) return "yellow";
-      return "red";
-
-    // Move calories: ≥800 green, ≥600 yellow, <600 red
-    case "move_calories":
-      if (value >= 800) return "green";
-      if (value >= 600) return "yellow";
-      return "red";
-
-    // Stand hours: ≥12 green, ≥8 yellow, <8 red
-    case "stand_hours":
-      if (value >= 12) return "green";
-      if (value >= 8) return "yellow";
-      return "red";
-
-    // Sleep hours: ≥7 green, ≥6 yellow, <6 red
-    case "sleep_total_hours":
-      if (value >= 7) return "green";
-      if (value >= 6) return "yellow";
-      return "red";
-
-    // Sleep awake mins: ≤20 green, ≤40 yellow, >40 red
-    case "sleep_awake_mins":
-      if (value <= 20) return "green";
-      if (value <= 40) return "yellow";
-      return "red";
-
-    // Brush count: ≥2 green, ≥1 yellow, <1 red
-    case "brush_count":
-      if (value >= 2) return "green";
-      if (value >= 1) return "yellow";
-      return "red";
-
-    // Brush duration: ≥2 mins green, ≥1.5 yellow, <1.5 red
-    case "brush_avg_duration_mins":
-      if (value >= 2) return "green";
-      if (value >= 1.5) return "yellow";
-      return "red";
-
-    default:
-      return "neutral";
+function statusColor(status: GoalStatus): string {
+  switch (status) {
+    case "success": return "var(--color-success)";
+    case "warning": return "var(--color-warning)";
+    case "danger":  return "var(--color-danger)";
+    default:        return "";
   }
 }
 
-function statusColor(status: MetricStatus): string {
+function statusBg(status: GoalStatus): string {
   switch (status) {
-    case "green":
-      return "#16a34a";
-    case "yellow":
-      return "#d97706";
-    case "red":
-      return "#dc2626";
-    default:
-      return "";
-  }
-}
-
-function statusBg(status: MetricStatus): string {
-  switch (status) {
-    case "green":
-      return "rgba(22,163,74,0.08)";
-    case "yellow":
-      return "rgba(217,119,6,0.08)";
-    case "red":
-      return "rgba(220,38,38,0.08)";
-    default:
-      return "";
+    case "success": return "color-mix(in srgb, var(--color-success) 8%, transparent)";
+    case "warning": return "color-mix(in srgb, var(--color-warning) 8%, transparent)";
+    case "danger":  return "color-mix(in srgb, var(--color-danger) 8%, transparent)";
+    default:        return "";
   }
 }
 
@@ -201,6 +126,7 @@ function KpiCard({
   color,
   formatter,
   status = "neutral",
+  goalText,
 }: {
   icon: React.ComponentType<{
     className?: string;
@@ -212,7 +138,9 @@ function KpiCard({
   avg30: number | null;
   color: string;
   formatter: (v: number | undefined) => string;
-  status?: MetricStatus;
+  status?: GoalStatus;
+  /** Optional goal summary shown beneath the today value (e.g. "Goal: 170–176 lbs"). */
+  goalText?: string;
 }) {
   const sc = statusColor(status);
   const sb = statusBg(status);
@@ -222,7 +150,7 @@ function KpiCard({
 
   return (
     <div
-      className="bg-card rounded-2xl border p-4"
+      className="bg-card rounded-2xl border border-border p-4"
       style={{
         borderColor: status !== "neutral" ? sc : undefined,
         backgroundColor: status !== "neutral" ? sb : undefined,
@@ -241,11 +169,15 @@ function KpiCard({
       </div>
 
       <p
-        className="text-2xl font-bold mb-3"
+        className="text-2xl font-bold mb-1"
         style={{ color: status !== "neutral" ? sc : undefined }}
       >
         {formatter(today)}
       </p>
+      {goalText && (
+        <p className="text-xs text-textSecondary mb-3">{goalText}</p>
+      )}
+      {!goalText && <div className="mb-3" />}
 
       <div className="grid grid-cols-2 gap-2">
         <div className="bg-surface rounded-xl p-2 text-center">
@@ -443,6 +375,16 @@ export default function HealthPage() {
   const [hourlyHRLoading, setHourlyHRLoading] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [goals, setGoals] = useState<HealthGoals | null>(null);
+  const [goalsModalOpen, setGoalsModalOpen] = useState(false);
+
+  // One-time fetch for user-defined health goals.
+  useEffect(() => {
+    if (!userId) return;
+    fetchHealthGoals(userId)
+      .then(setGoals)
+      .catch((err) => console.error("Health goals fetch error:", err));
+  }, [userId]);
 
   // Real-time listener for last-90-days health metrics
   useEffect(() => {
@@ -602,6 +544,68 @@ export default function HealthPage() {
     ? today.weight_lbs
     : undefined;
 
+  // ── Goal-driven status + display text per metric ───────────────────────
+  function statusOrNeutral<T>(
+    enabled: T | undefined,
+    compute: (g: T) => GoalStatus
+  ): GoalStatus {
+    return enabled ? compute(enabled) : "neutral";
+  }
+
+  const weightStatus: GoalStatus = statusOrNeutral(goals?.weight, (g) =>
+    todayWeight !== undefined
+      ? evaluateWeightGoal(todayWeight, g.goal, g.tolerance, g.warningPct, g.dangerPct)
+      : "neutral"
+  );
+  const weightGoalText = goals?.weight
+    ? `Goal: ${(goals.weight.goal - goals.weight.tolerance).toFixed(1)}–${(goals.weight.goal + goals.weight.tolerance).toFixed(1)} lbs`
+    : undefined;
+
+  const bmiStatus: GoalStatus = statusOrNeutral(goals?.bmi, (g) =>
+    today?.bmi !== undefined
+      ? evaluateBMIGoal(today.bmi, g.min, g.max, g.warningPct, g.dangerPct)
+      : "neutral"
+  );
+  const bmiGoalText = goals?.bmi
+    ? `Goal: ${goals.bmi.min}–${goals.bmi.max}`
+    : undefined;
+
+  const hrStatus: GoalStatus = statusOrNeutral(goals?.restingHR, (g) =>
+    today?.resting_hr !== undefined
+      ? evaluateMetricGoal(today.resting_hr, g.goal, "lower", g.warningPct, g.dangerPct)
+      : "neutral"
+  );
+  const hrGoalText = goals?.restingHR
+    ? `Goal: ≤${goals.restingHR.goal} bpm`
+    : undefined;
+
+  const stepsStatus: GoalStatus = statusOrNeutral(goals?.steps, (g) =>
+    today?.steps !== undefined
+      ? evaluateMetricGoal(today.steps, g.goal, "higher", g.warningPct, g.dangerPct)
+      : "neutral"
+  );
+  const stepsGoalText = goals?.steps
+    ? `Goal: ≥${Math.round(goals.steps.goal).toLocaleString()} steps`
+    : undefined;
+
+  const sleepStatus: GoalStatus = statusOrNeutral(goals?.sleep, (g) =>
+    today?.sleep_total_hours !== undefined
+      ? evaluateMetricGoal(today.sleep_total_hours, g.goal, "higher", g.warningPct, g.dangerPct)
+      : "neutral"
+  );
+  const sleepGoalText = goals?.sleep
+    ? `Goal: ≥${goals.sleep.goal} h`
+    : undefined;
+
+  const brushingStatus: GoalStatus = statusOrNeutral(goals?.brushing, (g) =>
+    today?.brush_count !== undefined
+      ? evaluateMetricGoal(today.brush_count, g.goal, "higher", g.warningPct, g.dangerPct)
+      : "neutral"
+  );
+  const brushingGoalText = goals?.brushing
+    ? `Goal: ≥${goals.brushing.goal}/day`
+    : undefined;
+
   // Last synced
   const lastSynced = today?.syncedAt
     ? new Date(today.syncedAt).toLocaleString("en-US", {
@@ -648,7 +652,7 @@ export default function HealthPage() {
   return (
     <div className="p-6 max-w-5xl mx-auto">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-6 gap-4">
         <div>
           <h1 className="text-2xl font-bold text-textPrimary">Health</h1>
           {lastSynced && (
@@ -658,11 +662,21 @@ export default function HealthPage() {
             </p>
           )}
         </div>
-        {today && (
-          <p className="text-sm text-textSecondary">
-            Data from {formatDate(today.date)}
-          </p>
-        )}
+        <div className="flex items-center gap-3">
+          {today && (
+            <p className="text-sm text-textSecondary hidden sm:block">
+              Data from {formatDate(today.date)}
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={() => setGoalsModalOpen(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-border text-sm text-textPrimary hover:bg-surface transition-colors"
+          >
+            <Target className="w-4 h-4 text-textSecondary" />
+            Set Goals
+          </button>
+        </div>
       </div>
 
       {/* ── Body Metrics ─────────────────────────────────────────── */}
@@ -676,7 +690,8 @@ export default function HealthPage() {
             avg7={a7Weight}
             avg30={a30Weight}
             formatter={(v) => (v ? `${v.toFixed(1)} lb` : "—")}
-            status={getStatus("weight_lbs", todayWeight)}
+            status={weightStatus}
+            goalText={weightGoalText}
           />
           <KpiCard
             icon={TrendingUp}
@@ -686,7 +701,8 @@ export default function HealthPage() {
             avg7={a7("bmi")}
             avg30={a30("bmi")}
             formatter={(v) => (v ? v.toFixed(1) : "—")}
-            status={getStatus("bmi", today?.bmi)}
+            status={bmiStatus}
+            goalText={bmiGoalText}
           />
           <KpiCard
             icon={Heart}
@@ -696,7 +712,8 @@ export default function HealthPage() {
             avg7={a7("resting_hr")}
             avg30={a30("resting_hr")}
             formatter={(v) => (v ? `${Math.round(v)} bpm` : "—")}
-            status={getStatus("resting_hr", today?.resting_hr)}
+            status={hrStatus}
+            goalText={hrGoalText}
           />
         </div>
 
@@ -711,6 +728,8 @@ export default function HealthPage() {
             formatter={(v) => `${v.toFixed(1)} lb`}
             yDomain={weight90Domain}
             yTickFormatter={(v) => `${Math.round(v)} lb`}
+            refValue={goals?.weight?.goal}
+            refLabel={goals?.weight ? `Goal ${goals.weight.goal} lbs` : undefined}
           />
         </div>
 
@@ -791,7 +810,8 @@ export default function HealthPage() {
             avg7={a7("steps")}
             avg30={a30("steps")}
             formatter={(v) => (v ? Math.round(v).toLocaleString() : "—")}
-            status={getStatus("steps", today?.steps)}
+            status={stepsStatus}
+            goalText={stepsGoalText}
           />
           <KpiCard
             icon={Clock}
@@ -801,7 +821,6 @@ export default function HealthPage() {
             avg7={a7("exercise_mins")}
             avg30={a30("exercise_mins")}
             formatter={(v) => (v ? `${Math.round(v)} min` : "—")}
-            status={getStatus("exercise_mins", today?.exercise_mins)}
           />
           <KpiCard
             icon={Zap}
@@ -811,7 +830,6 @@ export default function HealthPage() {
             avg7={a7("move_calories")}
             avg30={a30("move_calories")}
             formatter={(v) => (v ? `${Math.round(v)} kcal` : "—")}
-            status={getStatus("move_calories", today?.move_calories)}
           />
           <KpiCard
             icon={PersonStanding}
@@ -821,7 +839,6 @@ export default function HealthPage() {
             avg7={a7("stand_hours")}
             avg30={a30("stand_hours")}
             formatter={(v) => (v ? `${Math.round(v)}h` : "—")}
-            status={getStatus("stand_hours", today?.stand_hours)}
           />
         </div>
 
@@ -834,8 +851,12 @@ export default function HealthPage() {
             label="Steps"
             color={getColor("steps")}
             formatter={(v) => Math.round(v).toLocaleString()}
-            refValue={10000}
-            refLabel="10k goal"
+            refValue={goals?.steps?.goal}
+            refLabel={
+              goals?.steps
+                ? `Goal ${Math.round(goals.steps.goal).toLocaleString()}`
+                : undefined
+            }
             type="bar"
           />
         </div>
@@ -857,8 +878,6 @@ export default function HealthPage() {
             label="Stand Hours"
             color={getColor("stand")}
             formatter={(v) => `${Math.round(v)}h`}
-            refValue={12}
-            refLabel="12h goal"
             type="bar"
           />
         </div>
@@ -875,7 +894,8 @@ export default function HealthPage() {
             avg7={a7("sleep_total_hours")}
             avg30={a30("sleep_total_hours")}
             formatter={(v) => formatHours(v)}
-            status={getStatus("sleep_total_hours", today?.sleep_total_hours)}
+            status={sleepStatus}
+            goalText={sleepGoalText}
           />
           <KpiCard
             icon={Moon}
@@ -885,7 +905,6 @@ export default function HealthPage() {
             avg7={a7("sleep_awake_mins")}
             avg30={a30("sleep_awake_mins")}
             formatter={(v) => (v ? `${Math.round(v)} min` : "—")}
-            status={getStatus("sleep_awake_mins", today?.sleep_awake_mins)}
           />
         </div>
 
@@ -898,8 +917,8 @@ export default function HealthPage() {
             label="Sleep"
             color={getColor("sleep")}
             formatter={(v) => formatHours(v)}
-            refValue={8}
-            refLabel="8h goal"
+            refValue={goals?.sleep?.goal}
+            refLabel={goals?.sleep ? `Goal ${goals.sleep.goal}h` : undefined}
           />
         </div>
       </Section>
@@ -915,7 +934,8 @@ export default function HealthPage() {
             avg7={a7("brush_count")}
             avg30={a30("brush_count")}
             formatter={(v) => (v ? `${v.toFixed(1)}x` : "—")}
-            status={getStatus("brush_count", today?.brush_count)}
+            status={brushingStatus}
+            goalText={brushingGoalText}
           />
           <KpiCard
             icon={Clock}
@@ -925,7 +945,6 @@ export default function HealthPage() {
             avg7={a7("brush_avg_duration_mins")}
             avg30={a30("brush_avg_duration_mins")}
             formatter={(v) => (v ? `${v.toFixed(1)} min` : "—")}
-            status={getStatus("brush_avg_duration_mins", today?.brush_avg_duration_mins)}
           />
         </div>
 
@@ -938,12 +957,24 @@ export default function HealthPage() {
             label="Sessions"
             color={getColor("brush")}
             formatter={(v) => `${v.toFixed(1)}x`}
-            refValue={2}
-            refLabel="2x goal"
+            refValue={goals?.brushing?.goal}
+            refLabel={goals?.brushing ? `Goal ${goals.brushing.goal}x` : undefined}
             type="bar"
           />
         </div>
       </Section>
+
+      {/* Health Goals modal — set/edit/clear all goals */}
+      {userId && (
+        <HealthGoalsModal
+          isOpen={goalsModalOpen}
+          uid={userId}
+          initialGoals={goals}
+          onClose={() => setGoalsModalOpen(false)}
+          onSaved={(g) => setGoals(g)}
+          onCleared={() => setGoals(null)}
+        />
+      )}
 
       {/* ── Long-term trends ─────────────────────────────────────── */}
       {allMetrics.length > 90 && (
