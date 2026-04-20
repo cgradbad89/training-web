@@ -26,8 +26,14 @@ import { prefetchRoutes } from "@/utils/routeCache";
 import { fetchPlans } from "@/services/plans";
 import {
   fetchHealthMetricsRange,
+  fetchHealthGoals,
   type HealthMetric,
+  type HealthGoals,
 } from "@/services/healthMetrics";
+import {
+  evaluateMetricGoal,
+  type GoalStatus,
+} from "@/utils/goalEvaluation";
 
 import {
   efficiencyDisplayScore,
@@ -644,15 +650,26 @@ function WorkoutPlanProgressCard({
 
 interface HealthKpisRowProps {
   metrics: HealthMetric[];
+  goals: HealthGoals | null;
+}
+
+/** Tailwind text-color token for a GoalStatus. Neutral → primary text. */
+function goalStatusTextClass(status: GoalStatus): string {
+  switch (status) {
+    case "success": return "text-success";
+    case "warning": return "text-warning";
+    case "danger":  return "text-danger";
+    default:        return "text-textPrimary";
+  }
 }
 
 /**
- * Five tiles in a horizontal row showing the per-day average for the
- * selected week's healthMetrics: Steps, Exercise Mins, Move Calories,
- * Stand Hours, Sleep Hours. Neutral display only — goal-driven coloring
- * lives on the Health page.
+ * Horizontal row of per-day averages for the selected week's healthMetrics:
+ * Steps, Exercise Mins, Move Calories, Stand Hours, Sleep Hours. The Sleep
+ * tile applies goal-driven conditional formatting when a sleep goal is set;
+ * the other tiles stay neutral (their goal coloring lives on the Health page).
  */
-function HealthKpisRow({ metrics }: HealthKpisRowProps) {
+function HealthKpisRow({ metrics, goals }: HealthKpisRowProps) {
   const weeklyAvg = (field: keyof HealthMetric): number | null => {
     const values = metrics
       .map((m) => m[field])
@@ -661,7 +678,23 @@ function HealthKpisRow({ metrics }: HealthKpisRowProps) {
     return values.reduce((a, b) => a + b, 0) / values.length;
   };
 
-  const tiles: { label: string; value: string }[] = [
+  const avgSleep = weeklyAvg("sleep_total_hours");
+  const sleepStatus: GoalStatus =
+    avgSleep != null && goals?.sleep
+      ? evaluateMetricGoal(
+          avgSleep,
+          goals.sleep.goal,
+          "higher",
+          goals.sleep.warningPct,
+          goals.sleep.dangerPct
+        )
+      : "neutral";
+
+  const tiles: {
+    label: string;
+    value: string;
+    valueClass?: string;
+  }[] = [
     {
       label: "Steps",
       value: (() => {
@@ -692,10 +725,8 @@ function HealthKpisRow({ metrics }: HealthKpisRowProps) {
     },
     {
       label: "Sleep Hours",
-      value: (() => {
-        const v = weeklyAvg("sleep_total_hours");
-        return v == null ? "—" : `${v.toFixed(1)} hrs`;
-      })(),
+      value: avgSleep == null ? "—" : `${avgSleep.toFixed(1)} hrs`,
+      valueClass: goalStatusTextClass(sleepStatus),
     },
   ];
 
@@ -704,7 +735,11 @@ function HealthKpisRow({ metrics }: HealthKpisRowProps) {
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         {tiles.map((t) => (
           <div key={t.label} className="flex flex-col gap-0.5">
-            <div className="text-2xl font-bold text-textPrimary tabular-nums leading-tight">
+            <div
+              className={`text-2xl font-bold tabular-nums leading-tight ${
+                t.valueClass ?? "text-textPrimary"
+              }`}
+            >
               {t.value}
             </div>
             <span className="text-xs text-textPrimary">{t.label}</span>
@@ -822,7 +857,17 @@ export default function DashboardPage() {
     null
   );
   const [weekMetrics, setWeekMetrics] = useState<HealthMetric[]>([]);
+  const [healthGoals, setHealthGoals] = useState<HealthGoals | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // One-time fetch for user-defined health goals. Drives the Sleep KPI
+  // tile's conditional formatting on the row below the weekly stats bar.
+  useEffect(() => {
+    if (!uid) return;
+    fetchHealthGoals(uid)
+      .then(setHealthGoals)
+      .catch((err) => console.error("[fetchHealthGoals]", err));
+  }, [uid]);
 
   // One-time fetch for plans (user-managed data, not iOS-synced).
   // Race data was previously fetched here for the now-removed RaceGoalCard.
@@ -938,7 +983,7 @@ export default function DashboardPage() {
       />
 
       {/* Row 3: Health KPIs for the selected week (per-day averages) */}
-      <HealthKpisRow metrics={weekMetrics} />
+      <HealthKpisRow metrics={weekMetrics} goals={healthGoals} />
 
       {/* Week calendar — tracks the selected week via weekStart prop */}
       <section>

@@ -16,6 +16,7 @@ import {
   Line,
   BarChart,
   Bar,
+  Cell,
   XAxis,
   YAxis,
   Tooltip,
@@ -155,6 +156,54 @@ function statusBg(status: GoalStatus): string {
     case "danger":  return "color-mix(in srgb, var(--color-danger) 8%, transparent)";
     default:        return "";
   }
+}
+
+/** CSS var for the status color (used for chart fills). */
+function statusChartColor(status: GoalStatus): string {
+  switch (status) {
+    case "success": return "var(--color-success)";
+    case "warning": return "var(--color-warning)";
+    case "danger":  return "var(--color-danger)";
+    default:        return "var(--color-chart-primary)";
+  }
+}
+
+// ── Sleep time-of-day helpers ────────────────────────────────────────────────
+//
+// Bedtime/wake-time averages use a true circular mean (sin/cos → atan2) so
+// times clustering around midnight (e.g. 23:40, 00:10, 01:15) don't average
+// to mid-afternoon. Inputs are ISO 8601 UTC strings written by the iOS app;
+// JavaScript's Date constructor handles the UTC→local conversion, and we
+// format for display with toLocaleTimeString.
+
+/** Average a set of times-of-day using a circular mean. Returns null for empty input. */
+function circularMeanTime(
+  dates: Date[]
+): { hours: number; minutes: number } | null {
+  if (dates.length === 0) return null;
+  let sumSin = 0;
+  let sumCos = 0;
+  for (const d of dates) {
+    const min = d.getHours() * 60 + d.getMinutes();
+    const angle = (min / 1440) * 2 * Math.PI;
+    sumSin += Math.sin(angle);
+    sumCos += Math.cos(angle);
+  }
+  const meanAngle = Math.atan2(sumSin, sumCos);
+  const normalized = meanAngle < 0 ? meanAngle + 2 * Math.PI : meanAngle;
+  const meanMin = (normalized / (2 * Math.PI)) * 1440;
+  return {
+    hours: Math.floor(meanMin / 60) % 24,
+    minutes: Math.round(meanMin % 60) % 60,
+  };
+}
+
+/** Format a {hours, minutes} as "H:MM AM/PM" in the user's locale. */
+function formatTimeOfDay(hm: { hours: number; minutes: number } | null): string {
+  if (!hm) return "—";
+  const d = new Date();
+  d.setHours(hm.hours, hm.minutes, 0, 0);
+  return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 }
 
 // ── KPI Card ──────────────────────────────────────────────────────────────────
@@ -458,6 +507,182 @@ function ChartCard({ title, children }: { title: string; children: React.ReactNo
       </p>
       {children}
     </div>
+  );
+}
+
+// ── Sleep Analytics ──────────────────────────────────────────────────────────
+
+const DOW_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
+
+/** 0=Mon … 6=Sun from a YYYY-MM-DD doc date (parsed as LOCAL midnight). */
+function dayOfWeekFromIsoDate(isoDate: string): number {
+  const [y, m, d] = isoDate.split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  return (dt.getDay() + 6) % 7;
+}
+
+interface SleepAnalyticsProps {
+  metrics: HealthMetric[];
+  sleepGoal?: { goal: number; warningPct?: number; dangerPct?: number };
+}
+
+/**
+ * Two-part sleep section rendered when the Sleep KPI is selected:
+ *   A. Avg Sleep by Day of Week — Recharts bar chart, bars colored by
+ *      sleep-goal status when a goal is set.
+ *   B. Bedtime / Wake Time / Duration table — circular-mean averaged
+ *      bedtimes and wake times per weekday.
+ */
+function SleepAnalytics({ metrics, sleepGoal }: SleepAnalyticsProps) {
+  const perDay = useMemo(() => {
+    // index 0..6 = Mon..Sun
+    const hours: number[][] = Array.from({ length: 7 }, () => []);
+    const bedStarts: Date[][] = Array.from({ length: 7 }, () => []);
+    const wakeEnds: Date[][] = Array.from({ length: 7 }, () => []);
+
+    for (const m of metrics) {
+      const dow = dayOfWeekFromIsoDate(m.date);
+      if (typeof m.sleep_total_hours === "number" && m.sleep_total_hours > 0) {
+        hours[dow].push(m.sleep_total_hours);
+      }
+      if (m.sleep_start) {
+        const d = new Date(m.sleep_start);
+        if (!Number.isNaN(d.getTime())) bedStarts[dow].push(d);
+      }
+      if (m.sleep_end) {
+        const d = new Date(m.sleep_end);
+        if (!Number.isNaN(d.getTime())) wakeEnds[dow].push(d);
+      }
+    }
+
+    return DOW_LABELS.map((day, dow) => {
+      const hrs = hours[dow];
+      const avgHours =
+        hrs.length > 0 ? hrs.reduce((a, b) => a + b, 0) / hrs.length : null;
+      const avgBed = circularMeanTime(bedStarts[dow]);
+      const avgWake = circularMeanTime(wakeEnds[dow]);
+      return { day, dow, avgHours, avgBed, avgWake };
+    });
+  }, [metrics]);
+
+  const hasAnyHours = perDay.some((d) => d.avgHours !== null);
+  const hasAnyTimes = perDay.some((d) => d.avgBed !== null || d.avgWake !== null);
+
+  function statusFor(avgHours: number | null): GoalStatus {
+    if (avgHours == null || !sleepGoal) return "neutral";
+    return evaluateMetricGoal(
+      avgHours,
+      sleepGoal.goal,
+      "higher",
+      sleepGoal.warningPct,
+      sleepGoal.dangerPct
+    );
+  }
+
+  return (
+    <>
+      <ChartCard title="Avg Sleep by Day of Week — Last 90 Days">
+        {!hasAnyHours ? (
+          <div className="h-[180px] flex items-center justify-center">
+            <p className="text-xs text-textSecondary">Not enough sleep data yet</p>
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height={180}>
+            <BarChart
+              data={perDay.map((d) => ({ day: d.day, avg: d.avgHours ?? 0 }))}
+              margin={{ top: 4, right: 8, bottom: 0, left: 8 }}
+            >
+              <CartesianGrid
+                strokeDasharray="3 3"
+                vertical={false}
+                stroke="var(--color-chart-grid)"
+              />
+              <XAxis
+                dataKey="day"
+                tick={{ fontSize: 10, fill: "var(--color-chart-axis)" }}
+                axisLine={false}
+                tickLine={false}
+              />
+              <YAxis
+                domain={[4, 10]}
+                tick={{ fontSize: 10, fill: "var(--color-chart-axis)" }}
+                axisLine={false}
+                tickLine={false}
+                width={28}
+                tickFormatter={(v: number) => `${v}h`}
+              />
+              <Tooltip
+                formatter={(v, _name, { payload }) => {
+                  const dayLabel =
+                    payload && typeof payload === "object" && "day" in payload
+                      ? (payload as { day: string }).day
+                      : "";
+                  return [`${Number(v).toFixed(1)} hrs avg on ${dayLabel}`, "Sleep"];
+                }}
+                contentStyle={{
+                  fontSize: 11,
+                  borderRadius: 8,
+                  backgroundColor: "var(--color-chart-tooltip-bg)",
+                  border: "1px solid var(--color-border)",
+                  color: "var(--color-textPrimary)",
+                }}
+                labelStyle={{ color: "var(--color-textSecondary)" }}
+                itemStyle={{ color: "var(--color-textPrimary)" }}
+              />
+              <Bar dataKey="avg" radius={[4, 4, 0, 0]}>
+                {perDay.map((d, i) => (
+                  <Cell key={i} fill={statusChartColor(statusFor(d.avgHours))} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        )}
+      </ChartCard>
+
+      <ChartCard title="Bedtime & Wake Time — Last 90 Days">
+        {!hasAnyTimes ? (
+          <div className="h-[180px] flex items-center justify-center">
+            <p className="text-xs text-textSecondary">
+              No bedtime / wake-time data yet
+            </p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-xs font-semibold text-textSecondary uppercase tracking-wide">
+                  <th className="text-left py-2 pr-2">Day</th>
+                  <th className="text-left py-2 px-2">Avg Bedtime</th>
+                  <th className="text-left py-2 px-2">Avg Wake Time</th>
+                  <th className="text-left py-2 pl-2">Avg Duration</th>
+                </tr>
+              </thead>
+              <tbody>
+                {perDay.map((row) => {
+                  const status = statusFor(row.avgHours);
+                  const durationColor =
+                    status === "neutral" ? "text-textPrimary" : statusColor(status);
+                  return (
+                    <tr key={row.day} className="border-t border-border">
+                      <td className="py-2 pr-2 font-medium text-textPrimary">{row.day}</td>
+                      <td className="py-2 px-2 text-textPrimary tabular-nums">
+                        {formatTimeOfDay(row.avgBed)}
+                      </td>
+                      <td className="py-2 px-2 text-textPrimary tabular-nums">
+                        {formatTimeOfDay(row.avgWake)}
+                      </td>
+                      <td className={`py-2 pl-2 tabular-nums font-semibold ${durationColor}`}>
+                        {row.avgHours != null ? `${row.avgHours.toFixed(1)} hrs` : "—"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </ChartCard>
+    </>
   );
 }
 
@@ -1266,16 +1491,19 @@ export default function HealthPage() {
         {sectionAnyActive(RECOVERY_KPIS) && (
           <div className="flex flex-col gap-4 transition-all duration-200">
             {selectedKpis.has("sleep_total_hours") && (
-              <ChartCard title="Sleep Duration — Last 90 Days">
-                <TrendChart
-                  data={toChartSeries("sleep_total_hours")}
-                  label="Sleep"
-                  color={getColor("sleep")}
-                  formatter={(v) => formatHours(v)}
-                  refValue={goals?.sleep?.goal}
-                  refLabel={goals?.sleep ? `Goal ${goals.sleep.goal}h` : undefined}
-                />
-              </ChartCard>
+              <>
+                <ChartCard title="Sleep Duration — Last 90 Days">
+                  <TrendChart
+                    data={toChartSeries("sleep_total_hours")}
+                    label="Sleep"
+                    color={getColor("sleep")}
+                    formatter={(v) => formatHours(v)}
+                    refValue={goals?.sleep?.goal}
+                    refLabel={goals?.sleep ? `Goal ${goals.sleep.goal}h` : undefined}
+                  />
+                </ChartCard>
+                <SleepAnalytics metrics={metrics90} sleepGoal={goals?.sleep} />
+              </>
             )}
             {selectedKpis.has("sleep_awake_mins") && (
               <ChartCard title="Awake Time — Last 90 Days">

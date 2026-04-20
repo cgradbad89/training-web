@@ -26,6 +26,10 @@ export interface HealthMetric {
   stand_hours?: number;
   sleep_total_hours?: number;
   sleep_awake_mins?: number;
+  /** ISO 8601 UTC string when the user fell asleep (e.g. "2026-04-19T23:14:00Z"). */
+  sleep_start?: string;
+  /** ISO 8601 UTC string when the user woke up (e.g. "2026-04-20T06:45:00Z"). */
+  sleep_end?: string;
   brush_count?: number;
   brush_avg_duration_mins?: number;
   syncedAt?: string;
