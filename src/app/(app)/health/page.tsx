@@ -499,16 +499,171 @@ function Section({
 }
 
 /** Card chrome around a chart in the graph area below a section's tiles. */
-function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
+function ChartCard({
+  title,
+  actions,
+  children,
+}: {
+  title: string;
+  actions?: React.ReactNode;
+  children: React.ReactNode;
+}) {
   return (
     <div className="bg-card rounded-2xl border border-border p-4">
-      <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-3">
-        {title}
-      </p>
+      <div className="flex items-center justify-between mb-3 gap-2">
+        <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide">
+          {title}
+        </p>
+        {actions}
+      </div>
       {children}
     </div>
   );
 }
+
+// ── Time Range Filter ────────────────────────────────────────────────────────
+
+export type TimeRange = "30d" | "60d" | "90d" | "ytd" | "all";
+
+const TIME_RANGE_OPTIONS: readonly TimeRange[] = [
+  "30d",
+  "60d",
+  "90d",
+  "ytd",
+  "all",
+];
+
+const TIME_RANGE_LABELS: Record<TimeRange, string> = {
+  "30d": "30D",
+  "60d": "60D",
+  "90d": "90D",
+  ytd: "YTD",
+  all: "All",
+};
+
+const TIME_RANGE_STORAGE_KEY = "health_time_range";
+
+function isTimeRange(v: unknown): v is TimeRange {
+  return (
+    v === "30d" || v === "60d" || v === "90d" || v === "ytd" || v === "all"
+  );
+}
+
+function loadInitialGlobalRange(): TimeRange {
+  if (typeof window === "undefined") return "30d";
+  try {
+    const stored = window.localStorage.getItem(TIME_RANGE_STORAGE_KEY);
+    if (isTimeRange(stored)) return stored;
+  } catch {
+    // localStorage unavailable / quota / parse — silent
+  }
+  return "30d";
+}
+
+/** Segmented pill-group for picking a time range. Two sizes: default (header) and "sm" (per-chart). */
+function TimeRangeSelector({
+  value,
+  onChange,
+  size = "default",
+}: {
+  value: TimeRange;
+  onChange: (v: TimeRange) => void;
+  size?: "default" | "sm";
+}) {
+  const compact = size === "sm";
+  const base = compact
+    ? "text-[10px] px-2 h-6 rounded-md"
+    : "text-xs px-3 h-7 rounded-lg";
+  return (
+    <div className="inline-flex items-center gap-1 bg-surface rounded-lg p-0.5">
+      {TIME_RANGE_OPTIONS.map((r) => {
+        const active = r === value;
+        return (
+          <button
+            key={r}
+            type="button"
+            onClick={() => onChange(r)}
+            aria-pressed={active}
+            className={`${base} font-semibold transition-colors ${
+              active
+                ? "bg-primary text-white"
+                : "text-textSecondary hover:text-textPrimary"
+            }`}
+          >
+            {TIME_RANGE_LABELS[r]}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** "YYYY-MM-DD" for today (local). */
+function localTodayIsoDate(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/** Filter healthMetrics docs to the chosen range. Docs are returned ASC by `date`. */
+function filterMetricsByRange(
+  metrics: HealthMetric[],
+  range: TimeRange
+): HealthMetric[] {
+  const sorted = [...metrics].sort((a, b) => a.date.localeCompare(b.date));
+  if (range === "all") return sorted;
+  if (range === "ytd") {
+    const now = new Date();
+    const jan1 = `${now.getFullYear()}-01-01`;
+    return sorted.filter((m) => m.date >= jan1);
+  }
+  const days = range === "30d" ? 30 : range === "60d" ? 60 : 90;
+  const now = new Date();
+  now.setDate(now.getDate() - days);
+  const y = now.getFullYear();
+  const mo = String(now.getMonth() + 1).padStart(2, "0");
+  const dy = String(now.getDate()).padStart(2, "0");
+  const cutoff = `${y}-${mo}-${dy}`;
+  return sorted.filter((m) => m.date >= cutoff);
+}
+
+/** Pick the right source array for a given range — avoids pulling large data unnecessarily. */
+function sourceForRange(
+  range: TimeRange,
+  metrics90: HealthMetric[],
+  allMetrics: HealthMetric[]
+): HealthMetric[] {
+  if (range === "ytd" || range === "all") return allMetrics;
+  return metrics90;
+}
+
+/**
+ * Tight [min, max] Y-axis domain with 10% padding around the observed
+ * range. Returns undefined for sparse data (<2 points) so Recharts can
+ * auto-handle it gracefully.
+ */
+function tightDomain(
+  values: (number | null | undefined)[],
+  padding = 0.1
+): [number, number] | undefined {
+  const valid = values.filter(
+    (v): v is number => v != null && !Number.isNaN(v) && Number.isFinite(v)
+  );
+  if (valid.length < 2) return undefined;
+  const min = Math.min(...valid);
+  const max = Math.max(...valid);
+  const range = max - min || 1;
+  return [
+    Math.floor(min - range * padding),
+    Math.ceil(max + range * padding),
+  ];
+}
+
+// Suppress unused-var warning for localTodayIsoDate — it's a reserved helper
+// for future range calcs; tightDomain uses its own math.
+void localTodayIsoDate;
 
 // ── Sleep Analytics ──────────────────────────────────────────────────────────
 
@@ -581,7 +736,7 @@ function SleepAnalytics({ metrics, sleepGoal }: SleepAnalyticsProps) {
 
   return (
     <>
-      <ChartCard title="Avg Sleep by Day of Week — Last 90 Days">
+      <ChartCard title="Avg Sleep by Day of Week">
         {!hasAnyHours ? (
           <div className="h-[180px] flex items-center justify-center">
             <p className="text-xs text-textSecondary">Not enough sleep data yet</p>
@@ -604,7 +759,9 @@ function SleepAnalytics({ metrics, sleepGoal }: SleepAnalyticsProps) {
                 tickLine={false}
               />
               <YAxis
-                domain={[4, 10]}
+                domain={
+                  tightDomain(perDay.map((d) => d.avgHours)) ?? ["auto", "auto"]
+                }
                 tick={{ fontSize: 10, fill: "var(--color-chart-axis)" }}
                 axisLine={false}
                 tickLine={false}
@@ -639,7 +796,7 @@ function SleepAnalytics({ metrics, sleepGoal }: SleepAnalyticsProps) {
         )}
       </ChartCard>
 
-      <ChartCard title="Bedtime & Wake Time — Last 90 Days">
+      <ChartCard title="Bedtime & Wake Time">
         {!hasAnyTimes ? (
           <div className="h-[180px] flex items-center justify-center">
             <p className="text-xs text-textSecondary">
@@ -782,6 +939,36 @@ export default function HealthPage() {
   const sectionAnyActive = (fields: readonly string[]) =>
     fields.some((f) => selectedKpis.has(f));
 
+  // ── Time range filter (global + per-chart overrides) ──────────────────
+  // Global range persisted in localStorage. Per-chart overrides live in a
+  // Map keyed by chart id; when the global range changes we clear overrides
+  // so every chart snaps back to the new global (spec: "sync all chart
+  // ranges to global on globalRange change").
+  const [globalRange, setGlobalRange] = useState<TimeRange>(
+    () => loadInitialGlobalRange()
+  );
+  const [chartRanges, setChartRanges] = useState<Record<string, TimeRange>>({});
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(TIME_RANGE_STORAGE_KEY, globalRange);
+    } catch {
+      // silent
+    }
+    // Reset per-chart overrides so all charts follow the new global range.
+    setChartRanges({});
+  }, [globalRange]);
+
+  const rangeFor = useCallback(
+    (key: string): TimeRange => chartRanges[key] ?? globalRange,
+    [chartRanges, globalRange]
+  );
+
+  const setChartRange = useCallback((key: string, range: TimeRange) => {
+    setChartRanges((prev) => ({ ...prev, [key]: range }));
+  }, []);
+
   // Real-time listener for last-90-days health metrics
   useEffect(() => {
     if (!userId) return;
@@ -850,39 +1037,50 @@ export default function HealthPage() {
     }));
   }
 
-  /** Weight chart series — filter out invalid readings */
-  function weightChartSeries() {
-    return chartData.map((m) => ({
-      date: m.date,
-      value: isValidWeight(m.weight_lbs) ? m.weight_lbs : undefined,
-    }));
-  }
-
-  /** Compute tight Y domain for weight charts */
-  function weightDomain(
-    series: { value: number | undefined }[]
-  ): [number, number] | undefined {
-    const vals = series
-      .map((d) => d.value)
-      .filter((v): v is number => v !== undefined && v > 0);
-    if (vals.length < 2) return undefined;
-    const min = Math.min(...vals);
-    const max = Math.max(...vals);
-    return [Math.floor(min - 2), Math.ceil(max + 2)];
-  }
-
-  const weight90Series = useMemo(() => weightChartSeries(), [chartData]);
-  const weight90Domain = useMemo(() => weightDomain(weight90Series), [weight90Series]);
-
-  // All-time weight series (filtered)
-  const weightAllSeries = useMemo(
-    () => allMetrics.map((m) => ({
-      date: m.date,
-      value: isValidWeight(m.weight_lbs) ? m.weight_lbs : undefined,
-    })),
-    [allMetrics]
+  // Per-chart data slice: given the effective range + an accessor, build
+  // the Recharts {date, value}[] series + tight Y-axis domain.
+  const buildSlice = useCallback(
+    (
+      key: string,
+      accessor: (m: HealthMetric) => number | undefined
+    ): {
+      data: { date: string; value: number | undefined }[];
+      domain: [number, number] | undefined;
+      range: TimeRange;
+    } => {
+      const range = rangeFor(key);
+      const src = sourceForRange(range, metrics90, allMetrics);
+      const filtered = filterMetricsByRange(src, range);
+      const data = filtered.map((m) => ({ date: m.date, value: accessor(m) }));
+      const domain = tightDomain(data.map((d) => d.value));
+      return { data, domain, range };
+    },
+    [rangeFor, metrics90, allMetrics]
   );
-  const weightAllDomain = useMemo(() => weightDomain(weightAllSeries), [weightAllSeries]);
+
+  // Chart slices — one per selectable KPI. Sleep analytics uses the sleep
+  // slice's range too so bedtime/wake analysis follows the same filter.
+  const weightSlice     = buildSlice("weight_lbs", (m) => isValidWeight(m.weight_lbs) ? m.weight_lbs : undefined);
+  const bmiSlice        = buildSlice("bmi", (m) => m.bmi);
+  const hrSlice         = buildSlice("resting_hr", (m) => m.resting_hr);
+  const stepsSlice      = buildSlice("steps", (m) => m.steps);
+  const exerciseSlice   = buildSlice("exercise_mins", (m) => m.exercise_mins);
+  const moveCalSlice    = buildSlice("move_calories", (m) => m.move_calories);
+  const standSlice      = buildSlice("stand_hours", (m) => m.stand_hours);
+  const sleepSlice      = buildSlice("sleep_total_hours", (m) => m.sleep_total_hours);
+  const awakeSlice      = buildSlice("sleep_awake_mins", (m) => m.sleep_awake_mins);
+  const brushSlice      = buildSlice("brush_count", (m) => m.brush_count);
+  const avgBrushSlice   = buildSlice("brush_avg_duration_mins", (m) => m.brush_avg_duration_mins);
+
+  // Sleep analytics operates on the same filtered data slice as the sleep
+  // KPI so bedtime/wake averages respect the user's range selection.
+  const sleepAnalyticsMetrics = useMemo(() => {
+    const range = rangeFor("sleep_total_hours");
+    return filterMetricsByRange(
+      sourceForRange(range, metrics90, allMetrics),
+      range
+    );
+  }, [rangeFor, metrics90, allMetrics]);
 
   // Hourly HR chart data
   const hourlyHRChartData = useMemo(() => {
@@ -910,30 +1108,6 @@ export default function HealthPage() {
       minute: "2-digit",
     });
   }, [hourlyHR]);
-
-  // All-time resting HR — filter outliers, zoom domain
-  const { allTimeHRSeries, allTimeHRMin, allTimeHRMax } = useMemo(() => {
-    const series = allMetrics
-      .map((m) => ({ date: m.date, value: m.resting_hr }))
-      .filter(
-        (d) => d.value !== undefined && d.value >= 40 && d.value <= 120
-      );
-    const values = allMetrics
-      .map((m) => m.resting_hr)
-      .filter(
-        (v): v is number =>
-          v !== undefined && v >= 40 && v <= 120 && isFinite(v)
-      );
-    const min =
-      values.length > 0
-        ? Math.floor(Math.min(...values) - 3)
-        : 50;
-    const max =
-      values.length > 0
-        ? Math.ceil(Math.max(...values) + 3)
-        : 100;
-    return { allTimeHRSeries: series, allTimeHRMin: min, allTimeHRMax: max };
-  }, [allMetrics]);
 
   // Today's weight display — only show if valid
   const todayWeight = isValidWeight(today?.weight_lbs)
@@ -1111,6 +1285,7 @@ export default function HealthPage() {
               Data from {formatDate(today.date)}
             </p>
           )}
+          <TimeRangeSelector value={globalRange} onChange={setGlobalRange} />
           <button
             type="button"
             onClick={() => setGoalsModalOpen(true)}
@@ -1177,13 +1352,22 @@ export default function HealthPage() {
         {sectionAnyActive(BODY_KPIS) && (
           <div className="flex flex-col gap-4 transition-all duration-200">
             {selectedKpis.has("weight_lbs") && (
-              <ChartCard title="Weight — Last 90 Days">
+              <ChartCard
+                title="Weight"
+                actions={
+                  <TimeRangeSelector
+                    size="sm"
+                    value={weightSlice.range}
+                    onChange={(r) => setChartRange("weight_lbs", r)}
+                  />
+                }
+              >
                 <TrendChart
-                  data={weight90Series}
+                  data={weightSlice.data}
                   label="Weight"
                   color={getColor("weight")}
                   formatter={(v) => `${v.toFixed(1)} lb`}
-                  yDomain={weight90Domain}
+                  yDomain={weightSlice.domain}
                   yTickFormatter={(v) => `${Math.round(v)} lb`}
                   refValue={goals?.weight?.goal}
                   refLabel={goals?.weight ? `Goal ${goals.weight.goal} lbs` : undefined}
@@ -1191,23 +1375,44 @@ export default function HealthPage() {
               </ChartCard>
             )}
             {selectedKpis.has("bmi") && (
-              <ChartCard title="BMI — Last 90 Days">
+              <ChartCard
+                title="BMI"
+                actions={
+                  <TimeRangeSelector
+                    size="sm"
+                    value={bmiSlice.range}
+                    onChange={(r) => setChartRange("bmi", r)}
+                  />
+                }
+              >
                 <TrendChart
-                  data={toChartSeries("bmi")}
+                  data={bmiSlice.data}
                   label="BMI"
                   color={getColor("bmi")}
                   formatter={(v) => v.toFixed(1)}
+                  yDomain={bmiSlice.domain}
                 />
               </ChartCard>
             )}
             {selectedKpis.has("resting_hr") && (
               <>
-                <ChartCard title="Resting HR — Last 90 Days">
+                <ChartCard
+                  title="Resting HR"
+                  actions={
+                    <TimeRangeSelector
+                      size="sm"
+                      value={hrSlice.range}
+                      onChange={(r) => setChartRange("resting_hr", r)}
+                    />
+                  }
+                >
                   <TrendChart
-                    data={toChartSeries("resting_hr")}
+                    data={hrSlice.data}
                     label="Resting HR"
                     color={getColor("hr")}
                     formatter={(v) => `${Math.round(v)} bpm`}
+                    yDomain={hrSlice.domain}
+                    yTickFormatter={(v) => `${Math.round(v)}`}
                   />
                 </ChartCard>
                 <div className="bg-card rounded-2xl border border-border p-4">
@@ -1348,9 +1553,18 @@ export default function HealthPage() {
         {sectionAnyActive(ACTIVITY_KPIS) && (
           <div className="flex flex-col gap-4 transition-all duration-200">
             {selectedKpis.has("steps") && (
-              <ChartCard title="Daily Steps — Last 90 Days">
+              <ChartCard
+                title="Daily Steps"
+                actions={
+                  <TimeRangeSelector
+                    size="sm"
+                    value={stepsSlice.range}
+                    onChange={(r) => setChartRange("steps", r)}
+                  />
+                }
+              >
                 <TrendChart
-                  data={toChartSeries("steps")}
+                  data={stepsSlice.data}
                   label="Steps"
                   color={getColor("steps")}
                   formatter={(v) => Math.round(v).toLocaleString()}
@@ -1361,13 +1575,23 @@ export default function HealthPage() {
                       : undefined
                   }
                   type="bar"
+                  yDomain={stepsSlice.domain}
                 />
               </ChartCard>
             )}
             {selectedKpis.has("exercise_mins") && (
-              <ChartCard title="Exercise Mins — Last 90 Days">
+              <ChartCard
+                title="Exercise Mins"
+                actions={
+                  <TimeRangeSelector
+                    size="sm"
+                    value={exerciseSlice.range}
+                    onChange={(r) => setChartRange("exercise_mins", r)}
+                  />
+                }
+              >
                 <TrendChart
-                  data={toChartSeries("exercise_mins")}
+                  data={exerciseSlice.data}
                   label="Exercise"
                   color={getColor("exercise")}
                   formatter={(v) => `${Math.round(v)} min`}
@@ -1378,13 +1602,23 @@ export default function HealthPage() {
                       : undefined
                   }
                   type="bar"
+                  yDomain={exerciseSlice.domain}
                 />
               </ChartCard>
             )}
             {selectedKpis.has("move_calories") && (
-              <ChartCard title="Move Calories — Last 90 Days">
+              <ChartCard
+                title="Move Calories"
+                actions={
+                  <TimeRangeSelector
+                    size="sm"
+                    value={moveCalSlice.range}
+                    onChange={(r) => setChartRange("move_calories", r)}
+                  />
+                }
+              >
                 <TrendChart
-                  data={toChartSeries("move_calories")}
+                  data={moveCalSlice.data}
                   label="Move Calories"
                   color={getColor("calories")}
                   formatter={(v) => `${Math.round(v)} kcal`}
@@ -1395,13 +1629,23 @@ export default function HealthPage() {
                       : undefined
                   }
                   type="bar"
+                  yDomain={moveCalSlice.domain}
                 />
               </ChartCard>
             )}
             {selectedKpis.has("stand_hours") && (
-              <ChartCard title="Stand Hours — Last 90 Days">
+              <ChartCard
+                title="Stand Hours"
+                actions={
+                  <TimeRangeSelector
+                    size="sm"
+                    value={standSlice.range}
+                    onChange={(r) => setChartRange("stand_hours", r)}
+                  />
+                }
+              >
                 <TrendChart
-                  data={toChartSeries("stand_hours")}
+                  data={standSlice.data}
                   label="Stand Hours"
                   color={getColor("stand")}
                   formatter={(v) => `${Math.round(v)}h`}
@@ -1412,6 +1656,7 @@ export default function HealthPage() {
                       : undefined
                   }
                   type="bar"
+                  yDomain={standSlice.domain}
                 />
               </ChartCard>
             )}
@@ -1492,23 +1737,45 @@ export default function HealthPage() {
           <div className="flex flex-col gap-4 transition-all duration-200">
             {selectedKpis.has("sleep_total_hours") && (
               <>
-                <ChartCard title="Sleep Duration — Last 90 Days">
+                <ChartCard
+                  title="Sleep Duration"
+                  actions={
+                    <TimeRangeSelector
+                      size="sm"
+                      value={sleepSlice.range}
+                      onChange={(r) => setChartRange("sleep_total_hours", r)}
+                    />
+                  }
+                >
                   <TrendChart
-                    data={toChartSeries("sleep_total_hours")}
+                    data={sleepSlice.data}
                     label="Sleep"
                     color={getColor("sleep")}
                     formatter={(v) => formatHours(v)}
                     refValue={goals?.sleep?.goal}
                     refLabel={goals?.sleep ? `Goal ${goals.sleep.goal}h` : undefined}
+                    yDomain={sleepSlice.domain}
                   />
                 </ChartCard>
-                <SleepAnalytics metrics={metrics90} sleepGoal={goals?.sleep} />
+                <SleepAnalytics
+                  metrics={sleepAnalyticsMetrics}
+                  sleepGoal={goals?.sleep}
+                />
               </>
             )}
             {selectedKpis.has("sleep_awake_mins") && (
-              <ChartCard title="Awake Time — Last 90 Days">
+              <ChartCard
+                title="Awake Time"
+                actions={
+                  <TimeRangeSelector
+                    size="sm"
+                    value={awakeSlice.range}
+                    onChange={(r) => setChartRange("sleep_awake_mins", r)}
+                  />
+                }
+              >
                 <TrendChart
-                  data={toChartSeries("sleep_awake_mins")}
+                  data={awakeSlice.data}
                   label="Awake"
                   color="#6b7280"
                   formatter={(v) => `${Math.round(v)} min`}
@@ -1518,26 +1785,46 @@ export default function HealthPage() {
                       ? `Goal ≤${goals.awakeMins.goal} min`
                       : undefined
                   }
+                  yDomain={awakeSlice.domain}
                 />
               </ChartCard>
             )}
             {selectedKpis.has("brush_count") && (
-              <ChartCard title="Daily Brushing Sessions — Last 90 Days">
+              <ChartCard
+                title="Daily Brushing Sessions"
+                actions={
+                  <TimeRangeSelector
+                    size="sm"
+                    value={brushSlice.range}
+                    onChange={(r) => setChartRange("brush_count", r)}
+                  />
+                }
+              >
                 <TrendChart
-                  data={toChartSeries("brush_count")}
+                  data={brushSlice.data}
                   label="Sessions"
                   color={getColor("brush")}
                   formatter={(v) => `${v.toFixed(1)}x`}
                   refValue={goals?.brushing?.goal}
                   refLabel={goals?.brushing ? `Goal ${goals.brushing.goal}x` : undefined}
                   type="bar"
+                  yDomain={brushSlice.domain}
                 />
               </ChartCard>
             )}
             {selectedKpis.has("brush_avg_duration_mins") && (
-              <ChartCard title="Avg Brush Duration — Last 90 Days">
+              <ChartCard
+                title="Avg Brush Duration"
+                actions={
+                  <TimeRangeSelector
+                    size="sm"
+                    value={avgBrushSlice.range}
+                    onChange={(r) => setChartRange("brush_avg_duration_mins", r)}
+                  />
+                }
+              >
                 <TrendChart
-                  data={toChartSeries("brush_avg_duration_mins")}
+                  data={avgBrushSlice.data}
                   label="Avg Brush"
                   color={getColor("brush")}
                   formatter={(v) => `${v.toFixed(1)} min`}
@@ -1547,6 +1834,7 @@ export default function HealthPage() {
                       ? `Goal ${goals.avgBrushMins.goal} min`
                       : undefined
                   }
+                  yDomain={avgBrushSlice.domain}
                 />
               </ChartCard>
             )}
@@ -1566,39 +1854,6 @@ export default function HealthPage() {
         />
       )}
 
-      {/* ── Long-term trends ─────────────────────────────────────── */}
-      {allMetrics.length > 90 && (
-        <Section title="Long-Term Trends">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="bg-card rounded-2xl border border-border p-4">
-              <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-3">
-                Resting HR — All Time
-              </p>
-              <TrendChart
-                data={allTimeHRSeries}
-                label="Resting HR"
-                color={getColor("hr")}
-                formatter={(v) => `${Math.round(v)} bpm`}
-                yDomain={[allTimeHRMin, allTimeHRMax]}
-                yTickFormatter={(v) => `${Math.round(v)}`}
-              />
-            </div>
-            <div className="bg-card rounded-2xl border border-border p-4">
-              <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-3">
-                Weight — All Time
-              </p>
-              <TrendChart
-                data={weightAllSeries}
-                label="Weight"
-                color={getColor("weight")}
-                formatter={(v) => `${v.toFixed(1)} lb`}
-                yDomain={weightAllDomain}
-                yTickFormatter={(v) => `${Math.round(v)} lb`}
-              />
-            </div>
-          </div>
-        </Section>
-      )}
     </div>
   );
 }
