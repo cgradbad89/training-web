@@ -238,9 +238,10 @@ function ThisWeekRunsCard({ workouts, weekStart }: ThisWeekRunsCardProps) {
               });
 
               return (
-                <div
+                <Link
                   key={run.workoutId}
-                  className="flex items-center justify-between py-2 px-1 hover:bg-surface rounded-lg transition-colors"
+                  href={`/runs/${run.workoutId}`}
+                  className="flex items-center justify-between py-2 px-1 hover:bg-surface rounded-lg transition-colors cursor-pointer"
                 >
                   <span className="text-xs text-textSecondary w-20 shrink-0">
                     {dayAbbrev} {dateStr}
@@ -265,7 +266,7 @@ function ThisWeekRunsCard({ workouts, weekStart }: ThisWeekRunsCardProps) {
                       <MetricBadge label="Eff" value="—" level="neutral" />
                     )}
                   </div>
-                </div>
+                </Link>
               );
             })}
           </div>
