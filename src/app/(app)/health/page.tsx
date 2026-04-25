@@ -824,66 +824,6 @@ function SleepAnalytics({
 
   return (
     <>
-      <ChartCard title="Avg Sleep by Day of Week">
-        {!hasAnyHours ? (
-          <div className="h-[180px] flex items-center justify-center">
-            <p className="text-xs text-textSecondary">Not enough sleep data yet</p>
-          </div>
-        ) : (
-          <ResponsiveContainer width="100%" height={180}>
-            <BarChart
-              data={perDay.map((d) => ({ day: d.day, avg: d.avgHours ?? 0 }))}
-              margin={{ top: 4, right: 8, bottom: 0, left: 8 }}
-            >
-              <CartesianGrid
-                strokeDasharray="3 3"
-                vertical={false}
-                stroke="var(--color-chart-grid)"
-              />
-              <XAxis
-                dataKey="day"
-                tick={{ fontSize: 10, fill: "var(--color-chart-axis)" }}
-                axisLine={false}
-                tickLine={false}
-              />
-              <YAxis
-                domain={
-                  tightDomain(perDay.map((d) => d.avgHours)) ?? ["auto", "auto"]
-                }
-                tick={{ fontSize: 10, fill: "var(--color-chart-axis)" }}
-                axisLine={false}
-                tickLine={false}
-                width={28}
-                tickFormatter={(v: number) => `${v}h`}
-              />
-              <Tooltip
-                formatter={(v, _name, { payload }) => {
-                  const dayLabel =
-                    payload && typeof payload === "object" && "day" in payload
-                      ? (payload as { day: string }).day
-                      : "";
-                  return [`${Number(v).toFixed(1)} hrs avg on ${dayLabel}`, "Sleep"];
-                }}
-                contentStyle={{
-                  fontSize: 11,
-                  borderRadius: 8,
-                  backgroundColor: "var(--color-chart-tooltip-bg)",
-                  border: "1px solid var(--color-border)",
-                  color: "var(--color-textPrimary)",
-                }}
-                labelStyle={{ color: "var(--color-textSecondary)" }}
-                itemStyle={{ color: "var(--color-textPrimary)" }}
-              />
-              <Bar dataKey="avg" radius={[4, 4, 0, 0]}>
-                {perDay.map((d, i) => (
-                  <Cell key={i} fill={statusChartColor(statusFor(d.avgHours))} />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        )}
-      </ChartCard>
-
       <ChartCard
         title="SLEEP SUMMARY"
         actions={
@@ -984,6 +924,66 @@ function SleepAnalytics({
               Bedtime shown is the night before each day. Wake time is the morning of each day.
             </p>
           </div>
+        )}
+      </ChartCard>
+
+      <ChartCard title="Avg Sleep by Day of Week">
+        {!hasAnyHours ? (
+          <div className="h-[180px] flex items-center justify-center">
+            <p className="text-xs text-textSecondary">Not enough sleep data yet</p>
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height={180}>
+            <BarChart
+              data={perDay.map((d) => ({ day: d.day, avg: d.avgHours ?? 0 }))}
+              margin={{ top: 4, right: 8, bottom: 0, left: 8 }}
+            >
+              <CartesianGrid
+                strokeDasharray="3 3"
+                vertical={false}
+                stroke="var(--color-chart-grid)"
+              />
+              <XAxis
+                dataKey="day"
+                tick={{ fontSize: 10, fill: "var(--color-chart-axis)" }}
+                axisLine={false}
+                tickLine={false}
+              />
+              <YAxis
+                domain={
+                  tightDomain(perDay.map((d) => d.avgHours)) ?? ["auto", "auto"]
+                }
+                tick={{ fontSize: 10, fill: "var(--color-chart-axis)" }}
+                axisLine={false}
+                tickLine={false}
+                width={28}
+                tickFormatter={(v: number) => `${v}h`}
+              />
+              <Tooltip
+                formatter={(v, _name, { payload }) => {
+                  const dayLabel =
+                    payload && typeof payload === "object" && "day" in payload
+                      ? (payload as { day: string }).day
+                      : "";
+                  return [`${Number(v).toFixed(1)} hrs avg on ${dayLabel}`, "Sleep"];
+                }}
+                contentStyle={{
+                  fontSize: 11,
+                  borderRadius: 8,
+                  backgroundColor: "var(--color-chart-tooltip-bg)",
+                  border: "1px solid var(--color-border)",
+                  color: "var(--color-textPrimary)",
+                }}
+                labelStyle={{ color: "var(--color-textSecondary)" }}
+                itemStyle={{ color: "var(--color-textPrimary)" }}
+              />
+              <Bar dataKey="avg" radius={[4, 4, 0, 0]}>
+                {perDay.map((d, i) => (
+                  <Cell key={i} fill={statusChartColor(statusFor(d.avgHours))} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
         )}
       </ChartCard>
     </>
