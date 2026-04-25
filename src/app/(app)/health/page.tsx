@@ -726,6 +726,9 @@ function dayOfWeekFromIsoDate(isoDate: string): number {
 interface SleepAnalyticsProps {
   metrics: HealthMetric[];
   sleepGoal?: { goal: number; warningPct?: number; dangerPct?: number };
+  summaryMetrics: HealthMetric[];
+  summaryRange: TimeRange;
+  onSummaryRangeChange: (r: TimeRange) => void;
 }
 
 /**
@@ -735,7 +738,45 @@ interface SleepAnalyticsProps {
  *   B. Bedtime / Wake Time / Duration table — circular-mean averaged
  *      bedtimes and wake times per weekday.
  */
-function SleepAnalytics({ metrics, sleepGoal }: SleepAnalyticsProps) {
+function SleepAnalytics({
+  metrics,
+  sleepGoal,
+  summaryMetrics,
+  summaryRange,
+  onSummaryRangeChange,
+}: SleepAnalyticsProps) {
+  // ── Overall summary (circular-mean bedtime / wake, arithmetic mean duration) ──
+  const summary = useMemo(() => {
+    const daysWithData = summaryMetrics.filter(
+      (m) => typeof m.sleep_total_hours === "number" && m.sleep_total_hours > 0
+    );
+    if (daysWithData.length < 3) return null;
+
+    const avgDuration =
+      daysWithData.reduce((s, m) => s + (m.sleep_total_hours as number), 0) /
+      daysWithData.length;
+
+    const bedDates = summaryMetrics
+      .filter((m): m is HealthMetric & { sleep_start: string } =>
+        typeof m.sleep_start === "string"
+      )
+      .map((m) => new Date(m.sleep_start))
+      .filter((d) => !Number.isNaN(d.getTime()));
+
+    const wakeDates = summaryMetrics
+      .filter((m): m is HealthMetric & { sleep_end: string } =>
+        typeof m.sleep_end === "string"
+      )
+      .map((m) => new Date(m.sleep_end))
+      .filter((d) => !Number.isNaN(d.getTime()));
+
+    return {
+      avgDuration,
+      avgBedtime: circularMeanTime(bedDates),
+      avgWakeTime: circularMeanTime(wakeDates),
+    };
+  }, [summaryMetrics]);
+
   const perDay = useMemo(() => {
     // index 0..6 = Mon..Sun
     const hours: number[][] = Array.from({ length: 7 }, () => []);
@@ -840,6 +881,46 @@ function SleepAnalytics({ metrics, sleepGoal }: SleepAnalyticsProps) {
               </Bar>
             </BarChart>
           </ResponsiveContainer>
+        )}
+      </ChartCard>
+
+      <ChartCard
+        title="SLEEP SUMMARY"
+        actions={
+          <TimeRangeSelector
+            size="sm"
+            value={summaryRange}
+            onChange={onSummaryRangeChange}
+          />
+        }
+      >
+        {summary === null ? (
+          <div className="h-[72px] flex items-center justify-center">
+            <p className="text-xs text-textSecondary">
+              Not enough sleep data for this range
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 divide-x divide-border pt-1">
+            <div className="pr-4">
+              <p className="text-xl font-bold text-textPrimary tabular-nums">
+                {formatTimeOfDay(summary.avgBedtime)}
+              </p>
+              <p className="text-[11px] text-textSecondary mt-0.5">Avg Bedtime</p>
+            </div>
+            <div className="px-4">
+              <p className="text-xl font-bold text-textPrimary tabular-nums">
+                {formatTimeOfDay(summary.avgWakeTime)}
+              </p>
+              <p className="text-[11px] text-textSecondary mt-0.5">Avg Wake Time</p>
+            </div>
+            <div className="pl-4">
+              <p className="text-xl font-bold text-textPrimary tabular-nums">
+                {summary.avgDuration.toFixed(1)} hrs
+              </p>
+              <p className="text-[11px] text-textSecondary mt-0.5">Avg Duration</p>
+            </div>
+          </div>
         )}
       </ChartCard>
 
@@ -1142,6 +1223,15 @@ export default function HealthPage() {
   // KPI so bedtime/wake averages respect the user's range selection.
   const sleepAnalyticsMetrics = useMemo(() => {
     const range = rangeFor("sleep_total_hours");
+    return filterMetricsByRange(
+      sourceForRange(range, metrics90, allMetrics),
+      range
+    );
+  }, [rangeFor, metrics90, allMetrics]);
+
+  // Sleep summary tile has its own independent range override.
+  const sleepSummaryMetrics = useMemo(() => {
+    const range = rangeFor("sleep_summary");
     return filterMetricsByRange(
       sourceForRange(range, metrics90, allMetrics),
       range
@@ -1826,6 +1916,9 @@ export default function HealthPage() {
                 <SleepAnalytics
                   metrics={sleepAnalyticsMetrics}
                   sleepGoal={goals?.sleep}
+                  summaryMetrics={sleepSummaryMetrics}
+                  summaryRange={rangeFor("sleep_summary")}
+                  onSummaryRangeChange={(r) => setChartRange("sleep_summary", r)}
                 />
               </>
             )}
