@@ -1893,6 +1893,13 @@ export default function HealthPage() {
           <div className="flex flex-col gap-4 transition-all duration-200">
             {selectedKpis.has("sleep_total_hours") && (
               <>
+                <SleepAnalytics
+                  metrics={sleepAnalyticsMetrics}
+                  sleepGoal={goals?.sleep}
+                  summaryMetrics={sleepSummaryMetrics}
+                  summaryRange={rangeFor("sleep_summary")}
+                  onSummaryRangeChange={(r) => setChartRange("sleep_summary", r)}
+                />
                 <ChartCard
                   title="Sleep Duration"
                   actions={
@@ -1913,13 +1920,6 @@ export default function HealthPage() {
                     yDomain={sleepSlice.domain}
                   />
                 </ChartCard>
-                <SleepAnalytics
-                  metrics={sleepAnalyticsMetrics}
-                  sleepGoal={goals?.sleep}
-                  summaryMetrics={sleepSummaryMetrics}
-                  summaryRange={rangeFor("sleep_summary")}
-                  onSummaryRangeChange={(r) => setChartRange("sleep_summary", r)}
-                />
               </>
             )}
             {selectedKpis.has("sleep_awake_mins") && (
