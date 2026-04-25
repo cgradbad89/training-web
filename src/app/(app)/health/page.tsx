@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import {
   onHealthMetricsSnapshot,
@@ -665,6 +665,53 @@ function tightDomain(
 // for future range calcs; tightDomain uses its own math.
 void localTodayIsoDate;
 
+// ── Sleep Column Tooltip ──────────────────────────────────────────────────────
+
+/** Inline ⓘ tooltip for sleep table column headers. Fixed-positioned to escape
+ *  any overflow-hidden containers, matching the EfficiencyTooltip pattern. */
+function SleepColumnTooltip({ title, body }: { title: string; body: string }) {
+  const iconRef = useRef<HTMLButtonElement>(null)
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
+
+  function computePos() {
+    if (!iconRef.current) return null
+    const rect = iconRef.current.getBoundingClientRect()
+    return { top: rect.top - 8, left: rect.left + rect.width / 2 }
+  }
+
+  return (
+    <span className="inline-flex items-center">
+      <button
+        ref={iconRef}
+        type="button"
+        className="text-[10px] text-textSecondary cursor-help ml-0.5 outline-none leading-none select-none"
+        tabIndex={-1}
+        onMouseEnter={() => setPos(computePos())}
+        onMouseLeave={() => setPos(null)}
+        aria-label={title}
+      >
+        ⓘ
+      </button>
+      {pos && (
+        <div
+          role="tooltip"
+          style={{
+            position: 'fixed',
+            top: pos.top,
+            left: pos.left,
+            transform: 'translate(-50%, -100%)',
+            zIndex: 9999,
+          }}
+          className="w-44 bg-card border border-border rounded-lg p-3 shadow-lg pointer-events-none"
+        >
+          <p className="font-medium text-textPrimary mb-1 text-xs">{title}</p>
+          <p className="text-textSecondary text-[11px]">{body}</p>
+        </div>
+      )}
+    </span>
+  )
+}
+
 // ── Sleep Analytics ──────────────────────────────────────────────────────────
 
 const DOW_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
@@ -809,8 +856,24 @@ function SleepAnalytics({ metrics, sleepGoal }: SleepAnalyticsProps) {
               <thead>
                 <tr className="text-xs font-semibold text-textSecondary uppercase tracking-wide">
                   <th className="text-left py-2 pr-2">Day</th>
-                  <th className="text-left py-2 px-2">Avg Bedtime</th>
-                  <th className="text-left py-2 px-2">Avg Wake Time</th>
+                  <th className="text-left py-2 px-2">
+                    <span className="inline-flex items-center">
+                      Avg Bedtime
+                      <SleepColumnTooltip
+                        title="Avg Bedtime"
+                        body="The average time you went to bed the night before this day. e.g. Monday's bedtime = Sunday night"
+                      />
+                    </span>
+                  </th>
+                  <th className="text-left py-2 px-2">
+                    <span className="inline-flex items-center">
+                      Avg Wake Time
+                      <SleepColumnTooltip
+                        title="Avg Wake Time"
+                        body="The average time you woke up on this day. e.g. Monday's wake time = Monday morning"
+                      />
+                    </span>
+                  </th>
                   <th className="text-left py-2 pl-2">Avg Duration</th>
                 </tr>
               </thead>
@@ -836,6 +899,9 @@ function SleepAnalytics({ metrics, sleepGoal }: SleepAnalyticsProps) {
                 })}
               </tbody>
             </table>
+            <p className="text-[11px] text-textSecondary mt-2">
+              Bedtime shown is the night before each day. Wake time is the morning of each day.
+            </p>
           </div>
         )}
       </ChartCard>
