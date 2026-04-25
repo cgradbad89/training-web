@@ -11,6 +11,7 @@ import { MileSplitCharts } from "@/components/MileSplitCharts";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { StatBlock } from "@/components/ui/StatBlock";
 import { MetricBadge } from "@/components/ui/MetricBadge";
+import { EfficiencyTooltip } from "@/components/ui/EfficiencyTooltip";
 import { useAuth } from "@/hooks/useAuth";
 import { useUnsavedChanges } from "@/hooks/useUnsavedChanges";
 import { fetchHealthWorkout } from "@/services/healthWorkouts";
@@ -568,11 +569,13 @@ export default function RunDetailPage() {
             <span className="text-xs text-textSecondary uppercase tracking-wide">
               Efficiency
             </span>
-            <MetricBadge
-              label="Eff"
-              value={effStr}
-              level={effStr === "\u2014" ? "neutral" : effBadgeLevel}
-            />
+            <EfficiencyTooltip>
+              <MetricBadge
+                label="Eff"
+                value={effStr}
+                level={effStr === "\u2014" ? "neutral" : effBadgeLevel}
+              />
+            </EfficiencyTooltip>
           </div>
           <div className="flex flex-col gap-0.5">
             <span className="text-xs text-textSecondary uppercase tracking-wide">

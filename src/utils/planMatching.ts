@@ -43,6 +43,18 @@ function withinTolerance(e: PlannedRunEntry, w: HealthWorkout): boolean {
   );
 }
 
+// Runs more than 3 miles shorter than planned don't match — prevents a 4-mile
+// actual run from matching an 8-mile planned session.
+const DISTANCE_SHORTFALL_THRESHOLD = 3.0;
+
+function isDistanceAcceptable(
+  actualMiles: number,
+  plannedMiles: number
+): boolean {
+  if (!plannedMiles || plannedMiles <= 0) return true;
+  return plannedMiles - actualMiles <= DISTANCE_SHORTFALL_THRESHOLD;
+}
+
 /** DST-safe calendar day difference using local date components */
 function differenceInCalendarDays(a: string, b: string): number {
   // Parse as local dates (YYYY-MM-DD) to avoid timezone/DST issues
@@ -136,7 +148,7 @@ export function matchPlanToActual(
     for (const w of runs) {
       if (usedGlobal.has(w.workoutId)) continue;
       if (workoutDate(w) !== eDate) continue;
-      if (withinTolerance(e, w)) {
+      if (withinTolerance(e, w) && isDistanceAcceptable(w.distanceMiles, e.distanceMiles)) {
         result.set(e.id, { activity: w, quality: "full" });
         usedGlobal.add(w.workoutId);
         break;
@@ -155,6 +167,7 @@ export function matchPlanToActual(
         if (result.has(e.id)) return false;
         if (!withinOneDay(wDate, eDate)) return false;
         if (!withinTolerance(e, w)) return false;
+        if (!isDistanceAcceptable(w.distanceMiles, e.distanceMiles)) return false;
         return true;
       })
       .map(({ entry, eDate }) => ({
@@ -176,6 +189,7 @@ export function matchPlanToActual(
     for (const w of runs) {
       if (usedGlobal.has(w.workoutId)) continue;
       if (workoutDate(w) !== eDate) continue;
+      if (!isDistanceAcceptable(w.distanceMiles, e.distanceMiles)) continue;
       result.set(e.id, { activity: w, quality: "partial" });
       usedGlobal.add(w.workoutId);
       break;
@@ -191,6 +205,7 @@ export function matchPlanToActual(
       .filter(({ entry: e, eDate }) => {
         if (result.has(e.id)) return false;
         if (!withinOneDay(wDate, eDate)) return false;
+        if (!isDistanceAcceptable(w.distanceMiles, e.distanceMiles)) return false;
         return true;
       })
       .map(({ entry, eDate }) => ({

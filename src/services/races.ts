@@ -4,11 +4,14 @@ import {
   getDocs,
   setDoc,
   deleteDoc,
+  updateDoc,
+  deleteField,
   writeBatch,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { COLLECTIONS } from "@/lib/firestore";
 import { type Race } from "@/types";
+import { type HealthWorkout } from "@/types/healthWorkout";
 import { toDate } from "@/utils/dates";
 
 function stripUndefined<T extends object>(obj: T): T {
@@ -72,4 +75,31 @@ export async function setActiveRace(uid: string, raceId: string): Promise<void> 
 /** Legacy full-save helper — kept for backward compat */
 export async function saveRace(uid: string, race: Race): Promise<void> {
   await setDoc(doc(db, COLLECTIONS.halfMarathonRaces(uid), race.id), race);
+}
+
+export async function associateRunWithRace(
+  uid: string,
+  raceId: string,
+  run: HealthWorkout
+): Promise<void> {
+  await updateRace(uid, raceId, {
+    actualRunId: run.workoutId,
+    actualRunDate: run.startDate.toISOString().split("T")[0],
+    actualRunDistanceMiles: run.distanceMiles,
+    actualRunDurationSeconds: run.durationSeconds,
+    actualRunAvgPace: run.avgPaceSecPerMile ?? undefined,
+  });
+}
+
+export async function disassociateRunFromRace(
+  uid: string,
+  raceId: string
+): Promise<void> {
+  await updateDoc(doc(db, COLLECTIONS.halfMarathonRaces(uid), raceId), {
+    actualRunId: deleteField(),
+    actualRunDate: deleteField(),
+    actualRunDistanceMiles: deleteField(),
+    actualRunDurationSeconds: deleteField(),
+    actualRunAvgPace: deleteField(),
+  });
 }

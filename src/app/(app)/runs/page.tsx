@@ -11,6 +11,7 @@ import { useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight, AlertTriangle, EyeOff } from "lucide-react";
 
 import { MetricBadge } from "@/components/ui/MetricBadge";
+import { EfficiencyTooltip } from "@/components/ui/EfficiencyTooltip";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useAuth } from "@/hooks/useAuth";
@@ -427,11 +428,13 @@ function RunRow({
 
         {/* Col 7: Efficiency */}
         <div className="shrink-0">
-          <MetricBadge
-            label="Eff"
-            value={displayScoreStr}
-            level={displayScoreStr === "—" ? "neutral" : effBadgeLevel}
-          />
+          <EfficiencyTooltip>
+            <MetricBadge
+              label="Eff"
+              value={displayScoreStr}
+              level={displayScoreStr === "—" ? "neutral" : effBadgeLevel}
+            />
+          </EfficiencyTooltip>
         </div>
 
         {/* Col 8: Shoe — hidden on mobile to prevent overflow */}

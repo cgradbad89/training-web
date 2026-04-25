@@ -17,6 +17,7 @@ import {
 
 import { WeekNavigator } from "@/components/layout/WeekNavigator";
 import { MetricBadge } from "@/components/ui/MetricBadge";
+import { EfficiencyTooltip } from "@/components/ui/EfficiencyTooltip";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { WeekCalendar } from "@/components/WeekCalendar";
@@ -256,15 +257,17 @@ function ThisWeekRunsCard({ workouts, weekStart }: ThisWeekRunsCardProps) {
                     {run.avgHeartRate ? `${Math.round(run.avgHeartRate)} bpm` : "—"}
                   </span>
                   <div>
-                    {hasHR ? (
-                      <MetricBadge
-                        label="Eff"
-                        value={displayScore.toFixed(1)}
-                        level={effBadgeLevel as "good" | "ok" | "low" | "neutral"}
-                      />
-                    ) : (
-                      <MetricBadge label="Eff" value="—" level="neutral" />
-                    )}
+                    <EfficiencyTooltip>
+                      {hasHR ? (
+                        <MetricBadge
+                          label="Eff"
+                          value={displayScore.toFixed(1)}
+                          level={effBadgeLevel as "good" | "ok" | "low" | "neutral"}
+                        />
+                      ) : (
+                        <MetricBadge label="Eff" value="—" level="neutral" />
+                      )}
+                    </EfficiencyTooltip>
                   </div>
                 </Link>
               );

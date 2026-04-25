@@ -10,6 +10,8 @@ import {
   updateRace,
   deleteRace,
   setActiveRace,
+  associateRunWithRace,
+  disassociateRunFromRace,
 } from "@/services/races";
 import { fetchHealthWorkouts } from "@/services/healthWorkouts";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -132,6 +134,8 @@ interface RaceCardProps {
   onEdit: (race: Race) => void;
   onDelete: (race: Race) => void;
   onSetActive: (race: Race) => void;
+  onAssociate: (race: Race) => void;
+  onDisassociate: (raceId: string) => void;
 }
 
 function RaceCard({
@@ -141,6 +145,8 @@ function RaceCard({
   onEdit,
   onDelete,
   onSetActive,
+  onAssociate,
+  onDisassociate,
 }: RaceCardProps) {
   const days = daysFromToday(race.raceDate);
   const miles = raceMiles(race);
@@ -237,6 +243,38 @@ function RaceCard({
                   : "—"}
               </span>
             </div>
+          )}
+
+          {race.actualRunId ? (
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <p className="text-xs text-textSecondary">Actual Performance</p>
+                <p className="text-sm font-medium text-textPrimary">
+                  {race.actualRunDistanceMiles?.toFixed(2)} mi
+                  {race.actualRunAvgPace
+                    ? ` · ${formatPace(race.actualRunAvgPace)}/mi`
+                    : ""}
+                </p>
+                {race.actualRunDate && (
+                  <p className="text-xs text-textSecondary">
+                    {formatRaceDate(race.actualRunDate)}
+                  </p>
+                )}
+              </div>
+              <button
+                onClick={() => onDisassociate(race.id)}
+                className="text-xs text-danger hover:text-danger/80 transition-colors shrink-0"
+              >
+                Remove
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => onAssociate(race)}
+              className="text-xs text-primary hover:text-primary/80 transition-colors self-start"
+            >
+              ＋ Link actual run
+            </button>
           )}
         </div>
       )}
@@ -605,6 +643,89 @@ function Field({
   );
 }
 
+// ─── Run Picker Modal ─────────────────────────────────────────────────────────
+
+interface RunPickerModalProps {
+  race: Race;
+  activities: HealthWorkout[];
+  onSelect: (run: HealthWorkout) => void;
+  onClose: () => void;
+}
+
+function RunPickerModal({
+  race,
+  activities,
+  onSelect,
+  onClose,
+}: RunPickerModalProps) {
+  const nearby = nearbyRuns(activities, race.raceDate).sort(
+    (a, b) => b.startDate.getTime() - a.startDate.getTime()
+  );
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 overflow-hidden"
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div className="bg-card rounded-2xl shadow-xl w-full max-w-md flex flex-col max-h-[80vh]">
+        <div className="flex items-center justify-between p-4 border-b border-border sticky top-0 bg-card z-10 shrink-0">
+          <button onClick={onClose} className="text-sm text-textSecondary">
+            Cancel
+          </button>
+          <h2 className="text-sm font-semibold text-textPrimary">
+            Select Race Run
+          </h2>
+          <div className="w-12" />
+        </div>
+        <p className="px-4 pt-3 pb-1 text-xs text-textSecondary truncate">
+          {race.name}
+        </p>
+        <div className="overflow-y-auto flex-1 py-1">
+          {nearby.length === 0 ? (
+            <p className="text-sm text-textSecondary text-center py-10 px-4">
+              No runs found within 30 days of this race
+            </p>
+          ) : (
+            nearby.map((run) => {
+              const dateStr = run.startDate.toLocaleDateString("en-US", {
+                weekday: "short",
+                month: "short",
+                day: "numeric",
+              });
+              const pace = run.avgPaceSecPerMile
+                ? `${formatPace(run.avgPaceSecPerMile)}/mi`
+                : "—";
+              const duration = formatDuration(run.durationSeconds);
+              return (
+                <button
+                  key={run.workoutId}
+                  onClick={() => onSelect(run)}
+                  className="w-full flex items-center justify-between px-4 py-3 hover:bg-surface transition-colors text-left"
+                >
+                  <div>
+                    <p className="text-sm font-medium text-textPrimary">
+                      {run.distanceMiles.toFixed(2)} mi
+                    </p>
+                    <p className="text-xs text-textSecondary">{dateStr}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm text-textPrimary tabular-nums">
+                      {pace}
+                    </p>
+                    <p className="text-xs text-textSecondary tabular-nums">
+                      {duration}
+                    </p>
+                  </div>
+                </button>
+              );
+            })
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function RacesPage() {
@@ -617,6 +738,7 @@ export default function RacesPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingRace, setEditingRace] = useState<Race | null>(null);
   const [deletingRace, setDeletingRace] = useState<Race | null>(null);
+  const [pickerRaceId, setPickerRaceId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user) return;
@@ -625,10 +747,10 @@ export default function RacesPage() {
   }, [user]);
 
   useEffect(() => {
-    const isOpen = modalOpen || !!deletingRace;
+    const isOpen = modalOpen || !!deletingRace || !!pickerRaceId;
     document.body.style.overflow = isOpen ? "hidden" : "";
     return () => { document.body.style.overflow = ""; };
-  }, [modalOpen, deletingRace]);
+  }, [modalOpen, deletingRace, pickerRaceId]);
 
   async function loadAll() {
     if (!user) return;
@@ -719,6 +841,29 @@ export default function RacesPage() {
     }
   }
 
+  async function handleAssociate(run: HealthWorkout) {
+    if (!user || !pickerRaceId) return;
+    setSaving(true);
+    try {
+      await associateRunWithRace(user.uid, pickerRaceId, run);
+      setPickerRaceId(null);
+      await loadAll();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDisassociate(raceId: string) {
+    if (!user) return;
+    setSaving(true);
+    try {
+      await disassociateRunFromRace(user.uid, raceId);
+      await loadAll();
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function handleDelete() {
     if (!user || !deletingRace) return;
     setSaving(true);
@@ -775,6 +920,8 @@ export default function RacesPage() {
                   onEdit={openEdit}
                   onDelete={setDeletingRace}
                   onSetActive={handleSetActive}
+                  onAssociate={(r) => setPickerRaceId(r.id)}
+                  onDisassociate={handleDisassociate}
                 />
               ))}
             </div>
@@ -799,6 +946,8 @@ export default function RacesPage() {
                   onEdit={openEdit}
                   onDelete={setDeletingRace}
                   onSetActive={handleSetActive}
+                  onAssociate={(r) => setPickerRaceId(r.id)}
+                  onDisassociate={handleDisassociate}
                 />
               ))}
             </div>
@@ -816,6 +965,20 @@ export default function RacesPage() {
           saving={saving}
         />
       )}
+
+      {/* Run picker */}
+      {pickerRaceId && (() => {
+        const pickerRace = races.find((r) => r.id === pickerRaceId);
+        if (!pickerRace) return null;
+        return (
+          <RunPickerModal
+            race={pickerRace}
+            activities={activities}
+            onSelect={handleAssociate}
+            onClose={() => setPickerRaceId(null)}
+          />
+        );
+      })()}
 
       {/* Delete confirm */}
       <ConfirmDialog

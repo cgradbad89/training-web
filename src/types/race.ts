@@ -35,6 +35,12 @@ export interface Race {
   notes?: string;
   isActive: boolean;
   createdAt: string;
+  // Actual race run association (linked via run picker on the card)
+  actualRunId?: string;
+  actualRunDate?: string;
+  actualRunDistanceMiles?: number;
+  actualRunDurationSeconds?: number;
+  actualRunAvgPace?: number;
 }
 
 /** Legacy alias */
