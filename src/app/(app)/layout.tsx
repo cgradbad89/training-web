@@ -22,6 +22,7 @@ import {
 import { AuthGuard } from "@/components/layout/AuthGuard";
 import { HubBanner } from "@/components/layout/HubBanner";
 import { GoogleMapsProvider } from "@/components/GoogleMapsProvider";
+import AutoMatchRunner from "@/components/AutoMatchRunner";
 
 type NavItem = {
   href: string;
@@ -222,6 +223,7 @@ function BottomTabBar() {
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <AuthGuard>
+      <AutoMatchRunner />
       <GoogleMapsProvider>
         <div className="flex flex-col min-h-screen">
           <HubBanner />
