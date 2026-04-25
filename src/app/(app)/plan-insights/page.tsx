@@ -295,22 +295,6 @@ export default function PlanInsightsPage() {
     return fitRiegel(efforts, raceDistanceMiles, 0, { min: 0.9, max: 1.3 });
   }, [runs, raceDistanceMiles]);
 
-  // 5K fit
-  const fiveKFit = useMemo(() => {
-    const efforts = buildQualifyingEfforts(
-      runs.map((r) => ({
-        workoutId: r.workoutId,
-        distanceMiles: r.distanceMiles,
-        durationSeconds: r.durationSeconds,
-        startDate: r.startDate,
-        activityType: r.activityType,
-        sourceName: r.sourceName,
-      })),
-      56
-    );
-    return fitRiegel(efforts, 3.107, 0, { min: 0.9, max: 1.3 });
-  }, [runs]);
-
   // Plan adherence — weekly planned vs actual (uses ±1 day matching)
   const adherenceData = useMemo<WeekAdherenceData[]>(() => {
     if (!activePlan) return [];
@@ -430,22 +414,6 @@ export default function PlanInsightsPage() {
     .filter((r) => r.distanceMiles >= 6)
     .sort((a, b) => toMs(b.startDate) - toMs(a.startDate));
 
-  // Half marathon specific Riegel fit
-  const halfFit = useMemo(() => {
-    const efforts = buildQualifyingEfforts(
-      runs.map((r) => ({
-        workoutId: r.workoutId,
-        distanceMiles: r.distanceMiles,
-        durationSeconds: r.durationSeconds,
-        startDate: r.startDate,
-        activityType: r.activityType,
-        sourceName: r.sourceName,
-      })),
-      56
-    );
-    return fitRiegel(efforts, 13.109, 3.0, { min: 1.05, max: 1.18 });
-  }, [runs]);
-
   type ReadinessStatus = "onTrack" | "building" | "needsWork" | "insufficient";
   interface ReadinessIndicator {
     title: string;
@@ -519,19 +487,20 @@ export default function PlanInsightsPage() {
   })();
 
   const paceReadiness: ReadinessIndicator = (() => {
-    if (!halfFit)
+    if (!raceFit || !raceDistanceMiles)
       return {
         title: "Pace Readiness",
         status: "insufficient",
         detail: "Need more recent runs of 3+ miles.",
       };
-    const conf = riegelConfidenceLabel(halfFit);
-    const predicted = predictSeconds(halfFit, 13.109);
+    const conf = riegelConfidenceLabel(raceFit);
+    const predicted = predictSeconds(raceFit, raceDistanceMiles);
     const predStr = formatRaceTime(predicted);
+    const distLabel = activeRace ? RACE_DISTANCE_LABELS[activeRace.raceDistance] : "race";
     return {
       title: "Pace Readiness",
       status: conf === "High" ? "onTrack" : conf === "Medium" ? "building" : "needsWork",
-      detail: `Predicted half: ${predStr}`,
+      detail: `Predicted ${distLabel}: ${predStr}`,
     };
   })();
 
@@ -718,14 +687,9 @@ export default function PlanInsightsPage() {
             targetPace={activeRace?.targetPaceSecondsPerMile}
           />
         )}
-        <PredictionCard
-          label="5K Prediction"
-          distanceMiles={3.107}
-          fit={fiveKFit}
-        />
       </div>
 
-      {!raceFit && !fiveKFit && (
+      {!raceFit && (
         <Card className="border-warning/30">
           <div className="flex items-start gap-3">
             <AlertTriangle size={18} className="text-warning shrink-0 mt-0.5" />
