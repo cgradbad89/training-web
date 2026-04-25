@@ -10,20 +10,26 @@ export function EfficiencyTooltip({ children }: EfficiencyTooltipProps) {
   const [open, setOpen] = useState(false)
 
   return (
-    <div
-      className="relative group inline-flex items-center gap-0.5 cursor-help"
-      onMouseLeave={() => setOpen(false)}
-    >
-      {children}
-      <button
-        type="button"
-        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen(v => !v) }}
-        className="text-textSecondary text-[9px] shrink-0 leading-none select-none outline-none"
-        tabIndex={-1}
-        aria-label="Efficiency score explanation"
+    // Outer wrapper: relative container only — no `group` to avoid inheriting
+    // parent row's group-hover (the runs list row has its own `group` class).
+    <div className="relative inline-block">
+      {/* peer: tooltip responds to THIS element's hover, not the row's */}
+      <div
+        className="peer flex items-center gap-0.5 cursor-help"
+        onMouseLeave={() => setOpen(false)}
       >
-        ⓘ
-      </button>
+        {children}
+        <button
+          type="button"
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen(v => !v) }}
+          className="text-textSecondary text-[9px] shrink-0 leading-none select-none outline-none"
+          tabIndex={-1}
+          aria-label="Efficiency score explanation"
+        >
+          ⓘ
+        </button>
+      </div>
+      {/* Tooltip — peer-hover scopes to the sibling badge wrapper only */}
       <div
         role="tooltip"
         className={[
@@ -32,7 +38,7 @@ export function EfficiencyTooltip({ children }: EfficiencyTooltipProps) {
           'pointer-events-none transition-opacity duration-150',
           open
             ? 'opacity-100 visible'
-            : 'opacity-0 invisible group-hover:opacity-100 group-hover:visible',
+            : 'opacity-0 invisible peer-hover:opacity-100 peer-hover:visible',
         ].join(' ')}
       >
         <p className="font-medium text-textPrimary mb-1.5 text-xs">Efficiency Score</p>
