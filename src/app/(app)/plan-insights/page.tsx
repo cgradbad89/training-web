@@ -786,73 +786,91 @@ export default function PlanInsightsPage() {
                 </p>
               </div>
             </div>
+
+            {/* Target — shown whenever set */}
             {activeRace.targetPaceSecondsPerMile && activeRace.targetPaceSecondsPerMile > 0 && raceDistanceMiles && (
               <p className="text-xs text-textSecondary mt-2">
                 Target: {formatPace(activeRace.targetPaceSecondsPerMile)} /mi →{" "}
                 {formatRaceTime(activeRace.targetPaceSecondsPerMile * raceDistanceMiles)}
               </p>
             )}
+
+            {/* Actual — shown for past races with a linked run.
+                Falls back to "—" for any missing sub-field. Pace is derived
+                from duration/distance when actualRunAvgPace is absent. */}
+            {isPastRace && activeRace.actualRunId && (() => {
+              const actualSec = activeRace.actualRunDurationSeconds ?? null;
+              const actualMiles = activeRace.actualRunDistanceMiles ?? null;
+              const actualPace =
+                activeRace.actualRunAvgPace && activeRace.actualRunAvgPace > 0
+                  ? activeRace.actualRunAvgPace
+                  : actualSec != null && actualMiles && actualMiles > 0
+                    ? actualSec / actualMiles
+                    : null;
+              const targetSec =
+                activeRace.targetPaceSecondsPerMile && activeRace.targetPaceSecondsPerMile > 0 && raceDistanceMiles
+                  ? activeRace.targetPaceSecondsPerMile * raceDistanceMiles
+                  : null;
+              const beatTarget =
+                actualSec != null && targetSec != null && actualSec <= targetSec;
+              const actualColorClass =
+                actualSec != null && targetSec != null
+                  ? beatTarget
+                    ? "text-success font-medium"
+                    : "text-warning font-medium"
+                  : "text-textPrimary font-medium";
+
+              return (
+                <>
+                  <p className="text-xs mt-1">
+                    <span className="text-textSecondary">Actual: </span>
+                    {actualSec != null ? (
+                      <span className={actualColorClass}>
+                        {actualPace != null ? `${formatPace(actualPace)} /mi → ` : ""}
+                        {formatRaceTime(actualSec)}
+                      </span>
+                    ) : (
+                      <span className="text-textSecondary">—</span>
+                    )}
+                  </p>
+
+                  {/* Delta vs target */}
+                  {actualSec != null && targetSec != null && (
+                    <p className={`text-xs mt-1 ${beatTarget ? "text-success" : "text-warning"}`}>
+                      {beatTarget
+                        ? `✓ ${formatRaceTime(targetSec - actualSec)} under target`
+                        : `${formatRaceTime(actualSec - targetSec)} over target`}
+                    </p>
+                  )}
+
+                  {/* Delta vs prediction (preserved from removed tile) */}
+                  {actualSec != null && raceFit && raceDistanceMiles && (() => {
+                    const predictedSec = predictSeconds(raceFit, raceDistanceMiles);
+                    const diff = predictedSec - actualSec;
+                    const isUnder = diff >= 0;
+                    return (
+                      <p
+                        className={`text-xs mt-1 ${
+                          isUnder ? "text-success" : "text-textSecondary"
+                        }`}
+                      >
+                        {formatRaceTime(Math.abs(diff))} {isUnder ? "faster" : "slower"} than predicted
+                      </p>
+                    );
+                  })()}
+                </>
+              );
+            })()}
           </Card>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {raceDistanceMiles && (
-              <PredictionCard
-                label={raceDistanceLabel + " Prediction"}
-                distanceMiles={raceDistanceMiles}
-                fit={raceFit}
-                targetPace={activeRace?.targetPaceSecondsPerMile}
-              />
-            )}
-            {/* Actual performance tile — past race with a linked run.
-                Render the tile when isPastRace + actualRunId are set; show
-                "—" for any individual field that's missing on the doc. */}
-            {isPastRace && activeRace.actualRunId && (
-              <Card className="bg-success/5 border-success/20">
-                <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-3">
-                  Actual Performance
-                </p>
-                <p className="text-3xl font-bold text-textPrimary tabular-nums">
-                  {activeRace.actualRunDurationSeconds != null
-                    ? formatRaceTime(activeRace.actualRunDurationSeconds)
-                    : "—"}
-                </p>
-                <p className="text-sm text-textSecondary mt-1">
-                  {activeRace.actualRunAvgPace != null && activeRace.actualRunAvgPace > 0
-                    ? `${formatPace(activeRace.actualRunAvgPace)} /mi`
-                    : "—"}
-                </p>
-                <p className="text-xs text-textSecondary mt-2">
-                  {activeRace.actualRunDistanceMiles != null
-                    ? `${activeRace.actualRunDistanceMiles.toFixed(2)} mi`
-                    : "—"}
-                  {activeRace.actualRunDate
-                    ? " · " +
-                      new Date(activeRace.actualRunDate + "T00:00:00").toLocaleDateString("en-US", {
-                        month: "short",
-                        day: "numeric",
-                        year: "numeric",
-                      })
-                    : ""}
-                </p>
-                {/* vs prediction comparison — only when both are available */}
-                {raceFit && raceDistanceMiles && activeRace.actualRunDurationSeconds != null && (() => {
-                  const predictedSec = predictSeconds(raceFit, raceDistanceMiles);
-                  const actualSec = activeRace.actualRunDurationSeconds!;
-                  const diff = predictedSec - actualSec;
-                  const isUnder = diff >= 0;
-                  return (
-                    <p
-                      className={`text-xs mt-2 font-medium ${
-                        isUnder ? "text-success" : "text-warning"
-                      }`}
-                    >
-                      {formatRaceTime(Math.abs(diff))} {isUnder ? "faster" : "slower"} than predicted
-                    </p>
-                  );
-                })()}
-              </Card>
-            )}
-          </div>
+          {raceDistanceMiles && (
+            <PredictionCard
+              label={raceDistanceLabel + " Prediction"}
+              distanceMiles={raceDistanceMiles}
+              fit={raceFit}
+              targetPace={activeRace?.targetPaceSecondsPerMile}
+            />
+          )}
 
           {!raceFit && (
             <Card className="border-warning/30">
