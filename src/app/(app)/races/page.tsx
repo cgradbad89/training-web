@@ -220,7 +220,7 @@ function RaceCard({
         />
       </div>
 
-      {/* Past-race extras */}
+      {/* Past-race extras: result + linked Strava activity */}
       {isPast && (
         <div className="flex flex-col gap-2 pt-1 border-t border-border">
           {race.result ? (
@@ -244,7 +244,13 @@ function RaceCard({
               </span>
             </div>
           )}
+        </div>
+      )}
 
+      {/* Actual performance — visible on any tile when a run is linked,
+          or when the race date is today or in the past (link button shown). */}
+      {(!!race.actualRunId || days <= 0) && (
+        <div className="flex flex-col gap-2 pt-1 border-t border-border">
           {race.actualRunId ? (
             <div className="flex items-start justify-between gap-2">
               <div>
@@ -771,14 +777,14 @@ export default function RacesPage() {
   today.setHours(0, 0, 0, 0);
 
   const upcomingRaces = races
-    .filter((r) => new Date(r.raceDate + "T00:00:00") >= today)
+    .filter((r) => new Date(r.raceDate + "T00:00:00") > today)
     .sort(
       (a, b) =>
         new Date(a.raceDate).getTime() - new Date(b.raceDate).getTime()
     );
 
   const pastRaces = races
-    .filter((r) => new Date(r.raceDate + "T00:00:00") < today)
+    .filter((r) => new Date(r.raceDate + "T00:00:00") <= today)
     .sort(
       (a, b) =>
         new Date(b.raceDate).getTime() - new Date(a.raceDate).getTime()
