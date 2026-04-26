@@ -292,6 +292,13 @@ export default function PlanInsightsPage() {
       56
     );
     if (!raceDistanceMiles) return null;
+    // For HM/marathon use the same tighter long-run model as Personal Insights:
+    // minMiles=3.0 (excludes short runs) + exponent clamped to [1.05, 1.18].
+    // This matches the 12-effort, fitted-exponent fit that produces the
+    // Personal Insights prediction, eliminating the 2-3 min discrepancy.
+    if (raceDistanceMiles >= 13.109) {
+      return fitRiegel(efforts, raceDistanceMiles, 3.0, { min: 1.05, max: 1.18 });
+    }
     return fitRiegel(efforts, raceDistanceMiles, 0, { min: 0.9, max: 1.3 });
   }, [runs, raceDistanceMiles]);
 
