@@ -50,6 +50,15 @@ function daysUntil(dateStr: string): number {
   return Math.ceil((target.getTime() - now.getTime()) / 86400000);
 }
 
+/** Parse a finish-time string ("H:MM:SS" or "M:SS") into seconds. */
+function parseResultToSeconds(result: string): number | null {
+  const parts = result.trim().split(":").map((p) => Number(p));
+  if (parts.length < 2 || parts.length > 3) return null;
+  if (parts.some((n) => !isFinite(n))) return null;
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  return parts[0] * 60 + parts[1];
+}
+
 function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
     <div className={`bg-card rounded-2xl shadow-sm border border-border p-5 ${className}`}>
@@ -795,17 +804,29 @@ export default function PlanInsightsPage() {
               </p>
             )}
 
-            {/* Actual — shown for past races with a linked run.
-                Falls back to "—" for any missing sub-field. Pace is derived
-                from duration/distance when actualRunAvgPace is absent. */}
-            {isPastRace && activeRace.actualRunId && (() => {
-              const actualSec = activeRace.actualRunDurationSeconds ?? null;
-              const actualMiles = activeRace.actualRunDistanceMiles ?? null;
+            {/* Actual — shown for past races with EITHER a linked run OR a
+                manually-entered result string ("H:MM:SS"). Linked-run fields
+                take priority; result string is a fallback for races recorded
+                before the run-linking feature existed. Sub-fields render "—"
+                individually when missing; pace is derived from duration and
+                whichever distance source is available. */}
+            {isPastRace && (activeRace.actualRunId || activeRace.result) && (() => {
+              const actualSec =
+                activeRace.actualRunDurationSeconds ??
+                (activeRace.result ? parseResultToSeconds(activeRace.result) : null);
+              // Distance to use for pace derivation: prefer the linked run's
+              // recorded distance, fall back to the race's registered distance.
+              const milesForPace =
+                activeRace.actualRunDistanceMiles && activeRace.actualRunDistanceMiles > 0
+                  ? activeRace.actualRunDistanceMiles
+                  : raceDistanceMiles && raceDistanceMiles > 0
+                    ? raceDistanceMiles
+                    : null;
               const actualPace =
                 activeRace.actualRunAvgPace && activeRace.actualRunAvgPace > 0
                   ? activeRace.actualRunAvgPace
-                  : actualSec != null && actualMiles && actualMiles > 0
-                    ? actualSec / actualMiles
+                  : actualSec != null && milesForPace
+                    ? actualSec / milesForPace
                     : null;
               const targetSec =
                 activeRace.targetPaceSecondsPerMile && activeRace.targetPaceSecondsPerMile > 0 && raceDistanceMiles
