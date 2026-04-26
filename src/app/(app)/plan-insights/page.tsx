@@ -286,20 +286,41 @@ export default function PlanInsightsPage() {
     return plans.find((p) => p.id === activeRace.linkedPlanId) ?? null;
   }, [plans, activeRace]);
 
-  // Date cutoff for all run-based stats. For ANY race (past or future), only
-  // runs strictly before the race date count — this prevents a post-race run
-  // from contaminating the historical prediction / adherence picture.
+  // Date cutoff for all run-based stats. Set to the END of race day so that
+  // a run completed on race day itself (e.g. the actual race) is INCLUDED in
+  // the plan totals, while runs after race day are excluded.
   const raceDateCutoff = useMemo<Date | null>(() => {
     if (!activeRace) return null;
-    return new Date(activeRace.raceDate + "T00:00:00");
+    const d = new Date(activeRace.raceDate + "T00:00:00");
+    d.setHours(23, 59, 59, 999);
+    return d;
   }, [activeRace]);
 
+  // A race counts as past if its calendar day is on or before today
+  // (string-compare ISO YYYY-MM-DD avoids timezone/midnight edge cases).
+  // This lets today's race show the Actual Performance tile all day.
   const isPastRace = useMemo(() => {
     if (!activeRace) return false;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    return new Date(activeRace.raceDate + "T00:00:00") <= today;
+    const todayStr = new Date().toISOString().split("T")[0];
+    return activeRace.raceDate <= todayStr;
   }, [activeRace]);
+
+  // TEMP debug: log PNC race fields so we can confirm what's set on the doc
+  // when the Actual Performance tile is missing. Remove once verified.
+  useEffect(() => {
+    if (activeRace?.name?.includes("PNC")) {
+      // eslint-disable-next-line no-console
+      console.log("[PlanInsights] PNC race data:", {
+        isPastRace,
+        actualRunId: activeRace.actualRunId,
+        actualRunDurationSeconds: activeRace.actualRunDurationSeconds,
+        actualRunDistanceMiles: activeRace.actualRunDistanceMiles,
+        actualRunAvgPace: activeRace.actualRunAvgPace,
+        actualRunDate: activeRace.actualRunDate,
+        raceDate: activeRace.raceDate,
+      });
+    }
+  }, [activeRace, isPastRace]);
 
   // Race distance in miles
   const raceDistanceMiles = useMemo(() => {
@@ -782,22 +803,28 @@ export default function PlanInsightsPage() {
                 targetPace={activeRace?.targetPaceSecondsPerMile}
               />
             )}
-            {/* Actual performance tile — past race with a linked run */}
-            {isPastRace && activeRace.actualRunId && activeRace.actualRunDistanceMiles != null && activeRace.actualRunDurationSeconds != null && (
+            {/* Actual performance tile — past race with a linked run.
+                Render the tile when isPastRace + actualRunId are set; show
+                "—" for any individual field that's missing on the doc. */}
+            {isPastRace && activeRace.actualRunId && (
               <Card className="bg-success/5 border-success/20">
                 <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-3">
                   Actual Performance
                 </p>
                 <p className="text-3xl font-bold text-textPrimary tabular-nums">
-                  {formatRaceTime(activeRace.actualRunDurationSeconds)}
+                  {activeRace.actualRunDurationSeconds != null
+                    ? formatRaceTime(activeRace.actualRunDurationSeconds)
+                    : "—"}
                 </p>
-                {activeRace.actualRunAvgPace != null && activeRace.actualRunAvgPace > 0 && (
-                  <p className="text-sm text-textSecondary mt-1">
-                    {formatPace(activeRace.actualRunAvgPace)} /mi
-                  </p>
-                )}
+                <p className="text-sm text-textSecondary mt-1">
+                  {activeRace.actualRunAvgPace != null && activeRace.actualRunAvgPace > 0
+                    ? `${formatPace(activeRace.actualRunAvgPace)} /mi`
+                    : "—"}
+                </p>
                 <p className="text-xs text-textSecondary mt-2">
-                  {activeRace.actualRunDistanceMiles.toFixed(2)} mi
+                  {activeRace.actualRunDistanceMiles != null
+                    ? `${activeRace.actualRunDistanceMiles.toFixed(2)} mi`
+                    : "—"}
                   {activeRace.actualRunDate
                     ? " · " +
                       new Date(activeRace.actualRunDate + "T00:00:00").toLocaleDateString("en-US", {
@@ -807,8 +834,8 @@ export default function PlanInsightsPage() {
                       })
                     : ""}
                 </p>
-                {/* vs prediction comparison */}
-                {raceFit && raceDistanceMiles && (() => {
+                {/* vs prediction comparison — only when both are available */}
+                {raceFit && raceDistanceMiles && activeRace.actualRunDurationSeconds != null && (() => {
                   const predictedSec = predictSeconds(raceFit, raceDistanceMiles);
                   const actualSec = activeRace.actualRunDurationSeconds!;
                   const diff = predictedSec - actualSec;
