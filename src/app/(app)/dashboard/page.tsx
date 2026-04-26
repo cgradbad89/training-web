@@ -258,7 +258,7 @@ function ThisWeekRunsCard({ workouts, weekStart }: ThisWeekRunsCardProps) {
                   </span>
                   <div>
                     <EfficiencyTooltip>
-                      {hasHR ? (
+                      {hasHR && displayScore > 0 && displayScore <= 10 ? (
                         <MetricBadge
                           label="Eff"
                           value={displayScore.toFixed(1)}

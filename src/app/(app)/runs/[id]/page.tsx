@@ -244,8 +244,14 @@ export default function RunDetailPage() {
     minute: "2-digit",
   });
 
-  // Efficiency
-  const effDisplay = computeEfficiencyDisplay(displayWorkout);
+  // Efficiency \u2014 guard: require valid HR; cap: scores > 10 are physically impossible
+  const effDisplayRaw = computeEfficiencyDisplay(displayWorkout);
+  const effDisplay =
+    effDisplayRaw != null &&
+    effDisplayRaw <= 10 &&
+    (displayWorkout.avgHeartRate ?? 0) > 0
+      ? effDisplayRaw
+      : null;
   const effBadgeLevel = getEffBadgeLevel(displayWorkout);
   const effStr = effDisplay != null ? effDisplay.toFixed(1) : "\u2014";
 

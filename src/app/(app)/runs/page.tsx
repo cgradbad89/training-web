@@ -370,7 +370,7 @@ function RunRow({
   }
 
   const displayScoreStr =
-    hasHR && displayScore > 0 && isFinite(displayScore)
+    hasHR && displayScore > 0 && displayScore <= 10 && isFinite(displayScore)
       ? displayScore.toFixed(1)
       : "—";
 
