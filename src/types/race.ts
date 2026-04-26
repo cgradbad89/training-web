@@ -35,6 +35,8 @@ export interface Race {
   notes?: string;
   isActive: boolean;
   createdAt: string;
+  /** ID of the RunningPlan associated with this race (set on Races edit form). */
+  linkedPlanId?: string;
   // Actual race run association (linked via run picker on the card)
   actualRunId?: string;
   actualRunDate?: string;

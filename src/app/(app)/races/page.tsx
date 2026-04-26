@@ -14,6 +14,8 @@ import {
   disassociateRunFromRace,
 } from "@/services/races";
 import { fetchHealthWorkouts } from "@/services/healthWorkouts";
+import { fetchPlans } from "@/services/plans";
+import { type RunningPlan, isRunningPlan } from "@/types/plan";
 import { PageHeader } from "@/components/layout/PageHeader";
 import {
   type Race,
@@ -337,6 +339,7 @@ interface ModalFormState {
   location: string;
   paceInput: string;         // "M:SS" string shown in UI
   linkedStravaActivityId: string;
+  linkedPlanId: string;      // selected RunningPlan id, "" = none
   result: string;
   notes: string;
   setAsGoalRace: boolean;
@@ -351,6 +354,7 @@ function defaultForm(): ModalFormState {
     location: "",
     paceInput: "",
     linkedStravaActivityId: "",
+    linkedPlanId: "",
     result: "",
     notes: "",
     setAsGoalRace: false,
@@ -368,6 +372,7 @@ function raceToForm(race: Race): ModalFormState {
       ? formatPace(race.targetPaceSecondsPerMile)
       : "",
     linkedStravaActivityId: race.linkedStravaActivityId ?? "",
+    linkedPlanId: race.linkedPlanId ?? "",
     result: race.result ?? "",
     notes: race.notes ?? "",
     setAsGoalRace: race.isActive,
@@ -377,12 +382,13 @@ function raceToForm(race: Race): ModalFormState {
 interface RaceModalProps {
   editing: Race | null;
   activities: HealthWorkout[];
+  runningPlans: RunningPlan[];
   onSave: (data: Omit<Race, "id" | "createdAt">, setGoal: boolean) => Promise<void>;
   onClose: () => void;
   saving: boolean;
 }
 
-function RaceModal({ editing, activities, onSave, onClose, saving }: RaceModalProps) {
+function RaceModal({ editing, activities, runningPlans, onSave, onClose, saving }: RaceModalProps) {
   const [form, setForm] = useState<ModalFormState>(
     editing ? raceToForm(editing) : defaultForm()
   );
@@ -432,6 +438,7 @@ function RaceModal({ editing, activities, onSave, onClose, saving }: RaceModalPr
       location: form.location.trim() || undefined,
       targetPaceSecondsPerMile: parsedPace ?? undefined,
       linkedStravaActivityId: form.linkedStravaActivityId || undefined,
+      linkedPlanId: form.linkedPlanId || undefined,
       result: form.result.trim() || undefined,
       notes: form.notes.trim() || undefined,
       isActive: editing ? editing.isActive : false,
@@ -566,6 +573,25 @@ function RaceModal({ editing, activities, onSave, onClose, saving }: RaceModalPr
                 Set a race date to see nearby runs
               </p>
             )}
+          </Field>
+
+          {/* Training Plan */}
+          <Field
+            label="Training Plan"
+            hint="Plan Insights will use this plan when this race is selected"
+          >
+            <select
+              value={form.linkedPlanId}
+              onChange={(e) => set("linkedPlanId", e.target.value)}
+              className="input"
+            >
+              <option value="">— No plan linked —</option>
+              {runningPlans.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
           </Field>
 
           {/* Result */}
@@ -738,6 +764,7 @@ export default function RacesPage() {
   const { user } = useAuth();
   const [races, setRaces] = useState<Race[]>([]);
   const [activities, setActivities] = useState<HealthWorkout[]>([]);
+  const [runningPlans, setRunningPlans] = useState<RunningPlan[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -762,12 +789,14 @@ export default function RacesPage() {
     if (!user) return;
     setLoading(true);
     try {
-      const [loadedRaces, loadedActivities] = await Promise.all([
+      const [loadedRaces, loadedActivities, loadedPlans] = await Promise.all([
         fetchRaces(user.uid),
         fetchHealthWorkouts(user.uid, { limitCount: 200 }),
+        fetchPlans(user.uid),
       ]);
       setRaces(loadedRaces);
       setActivities(loadedActivities);
+      setRunningPlans(loadedPlans.filter(isRunningPlan));
     } finally {
       setLoading(false);
     }
@@ -966,6 +995,7 @@ export default function RacesPage() {
         <RaceModal
           editing={editingRace}
           activities={activities}
+          runningPlans={runningPlans}
           onSave={handleSave}
           onClose={() => setModalOpen(false)}
           saving={saving}

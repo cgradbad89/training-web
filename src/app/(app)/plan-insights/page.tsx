@@ -248,25 +248,58 @@ export default function PlanInsightsPage() {
       .finally(() => setLoading(false));
   }, [uid]);
 
-  // Active plan — the one marked isActive, or most recently started
-  const activePlan = useMemo(() => {
-    const active = plans.find((p) => p.isActive);
-    if (active) return active;
-    return plans.length > 0
-      ? plans.sort((a, b) => b.startDate.localeCompare(a.startDate))[0]
-      : null;
-  }, [plans]);
+  // ── Race-driven page state ─────────────────────────────────────────────────
+  // Plan Insights is keyed off a user-selected race. By default we pick the
+  // user's goal race (race.isActive); falling back to the soonest upcoming
+  // race, then the most recent past race.
+  const [selectedRaceId, setSelectedRaceId] = useState<string | null>(null);
 
-  // Active race — the upcoming soonest, or most recent past
-  const activeRace = useMemo(() => {
-    const now = new Date().toISOString().split("T")[0];
+  // Sorted race list for the picker — upcoming first (asc), then past (desc).
+  const sortedRaces = useMemo(() => {
+    const todayStr = new Date().toISOString().split("T")[0];
     const upcoming = races
-      .filter((r) => r.raceDate >= now)
+      .filter((r) => r.raceDate >= todayStr)
       .sort((a, b) => a.raceDate.localeCompare(b.raceDate));
-    if (upcoming.length > 0) return upcoming[0];
-    const past = races.sort((a, b) => b.raceDate.localeCompare(a.raceDate));
-    return past[0] ?? null;
+    const past = races
+      .filter((r) => r.raceDate < todayStr)
+      .sort((a, b) => b.raceDate.localeCompare(a.raceDate));
+    return [...upcoming, ...past];
   }, [races]);
+
+  // Default selection: goal race → soonest upcoming → most recent past.
+  useEffect(() => {
+    if (selectedRaceId) return;
+    if (sortedRaces.length === 0) return;
+    const goal = sortedRaces.find((r) => r.isActive);
+    setSelectedRaceId((goal ?? sortedRaces[0]).id);
+  }, [sortedRaces, selectedRaceId]);
+
+  // Currently-viewed race (replaces the old activeRace useMemo).
+  const activeRace = useMemo(
+    () => races.find((r) => r.id === selectedRaceId) ?? null,
+    [races, selectedRaceId]
+  );
+
+  // Plan linked to the selected race (replaces the old user-active-plan logic).
+  const activePlan = useMemo<RunningPlan | null>(() => {
+    if (!activeRace?.linkedPlanId) return null;
+    return plans.find((p) => p.id === activeRace.linkedPlanId) ?? null;
+  }, [plans, activeRace]);
+
+  // Date cutoff for all run-based stats. For ANY race (past or future), only
+  // runs strictly before the race date count — this prevents a post-race run
+  // from contaminating the historical prediction / adherence picture.
+  const raceDateCutoff = useMemo<Date | null>(() => {
+    if (!activeRace) return null;
+    return new Date(activeRace.raceDate + "T00:00:00");
+  }, [activeRace]);
+
+  const isPastRace = useMemo(() => {
+    if (!activeRace) return false;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return new Date(activeRace.raceDate + "T00:00:00") <= today;
+  }, [activeRace]);
 
   // Race distance in miles
   const raceDistanceMiles = useMemo(() => {
@@ -275,8 +308,14 @@ export default function PlanInsightsPage() {
     return RACE_DISTANCE_MILES[activeRace.raceDistance] ?? null;
   }, [activeRace]);
 
-  // Runs only
-  const runs = useMemo(() => workouts.filter((w) => w.isRunLike), [workouts]);
+  // Runs only — filtered to the race-date cutoff so post-race runs never
+  // contaminate stats for a historical race. Future races: cutoff = race day,
+  // so behaviour is unchanged for upcoming races.
+  const runs = useMemo(() => {
+    const all = workouts.filter((w) => w.isRunLike);
+    if (!raceDateCutoff) return all;
+    return all.filter((w) => w.startDate < raceDateCutoff);
+  }, [workouts, raceDateCutoff]);
 
   // Riegel fit for race prediction
   const raceFit = useMemo(() => {
@@ -652,67 +691,164 @@ export default function PlanInsightsPage() {
         </button>
       </div>
 
-      {/* ── Race Predictions ─────────────────────────────── */}
-      <SectionHeader icon={Target} title="Race Predictions" />
-
-      {activeRace && (
-        <Card className="bg-primary/5 border-primary/20">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm font-semibold text-textPrimary">{activeRace.name}</p>
-              <p className="text-xs text-textSecondary">
-                {raceDistanceLabel} · {new Date(activeRace.raceDate).toLocaleDateString("en-US", {
-                  weekday: "short",
-                  month: "short",
-                  day: "numeric",
-                  year: "numeric",
-                })}
-              </p>
-            </div>
-            <div className="text-right">
-              <p className="text-2xl font-bold text-primary tabular-nums">
-                {Math.max(0, daysUntil(activeRace.raceDate))}
-              </p>
-              <p className="text-xs text-textSecondary">days away</p>
-            </div>
-          </div>
-          {activeRace.targetPaceSecondsPerMile && activeRace.targetPaceSecondsPerMile > 0 && raceDistanceMiles && (
-            <p className="text-xs text-textSecondary mt-2">
-              Target: {formatPace(activeRace.targetPaceSecondsPerMile)} /mi →{" "}
-              {formatRaceTime(activeRace.targetPaceSecondsPerMile * raceDistanceMiles)}
-            </p>
-          )}
+      {/* ── Race picker ──────────────────────────────────── */}
+      {sortedRaces.length === 0 ? (
+        <Card>
+          <EmptyState
+            title="No races yet"
+            description="Add a race on the Races page to see plan insights."
+          />
         </Card>
+      ) : (
+        <div className="flex items-center gap-3 flex-wrap">
+          <label htmlFor="race-picker" className="text-sm text-textSecondary">
+            Viewing:
+          </label>
+          <select
+            id="race-picker"
+            value={selectedRaceId ?? ""}
+            onChange={(e) => setSelectedRaceId(e.target.value)}
+            className="bg-surface border border-border rounded-lg px-3 py-2 text-sm text-textPrimary"
+          >
+            {sortedRaces.map((race) => {
+              const dateLabel = new Date(race.raceDate + "T00:00:00").toLocaleDateString(
+                "en-US",
+                { month: "short", day: "numeric", year: "numeric" }
+              );
+              return (
+                <option key={race.id} value={race.id}>
+                  {race.name} · {dateLabel}
+                  {race.isActive ? " ★" : ""}
+                </option>
+              );
+            })}
+          </select>
+          {activeRace?.isActive && (
+            <span className="text-xs font-medium text-success bg-success/10 px-2 py-0.5 rounded-full">
+              Goal Race
+            </span>
+          )}
+          {isPastRace && (
+            <span className="text-xs font-medium text-textSecondary bg-surface px-2 py-0.5 rounded-full">
+              Past Race
+            </span>
+          )}
+        </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {raceDistanceMiles && (
-          <PredictionCard
-            label={raceDistanceLabel + " Prediction"}
-            distanceMiles={raceDistanceMiles}
-            fit={raceFit}
-            targetPace={activeRace?.targetPaceSecondsPerMile}
-          />
-        )}
-      </div>
+      {/* ── Race Predictions ─────────────────────────────── */}
+      {activeRace && (
+        <>
+          <SectionHeader icon={Target} title="Race Predictions" />
 
-      {!raceFit && (
-        <Card className="border-warning/30">
-          <div className="flex items-start gap-3">
-            <AlertTriangle size={18} className="text-warning shrink-0 mt-0.5" />
-            <div>
-              <p className="text-sm font-semibold text-textPrimary">Not enough data for predictions</p>
-              <p className="text-xs text-textSecondary mt-1">
-                Race predictions require at least 4 qualifying runs in the last 8 weeks.
-                Keep logging runs and predictions will appear automatically.
-              </p>
+          <Card className="bg-primary/5 border-primary/20">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-semibold text-textPrimary">{activeRace.name}</p>
+                <p className="text-xs text-textSecondary">
+                  {raceDistanceLabel} · {new Date(activeRace.raceDate).toLocaleDateString("en-US", {
+                    weekday: "short",
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="text-2xl font-bold text-primary tabular-nums">
+                  {isPastRace
+                    ? Math.abs(daysUntil(activeRace.raceDate))
+                    : Math.max(0, daysUntil(activeRace.raceDate))}
+                </p>
+                <p className="text-xs text-textSecondary">
+                  {isPastRace ? "days ago" : "days away"}
+                </p>
+              </div>
             </div>
+            {activeRace.targetPaceSecondsPerMile && activeRace.targetPaceSecondsPerMile > 0 && raceDistanceMiles && (
+              <p className="text-xs text-textSecondary mt-2">
+                Target: {formatPace(activeRace.targetPaceSecondsPerMile)} /mi →{" "}
+                {formatRaceTime(activeRace.targetPaceSecondsPerMile * raceDistanceMiles)}
+              </p>
+            )}
+          </Card>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {raceDistanceMiles && (
+              <PredictionCard
+                label={raceDistanceLabel + " Prediction"}
+                distanceMiles={raceDistanceMiles}
+                fit={raceFit}
+                targetPace={activeRace?.targetPaceSecondsPerMile}
+              />
+            )}
+            {/* Actual performance tile — past race with a linked run */}
+            {isPastRace && activeRace.actualRunId && activeRace.actualRunDistanceMiles != null && activeRace.actualRunDurationSeconds != null && (
+              <Card className="bg-success/5 border-success/20">
+                <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-3">
+                  Actual Performance
+                </p>
+                <p className="text-3xl font-bold text-textPrimary tabular-nums">
+                  {formatRaceTime(activeRace.actualRunDurationSeconds)}
+                </p>
+                {activeRace.actualRunAvgPace != null && activeRace.actualRunAvgPace > 0 && (
+                  <p className="text-sm text-textSecondary mt-1">
+                    {formatPace(activeRace.actualRunAvgPace)} /mi
+                  </p>
+                )}
+                <p className="text-xs text-textSecondary mt-2">
+                  {activeRace.actualRunDistanceMiles.toFixed(2)} mi
+                  {activeRace.actualRunDate
+                    ? " · " +
+                      new Date(activeRace.actualRunDate + "T00:00:00").toLocaleDateString("en-US", {
+                        month: "short",
+                        day: "numeric",
+                        year: "numeric",
+                      })
+                    : ""}
+                </p>
+                {/* vs prediction comparison */}
+                {raceFit && raceDistanceMiles && (() => {
+                  const predictedSec = predictSeconds(raceFit, raceDistanceMiles);
+                  const actualSec = activeRace.actualRunDurationSeconds!;
+                  const diff = predictedSec - actualSec;
+                  const isUnder = diff >= 0;
+                  return (
+                    <p
+                      className={`text-xs mt-2 font-medium ${
+                        isUnder ? "text-success" : "text-warning"
+                      }`}
+                    >
+                      {formatRaceTime(Math.abs(diff))} {isUnder ? "faster" : "slower"} than predicted
+                    </p>
+                  );
+                })()}
+              </Card>
+            )}
           </div>
-        </Card>
+
+          {!raceFit && (
+            <Card className="border-warning/30">
+              <div className="flex items-start gap-3">
+                <AlertTriangle size={18} className="text-warning shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-semibold text-textPrimary">Not enough data for predictions</p>
+                  <p className="text-xs text-textSecondary mt-1">
+                    Race predictions require at least 4 qualifying runs
+                    {isPastRace ? " before the race" : " in the last 8 weeks"}.
+                    {isPastRace
+                      ? ""
+                      : " Keep logging runs and predictions will appear automatically."}
+                  </p>
+                </div>
+              </div>
+            </Card>
+          )}
+        </>
       )}
 
       {/* ── Plan Progress ────────────────────────────────── */}
-      {activePlan && (
+      {activeRace && activePlan && (
         <>
           <SectionHeader icon={Calendar} title={`Plan: ${activePlan.name}`} />
 
@@ -793,15 +929,17 @@ export default function PlanInsightsPage() {
         </>
       )}
 
-      {!activePlan && (
+      {activeRace && !activePlan && (
         <Card>
           <EmptyState
-            title="No active training plan"
-            description="Create a plan to see weekly adherence tracking and mileage insights."
+            title="No training plan linked to this race"
+            description="Open this race on the Races page and pick a Training Plan to see weekly adherence tracking and mileage insights here."
           />
         </Card>
       )}
 
+      {activeRace && (
+        <>
       {/* ── Half Marathon Readiness ─────────────────────────── */}
       <SectionHeader icon={Shield} title={`${raceDistanceLabel} Readiness`} />
 
@@ -975,6 +1113,8 @@ export default function PlanInsightsPage() {
             })()}
           </Card>
         </div>
+      )}
+        </>
       )}
     </div>
   );
