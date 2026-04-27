@@ -334,12 +334,29 @@ export default function PlansPage() {
         finalPlans = [seeded];
       }
 
-      // One-time seed: September 2026 half marathon plan. Only seeds if no
-      // existing plan's name contains "Sept 2026" (idempotent — safe to rerun).
-      const hasSeptPlan = finalPlans.some((p) =>
+      // One-time seed / replacement: September 2026 half marathon plan.
+      //   • No "sept 2026" plan         → seed the current Sub 9:30 version
+      //   • Existing plan has "sub 9:45" → delete the old one and reseed
+      //   • Existing plan has "sub 9:30" → already up to date, skip
+      const existingSept = finalPlans.find((p) =>
         p.name.toLowerCase().includes("sept 2026")
       );
-      if (!hasSeptPlan) {
+      const isOldVersion =
+        !!existingSept && existingSept.name.toLowerCase().includes("sub 9:45");
+      const isCurrentVersion =
+        !!existingSept && existingSept.name.toLowerCase().includes("sub 9:30");
+      const needsSeed = !existingSept || isOldVersion;
+
+      if (isOldVersion && existingSept) {
+        try {
+          await deletePlan(user.uid, existingSept.id);
+          finalPlans = finalPlans.filter((p) => p.id !== existingSept.id);
+        } catch (err) {
+          console.error("[SeedSeptHMPlan] delete old plan error", err);
+        }
+      }
+
+      if (needsSeed && !isCurrentVersion) {
         try {
           const { plan: septPlan } = await seedSeptHMPlan(user.uid);
           finalPlans = [...finalPlans, septPlan];
