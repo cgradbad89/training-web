@@ -24,8 +24,7 @@ import {
 
 import {
   efficiencyDisplayScore,
-  efficiencyLevel,
-  distanceBucket,
+  efficiencyTierLevel,
 } from "@/utils/metrics";
 import { formatPace, formatDuration, formatMiles } from "@/utils/pace";
 import { weekStart as getWeekStart } from "@/utils/dates";
@@ -360,10 +359,10 @@ function RunRow({
 
   if (hasHR && run.avgHeartRate) {
     try {
-      const rawScore = ((run.avgSpeedMPS ?? 0) / run.avgHeartRate) * 1000;
       displayScore = efficiencyDisplayScore(run.avgSpeedMPS ?? 0, run.avgHeartRate);
-      const level = efficiencyLevel(rawScore, distanceBucket(run.distanceMiles));
-      effBadgeLevel = level === "good" ? "good" : level === "ok" ? "ok" : "low";
+      // Distance-adjusted tier: a 6.0 on a 13-miler reads "Good" while the
+      // same 6.0 on a 2-miler reads "Average".
+      effBadgeLevel = efficiencyTierLevel(displayScore, run.distanceMiles);
     } catch {
       // guard against unexpected NaN
     }
@@ -428,7 +427,7 @@ function RunRow({
 
         {/* Col 7: Efficiency */}
         <div className="shrink-0">
-          <EfficiencyTooltip>
+          <EfficiencyTooltip distanceMiles={run.distanceMiles}>
             <MetricBadge
               label="Eff"
               value={displayScoreStr}
@@ -907,11 +906,11 @@ export default function RunsPage() {
             <div className="w-20 shrink-0 text-xs font-semibold uppercase tracking-widest text-textSecondary text-right">
               Pace
             </div>
-            <div className="hidden lg:block w-16 shrink-0 text-xs font-semibold uppercase tracking-widest text-textSecondary text-right">
-              Time
+            <div className="hidden sm:block w-16 shrink-0 text-xs font-semibold uppercase tracking-widest text-textSecondary text-right">
+              HR
             </div>
             <div className="hidden lg:block w-16 shrink-0 text-xs font-semibold uppercase tracking-widest text-textSecondary text-right">
-              HR
+              Time
             </div>
             <div className="shrink-0 w-14 text-xs font-semibold uppercase tracking-widest text-textSecondary text-right">
               Eff

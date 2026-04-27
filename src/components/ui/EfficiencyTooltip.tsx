@@ -1,12 +1,16 @@
 'use client'
 
 import { useState, useRef } from 'react'
+import { getEfficiencyTiers } from '@/utils/metrics'
 
 interface EfficiencyTooltipProps {
   children: React.ReactNode
+  /** Run distance in miles. Used to pick the distance-adjusted tier set
+   *  shown in the tooltip body. Defaults to the medium tier when absent. */
+  distanceMiles?: number
 }
 
-export function EfficiencyTooltip({ children }: EfficiencyTooltipProps) {
+export function EfficiencyTooltip({ children, distanceMiles }: EfficiencyTooltipProps) {
   const badgeRef = useRef<HTMLDivElement>(null)
   const [tooltipPos, setTooltipPos] = useState<{ top: number; left: number } | null>(null)
   // open = true means the tooltip was pinned open by clicking ⓘ (mobile)
@@ -75,32 +79,39 @@ export function EfficiencyTooltip({ children }: EfficiencyTooltipProps) {
             }}
             className="w-48 bg-card border border-border rounded-lg p-3 shadow-lg pointer-events-none"
           >
-            <p className="font-medium text-textPrimary mb-1.5 text-xs">Efficiency Score</p>
-            <p className="text-textSecondary mb-2 text-[11px]">
-              How well your pace matches your heart rate effort.
-            </p>
-            <div className="space-y-1 text-[11px]">
-              <div className="flex justify-between">
-                <span className="text-textPrimary">Elite</span>
-                <span className="text-success">10.0</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-textPrimary">Good</span>
-                <span className="text-success">7.0+</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-textPrimary">Average</span>
-                <span className="text-warning">5.0+</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-textPrimary">Below avg</span>
-                <span className="text-warning">3.0+</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-textPrimary">Poor</span>
-                <span className="text-danger">&lt; 3.0</span>
-              </div>
-            </div>
+            <p className="font-medium text-textPrimary mb-1 text-xs">Efficiency Score</p>
+            {(() => {
+              // Default to the medium tier (3–8 mi) when no distance given.
+              const { tierLabel, tiers } = getEfficiencyTiers(distanceMiles ?? 5)
+              return (
+                <>
+                  <p className="text-[10px] text-textSecondary mb-1.5">{tierLabel}</p>
+                  <p className="text-textSecondary mb-2 text-[11px]">
+                    How well your pace matches your heart rate effort.
+                  </p>
+                  <div className="space-y-1 text-[11px]">
+                    {tiers.map((tier, i) => {
+                      const colorClass =
+                        tier.color === 'success'
+                          ? 'text-success'
+                          : tier.color === 'warning'
+                            ? 'text-warning'
+                            : 'text-danger'
+                      const range =
+                        i === tiers.length - 1
+                          ? `< ${tiers[i - 1].min.toFixed(1)}`
+                          : `${tier.min.toFixed(1)}+`
+                      return (
+                        <div key={tier.label} className="flex justify-between">
+                          <span className="text-textPrimary">{tier.label}</span>
+                          <span className={colorClass}>{range}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </>
+              )
+            })()}
           </div>
         </>
       )}

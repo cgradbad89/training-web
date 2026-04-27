@@ -38,8 +38,7 @@ import {
 
 import {
   efficiencyDisplayScore,
-  efficiencyLevel,
-  distanceBucket,
+  efficiencyTierLevel,
   trainingLoadLevel,
 } from "@/utils/metrics";
 import {
@@ -218,16 +217,15 @@ function ThisWeekRunsCard({ workouts, weekStart }: ThisWeekRunsCardProps) {
           <div className="flex flex-col gap-0.5">
             {runs.map((run) => {
               const hasHR = run.avgHeartRate !== null && (run.avgSpeedMPS ?? 0) > 0;
-              const rawScore = hasHR
-                ? ((run.avgSpeedMPS ?? 0) / run.avgHeartRate!) * 1000
-                : 0;
               const displayScore = hasHR
                 ? efficiencyDisplayScore(run.avgSpeedMPS ?? 0, run.avgHeartRate!)
                 : 0;
-              const bucket = distanceBucket(run.distanceMiles);
-              const effLevel = hasHR ? efficiencyLevel(rawScore, bucket) : "neutral";
-              const effBadgeLevel =
-                effLevel === "good" ? "good" : effLevel === "ok" ? "ok" : effLevel === "low" ? "low" : "neutral";
+              // Distance-adjusted tier — same green/yellow/red logic as the
+              // runs list and run detail page.
+              const effBadgeLevel: "good" | "ok" | "low" | "neutral" =
+                hasHR && displayScore > 0 && displayScore <= 10
+                  ? efficiencyTierLevel(displayScore, run.distanceMiles)
+                  : "neutral";
 
               const localDate = getWorkoutLocalDate(run);
               const dayAbbrev = localDate
@@ -257,12 +255,12 @@ function ThisWeekRunsCard({ workouts, weekStart }: ThisWeekRunsCardProps) {
                     {run.avgHeartRate ? `${Math.round(run.avgHeartRate)} bpm` : "—"}
                   </span>
                   <div>
-                    <EfficiencyTooltip>
+                    <EfficiencyTooltip distanceMiles={run.distanceMiles}>
                       {hasHR && displayScore > 0 && displayScore <= 10 ? (
                         <MetricBadge
                           label="Eff"
                           value={displayScore.toFixed(1)}
-                          level={effBadgeLevel as "good" | "ok" | "low" | "neutral"}
+                          level={effBadgeLevel}
                         />
                       ) : (
                         <MetricBadge label="Eff" value="—" level="neutral" />

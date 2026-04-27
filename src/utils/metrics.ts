@@ -66,6 +66,82 @@ export function efficiencyLevel(rawScore: number, bucket: DistanceBucket): Effic
   return "low";
 }
 
+// ─── Distance-adjusted display tiers ─────────────────────────────────────────
+// These operate on the 1–10 display score (not the raw 14–20 score) and are
+// used for the badge color + tooltip ranges in the runs list, run detail, and
+// dashboard. Longer efforts have lower expected scores because fatigue and
+// heat drift are part of the territory.
+
+export interface EfficiencyTier {
+  label: string;
+  /** Inclusive lower bound on the 1–10 display score. */
+  min: number;
+  color: "success" | "warning" | "danger";
+}
+
+export interface EfficiencyTierSet {
+  tierLabel: string;
+  tiers: EfficiencyTier[];
+}
+
+/** Tiers depend on the distance bucket. < 3 mi short, 3–8 mi medium, 8+ mi long. */
+export function getEfficiencyTiers(distanceMiles: number): EfficiencyTierSet {
+  if (distanceMiles < 3) {
+    return {
+      tierLabel: "Short run (< 3 mi)",
+      tiers: [
+        { label: "Elite",     min: 10.0, color: "success" },
+        { label: "Good",      min: 7.0,  color: "success" },
+        { label: "Average",   min: 5.0,  color: "warning" },
+        { label: "Below avg", min: 3.0,  color: "warning" },
+        { label: "Poor",      min: 0,    color: "danger"  },
+      ],
+    };
+  }
+  if (distanceMiles < 8) {
+    return {
+      tierLabel: "Medium run (3–8 mi)",
+      tiers: [
+        { label: "Elite",     min: 9.0,  color: "success" },
+        { label: "Good",      min: 6.5,  color: "success" },
+        { label: "Average",   min: 4.5,  color: "warning" },
+        { label: "Below avg", min: 2.5,  color: "warning" },
+        { label: "Poor",      min: 0,    color: "danger"  },
+      ],
+    };
+  }
+  return {
+    tierLabel: "Long run (8+ mi)",
+    tiers: [
+      { label: "Elite",     min: 8.0,  color: "success" },
+      { label: "Good",      min: 5.5,  color: "success" },
+      { label: "Average",   min: 4.0,  color: "warning" },
+      { label: "Below avg", min: 2.0,  color: "warning" },
+      { label: "Poor",      min: 0,    color: "danger"  },
+    ],
+  };
+}
+
+/** Map the display score (1–10) to the correct MetricBadge level using the
+ *  distance-adjusted tiers. Tier color "success" → good, "warning" → ok,
+ *  "danger" → low. */
+export function efficiencyTierLevel(
+  displayScore: number,
+  distanceMiles: number
+): EfficiencyLevel {
+  const { tiers } = getEfficiencyTiers(distanceMiles);
+  for (const tier of tiers) {
+    if (displayScore >= tier.min) {
+      return tier.color === "success"
+        ? "good"
+        : tier.color === "warning"
+          ? "ok"
+          : "low";
+    }
+  }
+  return "low";
+}
+
 // ─── Cadence ─────────────────────────────────────────────────────────────────
 // Primary: stepCount / (duration_s / 60)
 // Fallback: (speed_mps / strideLength_m) * 60

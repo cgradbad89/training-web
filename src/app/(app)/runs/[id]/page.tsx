@@ -35,7 +35,8 @@ import {
 } from "@/types/workoutOverride";
 import { formatPace, formatDuration } from "@/utils/pace";
 import {
-  efficiencyLevel,
+  efficiencyDisplayScore,
+  efficiencyTierLevel,
   distanceBucket,
   driftLevel,
 } from "@/utils/metrics";
@@ -59,13 +60,13 @@ function getEffBadgeLevel(
     workout.avgHeartRate !== null && (workout.avgSpeedMPS ?? 0) > 0;
   if (!hasHR || !workout.avgHeartRate) return "neutral";
   try {
-    const rawScore =
-      ((workout.avgSpeedMPS ?? 0) / workout.avgHeartRate) * 1000;
-    const level = efficiencyLevel(
-      rawScore,
-      distanceBucket(workout.distanceMiles)
+    const displayScore = efficiencyDisplayScore(
+      workout.avgSpeedMPS ?? 0,
+      workout.avgHeartRate
     );
-    return level === "good" ? "good" : level === "ok" ? "ok" : "low";
+    if (!isFinite(displayScore) || displayScore <= 0 || displayScore > 10)
+      return "neutral";
+    return efficiencyTierLevel(displayScore, workout.distanceMiles);
   } catch {
     return "neutral";
   }
@@ -575,7 +576,7 @@ export default function RunDetailPage() {
             <span className="text-xs text-textSecondary uppercase tracking-wide">
               Efficiency
             </span>
-            <EfficiencyTooltip>
+            <EfficiencyTooltip distanceMiles={displayWorkout.distanceMiles}>
               <MetricBadge
                 label="Eff"
                 value={effStr}
