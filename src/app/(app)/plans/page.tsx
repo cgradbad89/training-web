@@ -394,8 +394,20 @@ export default function PlansPage() {
     setSaving(true);
     try {
       await setActivePlan(user.uid, planId, plans);
+      // Mirror the service's same-type-only behaviour locally so a running
+      // plan activation never flips the active workout plan's flag (and
+      // vice versa). Plans of the other type keep their existing isActive.
+      const target = plans.find((p) => p.id === planId);
+      const targetIsRunning = !!target && isRunningPlan(target);
+      const targetIsWorkout = !!target && isWorkoutPlan(target);
       setPlans((prev) =>
-        prev.map((p) => ({ ...p, isActive: p.id === planId }))
+        prev.map((p) => {
+          const sameType =
+            (targetIsRunning && isRunningPlan(p)) ||
+            (targetIsWorkout && isWorkoutPlan(p));
+          if (!sameType) return p;
+          return { ...p, isActive: p.id === planId };
+        })
       );
     } finally {
       setSaving(false);
