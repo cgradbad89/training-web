@@ -26,7 +26,6 @@ import {
 } from "@/services/workoutOverrides";
 import {
   type HealthWorkout,
-  computeEfficiencyDisplay,
 } from "@/types/healthWorkout";
 import { type RunningShoe } from "@/types/shoe";
 import {
@@ -245,14 +244,23 @@ export default function RunDetailPage() {
     minute: "2-digit",
   });
 
-  // Efficiency \u2014 guard: require valid HR; cap: scores > 10 are physically impossible
-  const effDisplayRaw = computeEfficiencyDisplay(displayWorkout);
-  const effDisplay =
-    effDisplayRaw != null &&
-    effDisplayRaw <= 10 &&
-    (displayWorkout.avgHeartRate ?? 0) > 0
-      ? effDisplayRaw
-      : null;
+  // Efficiency \u2014 use the same normalized 1\u201310 display score as the runs list
+  // and dashboard. computeEfficiencyDisplay returned the raw 14\u201320 score, which
+  // always failed the >10 sanity cap and rendered blank for every valid run.
+  const effHasHR =
+    displayWorkout.avgHeartRate !== null &&
+    displayWorkout.avgHeartRate !== undefined &&
+    displayWorkout.avgHeartRate > 0 &&
+    (displayWorkout.avgSpeedMPS ?? 0) > 0;
+  const effDisplay = (() => {
+    if (!effHasHR || displayWorkout.avgHeartRate == null) return null;
+    const score = efficiencyDisplayScore(
+      displayWorkout.avgSpeedMPS ?? 0,
+      displayWorkout.avgHeartRate
+    );
+    if (!isFinite(score) || score <= 0 || score > 10) return null;
+    return score;
+  })();
   const effBadgeLevel = getEffBadgeLevel(displayWorkout);
   const effStr = effDisplay != null ? effDisplay.toFixed(1) : "\u2014";
 
