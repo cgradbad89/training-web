@@ -60,7 +60,18 @@ export const WORKOUT_CATEGORY_LABELS: Record<WorkoutCategory, string> = {
 
 /** HealthKit activityType strings that match each category (raw, mixed-case). */
 export const WORKOUT_CATEGORY_HK_TYPES: Record<WorkoutCategory, string[]> = {
-  strength: ['traditionalStrengthTraining', 'functionalStrengthTraining', 'coreTraining'],
+  strength: [
+    // camelCase HKWorkoutActivityType identifiers
+    'traditionalStrengthTraining',
+    'functionalStrengthTraining',
+    'coreTraining',
+    'strengthTraining',
+    // snake_case variants (some export pipelines normalise to this form)
+    'traditional_strength_training',
+    'functional_strength_training',
+    'core_training',
+    'strength_training',
+  ],
   orangetheory: [], // manual complete only — no auto-match
   cycling: ['cycling', 'indoorCycling'],
   pilates: ['pilates', 'mindAndBody', 'mind_and_body'],

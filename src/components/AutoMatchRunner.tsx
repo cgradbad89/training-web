@@ -21,6 +21,30 @@ export default function AutoMatchRunner() {
           fetchPlans(uid),
           fetchHealthWorkouts(uid, { limitCount: 500 }),
         ])
+
+        // TEMP debug — surfaces what the matcher actually sees so we can
+        // confirm activityType strings + active workout-plans on user devices.
+        // eslint-disable-next-line no-console
+        console.log(
+          '[AutoMatchRunner] non-running workouts (last 500):',
+          workouts
+            .filter((w) => !w.isRunLike)
+            .map((w) => ({
+              workoutId: w.workoutId,
+              date: w.startDate.toISOString().split('T')[0],
+              activityType: w.activityType,
+            }))
+        )
+        // eslint-disable-next-line no-console
+        console.log(
+          '[AutoMatchRunner] active workout plans:',
+          plans
+            .filter(
+              (p) => (p as { planType?: string }).planType === 'workout' && p.isActive
+            )
+            .map((p) => p.name)
+        )
+
         await autoMatchCrossTrainingSessions(uid, plans, workouts)
       } catch (err) {
         console.error('[AutoMatchRunner] error:', err)

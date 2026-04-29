@@ -170,6 +170,25 @@ export async function autoMatchCrossTrainingSessions(
 
         const key = localISODate(sessionDate);
         const candidates = byDate.get(key);
+
+        // TEMP debug — remove once auto-match is verified.
+        if (entry.category === 'strength' || candidates) {
+          // eslint-disable-next-line no-console
+          console.log('[autoMatch] checking session:', {
+            sessionDate: key,
+            category: entry.category ?? '(legacy)',
+            planId: plan.id,
+            weekIndex: entry.weekIndex,
+            weekday: entry.weekday,
+            candidateWorkouts: (candidates ?? []).map((w) => ({
+              workoutId: w.workoutId,
+              date: localISODate(w.startDate),
+              activityType: w.activityType,
+              isRunLike: w.isRunLike,
+            })),
+          });
+        }
+
         if (!candidates || candidates.length === 0) return entry;
 
         // Determine predicate: category-aware or legacy.
@@ -183,7 +202,15 @@ export async function autoMatchCrossTrainingSessions(
             : matchPredicate;
 
         const matchIdx = candidates.findIndex(predicate);
-        if (matchIdx === -1) return entry;
+        if (matchIdx === -1) {
+          // eslint-disable-next-line no-console
+          console.log('[autoMatch] no match for session', {
+            sessionDate: key,
+            category: entry.category ?? '(legacy)',
+            candidateActivityTypes: candidates.map((w) => w.activityType),
+          });
+          return entry;
+        }
 
         const matched = candidates.splice(matchIdx, 1)[0];
         planChanged = true;
