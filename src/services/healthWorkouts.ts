@@ -77,6 +77,11 @@ function docToHealthWorkout(
     efficiencyRaw: (data.efficiencyRaw as number | null) ?? null,
     efficiencyScore: (data.efficiencyScore as number | null) ?? null,
     elevationGainM: (data.elevationGainM as number | null) ?? null,
+    prBadges: Array.isArray(data.prBadges)
+      ? (data.prBadges as unknown[]).filter(
+          (v): v is string => typeof v === "string"
+        )
+      : undefined,
   };
 }
 

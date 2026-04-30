@@ -632,6 +632,20 @@ export default function RunDetailPage() {
         </div>
       </div>
 
+      {/* ── PR Badges ───────────────────────────────────────── */}
+      {displayWorkout.prBadges && displayWorkout.prBadges.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {displayWorkout.prBadges.map((badge) => (
+            <span
+              key={badge}
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-500/15 text-amber-500 border border-amber-500/25"
+            >
+              🏅 {badge}
+            </span>
+          ))}
+        </div>
+      )}
+
       {/* ── Route Map ───────────────────────────────────────── */}
       <div className="bg-card rounded-2xl border border-border overflow-hidden">
         {displayWorkout.hasRoute ? (

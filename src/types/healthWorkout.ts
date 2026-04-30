@@ -30,6 +30,9 @@ export interface HealthWorkout {
   efficiencyRaw: number | null;
   efficiencyScore: number | null;
   elevationGainM: number | null;
+  /** PR badge labels held by this run, e.g. ["5K PR", "1 Mile PR"].
+   *  Computed by PRComputerRunner; absent or empty = no PRs. */
+  prBadges?: string[];
 }
 
 export function isRunWorkout(w: HealthWorkout): boolean {

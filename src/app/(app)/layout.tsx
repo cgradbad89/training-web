@@ -23,6 +23,7 @@ import { AuthGuard } from "@/components/layout/AuthGuard";
 import { HubBanner } from "@/components/layout/HubBanner";
 import { GoogleMapsProvider } from "@/components/GoogleMapsProvider";
 import AutoMatchRunner from "@/components/AutoMatchRunner";
+import PRComputerRunner from "@/components/PRComputerRunner";
 
 type NavItem = {
   href: string;
@@ -224,6 +225,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <AuthGuard>
       <AutoMatchRunner />
+      <PRComputerRunner />
       <GoogleMapsProvider>
         <div className="flex flex-col min-h-screen">
           <HubBanner />

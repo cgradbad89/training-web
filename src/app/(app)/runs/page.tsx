@@ -378,6 +378,8 @@ function RunRow({
     ? assignedShoe.name || `${assignedShoe.brand} ${assignedShoe.model}`.trim()
     : null;
 
+  const prBadges = run.prBadges ?? [];
+
   return (
     <div onClick={onRowClick} className="py-3 px-4 hover:bg-surface rounded-xl transition-colors group cursor-pointer">
       <div className="flex items-center gap-3">
@@ -501,6 +503,20 @@ function RunRow({
           {RUN_TAG_LABELS[tag]}
         </span>
       </div>
+
+      {/* PR badges — render below the data row, aligned with Col 2 */}
+      {prBadges.length > 0 && (
+        <div className="flex flex-wrap gap-1 mt-1 ml-12">
+          {prBadges.map((badge) => (
+            <span
+              key={badge}
+              className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/10 text-amber-500 border border-amber-500/20"
+            >
+              🏅 {badge}
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
