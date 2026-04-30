@@ -43,14 +43,18 @@ export const ALL_PR_CATEGORIES: PRCategory[] = [
   ...SPECIFIC_DISTANCE_CATEGORIES,
 ];
 
-/** Inclusive lower / exclusive upper mile bounds. */
+/** Inclusive lower / exclusive upper mile bounds.
+ *  band_7_10's upper bound is widened to 10.15 (vs Personal Insights' 10.0)
+ *  so GPS-rounded "10 mile" runs that record as 10.01–10.14 still count
+ *  toward the 7–10 mi PR band rather than competing in 10+ where an HM may
+ *  hold a faster per-mile pace. band_10p is shifted up correspondingly. */
 export const BAND_RANGES: Record<string, [number, number]> = {
   band_1mi:  [0.9,  1.1],
   band_1_3:  [1.0,  3.0],
   band_3_6:  [3.0,  6.0],
   band_6_7:  [6.0,  7.0],
-  band_7_10: [7.0,  10.0],
-  band_10p:  [10.0, Infinity],
+  band_7_10: [7.0,  10.15],
+  band_10p:  [10.15, Infinity],
 };
 
 /** Tolerances chosen to match Personal Insights so both pages agree. */
@@ -80,15 +84,19 @@ function paceFor(r: HealthWorkout): number | null {
  * Compute the current PR holders across all categories. For each category
  * the run with the lowest pace wins. Returns one PRResult per category
  * that has at least one qualifying run.
+ *
+ * Eligibility filter (`pace > 180 && pace < 1200`) matches Personal Insights
+ * exactly so the same runs win on both pages.
  */
 export function computeAllPRs(runs: HealthWorkout[]): PRResult[] {
   const eligible = runs.filter((r) => {
     if (!r.isRunLike) return false;
     if (r.distanceMiles <= 0) return false;
+    if (r.durationSeconds <= 0) return false;
     const pace = paceFor(r);
-    if (pace == null) return false;
-    if (pace <= 0 || pace >= 1800) return false; // sanity: under 30 min/mi
-    return true;
+    if (pace == null || !isFinite(pace)) return false;
+    // Match Personal Insights: 3:00–20:00 per mile (180s–1200s).
+    return pace > 180 && pace < 1200;
   });
 
   const results: PRResult[] = [];
@@ -105,6 +113,14 @@ export function computeAllPRs(runs: HealthWorkout[]): PRResult[] {
     );
     const pace = paceFor(best);
     if (pace == null) continue;
+    // eslint-disable-next-line no-console
+    console.log(`[prComputation] ${category.id} winner:`, {
+      workoutId: best.workoutId,
+      distanceMiles: best.distanceMiles,
+      durationSeconds: best.durationSeconds,
+      derivedPace: pace,
+      date: best.startDate.toISOString().split('T')[0],
+    });
     results.push({
       categoryId: category.id,
       label: category.label,
@@ -125,6 +141,14 @@ export function computeAllPRs(runs: HealthWorkout[]): PRResult[] {
     );
     const pace = paceFor(best);
     if (pace == null) continue;
+    // eslint-disable-next-line no-console
+    console.log(`[prComputation] ${category.id} winner:`, {
+      workoutId: best.workoutId,
+      distanceMiles: best.distanceMiles,
+      durationSeconds: best.durationSeconds,
+      derivedPace: pace,
+      date: best.startDate.toISOString().split('T')[0],
+    });
     results.push({
       categoryId: category.id,
       label: category.label,
