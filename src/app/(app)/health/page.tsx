@@ -256,6 +256,7 @@ function KpiCard({
   formatter,
   status = "neutral",
   goalText,
+  subtitle,
   selected = false,
   onToggle,
 }: {
@@ -272,6 +273,9 @@ function KpiCard({
   status?: GoalStatus;
   /** Optional goal summary shown beneath the today value (e.g. "Goal: 170–176 lbs"). */
   goalText?: string;
+  /** Optional small italic line beneath the today value (e.g. "as of May 15")
+   *  used when the displayed value falls back to the most recent prior day. */
+  subtitle?: string;
   /** True when this KPI's chart is currently shown in its section's graph area. */
   selected?: boolean;
   /** Optional click handler to toggle chart visibility. When omitted, the
@@ -342,10 +346,19 @@ function KpiCard({
       >
         {formatter(today)}
       </p>
-      {goalText && (
-        <p className="text-xs text-textSecondary mb-3">{goalText}</p>
+      {/* subtitle and goalText share the bottom-margin slot; keep mb-3 stable */}
+      {(subtitle || goalText) ? (
+        <div className="mb-3">
+          {subtitle && (
+            <p className="text-[11px] text-textSecondary italic">{subtitle}</p>
+          )}
+          {goalText && (
+            <p className="text-xs text-textSecondary">{goalText}</p>
+          )}
+        </div>
+      ) : (
+        <div className="mb-3" />
       )}
-      {!goalText && <div className="mb-3" />}
 
       <div className="grid grid-cols-2 gap-2">
         <div className="bg-surface rounded-xl p-2 text-center">
@@ -1219,6 +1232,41 @@ export default function HealthPage() {
     (m) => m.date >= windowStart30 && m.date <= anchorDate
   );
 
+  // ── Today-only fallback for weight / BMI / resting HR ──────────────────────
+  // When the user is viewing today but today's doc is missing a value for one
+  // of these three KPIs, surface the most recent prior recorded value with a
+  // small "as of <date>" subtitle. Fallback is DISPLAY-ONLY — never injected
+  // into 7/30-day averages (those continue to come from last7/last30 with
+  // their existing Boolean/isValidWeight filters, which already exclude
+  // missing fields). Past-day navigation never uses the fallback.
+  const isViewingToday = anchorDate === todayISO();
+  const isPositiveNumber = (v: unknown): v is number =>
+    typeof v === "number" && v > 0 && isFinite(v);
+  function findFallback<T extends number>(
+    field: keyof HealthMetric,
+    isValid: (v: unknown) => v is T
+  ): { value: T; fromDate: string } | null {
+    if (!isViewingToday) return null;
+    // metrics90 is descending by date — first match before anchorDate wins.
+    for (const m of metrics90) {
+      if (m.date >= anchorDate) continue;
+      const v = m[field];
+      if (isValid(v)) return { value: v, fromDate: m.date };
+    }
+    return null;
+  }
+  const isValidWeightAny = (v: unknown): v is number =>
+    typeof v === "number" && isValidWeight(v);
+  const weightFallback = !isValidWeight(today?.weight_lbs)
+    ? findFallback("weight_lbs", isValidWeightAny)
+    : null;
+  const bmiFallback = !isPositiveNumber(today?.bmi)
+    ? findFallback("bmi", isPositiveNumber)
+    : null;
+  const restingHrFallback = !isPositiveNumber(today?.resting_hr)
+    ? findFallback("resting_hr", isPositiveNumber)
+    : null;
+
   // Averages (weight uses isValidWeight filter)
   const a7 = (key: keyof HealthMetric) =>
     avg(last7.map((m) => m[key] as number).filter(Boolean));
@@ -1563,12 +1611,17 @@ export default function HealthPage() {
             icon={Scale}
             label="Weight"
             color={getColor("weight")}
-            today={todayWeight}
+            today={todayWeight ?? weightFallback?.value}
             avg7={a7Weight}
             avg30={a30Weight}
             formatter={(v) => (v ? `${v.toFixed(1)} lb` : "—")}
             status={weightStatus}
             goalText={weightGoalText}
+            subtitle={
+              weightFallback
+                ? `as of ${formatDate(weightFallback.fromDate)}`
+                : undefined
+            }
             selected={selectedKpis.has("weight_lbs")}
             onToggle={() => toggleKpi("weight_lbs")}
           />
@@ -1576,12 +1629,19 @@ export default function HealthPage() {
             icon={TrendingUp}
             label="BMI"
             color={getColor("bmi")}
-            today={today?.bmi}
+            today={
+              isPositiveNumber(today?.bmi) ? today?.bmi : bmiFallback?.value
+            }
             avg7={a7("bmi")}
             avg30={a30("bmi")}
             formatter={(v) => (v ? v.toFixed(1) : "—")}
             status={bmiStatus}
             goalText={bmiGoalText}
+            subtitle={
+              bmiFallback
+                ? `as of ${formatDate(bmiFallback.fromDate)}`
+                : undefined
+            }
             selected={selectedKpis.has("bmi")}
             onToggle={() => toggleKpi("bmi")}
           />
@@ -1589,12 +1649,21 @@ export default function HealthPage() {
             icon={Heart}
             label="Resting HR"
             color={getColor("hr")}
-            today={today?.resting_hr}
+            today={
+              isPositiveNumber(today?.resting_hr)
+                ? today?.resting_hr
+                : restingHrFallback?.value
+            }
             avg7={a7("resting_hr")}
             avg30={a30("resting_hr")}
             formatter={(v) => (v ? `${Math.round(v)} bpm` : "—")}
             status={hrStatus}
             goalText={hrGoalText}
+            subtitle={
+              restingHrFallback
+                ? `as of ${formatDate(restingHrFallback.fromDate)}`
+                : undefined
+            }
             selected={selectedKpis.has("resting_hr")}
             onToggle={() => toggleKpi("resting_hr")}
           />
