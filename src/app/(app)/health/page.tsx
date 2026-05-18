@@ -37,6 +37,8 @@ import {
   PersonStanding,
   Target,
   Check,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { HealthGoalsModal } from "@/components/HealthGoalsModal";
 import {
@@ -57,6 +59,42 @@ function avg(values: number[]): number | null {
 function formatDate(dateStr: string): string {
   const d = new Date(dateStr + "T12:00:00");
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+/** Local "YYYY-MM-DD" for today — matches the Firestore doc.date format. */
+function todayISO(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/** Shift a "YYYY-MM-DD" string by N calendar days (local). */
+function shiftISODate(dateStr: string, days: number): string {
+  const d = new Date(dateStr + "T00:00:00");
+  d.setDate(d.getDate() + days);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function ordinalSuffix(n: number): string {
+  if (n >= 11 && n <= 13) return "th";
+  const last = n % 10;
+  if (last === 1) return "st";
+  if (last === 2) return "nd";
+  if (last === 3) return "rd";
+  return "th";
+}
+
+/** Format "YYYY-MM-DD" → "May 18th" (no year). */
+function formatDateOrdinal(dateStr: string): string {
+  const d = new Date(dateStr + "T12:00:00");
+  const month = d.toLocaleDateString("en-US", { month: "short" });
+  const day = d.getDate();
+  return `${month} ${day}${ordinalSuffix(day)}`;
 }
 
 function formatHours(h: number | undefined): string {
@@ -1033,6 +1071,15 @@ export default function HealthPage() {
   const [goals, setGoals] = useState<HealthGoals | null>(null);
   const [goalsModalOpen, setGoalsModalOpen] = useState(false);
 
+  // Date navigator — the day whose stats / 7-day / 30-day averages are shown
+  // in the KPI tiles. Initialised null on first render to avoid SSR/client
+  // hydration mismatch on timezone boundaries, then set to local today after
+  // mount. Capped to a 30-day-back window.
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  useEffect(() => {
+    if (selectedDate === null) setSelectedDate(todayISO());
+  }, [selectedDate]);
+
   // One-time fetch for user-defined health goals.
   useEffect(() => {
     if (!userId) return;
@@ -1156,10 +1203,21 @@ export default function HealthPage() {
       .finally(() => setHourlyHRLoading(false));
   }, [userId]);
 
-  // Most recent day with any data
-  const today = metrics90[0];
-  const last7 = metrics90.slice(0, 7);
-  const last30 = metrics90.slice(0, 30);
+  // Anchor for stats — the user-selected date, falling back to today on the
+  // first render (pre-mount, selectedDate is null to avoid hydration drift).
+  const anchorDate = selectedDate ?? todayISO();
+
+  // Stats for the selected day. The 90-day listener covers the 30-day-back
+  // navigation cap, so we filter from cached data — no extra query needed.
+  const today = metrics90.find((m) => m.date === anchorDate) ?? null;
+  const windowStart7 = shiftISODate(anchorDate, -6);
+  const windowStart30 = shiftISODate(anchorDate, -29);
+  const last7 = metrics90.filter(
+    (m) => m.date >= windowStart7 && m.date <= anchorDate
+  );
+  const last30 = metrics90.filter(
+    (m) => m.date >= windowStart30 && m.date <= anchorDate
+  );
 
   // Averages (weight uses isValidWeight filter)
   const a7 = (key: keyof HealthMetric) =>
@@ -1436,11 +1494,48 @@ export default function HealthPage() {
           )}
         </div>
         <div className="flex items-center gap-3">
-          {today && (
-            <p className="text-sm text-textSecondary hidden sm:block">
-              Data from {formatDate(today.date)}
-            </p>
-          )}
+          {selectedDate && (() => {
+            const todayStr = todayISO();
+            const minDate = shiftISODate(todayStr, -30);
+            const atToday = selectedDate === todayStr;
+            const atMinBound = selectedDate <= minDate;
+            return (
+              <div className="hidden sm:flex items-center gap-1 text-sm text-textSecondary">
+                {!atMinBound ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSelectedDate((d) => shiftISODate(d ?? todayStr, -1))
+                    }
+                    aria-label="Previous day"
+                    className="p-1 rounded hover:bg-surface hover:text-textPrimary transition-colors"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                ) : (
+                  // Reserve space to keep the date label position stable
+                  <span className="w-6" aria-hidden />
+                )}
+                <span className="tabular-nums min-w-[72px] text-center">
+                  {formatDateOrdinal(selectedDate)}
+                </span>
+                {!atToday ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSelectedDate((d) => shiftISODate(d ?? todayStr, 1))
+                    }
+                    aria-label="Next day"
+                    className="p-1 rounded hover:bg-surface hover:text-textPrimary transition-colors"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                ) : (
+                  <span className="w-6" aria-hidden />
+                )}
+              </div>
+            );
+          })()}
           <TimeRangeSelector value={globalRange} onChange={setGlobalRange} />
           <button
             type="button"
