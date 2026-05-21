@@ -61,6 +61,7 @@ import {
   isWorkoutPlan,
   isDurationOnlyEntry,
 } from "@/types/plan";
+import { matchPlanToActual, type PlanMatch } from "@/utils/planMatching";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -358,31 +359,20 @@ interface PlanProgressCardProps {
 
 type RunStatus = "met" | "partial" | "missed" | "upcoming";
 
-function runStatus(
-  entry: PlannedRunEntry,
-  weekMonday: Date,
-  weekRuns: HealthWorkout[]
-): RunStatus {
-  const entryDate = new Date(weekMonday);
-  entryDate.setDate(weekMonday.getDate() + entry.dayOfWeek);
-  const now = new Date();
-
-  if (entryDate > now) return "upcoming";
-
-  const run = weekRuns.find((w) => {
-    if (!w.isRunLike) return false;
-    const d = getWorkoutLocalDate(w);
-    const diffDays = Math.abs(
-      Math.round((d.getTime() - entryDate.getTime()) / (1000 * 60 * 60 * 24))
-    );
-    return diffDays <= 1;
-  });
-
-  if (!run) return "missed";
-  return run.distanceMiles >= entry.distanceMiles * 0.85 ? "met" : "partial";
-}
-
 function PlanProgressCard({ activePlan, workouts, weekStart, weekEnd }: PlanProgressCardProps) {
+  // matchPlanToActual filters isRunLike internally and locks each run to at
+  // most one planned entry via its usedGlobal Set. The Plans page and the
+  // dashboard's WeekCalendar tile already call it with the same {plan,
+  // workouts} pair, so routing this card through it too keeps all three
+  // surfaces in sync. Hook MUST come before any early return.
+  const matchMap = useMemo<Map<string, PlanMatch | null>>(
+    () =>
+      activePlan
+        ? matchPlanToActual(activePlan, workouts)
+        : new Map<string, PlanMatch | null>(),
+    [activePlan, workouts]
+  );
+
   if (!activePlan) {
     return (
       <Card>
@@ -409,12 +399,26 @@ function PlanProgressCard({ activePlan, workouts, weekStart, weekEnd }: PlanProg
       ? activePlan.weeks[weekIndex]
       : null;
 
+  // Weekly mileage display — sum of ALL actual runs this week (unchanged
+  // metric, independent of plan matching).
   const weekRuns = workouts.filter((w) => w.isRunLike && isInWeek(w, weekStart, weekEnd));
   const actualMiles = weekRuns.reduce((s, w) => s + w.distanceMiles, 0);
   const plannedMiles = planWeek
     ? planWeek.entries.reduce((s, e) => s + e.distanceMiles, 0)
     : 0;
   const progressPct = plannedMiles > 0 ? Math.min(1, actualMiles / plannedMiles) : 0;
+
+  // Map a PlanMatch (or absence) + planned date to the existing 4-state
+  // RunStatus taxonomy. Mirrors plans/page.tsx:933-951 inline mapping so
+  // both surfaces draw from the same rules and can't drift again.
+  function statusForEntry(entry: PlannedRunEntry): RunStatus {
+    const match = matchMap.get(entry.id);
+    if (match?.quality === "full") return "met";
+    if (match?.quality === "partial") return "partial";
+    const entryDate = new Date(weekStart);
+    entryDate.setDate(weekStart.getDate() + entry.dayOfWeek);
+    return entryDate > new Date() ? "upcoming" : "missed";
+  }
 
   return (
     <Card>
@@ -431,7 +435,7 @@ function PlanProgressCard({ activePlan, workouts, weekStart, weekEnd }: PlanProg
       ) : (
         <div className="flex flex-col gap-1 mb-4">
           {planWeek.entries.map((entry) => {
-            const status = runStatus(entry, weekStart, weekRuns);
+            const status = statusForEntry(entry);
             const dayLabel = DAY_LABELS[entry.dayOfWeek];
 
             return (
