@@ -383,11 +383,17 @@ export default function PlansPage() {
   }
 
   function currentWeekIndex(plan: Plan): number {
+    // Inactive / template plans always open at Week 1 — users editing a
+    // template or browsing an archived plan want to see the start, not a
+    // computed "current week" that's meaningless for an unstarted plan.
+    // Only active plans auto-jump to the week containing today's date.
+    if (!plan.isActive) return 0;
     const start = new Date(plan.startDate + "T00:00:00");
     const today = new Date();
     const diff = Math.floor(
       (today.getTime() - start.getTime()) / (7 * 24 * 3600 * 1000)
     );
+    // Clamp: today before startDate → 0; today after last week → last week.
     return Math.max(0, Math.min(diff, plan.weeks.length - 1));
   }
 
