@@ -28,7 +28,11 @@ import {
   isLegacyPilatesPlan,
 } from "@/types/plan";
 import { type HealthWorkout } from "@/types/healthWorkout";
-import { matchPlanToActual, type PlanMatch } from "@/utils/planMatching";
+import {
+  matchPlanToActual,
+  statusForRunEntry,
+  type PlanMatch,
+} from "@/utils/planMatching";
 import { useRouter } from "next/navigation";
 import {
   CheckCircle,
@@ -932,18 +936,18 @@ export default function PlansPage() {
                       );
                       const match = entry ? matchMap.get(entry.id) : undefined;
                       const date = dayDate(selectedPlan, selectedWeekIndex, weekday);
-                      const today = new Date();
-                      today.setHours(0, 0, 0, 0);
-                      const isPast = date < today;
+                      const status = entry
+                        ? statusForRunEntry(selectedPlan, entry, matchMap)
+                        : null;
 
                       // Status icon for this entry
                       let statusIcon: React.ReactNode = null;
-                      if (entry) {
-                        if (match?.quality === "full") {
+                      if (entry && status) {
+                        if (status === "met") {
                           statusIcon = <CheckCircle className="w-4 h-4 text-success shrink-0" />;
-                        } else if (match?.quality === "partial") {
+                        } else if (status === "partial") {
                           statusIcon = <Check className="w-4 h-4 text-warning shrink-0" />;
-                        } else if (isPast) {
+                        } else if (status === "missed") {
                           statusIcon = <AlertCircle className="w-4 h-4 text-danger shrink-0" />;
                         } else {
                           statusIcon = <Circle className="w-4 h-4 text-border shrink-0" />;

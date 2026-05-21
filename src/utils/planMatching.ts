@@ -229,6 +229,45 @@ export function matchPlanToActual(
   return result;
 }
 
+// ─── Per-entry status derivation ─────────────────────────────────────────────
+//
+// Shared four-state status used by dashboard PlanProgressCard and the Plans
+// page weekly grid. Single-sourcing this here prevents the two surfaces from
+// drifting (previous regression: the dashboard treated a today-dated
+// unmatched entry as "missed" while the Plans page showed "upcoming"; the
+// canonical rule below — today's unmatched entry is "upcoming" until the
+// day ends — is adopted everywhere).
+
+export type RunEntryStatus = "met" | "partial" | "missed" | "upcoming";
+
+/**
+ * Decide how a planned run should display given the matchMap output and a
+ * reference "now". Semantics:
+ *   - matchMap value with quality "full"    → "met"
+ *   - matchMap value with quality "partial" → "partial"
+ *   - no match (entry absent OR null in map):
+ *       entryDate < start-of-today (local) → "missed"
+ *       otherwise (entryDate today or future) → "upcoming"
+ * The entry's calendar date is derived from the SAME `plannedEntryDate` util
+ * matchPlanToActual uses internally — no parallel date math.
+ */
+export function statusForRunEntry(
+  plan: RunningPlan,
+  entry: PlannedRunEntry,
+  matchMap: Map<string, PlanMatch | null>,
+  now: Date = new Date()
+): RunEntryStatus {
+  const match = matchMap.get(entry.id);
+  if (match) {
+    if (match.quality === "full") return "met";
+    if (match.quality === "partial") return "partial";
+  }
+  const entryDate = plannedEntryDate(plan, entry);
+  const startOfToday = new Date(now);
+  startOfToday.setHours(0, 0, 0, 0);
+  return entryDate < startOfToday ? "missed" : "upcoming";
+}
+
 /**
  * Compute week-level completion result for a given week index.
  */

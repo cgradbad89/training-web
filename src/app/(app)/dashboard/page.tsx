@@ -55,13 +55,16 @@ import { type HealthWorkout } from "@/types/healthWorkout";
 import {
   type RunningPlan,
   type WorkoutPlan,
-  type PlannedRunEntry,
   type PlannedWorkoutEntry,
   isRunningPlan,
   isWorkoutPlan,
   isDurationOnlyEntry,
 } from "@/types/plan";
-import { matchPlanToActual, type PlanMatch } from "@/utils/planMatching";
+import {
+  matchPlanToActual,
+  statusForRunEntry,
+  type PlanMatch,
+} from "@/utils/planMatching";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -408,18 +411,6 @@ function PlanProgressCard({ activePlan, workouts, weekStart, weekEnd }: PlanProg
     : 0;
   const progressPct = plannedMiles > 0 ? Math.min(1, actualMiles / plannedMiles) : 0;
 
-  // Map a PlanMatch (or absence) + planned date to the existing 4-state
-  // RunStatus taxonomy. Mirrors plans/page.tsx:933-951 inline mapping so
-  // both surfaces draw from the same rules and can't drift again.
-  function statusForEntry(entry: PlannedRunEntry): RunStatus {
-    const match = matchMap.get(entry.id);
-    if (match?.quality === "full") return "met";
-    if (match?.quality === "partial") return "partial";
-    const entryDate = new Date(weekStart);
-    entryDate.setDate(weekStart.getDate() + entry.dayOfWeek);
-    return entryDate > new Date() ? "upcoming" : "missed";
-  }
-
   return (
     <Card>
       <CardTitle>Running Plan</CardTitle>
@@ -435,7 +426,7 @@ function PlanProgressCard({ activePlan, workouts, weekStart, weekEnd }: PlanProg
       ) : (
         <div className="flex flex-col gap-1 mb-4">
           {planWeek.entries.map((entry) => {
-            const status = statusForEntry(entry);
+            const status = statusForRunEntry(activePlan, entry, matchMap);
             const dayLabel = DAY_LABELS[entry.dayOfWeek];
 
             return (
