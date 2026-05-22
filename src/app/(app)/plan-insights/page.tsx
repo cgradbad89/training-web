@@ -38,6 +38,8 @@ import {
   formatRaceTime,
   formatRacePace,
   riegelConfidenceLabel,
+  summarizeTierCounts, // PRED_DEBUG_PANEL
+  rollingEasyPaceMedian, // PRED_DEBUG_PANEL
   type RiegelFit,
 } from "@/utils/riegelFit";
 import { matchPlanToActual } from "@/utils/planMatching";
@@ -698,6 +700,93 @@ export default function PlanInsightsPage() {
     b.length > 0 ? String(b.length) : "—"
   );
 
+  // ── PRED_DEBUG_PANEL ───────────────────────────────────────────────────────
+  // Temporary diagnostic panel — mirrors the EXACT construction used inside
+  // the raceFit useMemo above. Remove all lines tagged PRED_DEBUG_PANEL after QA.
+  const debugRaceList = useMemo(() => races.map((r) => { // PRED_DEBUG_PANEL
+    const distance = r.raceDistance === "custom" // PRED_DEBUG_PANEL
+      ? (r.customDistanceMiles ?? 0) // PRED_DEBUG_PANEL
+      : (RACE_DISTANCE_MILES[r.raceDistance] ?? 0); // PRED_DEBUG_PANEL
+    return { name: r.name, raceDate: r.raceDate, distanceMiles: distance }; // PRED_DEBUG_PANEL
+  }).filter((r) => r.distanceMiles > 0), [races]); // PRED_DEBUG_PANEL
+
+  const debugEfforts = useMemo(() => buildQualifyingEfforts( // PRED_DEBUG_PANEL
+    runs.map((r) => ({ // PRED_DEBUG_PANEL
+      workoutId: r.workoutId, // PRED_DEBUG_PANEL
+      distanceMiles: r.distanceMiles, // PRED_DEBUG_PANEL
+      durationSeconds: r.durationSeconds, // PRED_DEBUG_PANEL
+      startDate: r.startDate, // PRED_DEBUG_PANEL
+      activityType: r.activityType, // PRED_DEBUG_PANEL
+      sourceName: r.sourceName, // PRED_DEBUG_PANEL
+    })), // PRED_DEBUG_PANEL
+    56, // PRED_DEBUG_PANEL
+    { races: debugRaceList.map((r) => ({ raceDate: r.raceDate, distanceMiles: r.distanceMiles })) } // PRED_DEBUG_PANEL
+  ), [runs, debugRaceList]); // PRED_DEBUG_PANEL
+
+  const debugTierCounts = useMemo(() => summarizeTierCounts(debugEfforts), [debugEfforts]); // PRED_DEBUG_PANEL
+
+  const debugEasyMedianSec = useMemo(() => rollingEasyPaceMedian( // PRED_DEBUG_PANEL
+    runs.map((r) => ({ // PRED_DEBUG_PANEL
+      workoutId: r.workoutId, // PRED_DEBUG_PANEL
+      distanceMiles: r.distanceMiles, // PRED_DEBUG_PANEL
+      durationSeconds: r.durationSeconds, // PRED_DEBUG_PANEL
+      startDate: r.startDate, // PRED_DEBUG_PANEL
+      activityType: r.activityType, // PRED_DEBUG_PANEL
+      sourceName: r.sourceName, // PRED_DEBUG_PANEL
+    })), // PRED_DEBUG_PANEL
+    debugRaceList.map((r) => ({ raceDate: r.raceDate, distanceMiles: r.distanceMiles })) // PRED_DEBUG_PANEL
+  ), [runs, debugRaceList]); // PRED_DEBUG_PANEL
+
+  const debugHalfPredictionSec = useMemo(() => // PRED_DEBUG_PANEL
+    raceFit ? predictSeconds(raceFit, 13.109) : null, [raceFit]); // PRED_DEBUG_PANEL
+
+  const debugNonBaselineLines = useMemo<string[]>(() => { // PRED_DEBUG_PANEL
+    const now = Date.now(); // PRED_DEBUG_PANEL
+    const fmtPace = (secPerMile: number): string => { // PRED_DEBUG_PANEL
+      if (!isFinite(secPerMile) || secPerMile <= 0) return "—"; // PRED_DEBUG_PANEL
+      const t = Math.round(secPerMile); // PRED_DEBUG_PANEL
+      return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}/mi`; // PRED_DEBUG_PANEL
+    }; // PRED_DEBUG_PANEL
+    return debugEfforts // PRED_DEBUG_PANEL
+      .filter((e) => e.tier !== "BASELINE") // PRED_DEBUG_PANEL
+      .sort((a, b) => a.ageDays - b.ageDays) // PRED_DEBUG_PANEL
+      .map((e) => { // PRED_DEBUG_PANEL
+        const dateStr = new Date(now - e.ageDays * 86400000).toISOString().slice(0, 10); // PRED_DEBUG_PANEL
+        const pace = e.timeSeconds / e.distanceMiles; // PRED_DEBUG_PANEL
+        return `${e.tier.padEnd(8)} | ${dateStr} | ${e.distanceMiles.toFixed(1)}mi | ${fmtPace(pace)}`; // PRED_DEBUG_PANEL
+      }); // PRED_DEBUG_PANEL
+  }, [debugEfforts]); // PRED_DEBUG_PANEL
+
+  const debugClosestLine = useMemo<string | null>(() => { // PRED_DEBUG_PANEL
+    if (debugTierCounts.RACE > 0) return null; // PRED_DEBUG_PANEL
+    if (debugRaceList.length === 0) return null; // PRED_DEBUG_PANEL
+    if (runs.length === 0) return null; // PRED_DEBUG_PANEL
+    let bestGapMs = Infinity; // PRED_DEBUG_PANEL
+    let bestRunDate: Date | null = null; // PRED_DEBUG_PANEL
+    let bestRunMiles = 0; // PRED_DEBUG_PANEL
+    let bestRace: { name: string; raceDate: string; distanceMiles: number } | null = null; // PRED_DEBUG_PANEL
+    for (const r of runs) { // PRED_DEBUG_PANEL
+      for (const race of debugRaceList) { // PRED_DEBUG_PANEL
+        const [yy, mm, dd] = race.raceDate.split("-").map(Number); // PRED_DEBUG_PANEL
+        if (!isFinite(yy) || !isFinite(mm) || !isFinite(dd)) continue; // PRED_DEBUG_PANEL
+        const raceMs = new Date(yy, mm - 1, dd).getTime(); // PRED_DEBUG_PANEL
+        const gap = Math.abs(r.startDate.getTime() - raceMs); // PRED_DEBUG_PANEL
+        if (gap < bestGapMs) { // PRED_DEBUG_PANEL
+          bestGapMs = gap; // PRED_DEBUG_PANEL
+          bestRunDate = r.startDate; // PRED_DEBUG_PANEL
+          bestRunMiles = r.distanceMiles; // PRED_DEBUG_PANEL
+          bestRace = race; // PRED_DEBUG_PANEL
+        } // PRED_DEBUG_PANEL
+      } // PRED_DEBUG_PANEL
+    } // PRED_DEBUG_PANEL
+    if (!bestRunDate || !bestRace) return null; // PRED_DEBUG_PANEL
+    const dayGap = Math.round(bestGapMs / 86400000); // PRED_DEBUG_PANEL
+    const distGap = Math.abs(bestRunMiles - bestRace.distanceMiles); // PRED_DEBUG_PANEL
+    const runDateStr = bestRunDate.toISOString().slice(0, 10); // PRED_DEBUG_PANEL
+    return `Closest to ${bestRace.name} (${bestRace.raceDate}): ${runDateStr}, ${bestRunMiles.toFixed(1)}mi, gap ${dayGap}d / ${distGap.toFixed(1)}mi — but tier=BASELINE`; // PRED_DEBUG_PANEL
+  }, [runs, debugRaceList, debugTierCounts]); // PRED_DEBUG_PANEL
+  // ── END PRED_DEBUG_PANEL ───────────────────────────────────────────────────
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -712,6 +801,25 @@ export default function PlanInsightsPage() {
 
   return (
     <div className="flex flex-col gap-6 p-6 lg:p-6 max-w-5xl">
+      {/* PRED_DEBUG_PANEL — remove after QA */}
+      <div className="border border-border p-3 text-xs font-mono whitespace-pre-wrap"> {/* PRED_DEBUG_PANEL */}
+        <div className="font-bold mb-2">PRED_DEBUG_PANEL — remove after QA</div> {/* PRED_DEBUG_PANEL */}
+        <div>Tier counts: RACE={debugTierCounts.RACE}  QUALITY={debugTierCounts.QUALITY}  BASELINE={debugTierCounts.BASELINE}</div> {/* PRED_DEBUG_PANEL */}
+        <div>rollingEasyPaceMedian: {debugEasyMedianSec != null ? formatRacePace(debugEasyMedianSec, 1) : "n/a"}</div> {/* PRED_DEBUG_PANEL */}
+        <div>Half prediction: {debugHalfPredictionSec != null ? formatRaceTime(debugHalfPredictionSec) : "n/a"}</div> {/* PRED_DEBUG_PANEL */}
+        <div className="mt-2">Races matched against:</div> {/* PRED_DEBUG_PANEL */}
+        {debugRaceList.length === 0 && <div>  (none)</div>} {/* PRED_DEBUG_PANEL */}
+        {debugRaceList.map((r, i) => ( // PRED_DEBUG_PANEL
+          <div key={`pdp-race-${i}`}>  {r.name} | {r.raceDate} | {r.distanceMiles.toFixed(2)}mi</div> // PRED_DEBUG_PANEL
+        ))} {/* PRED_DEBUG_PANEL */}
+        <div className="mt-2">Non-baseline efforts ({debugNonBaselineLines.length}):</div> {/* PRED_DEBUG_PANEL */}
+        {debugNonBaselineLines.length === 0 && <div>  (none)</div>} {/* PRED_DEBUG_PANEL */}
+        {debugNonBaselineLines.map((line, i) => ( // PRED_DEBUG_PANEL
+          <div key={`pdp-eff-${i}`}>  {line}</div> // PRED_DEBUG_PANEL
+        ))} {/* PRED_DEBUG_PANEL */}
+        {debugClosestLine != null && <div className="mt-2">{debugClosestLine}</div>} {/* PRED_DEBUG_PANEL */}
+      </div> {/* PRED_DEBUG_PANEL */}
+      {/* END PRED_DEBUG_PANEL */}
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-textPrimary">Plan Insights</h1>
         <button
