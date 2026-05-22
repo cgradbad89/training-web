@@ -349,6 +349,13 @@ export default function PlanInsightsPage() {
 
   // Riegel fit for race prediction
   const raceFit = useMemo(() => {
+    const raceInputs = races.map((r) => {
+      const distance = r.raceDistance === "custom"
+        ? (r.customDistanceMiles ?? 0)
+        : (RACE_DISTANCE_MILES[r.raceDistance] ?? 0);
+      return { raceDate: r.raceDate, distanceMiles: distance };
+    }).filter((r) => r.distanceMiles > 0);
+
     const efforts = buildQualifyingEfforts(
       runs.map((r) => ({
         workoutId: r.workoutId,
@@ -358,18 +365,17 @@ export default function PlanInsightsPage() {
         activityType: r.activityType,
         sourceName: r.sourceName,
       })),
-      56
+      56,
+      { races: raceInputs }
     );
     if (!raceDistanceMiles) return null;
-    // For HM/marathon use the same tighter long-run model as Personal Insights:
-    // minMiles=3.0 (excludes short runs) + exponent clamped to [1.05, 1.18].
-    // This matches the 12-effort, fitted-exponent fit that produces the
-    // Personal Insights prediction, eliminating the 2-3 min discrepancy.
+    // Race-anchored long-run model: races dominate while fresh, decaying over
+    // a 5-week half-life. k clamp [1.04, 1.10] eases over-extrapolation to HM.
     if (raceDistanceMiles >= 13.109) {
-      return fitRiegel(efforts, raceDistanceMiles, 3.0, { min: 1.05, max: 1.18 });
+      return fitRiegel(efforts, raceDistanceMiles, 3.0, { min: 1.04, max: 1.10 });
     }
     return fitRiegel(efforts, raceDistanceMiles, 0, { min: 0.9, max: 1.3 });
-  }, [runs, raceDistanceMiles]);
+  }, [runs, raceDistanceMiles, races]);
 
   // Plan adherence — weekly planned vs actual (uses ±1 day matching)
   const adherenceData = useMemo<WeekAdherenceData[]>(() => {

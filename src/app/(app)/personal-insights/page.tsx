@@ -19,10 +19,12 @@ import { MetricBadge } from "@/components/ui/MetricBadge";
 import { WorkoutTrendsSection } from "@/components/WorkoutTrendsSection";
 import { useAuth } from "@/hooks/useAuth";
 import { fetchHealthWorkouts } from "@/services/healthWorkouts";
+import { fetchRaces } from "@/services/races";
 import { fetchRoutePoints, type RoutePoint } from "@/services/routes";
 import { fetchAllOverrides } from "@/services/workoutOverrides";
 import { applyOverride } from "@/types/workoutOverride";
 import { type HealthWorkout } from "@/types/healthWorkout";
+import { type Race, RACE_DISTANCE_MILES } from "@/types/race";
 import { formatPace } from "@/utils/pace";
 import { weekStart as getWeekStart } from "@/utils/dates";
 import {
@@ -158,6 +160,7 @@ export default function PersonalInsightsPage() {
   }
 
   const [workouts, setWorkouts] = useState<HealthWorkout[]>([]);
+  const [races, setRaces] = useState<Race[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   // Fastest 1-mile segment from GPS route points, keyed by year
@@ -169,12 +172,17 @@ export default function PersonalInsightsPage() {
     if (!uid) return;
 
     setLoading(true);
-    Promise.all([fetchHealthWorkouts(uid, { limitCount: 500 }), fetchAllOverrides(uid)])
-      .then(([wkts, overrides]) => {
+    Promise.all([
+      fetchHealthWorkouts(uid, { limitCount: 500 }),
+      fetchAllOverrides(uid),
+      fetchRaces(uid),
+    ])
+      .then(([wkts, overrides, racesData]) => {
         const processed = wkts
           .map((w) => applyOverride(w, overrides[w.workoutId] ?? null))
           .filter((w) => !overrides[w.workoutId]?.isExcluded);
         setWorkouts(processed);
+        setRaces(racesData);
       })
       .catch(console.error)
       .finally(() => setLoading(false));
@@ -243,15 +251,28 @@ export default function PersonalInsightsPage() {
     [runs]
   );
 
+  const raceInputs = useMemo(
+    () =>
+      races
+        .map((r) => {
+          const distance = r.raceDistance === "custom"
+            ? (r.customDistanceMiles ?? 0)
+            : (RACE_DISTANCE_MILES[r.raceDistance] ?? 0);
+          return { raceDate: r.raceDate, distanceMiles: distance };
+        })
+        .filter((r) => r.distanceMiles > 0),
+    [races]
+  );
+
   const fit5k = useMemo(() => {
-    const efforts = buildQualifyingEfforts(runInputs, 56);
+    const efforts = buildQualifyingEfforts(runInputs, 56, { races: raceInputs });
     return fitRiegel(efforts, 3.1069, 0, { min: 0.9, max: 1.3 });
-  }, [runInputs]);
+  }, [runInputs, raceInputs]);
 
   const fitLong = useMemo(() => {
-    const efforts = buildQualifyingEfforts(runInputs, 56);
-    return fitRiegel(efforts, 13.109, 3.0, { min: 1.05, max: 1.18 });
-  }, [runInputs]);
+    const efforts = buildQualifyingEfforts(runInputs, 56, { races: raceInputs });
+    return fitRiegel(efforts, 13.109, 3.0, { min: 1.04, max: 1.10 });
+  }, [runInputs, raceInputs]);
 
   const t5k = fit5k ? predictSeconds(fit5k, 3.1069) : null;
   const t10 = fitLong ? predictSeconds(fitLong, 10.0) : null;

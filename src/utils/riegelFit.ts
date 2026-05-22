@@ -1,11 +1,14 @@
 // Riegel-based race time prediction
 // Ported from InsightsView.swift (iOS app)
 
+export type EffortTier = 'RACE' | 'QUALITY' | 'BASELINE'
+
 export interface EffortPoint {
   distanceMiles: number
   timeSeconds: number   // total time = pace * distance
   ageDays: number       // how many days ago
   isTreadmill: boolean
+  tier: EffortTier
 }
 
 export interface RiegelFit {
@@ -15,6 +18,19 @@ export interface RiegelFit {
   n: number    // number of efforts used
   minMiles: number
   maxMiles: number
+}
+
+export interface RaceMatchInput {
+  raceDate: Date | string   // ISO string or Date
+  distanceMiles: number     // expected race distance
+}
+
+export interface BuildEffortsOptions {
+  races?: RaceMatchInput[]
+  /** How far back ordinary (non-race) efforts are eligible. Default 56. */
+  daysBack?: number
+  /** How far back race-matched efforts remain eligible. Default 120. */
+  raceDaysBack?: number
 }
 
 export function predictSeconds(fit: RiegelFit, miles: number): number {
@@ -38,11 +54,16 @@ export function formatRacePace(totalSeconds: number | null | undefined, distance
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2,'0')} /mi`
 }
 
+// ─── Weighting ─────────────────────────────────────────────────────────────────
+
+/**
+ * Continuous 5-week half-life recency decay.
+ *   weight = 0.5^(ageDays/35)
+ * Standardized across the fit — replaces the prior stepped recency function.
+ */
 function recencyWeight(ageDays: number): number {
-  if (ageDays < 14) return 1.0
-  if (ageDays < 35) return 0.7
-  if (ageDays < 56) return 0.4
-  return 0.15
+  if (!isFinite(ageDays) || ageDays < 0) return 1.0
+  return Math.pow(0.5, ageDays / 35)
 }
 
 function distanceWeight(miles: number, targetMiles: number): number {
@@ -64,6 +85,14 @@ function distanceWeight(miles: number, targetMiles: number): number {
 
 function treadmillWeight(isTreadmill: boolean): number {
   return isTreadmill ? 0.85 : 1.0
+}
+
+function tierWeight(tier: EffortTier): number {
+  switch (tier) {
+    case 'RACE':     return 3.0
+    case 'QUALITY':  return 1.75
+    case 'BASELINE': return 1.0
+  }
 }
 
 function longRunSupportMultiplier(
@@ -134,6 +163,7 @@ export function fitRiegel(
     recencyWeight(e.ageDays) *
     distanceWeight(e.distanceMiles, targetMiles) *
     treadmillWeight(e.isTreadmill) *
+    tierWeight(e.tier) *
     longRunSupportMultiplier(e, filtered, targetMiles)
   )
 
@@ -188,50 +218,226 @@ export function riegelConfidenceLabel(fit: RiegelFit): 'High' | 'Medium' | 'Low'
   return 'Low'
 }
 
+// ─── Race matching helpers ─────────────────────────────────────────────────────
+
+function toMillis(d: Date | string | undefined | null): number {
+  if (!d) return NaN
+  if (d instanceof Date) return d.getTime()
+  // Treat bare YYYY-MM-DD as local midnight so a Date(YYYY-MM-DD) UTC offset
+  // doesn't accidentally bump us across the ±1 day match window.
+  if (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
+    const [y, m, day] = d.split('-').map(Number)
+    return new Date(y, m - 1, day).getTime()
+  }
+  return new Date(d).getTime()
+}
+
+interface RaceMatchInternal {
+  dateMs: number
+  distanceMiles: number
+}
+
+function normalizeRaces(races: RaceMatchInput[] | undefined): RaceMatchInternal[] {
+  if (!races || races.length === 0) return []
+  const out: RaceMatchInternal[] = []
+  for (const r of races) {
+    const ms = toMillis(r.raceDate)
+    if (!isFinite(ms)) continue
+    if (!isFinite(r.distanceMiles) || r.distanceMiles <= 0) continue
+    out.push({ dateMs: ms, distanceMiles: r.distanceMiles })
+  }
+  return out
+}
+
+/**
+ * A run is a RACE effort if it falls within ±1 day of a Race document's
+ * raceDate AND |run.distanceMiles − raceDistanceMiles| ≤ 1.0.
+ */
+function isRaceMatch(runStartMs: number, runMiles: number, races: RaceMatchInternal[]): boolean {
+  const oneDayMs = 86400 * 1000
+  for (const r of races) {
+    if (Math.abs(runStartMs - r.dateMs) <= oneDayMs &&
+        Math.abs(runMiles - r.distanceMiles) <= 1.0) {
+      return true
+    }
+  }
+  return false
+}
+
+function median(values: number[]): number | null {
+  if (values.length === 0) return null
+  const sorted = [...values].sort((a, b) => a - b)
+  const mid = Math.floor(sorted.length / 2)
+  return sorted.length % 2 === 0
+    ? (sorted[mid - 1] + sorted[mid]) / 2
+    : sorted[mid]
+}
+
+// ─── Build qualifying efforts ──────────────────────────────────────────────────
+
+type WorkoutLike = {
+  workoutId: string
+  distanceMiles?: number | null
+  durationSeconds: number
+  startDate: Date | string | { toDate?: () => Date } | null | undefined
+  activityType: string
+  sourceName?: string
+}
+
 /**
  * Build qualifying efforts from Firestore HealthWorkout records.
- * Mirrors InsightsView.qualifyingEfforts(daysBack: 56)
+ *
+ * Race-anchored: when `options.races` is supplied, runs that fall within ±1 day
+ * of a race date AND within 1.0 mile of the race distance are tagged RACE and
+ * eligible up to `raceDaysBack` (default 120) — extending memory for real race
+ * efforts as they age. Ordinary runs keep the `daysBack` window (default 56).
+ *
+ * Effort tiering: non-race runs that go ≥30 s/mi faster than the trailing 28d
+ * easy-pace median (excluding race-matched runs) and are ≥3.0 mi long are
+ * candidates for QUALITY. They are upgraded to QUALITY only if ≥1 OTHER
+ * race-or-quality effort in the trailing 28 days has distance ≥ 0.7× theirs;
+ * otherwise they remain BASELINE. Races are self-corroborating.
+ *
+ * The signature accepts a legacy `daysBack: number` as the second argument for
+ * backward compatibility with call sites that pre-date races.
  */
 export function buildQualifyingEfforts(
-  workouts: Array<{
-    workoutId: string
-    distanceMiles?: number | null
-    durationSeconds: number
-    startDate: any
-    activityType: string
-    sourceName?: string
-  }>,
-  daysBack = 56
+  workouts: WorkoutLike[],
+  daysBackOrOptions: number | BuildEffortsOptions = 56,
+  optionsArg: BuildEffortsOptions = {}
 ): EffortPoint[] {
+  const options: BuildEffortsOptions =
+    typeof daysBackOrOptions === 'number'
+      ? { daysBack: daysBackOrOptions, ...optionsArg }
+      : { ...daysBackOrOptions, ...optionsArg }
+
+  const daysBack = options.daysBack ?? 56
+  const raceDaysBack = options.raceDaysBack ?? 120
+  const races = normalizeRaces(options.races)
+
   const now = Date.now()
-  const cutoff = now - daysBack * 86400 * 1000
+  const ordinaryCutoff = now - daysBack * 86400 * 1000
+  const raceCutoff = now - raceDaysBack * 86400 * 1000
 
-  return workouts.flatMap(w => {
+  interface Intermediate {
+    miles: number
+    totalSeconds: number
+    secPerMile: number
+    startMs: number
+    ageDays: number
+    isTreadmill: boolean
+    isRace: boolean
+  }
+
+  const intermediates: Intermediate[] = []
+
+  for (const w of workouts) {
     const miles = w.distanceMiles ?? 0
-    if (miles <= 0) return []
+    if (miles <= 0) continue
 
-    const startMs = w.startDate?.toDate
-      ? w.startDate.toDate().getTime()
-      : new Date(w.startDate).getTime()
-
-    if (!isFinite(startMs) || startMs < cutoff) return []
+    let startMs: number
+    const sd = w.startDate
+    if (sd && typeof sd === 'object' && typeof (sd as { toDate?: () => Date }).toDate === 'function') {
+      startMs = (sd as { toDate: () => Date }).toDate().getTime()
+    } else if (sd instanceof Date) {
+      startMs = sd.getTime()
+    } else if (typeof sd === 'string') {
+      startMs = new Date(sd).getTime()
+    } else {
+      continue
+    }
+    if (!isFinite(startMs)) continue
 
     const totalSeconds = w.durationSeconds
-    if (totalSeconds <= 0 || miles <= 0) return []
+    if (totalSeconds <= 0) continue
     const secPerMile = totalSeconds / miles
-    if (secPerMile < 180 || secPerMile > 1200) return [] // 3:00-20:00/mi
-    if (totalSeconds < 300) return [] // under 5 min total
+
+    // ── Sanity filters ──
+    //   • drop unrealistic paces (faster than 4:30/mi or slower than 15:00/mi)
+    //   • drop very short runs (< 0.5 mi) — too noisy for a Riegel fit
+    //   • drop sub-5-minute total — fragments / GPS auto-pauses
+    if (secPerMile < 270 || secPerMile > 900) continue
+    if (miles < 0.5) continue
+    if (totalSeconds < 300) continue
+
+    const isRace = isRaceMatch(startMs, miles, races)
+
+    // Apply lookback gate: RACE-matched gets extended memory, others 56d.
+    const cutoff = isRace ? raceCutoff : ordinaryCutoff
+    if (startMs < cutoff) continue
 
     const ageDays = (now - startMs) / 86400000
     const isTreadmill =
       w.activityType === 'treadmill_running' ||
       (w.sourceName ?? '').toLowerCase().includes('treadmill')
 
-    return [{
-      distanceMiles: miles,
-      timeSeconds: totalSeconds,
-      ageDays,
-      isTreadmill
-    }]
+    intermediates.push({
+      miles, totalSeconds, secPerMile, startMs, ageDays, isTreadmill, isRace
+    })
+  }
+
+  // ── Compute rollingEasyMedian over trailing 28d non-race runs ──
+  const easyPaces = intermediates
+    .filter(i => !i.isRace && i.ageDays <= 28)
+    .map(i => i.secPerMile)
+  const rollingEasyMedian = easyPaces.length >= 2 ? median(easyPaces) : null
+
+  // ── Candidate QUALITY: non-race, ≥3.0 mi, ≥30 s/mi faster than median ──
+  // If <2 easy runs in the 28d window, classification is skipped and every
+  // non-race run is BASELINE.
+  function isQualityCandidate(i: Intermediate): boolean {
+    if (rollingEasyMedian == null) return false
+    if (i.isRace) return false
+    if (i.miles < 3.0) return false
+    return i.secPerMile <= rollingEasyMedian - 30
+  }
+
+  // ── Corroboration: a candidate QUALITY needs ≥1 OTHER race-or-candidate ──
+  // ── quality effort in trailing 28d with distance ≥ 0.7 × its distance. ──
+  function isCorroborated(target: Intermediate): boolean {
+    for (const other of intermediates) {
+      if (other === target) continue
+      if (other.ageDays > 28) continue
+      if (other.miles < target.miles * 0.7) continue
+      if (other.isRace || isQualityCandidate(other)) return true
+    }
+    return false
+  }
+
+  return intermediates.map<EffortPoint>(i => {
+    let tier: EffortTier
+    if (i.isRace) {
+      tier = 'RACE'
+    } else if (isQualityCandidate(i) && isCorroborated(i)) {
+      tier = 'QUALITY'
+    } else {
+      tier = 'BASELINE'
+    }
+    return {
+      distanceMiles: i.miles,
+      timeSeconds: i.totalSeconds,
+      ageDays: i.ageDays,
+      isTreadmill: i.isTreadmill,
+      tier,
+    }
   })
+}
+
+// ─── Diagnostics ───────────────────────────────────────────────────────────────
+
+/** Summarize effort classification — handy for surfacing counts on insights pages. */
+export function summarizeTierCounts(efforts: EffortPoint[]): Record<EffortTier, number> {
+  const counts: Record<EffortTier, number> = { RACE: 0, QUALITY: 0, BASELINE: 0 }
+  for (const e of efforts) counts[e.tier]++
+  return counts
+}
+
+/** Compute the trailing 28d easy-pace median (exposed for diagnostics/UI). */
+export function rollingEasyPaceMedian(workouts: WorkoutLike[], races?: RaceMatchInput[]): number | null {
+  const efforts = buildQualifyingEfforts(workouts, { daysBack: 56, races })
+  // Reconstruct paces of non-race runs ≤28d directly from efforts
+  const paces = efforts
+    .filter(e => e.tier !== 'RACE' && e.ageDays <= 28)
+    .map(e => e.timeSeconds / e.distanceMiles)
+  return paces.length >= 2 ? median(paces) : null
 }

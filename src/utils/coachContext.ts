@@ -225,11 +225,16 @@ export function buildCoachContext(
     const daysAway = daysBetween(new Date(), raceDate)
     const distanceMiles = getRaceDistanceMiles(activeRace)
 
-    // Predicted time via Riegel
+    // Predicted time via Riegel — race-anchored: the active race's planned
+    // date/distance feed the race-match so the actual race run (if already
+    // recorded) dominates the fit while fresh.
     const nonExcludedRuns = allRuns.filter(r => !overrides[r.workoutId]?.isExcluded)
-    const efforts = buildQualifyingEfforts(nonExcludedRuns, 56)
+    const raceInputs = distanceMiles
+      ? [{ raceDate: activeRace.raceDate, distanceMiles }]
+      : []
+    const efforts = buildQualifyingEfforts(nonExcludedRuns, 56, { races: raceInputs })
     const fit = distanceMiles
-      ? fitRiegel(efforts, distanceMiles, 3.0, { min: 1.05, max: 1.18 })
+      ? fitRiegel(efforts, distanceMiles, 3.0, { min: 1.04, max: 1.10 })
       : null
     const predictedSeconds = fit && distanceMiles ? predictSeconds(fit, distanceMiles) : null
     const predictedTime = predictedSeconds

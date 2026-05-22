@@ -85,9 +85,9 @@ describe('fitRiegel', () => {
 
   it('returns null for fewer than 4 efforts', () => {
     const efforts = [
-      { distanceMiles: 3, timeSeconds: 1500, ageDays: 5, isTreadmill: false },
-      { distanceMiles: 5, timeSeconds: 2600, ageDays: 10, isTreadmill: false },
-      { distanceMiles: 7, timeSeconds: 3800, ageDays: 15, isTreadmill: false },
+      { distanceMiles: 3, timeSeconds: 1500, ageDays: 5, isTreadmill: false, tier: 'BASELINE' as const },
+      { distanceMiles: 5, timeSeconds: 2600, ageDays: 10, isTreadmill: false, tier: 'BASELINE' as const },
+      { distanceMiles: 7, timeSeconds: 3800, ageDays: 15, isTreadmill: false, tier: 'BASELINE' as const },
     ]
     expect(fitRiegel(efforts, 13.109)).toBeNull()
   })
@@ -98,6 +98,7 @@ describe('fitRiegel', () => {
       timeSeconds: 2500 + i * 10,
       ageDays: i * 5,
       isTreadmill: false,
+      tier: 'BASELINE' as const,
     }))
     // All same distance means sxx = 0, should return null
     expect(fitRiegel(efforts, 13.109)).toBeNull()
@@ -105,11 +106,11 @@ describe('fitRiegel', () => {
 
   it('returns a valid fit for diverse efforts', () => {
     const efforts = [
-      { distanceMiles: 3.1, timeSeconds: 1500, ageDays: 5, isTreadmill: false },
-      { distanceMiles: 5.0, timeSeconds: 2550, ageDays: 10, isTreadmill: false },
-      { distanceMiles: 7.0, timeSeconds: 3700, ageDays: 15, isTreadmill: false },
-      { distanceMiles: 10.0, timeSeconds: 5500, ageDays: 20, isTreadmill: false },
-      { distanceMiles: 6.0, timeSeconds: 3100, ageDays: 25, isTreadmill: false },
+      { distanceMiles: 3.1, timeSeconds: 1500, ageDays: 5, isTreadmill: false, tier: 'BASELINE' as const },
+      { distanceMiles: 5.0, timeSeconds: 2550, ageDays: 10, isTreadmill: false, tier: 'BASELINE' as const },
+      { distanceMiles: 7.0, timeSeconds: 3700, ageDays: 15, isTreadmill: false, tier: 'BASELINE' as const },
+      { distanceMiles: 10.0, timeSeconds: 5500, ageDays: 20, isTreadmill: false, tier: 'BASELINE' as const },
+      { distanceMiles: 6.0, timeSeconds: 3100, ageDays: 25, isTreadmill: false, tier: 'BASELINE' as const },
     ]
     const fit = fitRiegel(efforts, 5.0, 0)
     expect(fit).not.toBeNull()
