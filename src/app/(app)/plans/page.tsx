@@ -383,6 +383,15 @@ export default function PlansPage() {
   }
 
   function currentWeekIndex(plan: Plan): number {
+    // TEMP debug — confirms what fields the helper sees per plan. Remove
+    // once both running and workout plans verified to land on the right week.
+    // eslint-disable-next-line no-console
+    console.log("[currentWeekIndex]", {
+      name: plan.name,
+      isActive: plan.isActive,
+      startDate: plan.startDate,
+      weeksLength: plan.weeks?.length,
+    });
     // Inactive / template plans always open at Week 1 — users editing a
     // template or browsing an archived plan want to see the start, not a
     // computed "current week" that's meaningless for an unstarted plan.
@@ -724,6 +733,7 @@ export default function PlansPage() {
         {/* Workout plan detail */}
         {selectedPlan && isWorkoutPlan(selectedPlan) && (
           <CrossTrainingPlanDetail
+            key={selectedPlan.id}
             plan={selectedPlan}
             onUpdate={handleCrossTrainingUpdate}
             onDelete={async () => {

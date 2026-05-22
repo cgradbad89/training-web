@@ -734,7 +734,25 @@ export function CrossTrainingPlanDetail({
   saving,
 }: CrossTrainingPlanDetailProps) {
   const [isEditMode, setIsEditMode] = useState(false);
-  const [selectedWeekIndex, setSelectedWeekIndex] = useState(0);
+  // Default to the week containing today for active plans; inactive / template
+  // plans open at Week 1. Lazy useState init runs once per mount; the parent
+  // sets key={plan.id} so a different workout plan remounts and re-derives.
+  const [selectedWeekIndex, setSelectedWeekIndex] = useState<number>(() => {
+    // eslint-disable-next-line no-console
+    console.log("[CrossTrainingPlanDetail.initWeek]", {
+      name: plan.name,
+      isActive: plan.isActive,
+      startDate: plan.startDate,
+      weeksLength: plan.weeks?.length,
+    });
+    if (!plan.isActive) return 0;
+    const start = new Date(plan.startDate + "T00:00:00");
+    const today = new Date();
+    const diff = Math.floor(
+      (today.getTime() - start.getTime()) / (7 * 24 * 3600 * 1000)
+    );
+    return Math.max(0, Math.min(diff, plan.weeks.length - 1));
+  });
   // Editing state — null when no day is being edited. Either editing an
   // existing entry (entryId set) or adding a new one to a day (newEntry true).
   type EditingState =
