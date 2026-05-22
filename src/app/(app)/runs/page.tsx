@@ -129,18 +129,26 @@ interface MiniCalendarProps {
   year: number;
   runs: HealthWorkout[];
   onDayClick: (wKey: string) => void;
+  /** When set, the calendar forces this month and disables chevron nav. */
+  lockedMonth?: number | null;
 }
 
-function MiniCalendar({ year, runs, onDayClick }: MiniCalendarProps) {
+function MiniCalendar({ year, runs, onDayClick, lockedMonth }: MiniCalendarProps) {
   const today = new Date();
+  const isLocked = lockedMonth !== null && lockedMonth !== undefined;
   const [month, setMonth] = useState<number>(() => {
+    if (isLocked) return lockedMonth as number;
     return today.getFullYear() === year ? today.getMonth() : 11;
   });
 
   useEffect(() => {
-    setMonth(today.getFullYear() === year ? today.getMonth() : 11);
+    if (isLocked) {
+      setMonth(lockedMonth as number);
+    } else {
+      setMonth(today.getFullYear() === year ? today.getMonth() : 11);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [year]);
+  }, [year, lockedMonth]);
 
   const runsByDay = useMemo(() => {
     const map: Record<string, number> = {};
@@ -162,15 +170,15 @@ function MiniCalendar({ year, runs, onDayClick }: MiniCalendarProps) {
     year: "numeric",
   });
 
-  const canGoPrev = !(month === 0);
-  const canGoNext = !(month === 11);
+  const canGoPrev = !isLocked && month !== 0;
+  const canGoNext = !isLocked && month !== 11;
 
   function prevMonth() {
-    if (month === 0) return;
+    if (isLocked || month === 0) return;
     setMonth((m) => m - 1);
   }
   function nextMonth() {
-    if (month === 11) return;
+    if (isLocked || month === 11) return;
     setMonth((m) => m + 1);
   }
 
@@ -305,6 +313,37 @@ function YearStats({ runs }: YearStatsProps) {
   const totalTime = runs.reduce((s, r) => s + r.durationSeconds, 0);
   const avgPaceSec = totalMiles > 0 ? totalTime / totalMiles : 0;
 
+  // Avg HR — simple mean of run-level avgHeartRate ignoring missing / zero.
+  const hrVals = runs
+    .map((r) => r.avgHeartRate)
+    .filter((v): v is number => typeof v === "number" && v > 0 && isFinite(v));
+  const avgHR =
+    hrVals.length > 0
+      ? hrVals.reduce((a, b) => a + b, 0) / hrVals.length
+      : null;
+
+  // Efficiency Score — reuse the SAME source as the per-run badge:
+  //   efficiencyDisplayScore(speed_mps, avgHR) → normalised 1–10. The badge
+  //   already gates on hasHR + 0 < score <= 10 (anything above the cap is
+  //   treated as bad input). We aggregate with that same null + outlier
+  //   filter and report the mean. No new Firestore reads — every input
+  //   field is already on the HealthWorkout docs this page subscribes to.
+  const effVals: number[] = [];
+  for (const r of runs) {
+    if (!r.avgHeartRate || r.avgHeartRate <= 0) continue;
+    if (!r.avgSpeedMPS || r.avgSpeedMPS <= 0) continue;
+    try {
+      const score = efficiencyDisplayScore(r.avgSpeedMPS, r.avgHeartRate);
+      if (isFinite(score) && score > 0 && score <= 10) effVals.push(score);
+    } catch {
+      // skip
+    }
+  }
+  const avgEff =
+    effVals.length > 0
+      ? effVals.reduce((a, b) => a + b, 0) / effVals.length
+      : null;
+
   return (
     <div className="grid grid-cols-2 gap-3">
       {[
@@ -312,6 +351,8 @@ function YearStats({ runs }: YearStatsProps) {
         { label: "Miles", value: `${totalMiles.toFixed(1)} mi` },
         { label: "Avg Mi/Run", value: `${avgMiPerRun.toFixed(2)} mi` },
         { label: "Avg Pace", value: avgPaceSec > 0 ? `${formatPace(avgPaceSec)} /mi` : "—" },
+        { label: "Avg HR", value: avgHR != null ? `${Math.round(avgHR)} bpm` : "—" },
+        { label: "Efficiency", value: avgEff != null ? avgEff.toFixed(1) : "—" },
       ].map(({ label, value }) => (
         <div key={label} className="flex flex-col gap-0.5">
           <span className="text-xs text-textSecondary">{label}</span>
@@ -585,6 +626,75 @@ function WeekGroup({
   );
 }
 
+// ─── Shoes Used (sidebar section) ───────────────────────────────────────────
+
+interface ShoesUsedProps {
+  runs: HealthWorkout[];
+  shoes: RunningShoe[];
+  manualAssignments: Record<string, string | null>;
+}
+
+function ShoesUsed({ runs, shoes, manualAssignments }: ShoesUsedProps) {
+  // Reuse the SAME per-run shoe resolution as RunRow: manualAssignments
+  // map (which is set up at page level with auto-rule overlay) → shoes.find().
+  // Window miles only — no startMileageOffset, no lifetime totals.
+  type Row = { id: string | null; name: string; miles: number; count: number };
+  const map = new Map<string, Row>();
+  for (const r of runs) {
+    const shoeId = manualAssignments[r.workoutId] ?? null;
+    const key = shoeId ?? "__unassigned__";
+    let row = map.get(key);
+    if (!row) {
+      const shoe = shoeId ? shoes.find((s) => s.id === shoeId) : null;
+      row = {
+        id: shoeId,
+        name: shoe
+          ? shoe.name || `${shoe.brand} ${shoe.model}`.trim() || "Unnamed shoe"
+          : "Unassigned",
+        miles: 0,
+        count: 0,
+      };
+      map.set(key, row);
+    }
+    row.miles += r.distanceMiles;
+    row.count += 1;
+  }
+  const rows = Array.from(map.values()).sort((a, b) => b.miles - a.miles);
+
+  if (rows.length === 0) {
+    return (
+      <p className="text-xs text-textSecondary">No runs in this period.</p>
+    );
+  }
+
+  return (
+    <ul className="flex flex-col gap-2">
+      {rows.map((row) => (
+        <li
+          key={row.id ?? "__unassigned__"}
+          className="flex items-baseline justify-between gap-2"
+        >
+          <div className="flex items-baseline gap-2 min-w-0">
+            <span
+              className={`text-sm truncate ${
+                row.id ? "text-textPrimary" : "text-textSecondary italic"
+              }`}
+            >
+              {row.name}
+            </span>
+            <span className="text-[10px] text-textSecondary shrink-0">
+              · {row.count} {row.count === 1 ? "run" : "runs"}
+            </span>
+          </div>
+          <span className="text-sm font-semibold text-textPrimary tabular-nums shrink-0">
+            {row.miles.toFixed(1)} mi
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function RunsPage() {
@@ -602,6 +712,13 @@ export default function RunsPage() {
 
   const currentYear = new Date().getFullYear();
   const [selectedYear, setSelectedYear] = useState<number>(currentYear);
+  // null = "All months"; otherwise 0-indexed month within selectedYear.
+  // Resets when selectedYear changes (a chosen month may not exist in the
+  // new year).
+  const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
+  useEffect(() => {
+    setSelectedMonth(null);
+  }, [selectedYear]);
 
   const weekRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
@@ -744,6 +861,25 @@ export default function RunsPage() {
     [visibleRuns, selectedYear]
   );
 
+  // Months (0-indexed) that have at least one run in the selected year.
+  // Sorted ascending so the dropdown renders Jan → Dec.
+  const availableMonths = useMemo(() => {
+    const months = new Set<number>();
+    for (const r of filteredRuns) months.add(getLocalDate(r).getMonth());
+    return Array.from(months).sort((a, b) => a - b);
+  }, [filteredRuns]);
+
+  // Active window — runs feeding the summary tile, run list, calendar,
+  // and shoes-used aggregation. With selectedMonth=null this equals
+  // filteredRuns (preserving today's year-level behaviour). With a month
+  // selected, narrows to that month within selectedYear.
+  const windowRuns = useMemo(() => {
+    if (selectedMonth === null) return filteredRuns;
+    return filteredRuns.filter(
+      (r) => getLocalDate(r).getMonth() === selectedMonth
+    );
+  }, [filteredRuns, selectedMonth]);
+
   // Detect duplicate pairs and derive badge IDs
   const duplicatePairs = useMemo(
     () => detectDuplicatePairs(visibleRuns),
@@ -779,16 +915,19 @@ export default function RunsPage() {
 
   const groupedWeeks = useMemo(() => {
     const map: Record<string, HealthWorkout[]> = {};
-    for (const run of filteredRuns) {
+    for (const run of windowRuns) {
       const k = weekKey(getLocalDate(run));
       if (!map[k]) map[k] = [];
       map[k].push(run);
     }
+    // Within each week, sort runs DESCENDING by date — most recent first.
+    // Week-group order (most-recent-week first) is preserved by the outer
+    // localeCompare swap below.
     for (const k of Object.keys(map)) {
-      map[k].sort((a, b) => getLocalDate(a).getTime() - getLocalDate(b).getTime());
+      map[k].sort((a, b) => getLocalDate(b).getTime() - getLocalDate(a).getTime());
     }
     return Object.entries(map).sort(([a], [b]) => b.localeCompare(a));
-  }, [filteredRuns]);
+  }, [windowRuns]);
 
   const scrollToWeek = useCallback((wk: string) => {
     weekRefs.current[wk]?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -802,13 +941,25 @@ export default function RunsPage() {
     );
   }
 
-  const totalYearMiles = filteredRuns.reduce((s, r) => s + r.distanceMiles, 0);
+  const totalWindowMiles = windowRuns.reduce((s, r) => s + r.distanceMiles, 0);
+
+  // Title for the summary tile — month-aware.
+  const monthName =
+    selectedMonth !== null
+      ? new Date(selectedYear, selectedMonth, 1).toLocaleDateString("en-US", {
+          month: "long",
+        })
+      : null;
+  const summaryTitle =
+    monthName !== null
+      ? `${monthName} ${selectedYear} Summary`
+      : `${selectedYear} Summary`;
 
   return (
     <div className="flex flex-col lg:flex-row gap-6 p-4 lg:p-6 min-h-full">
       {/* ── Left Sidebar ────────────────────────────────────── */}
       <aside className="w-full lg:w-64 shrink-0 flex flex-col gap-5">
-        {/* Year selector */}
+        {/* Year + Month selector */}
         <div className="bg-card rounded-2xl border border-border p-4 flex flex-col gap-4">
           <p className="text-xs font-semibold uppercase tracking-widest text-textSecondary">
             Year
@@ -818,18 +969,51 @@ export default function RunsPage() {
             selected={selectedYear}
             onChange={setSelectedYear}
           />
+          <p className="text-xs font-semibold uppercase tracking-widest text-textSecondary">
+            Month
+          </p>
+          <select
+            value={selectedMonth ?? ""}
+            onChange={(e) =>
+              setSelectedMonth(
+                e.target.value === "" ? null : Number(e.target.value)
+              )
+            }
+            className="bg-surface border border-border rounded-lg px-3 py-2 text-sm text-textPrimary"
+          >
+            <option value="">All months</option>
+            {availableMonths.map((m) => (
+              <option key={m} value={m}>
+                {new Date(selectedYear, m, 1).toLocaleDateString("en-US", {
+                  month: "long",
+                })}
+              </option>
+            ))}
+          </select>
         </div>
 
-        {/* Year stats */}
+        {/* Summary tile */}
         <div className="bg-card rounded-2xl border border-border p-4 flex flex-col gap-4">
           <p className="text-xs font-semibold uppercase tracking-widest text-textSecondary">
-            {selectedYear} Summary
+            {summaryTitle}
           </p>
-          {filteredRuns.length === 0 ? (
+          {windowRuns.length === 0 ? (
             <p className="text-xs text-textSecondary">No runs yet</p>
           ) : (
-            <YearStats runs={filteredRuns} />
+            <YearStats runs={windowRuns} />
           )}
+        </div>
+
+        {/* Shoes used — sits between summary and calendar */}
+        <div className="bg-card rounded-2xl border border-border p-4 flex flex-col gap-3">
+          <p className="text-xs font-semibold uppercase tracking-widest text-textSecondary">
+            Shoes Used
+          </p>
+          <ShoesUsed
+            runs={windowRuns}
+            shoes={shoes}
+            manualAssignments={manualAssignments}
+          />
         </div>
 
         {/* Mini calendar — hidden on mobile */}
@@ -839,8 +1023,9 @@ export default function RunsPage() {
           </p>
           <MiniCalendar
             year={selectedYear}
-            runs={filteredRuns}
+            runs={windowRuns}
             onDayClick={scrollToWeek}
+            lockedMonth={selectedMonth}
           />
         </div>
       </aside>
@@ -859,8 +1044,8 @@ export default function RunsPage() {
             </button>
           )}
           <span className="text-sm text-textSecondary tabular-nums">
-            {filteredRuns.length} {filteredRuns.length === 1 ? "run" : "runs"}{" "}
-            &middot; {totalYearMiles.toFixed(1)} miles
+            {windowRuns.length} {windowRuns.length === 1 ? "run" : "runs"}{" "}
+            &middot; {totalWindowMiles.toFixed(1)} miles
           </span>
         </div>
 
@@ -938,7 +1123,7 @@ export default function RunsPage() {
         )}
 
         {/* Run list */}
-        {filteredRuns.length === 0 ? (
+        {windowRuns.length === 0 ? (
           <div className="mt-8">
             {allRuns.length === 0 ? (
               <EmptyState
@@ -946,7 +1131,13 @@ export default function RunsPage() {
                 description="Sync workouts from the iOS app to see your runs here."
               />
             ) : (
-              <EmptyState title={`No runs recorded in ${selectedYear}`} />
+              <EmptyState
+                title={
+                  monthName !== null
+                    ? `No runs recorded in ${monthName} ${selectedYear}`
+                    : `No runs recorded in ${selectedYear}`
+                }
+              />
             )}
           </div>
         ) : (
