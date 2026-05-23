@@ -160,6 +160,9 @@ interface WeekAdherenceData {
   planned: number;
   actual: number;
   weekNumber: number;
+  /** Sum of computeTrainingLoad across runs in this plan week (runs only,
+   *  null-HR runs excluded). 0 when no qualifying runs in window. */
+  runLoad: number;
 }
 
 function PlanAdherenceChart({ data }: { data: WeekAdherenceData[] }) {
@@ -214,6 +217,91 @@ function PlanAdherenceChart({ data }: { data: WeekAdherenceData[] }) {
           <span className="inline-block w-3 h-3 rounded" style={{ backgroundColor: 'var(--color-chart-primary)' }} /> Actual
         </span>
       </div>
+    </Card>
+  );
+}
+
+// ─── Weekly Run Load Chart ───────────────────────────────────────────────────
+
+/**
+ * Sibling of PlanAdherenceChart. Reads the same WeekAdherenceData[] so the
+ * x-axis domain and weekly buckets line up week-for-week with the mileage
+ * chart above it. Single purple "actual" series; future weeks are not in
+ * `data` (adherenceData filters to elapsed weeks only), matching the
+ * mileage chart's behaviour.
+ */
+function PlanRunLoadChart({ data }: { data: WeekAdherenceData[] }) {
+  if (data.length === 0) return null;
+
+  const hasAnyLoad = data.some((w) => w.runLoad > 0);
+
+  return (
+    <Card>
+      <CardTitle>Weekly Run Load — Plan Progress</CardTitle>
+      <p className="text-xs text-textSecondary mb-3">
+        Actual training load from runs each plan week (runs only).
+      </p>
+      {hasAnyLoad ? (
+        <>
+          <ResponsiveContainer width="100%" height={200}>
+            <BarChart
+              data={data}
+              barGap={2}
+              margin={{ top: 4, right: 0, bottom: 0, left: 0 }}
+            >
+              <CartesianGrid
+                strokeDasharray="3 3"
+                vertical={false}
+                stroke="var(--color-border)"
+              />
+              <XAxis
+                dataKey="label"
+                tick={{ fontSize: 10 }}
+                axisLine={false}
+                tickLine={false}
+              />
+              <YAxis
+                tick={{ fontSize: 10 }}
+                axisLine={false}
+                tickLine={false}
+                width={30}
+                allowDecimals={false}
+              />
+              <Tooltip
+                formatter={(v) => [`${Math.round(Number(v))}`, "Run load"]}
+                contentStyle={{
+                  fontSize: 12,
+                  backgroundColor: "var(--color-chart-tooltip-bg)",
+                  border: "1px solid var(--color-border)",
+                  borderRadius: "0.375rem",
+                  color: "var(--color-textPrimary)",
+                }}
+                labelStyle={{ color: "var(--color-textSecondary)" }}
+                itemStyle={{ color: "var(--color-textPrimary)" }}
+              />
+              <Bar
+                dataKey="runLoad"
+                fill="var(--color-chart-primary)"
+                radius={[4, 4, 0, 0]}
+                name="runLoad"
+              />
+            </BarChart>
+          </ResponsiveContainer>
+          <div className="flex items-center gap-4 mt-3 text-xs text-textSecondary">
+            <span className="flex items-center gap-1">
+              <span
+                className="inline-block w-3 h-3 rounded"
+                style={{ backgroundColor: "var(--color-chart-primary)" }}
+              />{" "}
+              Run load (score)
+            </span>
+          </div>
+        </>
+      ) : (
+        <p className="text-sm text-textSecondary text-center py-6">
+          No run load data yet for this plan.
+        </p>
+      )}
     </Card>
   );
 }
@@ -426,11 +514,29 @@ export default function PlanInsightsPage() {
           }
         }
 
+        // Run load for this plan week — sum computeTrainingLoad across every
+        // run in the week's date range (matching is irrelevant for load; we
+        // care about total stress, not which planned session it satisfied).
+        // Null-HR runs are excluded (not counted as 0).
+        let runLoad = 0;
+        for (const r of runs) {
+          if (!r.isRunLike) continue;
+          if (r.startDate < ws || r.startDate > we) continue;
+          const score = computeTrainingLoad(
+            r.durationSeconds,
+            r.avgHeartRate,
+            "running"
+          );
+          if (score == null) continue;
+          runLoad += score;
+        }
+
         return {
           label: `W${week.weekNumber}`,
           planned,
           actual,
           weekNumber: week.weekNumber,
+          runLoad,
         };
       });
   }, [activePlan, runs]);
@@ -445,6 +551,16 @@ export default function PlanInsightsPage() {
     const weeksWithPlan = adherenceData.filter((w) => w.planned > 0).length;
     const adherencePct = weeksWithPlan > 0 ? (weeksHit / weeksWithPlan) * 100 : 0;
 
+    // Avg weekly run load across elapsed plan weeks. Sum of per-week run load
+    // ÷ number of elapsed weeks (adherenceData.length, which already filters
+    // to weeks that have started). Null only when there are zero qualifying
+    // runs anywhere in the elapsed plan window.
+    const totalRunLoad = adherenceData.reduce((s, w) => s + w.runLoad, 0);
+    const avgWeeklyRunLoad =
+      totalRunLoad > 0 && adherenceData.length > 0
+        ? Math.round(totalRunLoad / adherenceData.length)
+        : null;
+
     return {
       totalPlanned,
       totalActual,
@@ -453,6 +569,7 @@ export default function PlanInsightsPage() {
       weeksHit,
       weeksWithPlan,
       adherencePct,
+      avgWeeklyRunLoad,
     };
   }, [adherenceData, activePlan]);
 
@@ -926,7 +1043,10 @@ export default function PlanInsightsPage() {
 
           {/* Summary stats row */}
           {planStats && (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            // 5-card row: widened from md:grid-cols-4 → md:grid-cols-5 so the
+            // new Avg Weekly Run Load KPI fits on one row at md+. On small
+            // screens it stays 2-col and wraps naturally.
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
               <Card>
                 <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-1">
                   Progress
@@ -971,6 +1091,19 @@ export default function PlanInsightsPage() {
                   <span className="text-sm font-normal text-textSecondary ml-1">mi</span>
                 </p>
               </Card>
+              <Card>
+                <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-1">
+                  Avg Weekly Run Load
+                </p>
+                <p className="text-2xl font-bold text-textPrimary tabular-nums">
+                  {planStats.avgWeeklyRunLoad != null
+                    ? planStats.avgWeeklyRunLoad.toLocaleString()
+                    : "—"}
+                </p>
+                <p className="text-xs text-textSecondary mt-1">
+                  score · runs only
+                </p>
+              </Card>
             </div>
           )}
 
@@ -998,6 +1131,10 @@ export default function PlanInsightsPage() {
 
           {/* Plan vs Actual chart */}
           <PlanAdherenceChart data={adherenceData} />
+
+          {/* Weekly Run Load chart — shares adherenceData so the week buckets
+              and x-axis domain line up with the mileage chart above. */}
+          <PlanRunLoadChart data={adherenceData} />
         </>
       )}
 
