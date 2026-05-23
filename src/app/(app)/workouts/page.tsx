@@ -35,6 +35,7 @@ import { type HealthWorkout } from "@/types/healthWorkout";
 import { WorkoutDetailModal } from "@/components/WorkoutDetailModal";
 import { ExcludedItemsModal } from "@/components/ExcludedItemsModal";
 import { TrainingLoadBadge } from "@/components/ui/TrainingLoadBadge";
+import { computeTrainingLoad } from "@/utils/trainingLoad";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -163,12 +164,20 @@ function YearSummary({ workouts, year }: { workouts: HealthWorkout[]; year: numb
         )
       : null;
 
+  const loadScores = workouts
+    .map((w) => computeTrainingLoad(w.durationSeconds, w.avgHeartRate, w.activityType))
+    .filter((s): s is number => s !== null);
+  const avgTrainingLoad =
+    loadScores.length > 0
+      ? Math.round(loadScores.reduce((s, v) => s + v, 0) / loadScores.length)
+      : null;
+
   const activeCount = workouts.filter((w) => !isMindBody(w)).length;
   const mindBodyCount = workouts.filter((w) => isMindBody(w)).length;
 
   return (
     <div className="bg-card rounded-2xl border border-border p-5 flex flex-col gap-5">
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatBlock label="Total Workouts" value={count} />
         <StatBlock
           label="Avg Duration"
@@ -178,6 +187,11 @@ function YearSummary({ workouts, year }: { workouts: HealthWorkout[]; year: numb
           label="Avg Calories"
           value={avgCalories !== null ? avgCalories.toLocaleString() : "—"}
           unit={avgCalories !== null ? "kcal" : undefined}
+        />
+        <StatBlock
+          label="Avg Training Load"
+          value={avgTrainingLoad !== null ? avgTrainingLoad.toLocaleString() : "—"}
+          unit={avgTrainingLoad !== null ? "score" : undefined}
         />
       </div>
       <div className="grid grid-cols-4 gap-4">

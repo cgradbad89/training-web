@@ -37,6 +37,7 @@ import {
 } from "@/utils/goalEvaluation";
 
 import { trainingLoadLevel } from "@/utils/metrics";
+import { computeTrainingLoad } from "@/utils/trainingLoad";
 import {
   formatPace,
   formatDuration,
@@ -155,6 +156,22 @@ function WeeklyStatsBar({ workouts, weekStart, weekEnd, plannedMiles }: WeeklySt
 
   const avgPaceSecPerMile = actualMiles > 0 ? totalMovingTime / actualMiles : 0;
 
+  const runLoadScores = runs
+    .map((r) => computeTrainingLoad(r.durationSeconds, r.avgHeartRate, r.activityType))
+    .filter((s): s is number => s !== null);
+  const avgRunLoad =
+    runLoadScores.length > 0
+      ? Math.round(runLoadScores.reduce((s, v) => s + v, 0) / runLoadScores.length)
+      : null;
+
+  const workoutLoadScores = nonRunWorkouts
+    .map((w) => computeTrainingLoad(w.durationSeconds, w.avgHeartRate, w.activityType))
+    .filter((s): s is number => s !== null);
+  const avgWorkoutLoad =
+    workoutLoadScores.length > 0
+      ? Math.round(workoutLoadScores.reduce((s, v) => s + v, 0) / workoutLoadScores.length)
+      : null;
+
   let milesColor = "text-textPrimary";
   if (plannedMiles > 0) {
     milesColor = actualMiles >= plannedMiles ? "text-success" : "text-danger";
@@ -162,7 +179,7 @@ function WeeklyStatsBar({ workouts, weekStart, weekEnd, plannedMiles }: WeeklySt
 
   return (
     <Card>
-      <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-8 gap-4">
         <StatItem
           label="Planned Miles"
           value={
@@ -180,7 +197,15 @@ function WeeklyStatsBar({ workouts, weekStart, weekEnd, plannedMiles }: WeeklySt
           label="Avg Pace"
           value={avgPaceSecPerMile > 0 ? `${formatPace(avgPaceSecPerMile)} /mi` : "—"}
         />
+        <StatItem
+          label="Run Load Avg"
+          value={avgRunLoad !== null ? avgRunLoad.toLocaleString() : "—"}
+        />
         <StatItem label="Workouts" value={nonRunWorkouts.length} />
+        <StatItem
+          label="Workout Load Avg"
+          value={avgWorkoutLoad !== null ? avgWorkoutLoad.toLocaleString() : "—"}
+        />
         <StatItem
           label="Calories"
           value={`${Math.round(totalCalories).toLocaleString()} kcal`}
