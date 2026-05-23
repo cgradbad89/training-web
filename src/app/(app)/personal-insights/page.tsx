@@ -4,6 +4,8 @@ import React, { useState, useEffect, useMemo } from "react";
 import {
   LineChart,
   Line,
+  BarChart,
+  Bar,
   XAxis,
   YAxis,
   Tooltip,
@@ -11,7 +13,15 @@ import {
   ResponsiveContainer,
   Legend,
 } from "recharts";
-import { ChevronLeft, ChevronRight, Timer, Trophy, TrendingUp, BotMessageSquare } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Timer,
+  Trophy,
+  TrendingUp,
+  BotMessageSquare,
+  Activity,
+} from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
@@ -36,6 +46,12 @@ import {
   riegelConfidenceLabel,
   type RiegelFit,
 } from "@/utils/riegelFit";
+import {
+  buildDailyLoadMap,
+  buildLoadEwmaSeries,
+  CTL_DAYS,
+} from "@/utils/trainingLoadSeries";
+import { computeTrainingLoad } from "@/utils/trainingLoad";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -146,6 +162,329 @@ function fastestMileSegment(points: RoutePoint[]): number | null {
   }
 
   return bestSeconds;
+}
+
+// ─── Training Load Section ───────────────────────────────────────────────────
+
+interface TrainingLoadSectionData {
+  displaySeries: Array<{
+    date: string;
+    load: number;
+    ctl: number;
+    atl: number;
+    tsb: number;
+  }>;
+  last: { ctl: number; atl: number; tsb: number } | null;
+  daysOfData: number;
+  peakRunLoad: number | null;
+  peakRunDate: Date | null;
+}
+
+interface WeeklyLoadDatum {
+  label: string;
+  runLoad: number;
+  workoutLoad: number;
+}
+
+function tsbBand(tsb: number): string {
+  if (tsb >= 5) return "Fresh";
+  if (tsb >= -10) return "Balanced";
+  return "Fatigued";
+}
+
+function signedRound(n: number): string {
+  const r = Math.round(n);
+  if (r > 0) return `+${r}`;
+  // Use a real minus sign for negative for typographic consistency.
+  if (r < 0) return `−${Math.abs(r)}`;
+  return "0";
+}
+
+function shortDateLabel(iso: string): string {
+  const [y, m, d] = iso.split("-").map((p) => parseInt(p, 10));
+  return new Date(y, m - 1, d).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function TrainingLoadSection({
+  data,
+  weeklyData,
+}: {
+  data: TrainingLoadSectionData;
+  weeklyData: WeeklyLoadDatum[];
+}) {
+  const { displaySeries, last, daysOfData, peakRunLoad, peakRunDate } = data;
+  const hasLoadData = displaySeries.some((p) => p.load > 0);
+  const baselineBuilding = daysOfData < CTL_DAYS;
+
+  const ctlValue = last && hasLoadData ? Math.round(last.ctl) : null;
+  const atlValue = last && hasLoadData ? Math.round(last.atl) : null;
+  const tsbValue = last && hasLoadData ? last.tsb : null;
+
+  // Recharts data — round CTL/ATL for chart readability; keep raw TSB for tooltip.
+  const chartData = displaySeries.map((p) => ({
+    date: p.date,
+    ctl: Math.round(p.ctl),
+    atl: Math.round(p.atl),
+    tsb: Math.round(p.tsb),
+  }));
+
+  // Weekly bars: show empty-state if every week has 0 load.
+  const hasWeeklyData = weeklyData.some(
+    (w) => w.runLoad > 0 || w.workoutLoad > 0
+  );
+
+  return (
+    <>
+      <Card>
+        {/* KPI row */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-2">
+          <div className="text-center">
+            <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-2">
+              Fitness (CTL)
+            </p>
+            <p className="text-2xl font-bold text-textPrimary tabular-nums">
+              {ctlValue != null ? ctlValue : "—"}
+            </p>
+            <p className="text-xs text-textSecondary mt-1">42-day load</p>
+          </div>
+          <div className="text-center">
+            <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-2">
+              Fatigue (ATL)
+            </p>
+            <p className="text-2xl font-bold text-textPrimary tabular-nums">
+              {atlValue != null ? atlValue : "—"}
+            </p>
+            <p className="text-xs text-textSecondary mt-1">7-day load</p>
+          </div>
+          <div className="text-center">
+            <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-2">
+              Form (TSB)
+            </p>
+            <p className="text-2xl font-bold text-textPrimary tabular-nums">
+              {tsbValue != null ? signedRound(tsbValue) : "—"}
+            </p>
+            <p className="text-xs text-textSecondary mt-1">
+              {tsbValue != null ? tsbBand(tsbValue) : "—"}
+            </p>
+          </div>
+          <div className="text-center">
+            <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-2">
+              Peak Run Load
+            </p>
+            <p className="text-2xl font-bold text-textPrimary tabular-nums">
+              {peakRunLoad != null ? Math.round(peakRunLoad) : "—"}
+            </p>
+            <p className="text-xs text-textSecondary mt-1">
+              {peakRunDate
+                ? peakRunDate.toLocaleDateString("en-US", {
+                    month: "short",
+                    day: "numeric",
+                  })
+                : "—"}
+            </p>
+          </div>
+        </div>
+
+        {baselineBuilding && hasLoadData && (
+          <p className="text-xs text-textSecondary text-center mt-3">
+            Baseline still building ({daysOfData} days)
+          </p>
+        )}
+      </Card>
+
+      {/* Fitness curve */}
+      <Card>
+        <h3 className="text-sm font-semibold text-textPrimary mb-1">
+          Fitness curve — last 16 weeks
+        </h3>
+        <p className="text-xs text-textSecondary mb-3">
+          Fitness (CTL) is your 42-day load average; Fatigue (ATL) is 7-day. The
+          gap is your form.
+        </p>
+        {hasLoadData ? (
+          <ResponsiveContainer width="100%" height={220}>
+            <LineChart
+              data={chartData}
+              margin={{ top: 4, right: 8, bottom: 0, left: 8 }}
+            >
+              <CartesianGrid
+                strokeDasharray="3 3"
+                vertical={false}
+                stroke="var(--color-border)"
+              />
+              <XAxis
+                dataKey="date"
+                tick={{ fontSize: 10 }}
+                axisLine={false}
+                tickLine={false}
+                interval={6}
+                tickFormatter={(v: string) => shortDateLabel(v)}
+              />
+              <YAxis
+                domain={[0, "dataMax + 10"]}
+                tick={{ fontSize: 10 }}
+                axisLine={false}
+                tickLine={false}
+                width={40}
+              />
+              <Tooltip
+                labelFormatter={(l) => shortDateLabel(String(l))}
+                formatter={(value, name) => {
+                  const label =
+                    name === "ctl"
+                      ? "Fitness (CTL)"
+                      : name === "atl"
+                        ? "Fatigue (ATL)"
+                        : "Form (TSB)";
+                  const num = Number(value);
+                  const display =
+                    name === "tsb" ? signedRound(num) : String(Math.round(num));
+                  return [display, label];
+                }}
+                contentStyle={{
+                  fontSize: 12,
+                  backgroundColor: "var(--color-chart-tooltip-bg)",
+                  border: "1px solid var(--color-border)",
+                  borderRadius: "0.375rem",
+                  color: "var(--color-textPrimary)",
+                }}
+                labelStyle={{ color: "var(--color-textSecondary)" }}
+                itemStyle={{ color: "var(--color-textPrimary)" }}
+              />
+              <Legend
+                wrapperStyle={{ fontSize: 11 }}
+                formatter={(value) =>
+                  value === "ctl"
+                    ? "Fitness (CTL)"
+                    : value === "atl"
+                      ? "Fatigue (ATL)"
+                      : value
+                }
+              />
+              <Line
+                type="monotone"
+                dataKey="ctl"
+                stroke="var(--color-chart-primary)"
+                strokeWidth={2}
+                dot={false}
+                name="ctl"
+              />
+              <Line
+                type="monotone"
+                dataKey="atl"
+                stroke="var(--color-chart-orange)"
+                strokeWidth={2}
+                dot={false}
+                name="atl"
+              />
+              {/* TSB is computed but rendered only in tooltip — wired via an
+                  invisible line so Recharts includes it in payload. */}
+              <Line
+                type="monotone"
+                dataKey="tsb"
+                stroke="transparent"
+                strokeWidth={0}
+                dot={false}
+                legendType="none"
+                name="tsb"
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        ) : (
+          <p className="text-sm text-textSecondary text-center py-6">
+            Not enough HR-bearing activity yet to plot fitness and fatigue.
+          </p>
+        )}
+      </Card>
+
+      {/* Weekly load trend */}
+      <Card>
+        <h3 className="text-sm font-semibold text-textPrimary mb-3">
+          Weekly training load — last 16 weeks
+        </h3>
+        {hasWeeklyData ? (
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart
+              data={weeklyData}
+              margin={{ top: 4, right: 8, bottom: 0, left: 8 }}
+            >
+              <CartesianGrid
+                strokeDasharray="3 3"
+                vertical={false}
+                stroke="var(--color-border)"
+              />
+              <XAxis
+                dataKey="label"
+                tick={{ fontSize: 10 }}
+                axisLine={false}
+                tickLine={false}
+              />
+              <YAxis
+                allowDecimals={false}
+                tick={{ fontSize: 10 }}
+                axisLine={false}
+                tickLine={false}
+                width={52}
+              />
+              <Tooltip
+                cursor={{ fill: "rgba(0,0,0,0.04)" }}
+                formatter={(value, name) => {
+                  const label =
+                    name === "runLoad"
+                      ? "Run load"
+                      : name === "workoutLoad"
+                        ? "Workout load"
+                        : name;
+                  return [Math.round(Number(value)), label];
+                }}
+                labelFormatter={(l) => `Week of ${l}`}
+                contentStyle={{
+                  fontSize: 12,
+                  backgroundColor: "var(--color-chart-tooltip-bg)",
+                  border: "1px solid var(--color-border)",
+                  borderRadius: "0.375rem",
+                  color: "var(--color-textPrimary)",
+                }}
+                labelStyle={{ color: "var(--color-textSecondary)" }}
+                itemStyle={{ color: "var(--color-textPrimary)" }}
+              />
+              <Legend
+                wrapperStyle={{ fontSize: 11 }}
+                formatter={(v) =>
+                  v === "runLoad"
+                    ? "Run load"
+                    : v === "workoutLoad"
+                      ? "Workout load"
+                      : v
+                }
+              />
+              <Bar
+                dataKey="runLoad"
+                stackId="load"
+                fill="var(--color-chart-primary)"
+                radius={[0, 0, 0, 0]}
+                name="runLoad"
+              />
+              <Bar
+                dataKey="workoutLoad"
+                stackId="load"
+                fill="var(--color-chart-teal)"
+                radius={[6, 6, 0, 0]}
+                name="workoutLoad"
+              />
+            </BarChart>
+          </ResponsiveContainer>
+        ) : (
+          <p className="text-sm text-textSecondary text-center py-6">
+            Not enough HR-bearing activity in the last 16 weeks.
+          </p>
+        )}
+      </Card>
+    </>
+  );
 }
 
 // ─── Page ────────────────────────────────────────────────────────────────────
@@ -404,6 +743,124 @@ export default function PersonalInsightsPage() {
 
   const hasPaceTrend = paceTrendData.some((w) => w.short || w.medium || w.long);
 
+  // ── Training Load (CTL / ATL / TSB) ────────────────────────────────────────
+
+  const trainingLoadData = useMemo(() => {
+    // Window the user sees on the chart.
+    const DISPLAY_DAYS = 112; // 16 weeks
+    // Seed window — 180 days is well past 3× CTL_DAYS (42), so the EWMA has
+    // converged by the time we hit the displayed range.
+    const SEED_DAYS = 180;
+
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const displayStart = new Date(today);
+    displayStart.setDate(today.getDate() - (DISPLAY_DAYS - 1));
+
+    // Determine the earliest day we can safely seed from: prefer the seed
+    // window, but if the user's actual history is shorter, start there.
+    const earliestWorkoutTime = workouts.reduce(
+      (min, w) => Math.min(min, w.startDate.getTime()),
+      Infinity
+    );
+    const seedFromHistory =
+      isFinite(earliestWorkoutTime) ? new Date(earliestWorkoutTime) : null;
+
+    const seedFromSeedWindow = new Date(today);
+    seedFromSeedWindow.setDate(today.getDate() - (SEED_DAYS - 1));
+
+    const seedStart =
+      seedFromHistory && seedFromHistory > seedFromSeedWindow
+        ? new Date(
+            seedFromHistory.getFullYear(),
+            seedFromHistory.getMonth(),
+            seedFromHistory.getDate()
+          )
+        : seedFromSeedWindow;
+
+    const dailyMap = buildDailyLoadMap(workouts);
+    const fullSeries = buildLoadEwmaSeries(dailyMap, seedStart, today);
+
+    // Slice for display
+    const displaySeries = fullSeries.slice(
+      Math.max(0, fullSeries.length - DISPLAY_DAYS)
+    );
+
+    // Latest values from the converged series
+    const last = fullSeries[fullSeries.length - 1] ?? null;
+
+    // Total calendar days in fullSeries == seedStart→today inclusive; a useful
+    // proxy for "days of data" available for baselining.
+    const daysOfData = fullSeries.length;
+
+    // Peak single-run training load over the displayed (112d) window.
+    const displayStartTime = displayStart.getTime();
+    let peakRunLoad = 0;
+    let peakRunDate: Date | null = null;
+    for (const w of workouts) {
+      if (!w.isRunLike) continue;
+      if (w.startDate.getTime() < displayStartTime) continue;
+      const score = computeTrainingLoad(
+        w.durationSeconds,
+        w.avgHeartRate,
+        w.activityType
+      );
+      if (score == null) continue;
+      if (score > peakRunLoad) {
+        peakRunLoad = score;
+        peakRunDate = w.startDate;
+      }
+    }
+
+    return {
+      dailyMap,
+      displaySeries,
+      last,
+      daysOfData,
+      peakRunLoad: peakRunDate ? peakRunLoad : null,
+      peakRunDate,
+      displayStart,
+      today,
+    };
+  }, [workouts]);
+
+  const weeklyLoadData = useMemo(() => {
+    // Last 16 weeks, Monday-anchored — matches Workout Frequency chart bucketing.
+    const today = new Date();
+    const currentMonday = getWeekStart(today);
+
+    return Array.from({ length: 16 }, (_, i) => {
+      const weekDate = new Date(currentMonday);
+      weekDate.setDate(weekDate.getDate() - (15 - i) * 7);
+      const label = weekDate.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+      });
+
+      let runLoad = 0;
+      let workoutLoad = 0;
+      for (let d = 0; d < 7; d++) {
+        const day = new Date(weekDate);
+        day.setDate(weekDate.getDate() + d);
+        const iso = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(
+          2,
+          "0"
+        )}-${String(day.getDate()).padStart(2, "0")}`;
+        const entry = trainingLoadData.dailyMap.get(iso);
+        if (entry) {
+          runLoad += entry.runLoad;
+          workoutLoad += entry.workoutLoad;
+        }
+      }
+
+      return {
+        label,
+        runLoad: Math.round(runLoad),
+        workoutLoad: Math.round(workoutLoad),
+      };
+    });
+  }, [trainingLoadData.dailyMap]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -486,6 +943,11 @@ export default function PersonalInsightsPage() {
           Ask about my race predictions
         </button>
       </Card>
+
+      {/* ── Training Load ─────────────────────────────────── */}
+      <SectionHeader icon={Activity} title="Training Load" />
+
+      <TrainingLoadSection data={trainingLoadData} weeklyData={weeklyLoadData} />
 
       {/* ── Personal Records by Year ─────────────────────── */}
       <SectionHeader icon={Trophy} title="Personal Records by Year" />
