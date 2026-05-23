@@ -43,6 +43,111 @@ export const HR_ZONES: HRZone[] = [
   { zone: 5, minPct: 0.90, maxPct: 1.00, multiplier: 6.5, label: "Max"       },
 ];
 
+// ─── Activity context — running vs OTF vs strength ──────────────────────────
+//
+// Strength work peaks HR lower than running for the same perceived effort,
+// and OTF (mixed treadmill + floor) sits between. We shift the zone bands
+// for these contexts so the Load score reads similarly across activities:
+// 120 bpm on a strength session shouldn't read "Recovery" the way 120 bpm
+// on a long run does.
+
+export type ActivityContext = "running" | "otf" | "strength";
+
+export const ACTIVITY_CONTEXT_LABEL: Record<ActivityContext, string> = {
+  running: "Running",
+  otf: "OTF / HIIT",
+  strength: "Strength",
+};
+
+/**
+ * Map a HealthKit activityType string to a TRIMP zone-set context. Defaults
+ * to "strength" when the activityType is missing — Load shouldn't read as a
+ * run if the source data is unclear, and strength's lower boundaries are
+ * the conservative pick.
+ */
+export function getActivityContext(
+  activityType: string | null | undefined
+): ActivityContext {
+  if (!activityType) return "strength";
+  const t = activityType.toLowerCase().trim();
+
+  // OTF + HIIT family — mixed treadmill/floor, peaks below pure running.
+  if (
+    t.includes("orangetheory") ||
+    t.includes("orange_theory") ||
+    t.includes("highintensityintervaltraining") ||
+    t.includes("high_intensity_interval_training") ||
+    t.includes("hiit") ||
+    t.includes("mixedcardio") ||
+    t.includes("mixed_cardio")
+  ) {
+    return "otf";
+  }
+
+  // Continuous-cardio family — running, walking, hiking, cycling. These
+  // share the running zone set because HR responds in a similar steady-
+  // state way to sustained aerobic work.
+  if (
+    t.includes("run") ||
+    t.includes("walk") ||
+    t.includes("hike") ||
+    t.includes("cycling") ||
+    t.includes("ride")
+  ) {
+    return "running";
+  }
+
+  // Everything else (strength, core, yoga, pilates, dance, etc.) — HR peaks
+  // lower per unit of effort.
+  return "strength";
+}
+
+/** Per-context zone sets. All share the same multipliers; only the bpm
+ *  bands shift so a strength session at 120 bpm reads as harder effort
+ *  than a long run at 120 bpm. */
+export const WORKOUT_ZONES: Record<ActivityContext, HRZone[]> = {
+  running: HR_ZONES,
+  otf: [
+    { zone: 1, minPct: 0,    maxPct: 0.57, multiplier: 1.0, label: "Recovery"  },
+    { zone: 2, minPct: 0.57, maxPct: 0.68, multiplier: 1.5, label: "Aerobic"   },
+    { zone: 3, minPct: 0.68, maxPct: 0.76, multiplier: 2.5, label: "Tempo"     },
+    { zone: 4, minPct: 0.76, maxPct: 0.85, multiplier: 4.0, label: "Threshold" },
+    { zone: 5, minPct: 0.85, maxPct: 1.00, multiplier: 6.5, label: "Max"       },
+  ],
+  strength: [
+    { zone: 1, minPct: 0,    maxPct: 0.50, multiplier: 1.0, label: "Recovery"  },
+    { zone: 2, minPct: 0.50, maxPct: 0.62, multiplier: 1.5, label: "Aerobic"   },
+    { zone: 3, minPct: 0.62, maxPct: 0.70, multiplier: 2.5, label: "Tempo"     },
+    { zone: 4, minPct: 0.70, maxPct: 0.80, multiplier: 4.0, label: "Threshold" },
+    { zone: 5, minPct: 0.80, maxPct: 1.00, multiplier: 6.5, label: "Max"       },
+  ],
+};
+
+/** Inclusive-min, exclusive-max bpm bounds for a specific zone in a context. */
+export function zoneBoundsBpmForActivity(
+  z: HRZone,
+  context: ActivityContext
+): { min: number; maxLabel: string } {
+  const zones = WORKOUT_ZONES[context];
+  const idx = zones.findIndex((x) => x.zone === z.zone);
+  const min = Math.ceil(z.minPct * MAX_HR);
+  const maxLabel =
+    idx === zones.length - 1
+      ? `${Math.ceil(z.minPct * MAX_HR)}+`
+      : `${Math.floor(z.maxPct * MAX_HR)}`;
+  return { min, maxLabel };
+}
+
+/** Pick the zone for an avg HR inside a given activity context. */
+export function getHRZoneForActivity(
+  bpm: number,
+  context: ActivityContext
+): HRZone {
+  const zones = WORKOUT_ZONES[context];
+  const pct = bpm / MAX_HR;
+  return zones.find((z) => pct < z.maxPct) ?? zones[zones.length - 1];
+}
+
 /** Inclusive-min, exclusive-max bpm bounds (Zone 5 is open-ended). */
 export function zoneBoundsBpm(z: HRZone): { min: number; maxLabel: string } {
   const min = Math.ceil(z.minPct * MAX_HR);
@@ -62,16 +167,22 @@ export function getHRZone(bpm: number): HRZone {
 /**
  * Compute Training Load. Returns null when HR or duration is missing/invalid,
  * matching the existing "—" behaviour of the efficiency score it replaces.
+ *
+ * `activityType` is optional; when provided, zone bands shift per the
+ * WORKOUT_ZONES table (running / otf / strength). When omitted, falls back
+ * to the running zone set so existing call sites keep their behaviour.
  */
 export function computeTrainingLoad(
   durationSeconds: number,
-  avgHeartRate: number | null | undefined
+  avgHeartRate: number | null | undefined,
+  activityType?: string | null
 ): number | null {
   if (!avgHeartRate || avgHeartRate <= 0) return null;
   if (!durationSeconds || durationSeconds <= 0) return null;
   if (!isFinite(avgHeartRate) || !isFinite(durationSeconds)) return null;
   const durationMinutes = durationSeconds / 60;
-  const zone = getHRZone(avgHeartRate);
+  const context = activityType ? getActivityContext(activityType) : "running";
+  const zone = getHRZoneForActivity(avgHeartRate, context);
   return Math.round(durationMinutes * zone.multiplier);
 }
 

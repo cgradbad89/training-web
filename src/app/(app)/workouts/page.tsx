@@ -34,6 +34,7 @@ import { weekStart } from "@/utils/dates";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { WorkoutDetailModal } from "@/components/WorkoutDetailModal";
 import { ExcludedItemsModal } from "@/components/ExcludedItemsModal";
+import { TrainingLoadBadge } from "@/components/ui/TrainingLoadBadge";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -304,6 +305,19 @@ function WorkoutRow({ workout, onClick }: { workout: HealthWorkout; onClick: () 
       {/* Col 6: Heart Rate — hidden on mobile */}
       <div className="hidden md:block w-20 shrink-0 text-sm text-textSecondary tabular-nums text-right">
         {workout.avgHeartRate ? `${Math.round(workout.avgHeartRate)} bpm` : "—"}
+      </div>
+
+      {/* Col 7: Training Load — only when both inputs are present */}
+      <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
+        {workout.avgHeartRate && workout.durationSeconds > 0 ? (
+          <TrainingLoadBadge
+            durationSeconds={workout.durationSeconds}
+            avgHeartRate={workout.avgHeartRate}
+            activityType={workout.activityType}
+          />
+        ) : (
+          <span className="text-xs text-textSecondary w-12 inline-block text-right">—</span>
+        )}
       </div>
     </div>
   );

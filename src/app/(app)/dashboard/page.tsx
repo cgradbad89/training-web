@@ -247,6 +247,7 @@ function ThisWeekRunsCard({ workouts, weekStart }: ThisWeekRunsCardProps) {
                     <TrainingLoadBadge
                       durationSeconds={run.durationSeconds}
                       avgHeartRate={run.avgHeartRate}
+                      activityType={run.activityType}
                     />
                   </div>
                 </Link>
@@ -304,12 +305,12 @@ function WorkoutSummaryCard({ workouts, weekStart, weekEnd }: WorkoutSummaryCard
             return (
               <div
                 key={w.workoutId}
-                className="flex items-center justify-between py-2.5 px-1 hover:bg-surface rounded-lg transition-colors"
+                className="flex items-center justify-between py-2.5 px-1 hover:bg-surface rounded-lg transition-colors gap-2"
               >
-                <div className="flex items-center gap-2.5">
+                <div className="flex items-center gap-2.5 min-w-0">
                   <Icon size={15} className="text-textSecondary shrink-0" />
                   <span className="text-xs text-textSecondary w-7 shrink-0">{dayLabel}</span>
-                  <span className="text-sm text-textPrimary">{w.displayType}</span>
+                  <span className="text-sm text-textPrimary truncate">{w.displayType}</span>
                 </div>
                 <div className="flex items-center gap-2 text-xs text-textSecondary whitespace-nowrap">
                   <span>{formatDuration(w.durationSeconds)}</span>
@@ -318,6 +319,13 @@ function WorkoutSummaryCard({ workouts, weekStart, weekEnd }: WorkoutSummaryCard
                       <span className="text-border">·</span>
                       <span>{Math.round(w.calories).toLocaleString()} kcal</span>
                     </>
+                  )}
+                  {w.avgHeartRate && w.durationSeconds > 0 && (
+                    <TrainingLoadBadge
+                      durationSeconds={w.durationSeconds}
+                      avgHeartRate={w.avgHeartRate}
+                      activityType={w.activityType}
+                    />
                   )}
                 </div>
               </div>

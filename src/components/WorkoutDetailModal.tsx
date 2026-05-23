@@ -17,6 +17,7 @@ import {
   excludeWorkout,
   restoreWorkout,
 } from "@/services/workoutOverrides";
+import { TrainingLoadBadge } from "@/components/ui/TrainingLoadBadge";
 
 interface WorkoutDetailModalProps {
   workout: HealthWorkout;
@@ -169,6 +170,21 @@ export function WorkoutDetailModal({
                   ? Math.round(workout.avgHeartRate) + " bpm"
                   : "\u2014"}
               </p>
+            </div>
+
+            {/* Training Load */}
+            <div className="bg-surface rounded-xl p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-xs text-textSecondary uppercase tracking-widest font-semibold">
+                  Training Load
+                </span>
+              </div>
+              <TrainingLoadBadge
+                durationSeconds={workout.durationSeconds}
+                avgHeartRate={workout.avgHeartRate}
+                activityType={workout.activityType}
+                size="large"
+              />
             </div>
 
             {/* Source */}

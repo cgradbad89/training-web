@@ -441,6 +441,7 @@ function RunRow({
           <TrainingLoadBadge
             durationSeconds={run.durationSeconds}
             avgHeartRate={run.avgHeartRate}
+            activityType={run.activityType}
           />
         </div>
 

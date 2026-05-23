@@ -546,6 +546,7 @@ export default function RunDetailPage() {
             <TrainingLoadBadge
               durationSeconds={displayWorkout.durationSeconds}
               avgHeartRate={displayWorkout.avgHeartRate}
+              activityType={displayWorkout.activityType}
               size="large"
             />
           </div>
