@@ -43,6 +43,11 @@ import {
   MIN_WORKOUT_SECONDS_FOR_AVG,
 } from "@/utils/trainingLoad";
 import {
+  buildDailyLoadMap,
+  rollingLoad,
+  loadStatus,
+} from "@/utils/trainingLoadSeries";
+import {
   formatPace,
   formatDuration,
   formatMiles,
@@ -820,7 +825,7 @@ function TrainingLoadCard({ workouts }: TrainingLoadCardProps) {
 
   return (
     <Card>
-      <CardTitle>Training Load</CardTitle>
+      <CardTitle>Mileage Training Load</CardTitle>
 
       <div className="grid grid-cols-2 gap-4 mb-4">
         <div className="flex flex-col gap-0.5">
@@ -851,6 +856,67 @@ function TrainingLoadCard({ workouts }: TrainingLoadCardProps) {
         />
       ) : (
         <p className="text-xs text-textSecondary">No run data yet</p>
+      )}
+    </Card>
+  );
+}
+
+// ─── Load Score Training Load ─────────────────────────────────────────────────
+
+interface LoadScoreTrainingLoadCardProps {
+  workouts: HealthWorkout[];
+}
+
+function LoadScoreTrainingLoadCard({
+  workouts,
+}: LoadScoreTrainingLoadCardProps) {
+  const now = new Date();
+
+  // Build the daily-load map across ALL workout types (runs + non-runs).
+  // The advantage of this card over the mileage card is that it surfaces
+  // cross-training stress mileage can't see.
+  const dailyMap = useMemo(() => buildDailyLoadMap(workouts), [workouts]);
+
+  const acute = rollingLoad(dailyMap, now, 7);          // 7-day total
+  const chronicTotal = rollingLoad(dailyMap, now, 28);  // 28-day total
+  const chronicWeekly = chronicTotal / 4;               // avg per week over 28d
+
+  const hasAcute = acute > 0;
+  const hasChronic = chronicWeekly > 0;
+
+  const status = loadStatus(acute, chronicWeekly);
+
+  return (
+    <Card>
+      <CardTitle>Load Score Training Load</CardTitle>
+
+      <div className="grid grid-cols-2 gap-4 mb-4">
+        <div className="flex flex-col gap-0.5">
+          <span className="text-xs text-textSecondary">7-Day Load</span>
+          <span className="text-2xl font-bold text-textPrimary tabular-nums">
+            {hasAcute ? Math.round(acute).toLocaleString() : "—"}
+            {hasAcute && (
+              <span className="text-sm font-normal text-textSecondary"> score</span>
+            )}
+          </span>
+        </div>
+        <div className="flex flex-col gap-0.5">
+          <span className="text-xs text-textSecondary">28-Day Avg/Wk</span>
+          <span className="text-2xl font-bold text-textPrimary tabular-nums">
+            {hasChronic ? Math.round(chronicWeekly).toLocaleString() : "—"}
+            {hasChronic && (
+              <span className="text-sm font-normal text-textSecondary"> score</span>
+            )}
+          </span>
+        </div>
+      </div>
+
+      {status ? (
+        <MetricBadge label="Status" value={status.label} level={status.level} />
+      ) : (
+        <p className="text-xs text-textSecondary">
+          No HR-bearing activity in the window
+        </p>
       )}
     </Card>
   );
@@ -1039,6 +1105,7 @@ export default function DashboardPage() {
           weekEnd={selectedWeekEnd}
         />
         <TrainingLoadCard workouts={workouts} />
+        <LoadScoreTrainingLoadCard workouts={workouts} />
       </div>
     </div>
   );
