@@ -861,16 +861,34 @@ export default function PersonalInsightsPage() {
     return fitRiegel(efforts, 3.1069, 0, { min: 0.9, max: 1.3 });
   }, [runInputs, raceInputs]);
 
-  const fitLong = useMemo(() => {
+  // Per-distance long fits — each target is gated independently by
+  // hasRaceAnchor inside fitRiegel, so a half-only race (e.g. 13.37mi) unlocks
+  // the 10mi and half fits but leaves the marathon fit null (its anchor check
+  // demands a race effort ≥26.219mi).
+  // All three reuse the same long-distance args the single `fitLong` used
+  // before: minMilesForFit=3.0, k clamp [1.04, 1.10].
+  const fitTen = useMemo(() => {
+    const efforts = buildQualifyingEfforts(runInputs, 56, { races: raceInputs });
+    return fitRiegel(efforts, 10.0, 3.0, { min: 1.04, max: 1.10 });
+  }, [runInputs, raceInputs]);
+
+  const fitHalf = useMemo(() => {
     const efforts = buildQualifyingEfforts(runInputs, 56, { races: raceInputs });
     return fitRiegel(efforts, 13.109, 3.0, { min: 1.04, max: 1.10 });
   }, [runInputs, raceInputs]);
 
-  const t5k = fit5k ? predictSeconds(fit5k, 3.1069) : null;
-  const t10 = fitLong ? predictSeconds(fitLong, 10.0) : null;
-  const tHalf = fitLong ? predictSeconds(fitLong, 13.109) : null;
-  const tMar = fitLong ? predictSeconds(fitLong, 26.219) : null;
+  const fitMarathon = useMemo(() => {
+    const efforts = buildQualifyingEfforts(runInputs, 56, { races: raceInputs });
+    return fitRiegel(efforts, 26.219, 3.0, { min: 1.04, max: 1.10 });
+  }, [runInputs, raceInputs]);
 
+  const t5k  = fit5k        ? predictSeconds(fit5k,        3.1069) : null;
+  const t10  = fitTen       ? predictSeconds(fitTen,       10.0)   : null;
+  const tHalf = fitHalf     ? predictSeconds(fitHalf,      13.109) : null;
+  const tMar = fitMarathon  ? predictSeconds(fitMarathon,  26.219) : null;
+
+  // Confidence is computed from the half-distance fit — the closest analog to
+  // the original `fitLong` (same target distance), preserving prior semantics.
   function overallConfidence(f5k: RiegelFit | null, fLong: RiegelFit | null): string {
     if (!fLong) return "Limited Data";
     if (fLong.n >= 6 && fLong.r2 >= 0.55) return "High";
@@ -878,7 +896,7 @@ export default function PersonalInsightsPage() {
     return "Limited Data";
   }
 
-  const confidence = overallConfidence(fit5k, fitLong);
+  const confidence = overallConfidence(fit5k, fitHalf);
   const confidenceLevel: "good" | "ok" | "low" =
     confidence === "High" ? "good" : confidence === "Moderate" ? "ok" : "low";
 
@@ -1172,18 +1190,26 @@ export default function PersonalInsightsPage() {
           ))}
         </div>
 
-        {!fitLong && !fit5k && (
+        {!fit5k && !fitTen && !fitHalf && !fitMarathon && (
           <p className="text-xs text-textSecondary mt-4 text-center">
             Need 4+ qualifying runs in the last 8 weeks for predictions.
           </p>
         )}
 
-        {fitLong && (
-          <p className="text-xs text-textSecondary mt-4 text-center">
-            Model: {fitLong.n} efforts, R² {fitLong.r2.toFixed(2)}, exponent{" "}
-            {fitLong.k.toFixed(3)}
-          </p>
-        )}
+        {/* Show the model line for the strongest long fit available — prefer
+            half (closest to the prior `fitLong` semantics), fall back to
+            marathon, then 10mi, so post-race recovery still gets a model
+            summary even when only the half fit is unlocked. */}
+        {(() => {
+          const modelFit = fitHalf ?? fitMarathon ?? fitTen;
+          if (!modelFit) return null;
+          return (
+            <p className="text-xs text-textSecondary mt-4 text-center">
+              Model: {modelFit.n} efforts, R² {modelFit.r2.toFixed(2)}, exponent{" "}
+              {modelFit.k.toFixed(3)}
+            </p>
+          );
+        })()}
         <button
           onClick={() => askCoach(
             'Based on my predicted race times, how realistic is ' +
