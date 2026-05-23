@@ -7,6 +7,7 @@ import {
   buildQualifyingEfforts, fitRiegel, predictSeconds
 } from '@/utils/riegelFit'
 import { weekStart as getWeekStart } from '@/utils/dates'
+import { computeTrainingLoad } from '@/utils/trainingLoad'
 import type { WorkoutOverride } from '@/types/workoutOverride'
 
 const RACE_MILES: Record<Exclude<RaceDistance, 'custom'>, number> = {
@@ -76,15 +77,13 @@ export function buildCoachContext(
     const d = new Date(r.startDate)
     const miles = r.distanceMiles ?? 0
     const pace = miles > 0 ? formatPaceStr(r.durationSeconds / miles) : null
-    const eff = r.efficiencyScore != null
-      ? r.efficiencyScore / 2  // normalize to 1-10 range
-      : null
+    const trainingLoad = computeTrainingLoad(r.durationSeconds, r.avgHeartRate)
     return {
       date: formatDateStr(d),
       distance: miles,
       pace,
       avgHR: r.avgHeartRate ?? null,
-      efficiencyScore: eff,
+      trainingLoad,
       runType: r.displayType ?? null,
     }
   })

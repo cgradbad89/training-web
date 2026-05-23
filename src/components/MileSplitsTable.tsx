@@ -4,16 +4,6 @@ import React from "react";
 import { type MileSplit } from "@/utils/mileSplits";
 import { formatPace } from "@/utils/pace";
 
-// ─── Efficiency color helpers (matches MetricBadge / runs list styling) ─────
-
-function efficiencyColor(score: number): string {
-  if (score >= 7) return "text-green-700 bg-green-100";
-  if (score >= 5) return "text-yellow-800 bg-yellow-100";
-  return "text-orange-800 bg-orange-100";
-}
-
-// ─── Component ──────────────────────────────────────────────────────────────
-
 interface MileSplitsTableProps {
   splits: MileSplit[];
   routeLoading: boolean;
@@ -85,8 +75,7 @@ export function MileSplitsTable({
             <tr className="text-xs text-textSecondary uppercase tracking-wide border-b border-border">
               <th className="text-left py-2 pr-4 font-medium">Mile</th>
               <th className="text-right py-2 px-4 font-medium">Pace</th>
-              <th className="text-right py-2 px-4 font-medium">Heart Rate</th>
-              <th className="text-right py-2 pl-4 font-medium">Efficiency</th>
+              <th className="text-right py-2 pl-4 font-medium">Heart Rate</th>
             </tr>
           </thead>
           <tbody>
@@ -103,22 +92,11 @@ export function MileSplitsTable({
                 <td className="py-2.5 px-4 text-right text-textPrimary tabular-nums">
                   {formatPace(split.paceSecPerMile)} /mi
                 </td>
-                <td className="py-2.5 px-4 text-right text-textPrimary tabular-nums">
+                <td className="py-2.5 pl-4 text-right text-textPrimary tabular-nums">
                   {split.avgBpm ? (
                     <span>{Math.round(split.avgBpm)} bpm</span>
                   ) : (
-                    <span className="text-textSecondary">{"\u2014"}</span>
-                  )}
-                </td>
-                <td className="py-2.5 pl-4 text-right">
-                  {split.efficiency != null ? (
-                    <span
-                      className={`inline-block px-2 py-0.5 rounded-full text-xs font-semibold ${efficiencyColor(split.efficiency)}`}
-                    >
-                      {split.efficiency.toFixed(1)}
-                    </span>
-                  ) : (
-                    <span className="text-textSecondary">{"\u2014"}</span>
+                    <span className="text-textSecondary">{"—"}</span>
                   )}
                 </td>
               </tr>

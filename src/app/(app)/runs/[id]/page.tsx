@@ -11,7 +11,7 @@ import { MileSplitCharts } from "@/components/MileSplitCharts";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { StatBlock } from "@/components/ui/StatBlock";
 import { MetricBadge } from "@/components/ui/MetricBadge";
-import { EfficiencyTooltip } from "@/components/ui/EfficiencyTooltip";
+import { TrainingLoadBadge } from "@/components/ui/TrainingLoadBadge";
 import { useAuth } from "@/hooks/useAuth";
 import { useUnsavedChanges } from "@/hooks/useUnsavedChanges";
 import { fetchHealthWorkout } from "@/services/healthWorkouts";
@@ -34,8 +34,6 @@ import {
 } from "@/types/workoutOverride";
 import { formatPace, formatDuration } from "@/utils/pace";
 import {
-  efficiencyDisplayScore,
-  efficiencyTierLevel,
   distanceBucket,
   driftLevel,
 } from "@/utils/metrics";
@@ -51,25 +49,6 @@ import { db } from "@/lib/firebase";
 const RunMap = dynamic(() => import("@/components/RunMap"), { ssr: false });
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function getEffBadgeLevel(
-  workout: HealthWorkout
-): "good" | "ok" | "low" | "neutral" {
-  const hasHR =
-    workout.avgHeartRate !== null && (workout.avgSpeedMPS ?? 0) > 0;
-  if (!hasHR || !workout.avgHeartRate) return "neutral";
-  try {
-    const displayScore = efficiencyDisplayScore(
-      workout.avgSpeedMPS ?? 0,
-      workout.avgHeartRate
-    );
-    if (!isFinite(displayScore) || displayScore <= 0 || displayScore > 10)
-      return "neutral";
-    return efficiencyTierLevel(displayScore, workout.distanceMiles);
-  } catch {
-    return "neutral";
-  }
-}
 
 function getDriftBadgeLevel(
   workout: HealthWorkout
@@ -243,26 +222,6 @@ export default function RunDetailPage() {
     hour: "numeric",
     minute: "2-digit",
   });
-
-  // Efficiency \u2014 use the same normalized 1\u201310 display score as the runs list
-  // and dashboard. computeEfficiencyDisplay returned the raw 14\u201320 score, which
-  // always failed the >10 sanity cap and rendered blank for every valid run.
-  const effHasHR =
-    displayWorkout.avgHeartRate !== null &&
-    displayWorkout.avgHeartRate !== undefined &&
-    displayWorkout.avgHeartRate > 0 &&
-    (displayWorkout.avgSpeedMPS ?? 0) > 0;
-  const effDisplay = (() => {
-    if (!effHasHR || displayWorkout.avgHeartRate == null) return null;
-    const score = efficiencyDisplayScore(
-      displayWorkout.avgSpeedMPS ?? 0,
-      displayWorkout.avgHeartRate
-    );
-    if (!isFinite(score) || score <= 0 || score > 10) return null;
-    return score;
-  })();
-  const effBadgeLevel = getEffBadgeLevel(displayWorkout);
-  const effStr = effDisplay != null ? effDisplay.toFixed(1) : "\u2014";
 
   // HR Drift
   const driftBadgeLevel = getDriftBadgeLevel(displayWorkout);
@@ -582,15 +541,13 @@ export default function RunDetailPage() {
           />
           <div className="flex flex-col gap-0.5">
             <span className="text-xs text-textSecondary uppercase tracking-wide">
-              Efficiency
+              Training Load
             </span>
-            <EfficiencyTooltip distanceMiles={displayWorkout.distanceMiles}>
-              <MetricBadge
-                label="Eff"
-                value={effStr}
-                level={effStr === "\u2014" ? "neutral" : effBadgeLevel}
-              />
-            </EfficiencyTooltip>
+            <TrainingLoadBadge
+              durationSeconds={displayWorkout.durationSeconds}
+              avgHeartRate={displayWorkout.avgHeartRate}
+              size="large"
+            />
           </div>
           <div className="flex flex-col gap-0.5">
             <span className="text-xs text-textSecondary uppercase tracking-wide">

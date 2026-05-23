@@ -10,8 +10,7 @@ import React, {
 import { useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight, AlertTriangle, EyeOff } from "lucide-react";
 
-import { MetricBadge } from "@/components/ui/MetricBadge";
-import { EfficiencyTooltip } from "@/components/ui/EfficiencyTooltip";
+import { TrainingLoadBadge } from "@/components/ui/TrainingLoadBadge";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useAuth } from "@/hooks/useAuth";
@@ -22,10 +21,7 @@ import {
   saveManualAssignments,
 } from "@/services/shoes";
 
-import {
-  efficiencyDisplayScore,
-  efficiencyTierLevel,
-} from "@/utils/metrics";
+import { computeTrainingLoad } from "@/utils/trainingLoad";
 import { formatPace, formatDuration, formatMiles } from "@/utils/pace";
 import { weekStart as getWeekStart } from "@/utils/dates";
 import {
@@ -322,26 +318,18 @@ function YearStats({ runs }: YearStatsProps) {
       ? hrVals.reduce((a, b) => a + b, 0) / hrVals.length
       : null;
 
-  // Efficiency Score — reuse the SAME source as the per-run badge:
-  //   efficiencyDisplayScore(speed_mps, avgHR) → normalised 1–10. The badge
-  //   already gates on hasHR + 0 < score <= 10 (anything above the cap is
-  //   treated as bad input). We aggregate with that same null + outlier
-  //   filter and report the mean. No new Firestore reads — every input
-  //   field is already on the HealthWorkout docs this page subscribes to.
-  const effVals: number[] = [];
+  // Training Load — same TRIMP-style score as the per-run badge:
+  //   computeTrainingLoad(duration, HR) → null if HR/duration invalid.
+  //   We aggregate the mean of valid scores so the summary tile shows
+  //   "average effort per run" rather than total load.
+  const loadVals: number[] = [];
   for (const r of runs) {
-    if (!r.avgHeartRate || r.avgHeartRate <= 0) continue;
-    if (!r.avgSpeedMPS || r.avgSpeedMPS <= 0) continue;
-    try {
-      const score = efficiencyDisplayScore(r.avgSpeedMPS, r.avgHeartRate);
-      if (isFinite(score) && score > 0 && score <= 10) effVals.push(score);
-    } catch {
-      // skip
-    }
+    const load = computeTrainingLoad(r.durationSeconds, r.avgHeartRate);
+    if (load != null) loadVals.push(load);
   }
-  const avgEff =
-    effVals.length > 0
-      ? effVals.reduce((a, b) => a + b, 0) / effVals.length
+  const avgLoad =
+    loadVals.length > 0
+      ? loadVals.reduce((a, b) => a + b, 0) / loadVals.length
       : null;
 
   return (
@@ -352,7 +340,7 @@ function YearStats({ runs }: YearStatsProps) {
         { label: "Avg Mi/Run", value: `${avgMiPerRun.toFixed(2)} mi` },
         { label: "Avg Pace", value: avgPaceSec > 0 ? `${formatPace(avgPaceSec)} /mi` : "—" },
         { label: "Avg HR", value: avgHR != null ? `${Math.round(avgHR)} bpm` : "—" },
-        { label: "Efficiency", value: avgEff != null ? avgEff.toFixed(1) : "—" },
+        { label: "Avg Load", value: avgLoad != null ? String(Math.round(avgLoad)) : "—" },
       ].map(({ label, value }) => (
         <div key={label} className="flex flex-col gap-0.5">
           <span className="text-xs text-textSecondary">{label}</span>
@@ -393,26 +381,6 @@ function RunRow({
   const dayNum = localDate.getDate();
 
   const tag = classifyRun(run.displayType, run.distanceMiles);
-
-  const hasHR = run.avgHeartRate !== null && (run.avgSpeedMPS ?? 0) > 0;
-  let displayScore = 0;
-  let effBadgeLevel: "good" | "ok" | "low" | "neutral" = "neutral";
-
-  if (hasHR && run.avgHeartRate) {
-    try {
-      displayScore = efficiencyDisplayScore(run.avgSpeedMPS ?? 0, run.avgHeartRate);
-      // Distance-adjusted tier: a 6.0 on a 13-miler reads "Good" while the
-      // same 6.0 on a 2-miler reads "Average".
-      effBadgeLevel = efficiencyTierLevel(displayScore, run.distanceMiles);
-    } catch {
-      // guard against unexpected NaN
-    }
-  }
-
-  const displayScoreStr =
-    hasHR && displayScore > 0 && displayScore <= 10 && isFinite(displayScore)
-      ? displayScore.toFixed(1)
-      : "—";
 
   const assignedShoe = shoes.find((s) => s.id === assignedShoeId) ?? null;
   const shoeName = assignedShoe
@@ -468,15 +436,12 @@ function RunRow({
           {formatDuration(run.durationSeconds)}
         </div>
 
-        {/* Col 7: Efficiency */}
+        {/* Col 7: Training Load */}
         <div className="shrink-0">
-          <EfficiencyTooltip distanceMiles={run.distanceMiles}>
-            <MetricBadge
-              label="Eff"
-              value={displayScoreStr}
-              level={displayScoreStr === "—" ? "neutral" : effBadgeLevel}
-            />
-          </EfficiencyTooltip>
+          <TrainingLoadBadge
+            durationSeconds={run.durationSeconds}
+            avgHeartRate={run.avgHeartRate}
+          />
         </div>
 
         {/* Col 8: Shoe — hidden on mobile to prevent overflow */}
@@ -1114,7 +1079,7 @@ export default function RunsPage() {
               Time
             </div>
             <div className="shrink-0 w-14 text-xs font-semibold uppercase tracking-widest text-textSecondary text-right">
-              Eff
+              Load
             </div>
             <div className="w-28 shrink-0 text-xs font-semibold uppercase tracking-widest text-textSecondary">
               Shoe

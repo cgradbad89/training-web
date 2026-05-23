@@ -2,11 +2,10 @@
  * Compute per-mile split data from GPS route points.
  *
  * Uses cumulative haversine distance to slice route points into 1-mile
- * segments, then derives pace (from timestamps) and efficiency for each.
+ * segments, then derives pace (from timestamps) for each.
  */
 
 import { type RoutePoint } from "@/services/routes";
-import { efficiencyDisplayScore } from "@/utils/metrics";
 
 export interface MileSplit {
   /** 1-indexed mile number */
@@ -15,8 +14,6 @@ export interface MileSplit {
   segmentMiles: number;
   /** Pace in seconds per mile */
   paceSecPerMile: number;
-  /** Efficiency display score (1–10), or null if HR unavailable */
-  efficiency: number | null;
   /** Whether this is a partial (final) mile */
   isPartial: boolean;
   /** Average heart rate for this mile from iOS-synced mileSplits subcollection */
@@ -136,21 +133,10 @@ export function computeMileSplits(
     const paceSecPerMile =
       segmentMiles > 0 ? elapsedSec / segmentMiles : 0;
 
-    // Speed in m/s for efficiency calc
-    const segmentMeters = segmentMiles * 1609.344;
-    const speedMps = elapsedSec > 0 ? segmentMeters / elapsedSec : 0;
-
-    // Efficiency (uses run-level fallbackHR since no per-point HR exists)
-    const efficiency =
-      speedMps > 0 && fallbackHR != null && fallbackHR > 0
-        ? efficiencyDisplayScore(speedMps, fallbackHR)
-        : null;
-
     splits.push({
       mile,
       segmentMiles,
       paceSecPerMile,
-      efficiency,
       isPartial: isLast,
     });
 

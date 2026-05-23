@@ -719,7 +719,7 @@ void localTodayIsoDate;
 // ── Sleep Column Tooltip ──────────────────────────────────────────────────────
 
 /** Inline ⓘ tooltip for sleep table column headers. Fixed-positioned to escape
- *  any overflow-hidden containers, matching the EfficiencyTooltip pattern. */
+ *  any overflow-hidden containers (same pattern as TrainingLoadBadge's tooltip). */
 function SleepColumnTooltip({ title, body }: { title: string; body: string }) {
   const iconRef = useRef<HTMLButtonElement>(null)
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null)

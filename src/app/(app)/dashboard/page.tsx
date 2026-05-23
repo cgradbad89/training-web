@@ -17,7 +17,7 @@ import {
 
 import { WeekNavigator } from "@/components/layout/WeekNavigator";
 import { MetricBadge } from "@/components/ui/MetricBadge";
-import { EfficiencyTooltip } from "@/components/ui/EfficiencyTooltip";
+import { TrainingLoadBadge } from "@/components/ui/TrainingLoadBadge";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { WeekCalendar } from "@/components/WeekCalendar";
@@ -36,11 +36,7 @@ import {
   type GoalStatus,
 } from "@/utils/goalEvaluation";
 
-import {
-  efficiencyDisplayScore,
-  efficiencyTierLevel,
-  trainingLoadLevel,
-} from "@/utils/metrics";
+import { trainingLoadLevel } from "@/utils/metrics";
 import {
   formatPace,
   formatDuration,
@@ -220,17 +216,6 @@ function ThisWeekRunsCard({ workouts, weekStart }: ThisWeekRunsCardProps) {
         <>
           <div className="flex flex-col gap-0.5">
             {runs.map((run) => {
-              const hasHR = run.avgHeartRate !== null && (run.avgSpeedMPS ?? 0) > 0;
-              const displayScore = hasHR
-                ? efficiencyDisplayScore(run.avgSpeedMPS ?? 0, run.avgHeartRate!)
-                : 0;
-              // Distance-adjusted tier — same green/yellow/red logic as the
-              // runs list and run detail page.
-              const effBadgeLevel: "good" | "ok" | "low" | "neutral" =
-                hasHR && displayScore > 0 && displayScore <= 10
-                  ? efficiencyTierLevel(displayScore, run.distanceMiles)
-                  : "neutral";
-
               const localDate = getWorkoutLocalDate(run);
               const dayAbbrev = localDate
                 .toLocaleDateString("en-US", { weekday: "short" })
@@ -259,17 +244,10 @@ function ThisWeekRunsCard({ workouts, weekStart }: ThisWeekRunsCardProps) {
                     {run.avgHeartRate ? `${Math.round(run.avgHeartRate)} bpm` : "—"}
                   </span>
                   <div>
-                    <EfficiencyTooltip distanceMiles={run.distanceMiles}>
-                      {hasHR && displayScore > 0 && displayScore <= 10 ? (
-                        <MetricBadge
-                          label="Eff"
-                          value={displayScore.toFixed(1)}
-                          level={effBadgeLevel}
-                        />
-                      ) : (
-                        <MetricBadge label="Eff" value="—" level="neutral" />
-                      )}
-                    </EfficiencyTooltip>
+                    <TrainingLoadBadge
+                      durationSeconds={run.durationSeconds}
+                      avgHeartRate={run.avgHeartRate}
+                    />
                   </div>
                 </Link>
               );

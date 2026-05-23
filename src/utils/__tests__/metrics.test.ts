@@ -1,42 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import {
-  efficiencyDisplayScore,
   driftLevel,
-  cadenceLevel,
   trainingLoadLevel,
   distanceBucket,
 } from '../metrics'
-
-describe('efficiencyDisplayScore', () => {
-  it('returns 0 for zero speed', () => {
-    expect(efficiencyDisplayScore(0, 150)).toBe(0)
-  })
-
-  it('returns 0 for zero HR', () => {
-    expect(efficiencyDisplayScore(3.5, 0)).toBe(0)
-  })
-
-  it('returns 0 for both zero (no NaN)', () => {
-    // 0/0 would be NaN — function should return 0 instead
-    expect(efficiencyDisplayScore(0, 0)).toBe(0)
-  })
-
-  it('clamps to range [1, 10] for valid inputs', () => {
-    // Very slow runner with high HR
-    const low = efficiencyDisplayScore(1.5, 180)
-    expect(low).toBeGreaterThanOrEqual(1)
-    expect(low).toBeLessThanOrEqual(10)
-
-    // Very fast runner with low HR
-    const high = efficiencyDisplayScore(5.0, 120)
-    expect(high).toBeGreaterThanOrEqual(1)
-    expect(high).toBeLessThanOrEqual(10)
-  })
-
-  it('returns a finite number', () => {
-    expect(isFinite(efficiencyDisplayScore(3.5, 150))).toBe(true)
-  })
-})
 
 describe('distanceBucket', () => {
   it('classifies short runs', () => {

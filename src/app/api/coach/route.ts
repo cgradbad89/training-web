@@ -140,10 +140,10 @@ ${activePlan.weekSummaries.map((w: { weekNumber: number; plannedMiles: number; a
   const runsSection = runs.length > 0
     ? `
 ## Recent Runs (last 30 days, most recent first)
-${runs.slice(0, 20).map((r: { date: string; distance: number; pace: string | null; avgHR: number | null; efficiencyScore: number | null; runType: string | null }) =>
+${runs.slice(0, 20).map((r: { date: string; distance: number; pace: string | null; avgHR: number | null; trainingLoad: number | null; runType: string | null }) =>
   `- ${r.date}: ${r.distance.toFixed(2)}mi @ ${r.pace ?? '—'}/mi` +
   (r.avgHR ? ` HR:${Math.round(r.avgHR)}bpm` : '') +
-  (r.efficiencyScore ? ` Eff:${r.efficiencyScore.toFixed(1)}` : '') +
+  (r.trainingLoad != null ? ` Load:${r.trainingLoad}` : '') +
   (r.runType ? ` [${r.runType}]` : '')
 ).join('\n')}
     `.trim()
@@ -215,7 +215,7 @@ interface CoachContext {
     distance: number
     pace: string | null
     avgHR: number | null
-    efficiencyScore: number | null
+    trainingLoad: number | null
     runType: string | null
   }[]
   activePlan: {

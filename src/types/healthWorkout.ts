@@ -43,30 +43,11 @@ export function isNonRunWorkout(w: HealthWorkout): boolean {
   return !w.isRunLike;
 }
 
-/**
- * Returns the efficiency display score (roughly 0–3 range).
- * Prefers the pre-computed efficiencyScore from iOS, falls back to
- * computing from raw speed/HR.
- */
-export function computeEfficiencyDisplay(w: HealthWorkout): number | null {
-  if (w.efficiencyScore != null) return w.efficiencyScore;
-  if (w.efficiencyRaw != null) return w.efficiencyRaw * 1000.0;
-  if (
-    w.avgSpeedMPS != null &&
-    w.avgHeartRate != null &&
-    w.avgSpeedMPS > 0 &&
-    w.avgHeartRate > 0
-  ) {
-    return (w.avgSpeedMPS / w.avgHeartRate) * 1000;
-  }
-  return null;
-}
-
-export function efficiencyColor(score: number): "good" | "ok" | "low" {
-  if (score >= 1.5) return "good";
-  if (score >= 1.0) return "ok";
-  return "low";
-}
+// Efficiency-score helpers (computeEfficiencyDisplay / efficiencyColor) were
+// removed when the efficiency metric was replaced by Training Load — see
+// src/utils/trainingLoad.ts. The Firestore fields `efficiencyRaw` and
+// `efficiencyScore` on HealthWorkout remain in the type for backward compat
+// with iOS-synced docs but are no longer read by any UI.
 
 export function driftColor(pct: number): "good" | "ok" | "low" {
   if (pct <= 5) return "good";

@@ -29,7 +29,7 @@ import { type HealthWorkout } from "@/types/healthWorkout";
 import { type RunningPlan, isRunningPlan } from "@/types/plan";
 import { type Race, RACE_DISTANCE_MILES, RACE_DISTANCE_LABELS } from "@/types/race";
 import { formatPace, formatMiles } from "@/utils/pace";
-import { efficiencyDisplayScore } from "@/utils/metrics";
+import { computeTrainingLoad } from "@/utils/trainingLoad";
 import { weekStart as getWeekStart } from "@/utils/dates";
 import {
   buildQualifyingEfforts,
@@ -669,18 +669,15 @@ export default function PlanInsightsPage() {
     return `${Math.floor(pace / 60)}:${String(Math.round(pace % 60)).padStart(2, "0")} /mi`;
   }
 
-  function avgEffStr(bucket: HealthWorkout[]): string {
-    // Use efficiencyDisplayScore (1–10 scale) matching runs page normalization
+  function avgLoadStr(bucket: HealthWorkout[]): string {
+    // Training Load (TRIMP) per run, averaged — same source as the runs
+    // list and dashboard Load badge.
     const vals = bucket
-      .map((r) => {
-        if (!r.avgSpeedMPS || !r.avgHeartRate || r.avgSpeedMPS <= 0 || r.avgHeartRate <= 0)
-          return null;
-        return efficiencyDisplayScore(r.avgSpeedMPS, r.avgHeartRate);
-      })
-      .filter((v): v is number => v !== null && v > 0 && isFinite(v));
+      .map((r) => computeTrainingLoad(r.durationSeconds, r.avgHeartRate))
+      .filter((v): v is number => v != null && isFinite(v));
     if (vals.length === 0) return "—";
     const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
-    return avg.toFixed(1);
+    return String(Math.round(avg));
   }
 
   function avgHRStr(bucket: HealthWorkout[]): string {
@@ -692,7 +689,7 @@ export default function PlanInsightsPage() {
   }
 
   const runTypePace = [shortRuns, mediumRuns, longRuns2].map(avgPaceStr);
-  const runTypeEfficiency = [shortRuns, mediumRuns, longRuns2].map(avgEffStr);
+  const runTypeLoad = [shortRuns, mediumRuns, longRuns2].map(avgLoadStr);
   const runTypeHR = [shortRuns, mediumRuns, longRuns2].map(avgHRStr);
   const runTypeCount = [shortRuns, mediumRuns, longRuns2].map((b) =>
     b.length > 0 ? String(b.length) : "—"
@@ -1101,7 +1098,7 @@ export default function PlanInsightsPage() {
             <tbody>
               {[
                 { label: "Avg Pace", values: runTypePace },
-                { label: "Avg Efficiency", values: runTypeEfficiency },
+                { label: "Avg Load", values: runTypeLoad },
                 { label: "Avg HR", values: runTypeHR },
                 { label: "Run Count", values: runTypeCount },
               ].map((row) => (
@@ -1120,7 +1117,7 @@ export default function PlanInsightsPage() {
         <button
           onClick={() => askCoach(
             'Looking at my performance across short, medium, ' +
-            'and long runs — what does the efficiency and pace ' +
+            'and long runs — what does the training load and pace ' +
             'data suggest about where I should focus my training?'
           )}
           className="text-xs text-primary hover:underline flex items-center gap-1 mt-2"
