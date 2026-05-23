@@ -160,6 +160,19 @@ export function getHRZone(bpm: number): HRZone {
 }
 
 /**
+ * Narrow-typed zone classifier for callers that only need the zone number
+ * (1–5) and want it as a union. Delegates to the running-context thresholds
+ * in HR_ZONES — does not duplicate any boundary constants.
+ */
+export type HRZoneNumber = 1 | 2 | 3 | 4 | 5;
+
+export function classifyHrZone(bpm: number): HRZoneNumber {
+  const z = getHRZone(bpm).zone;
+  // HR_ZONES is fixed at 5 entries with zones 1..5, so this narrowing is safe.
+  return Math.min(5, Math.max(1, z)) as HRZoneNumber;
+}
+
+/**
  * Compute Training Load. Returns null when HR or duration is missing/invalid,
  * matching the existing "—" behaviour of the efficiency score it replaces.
  *

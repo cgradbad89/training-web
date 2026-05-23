@@ -51,7 +51,18 @@ import {
   buildLoadEwmaSeries,
   CTL_DAYS,
 } from "@/utils/trainingLoadSeries";
-import { computeTrainingLoad } from "@/utils/trainingLoad";
+import {
+  computeTrainingLoad,
+  classifyHrZone,
+  type HRZoneNumber,
+} from "@/utils/trainingLoad";
+import {
+  collection,
+  getDocs,
+  query,
+  orderBy,
+} from "firebase/firestore";
+import { db } from "@/lib/firebase";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -208,12 +219,45 @@ function shortDateLabel(iso: string): string {
   });
 }
 
+// Zone palette — extends the TrainingLoadBadge low/moderate/hard/very-hard
+// family across 5 zones so colours read consistently with the badge.
+const ZONE_STYLES: Record<
+  HRZoneNumber,
+  { bg: string; text: string; label: string }
+> = {
+  1: { bg: "bg-blue-500",   text: "text-blue-500",   label: "Recovery"  },
+  2: { bg: "bg-green-500",  text: "text-green-500",  label: "Aerobic"   },
+  3: { bg: "bg-yellow-500", text: "text-yellow-500", label: "Tempo"     },
+  4: { bg: "bg-orange-500", text: "text-orange-500", label: "Threshold" },
+  5: { bg: "bg-red-500",    text: "text-red-500",    label: "Max"       },
+};
+
+// Inclusive-min / exclusive-max bpm bounds per zone, derived from HR_ZONES
+// (60/70/80/90% of MAX_HR=185 → 111/130/149/167). Kept in lock-step by
+// reading the same thresholds at runtime would couple this file to the
+// internals; the values mirror the constants and are commented at source.
+const ZONE_BPM_LABEL: Record<HRZoneNumber, string> = {
+  1: "< 111",
+  2: "111–129",
+  3: "130–148",
+  4: "149–166",
+  5: "167+",
+};
+
 function TrainingLoadSection({
   data,
   weeklyData,
+  intensity,
+  intensityLoading,
 }: {
   data: TrainingLoadSectionData;
   weeklyData: WeeklyLoadDatum[];
+  intensity: {
+    zoneMiles: Record<HRZoneNumber, number>;
+    totalMiles: number;
+    runsCounted: number;
+  } | null;
+  intensityLoading: boolean;
 }) {
   const { displaySeries, last, daysOfData, peakRunLoad, peakRunDate } = data;
   const hasLoadData = displaySeries.some((p) => p.load > 0);
@@ -483,6 +527,86 @@ function TrainingLoadSection({
           </p>
         )}
       </Card>
+
+      {/* Running Intensity by HR Zone — distance-weighted share per zone */}
+      <Card>
+        <h3 className="text-sm font-semibold text-textPrimary mb-1">
+          Running Intensity by HR Zone
+        </h3>
+        <p className="text-xs text-textSecondary mb-3">
+          Based on per-mile HR from your last 8 weeks of GPS runs. Fills in as
+          more runs sync.
+        </p>
+
+        {intensityLoading ? (
+          <p className="text-sm text-textSecondary text-center py-6">
+            Loading per-mile heart rate…
+          </p>
+        ) : !intensity || intensity.totalMiles <= 0 ? (
+          <p className="text-sm text-textSecondary text-center py-6">
+            Per-mile heart rate data not available yet.
+          </p>
+        ) : (
+          <>
+            {/* Single horizontal stacked bar, split into 5 zone segments. */}
+            <div className="flex w-full h-3 rounded-full overflow-hidden mb-4">
+              {([1, 2, 3, 4, 5] as const).map((z) => {
+                const pct =
+                  intensity.totalMiles > 0
+                    ? (intensity.zoneMiles[z] / intensity.totalMiles) * 100
+                    : 0;
+                if (pct <= 0) return null;
+                return (
+                  <div
+                    key={z}
+                    className={ZONE_STYLES[z].bg}
+                    style={{ width: `${pct}%` }}
+                    title={`Z${z} ${ZONE_STYLES[z].label} — ${pct.toFixed(1)}%`}
+                  />
+                );
+              })}
+            </div>
+
+            {/* Per-zone legend rows */}
+            <div className="flex flex-col gap-1.5">
+              {([1, 2, 3, 4, 5] as const).map((z) => {
+                const miles = intensity.zoneMiles[z];
+                const pct =
+                  intensity.totalMiles > 0
+                    ? (miles / intensity.totalMiles) * 100
+                    : 0;
+                return (
+                  <div
+                    key={z}
+                    className="flex items-center justify-between text-xs"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span
+                        className={`inline-block w-2.5 h-2.5 rounded-sm shrink-0 ${ZONE_STYLES[z].bg}`}
+                      />
+                      <span className="text-textPrimary font-medium">
+                        Z{z} {ZONE_STYLES[z].label}
+                      </span>
+                      <span className="text-textSecondary tabular-nums">
+                        {ZONE_BPM_LABEL[z]} bpm
+                      </span>
+                    </div>
+                    <span className="text-textPrimary font-semibold tabular-nums">
+                      {pct.toFixed(1)}%
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            <p className="text-xs text-textSecondary mt-3">
+              Based on {intensity.runsCounted}{" "}
+              {intensity.runsCounted === 1 ? "run" : "runs"} ·{" "}
+              {intensity.totalMiles.toFixed(1)} mi of per-mile HR data.
+            </p>
+          </>
+        )}
+      </Card>
     </>
   );
 }
@@ -506,6 +630,15 @@ export default function PersonalInsightsPage() {
   const [fastestMileByYear, setFastestMileByYear] = useState<
     Record<number, { seconds: number; date: Date } | null>
   >({});
+
+  // Running Intensity by HR Zone — share of miles per zone, distance-weighted.
+  // Populated by a one-shot mileSplits fetch on mount (see useEffect below).
+  const [intensityData, setIntensityData] = useState<{
+    zoneMiles: Record<HRZoneNumber, number>;
+    totalMiles: number;
+    runsCounted: number;
+  } | null>(null);
+  const [intensityLoading, setIntensityLoading] = useState(true);
 
   useEffect(() => {
     if (!uid) return;
@@ -565,6 +698,126 @@ export default function PersonalInsightsPage() {
       setFastestMileByYear((prev) => ({ ...prev, [selectedYear]: best }));
     });
   }, [uid, runs, selectedYear, fastestMileByYear]);
+
+  // Running Intensity by HR Zone — fetch per-mile HR from mileSplits
+  // subcollection for the last 8 weeks of GPS runs (capped at 40 runs).
+  useEffect(() => {
+    if (!uid) return;
+    if (runs.length === 0) {
+      setIntensityLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setIntensityLoading(true);
+
+    const eightWeeksAgo = new Date();
+    eightWeeksAgo.setDate(eightWeeksAgo.getDate() - 8 * 7);
+
+    const candidateRuns = runs
+      .filter(
+        (r) =>
+          r.hasRoute &&
+          r.startDate >= eightWeeksAgo &&
+          r.distanceMiles > 0
+      )
+      .sort((a, b) => b.startDate.getTime() - a.startDate.getTime())
+      .slice(0, 40);
+
+    if (candidateRuns.length === 0) {
+      if (!cancelled) {
+        setIntensityData({
+          zoneMiles: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+          totalMiles: 0,
+          runsCounted: 0,
+        });
+        setIntensityLoading(false);
+      }
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    Promise.all(
+      candidateRuns.map(async (run) => {
+        try {
+          // Mirror src/app/(app)/runs/[id]/page.tsx pattern verbatim:
+          //   path users/{uid}/healthWorkouts/{id}/mileSplits, ordered by mile.
+          const snap = await getDocs(
+            query(
+              collection(
+                db,
+                `users/${uid}/healthWorkouts/${run.workoutId}/mileSplits`
+              ),
+              orderBy("mile", "asc")
+            )
+          );
+
+          const totalMi = run.distanceMiles;
+          const fullMiles = Math.floor(totalMi);
+          const partial = totalMi - fullMiles; // 0 when run is whole-mile
+
+          const miles: Array<{ mile: number; bpm: number; distance: number }> =
+            [];
+          snap.docs.forEach((doc) => {
+            const data = doc.data() as Record<string, unknown>;
+            const mile = typeof data.mile === "number" ? data.mile : null;
+            const avgBpm =
+              typeof data.avgBpm === "number" ? data.avgBpm : null;
+            const sampleCount =
+              typeof data.sampleCount === "number" ? data.sampleCount : 0;
+            if (mile == null || avgBpm == null) return;
+            // Guards: matches run-detail page + per-prompt 40–220 bpm sanity.
+            if (sampleCount < 2) return;
+            if (avgBpm < 40 || avgBpm > 220) return;
+
+            // Per-mile distance: each whole-mile bucket = 1.0; final partial
+            // mile (1-indexed = fullMiles + 1) uses the residual.
+            let distance: number;
+            if (mile <= fullMiles) {
+              distance = 1.0;
+            } else if (mile === fullMiles + 1 && partial > 0) {
+              distance = partial;
+            } else {
+              // Defensive: out-of-range mile index — skip rather than assume.
+              return;
+            }
+            miles.push({ mile, bpm: avgBpm, distance });
+          });
+
+          return miles;
+        } catch {
+          return [];
+        }
+      })
+    ).then((perRun) => {
+      if (cancelled) return;
+
+      const zoneMiles: Record<HRZoneNumber, number> = {
+        1: 0,
+        2: 0,
+        3: 0,
+        4: 0,
+        5: 0,
+      };
+      let totalMiles = 0;
+      let runsCounted = 0;
+      for (const miles of perRun) {
+        if (miles.length === 0) continue;
+        runsCounted += 1;
+        for (const m of miles) {
+          const z = classifyHrZone(m.bpm);
+          zoneMiles[z] += m.distance;
+          totalMiles += m.distance;
+        }
+      }
+      setIntensityData({ zoneMiles, totalMiles, runsCounted });
+      setIntensityLoading(false);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [uid, runs]);
 
   // ── Available years ─────────────────────────────────────────────────────────
 
@@ -947,7 +1200,12 @@ export default function PersonalInsightsPage() {
       {/* ── Training Load ─────────────────────────────────── */}
       <SectionHeader icon={Activity} title="Training Load" />
 
-      <TrainingLoadSection data={trainingLoadData} weeklyData={weeklyLoadData} />
+      <TrainingLoadSection
+        data={trainingLoadData}
+        weeklyData={weeklyLoadData}
+        intensity={intensityData}
+        intensityLoading={intensityLoading}
+      />
 
       {/* ── Personal Records by Year ─────────────────────── */}
       <SectionHeader icon={Trophy} title="Personal Records by Year" />
