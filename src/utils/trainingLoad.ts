@@ -55,7 +55,9 @@ export type ActivityContext = "running" | "otf" | "strength";
 
 export const ACTIVITY_CONTEXT_LABEL: Record<ActivityContext, string> = {
   running: "Running",
-  otf: "OTF / HIIT",
+  // OTF + HIIT use the running zone set — treadmill intervals routinely push
+  // HR to running-equivalent intensity, so the same bands score them fairly.
+  otf: "OTF / High Intensity",
   strength: "Strength",
 };
 
@@ -64,6 +66,10 @@ export const ACTIVITY_CONTEXT_LABEL: Record<ActivityContext, string> = {
  * to "strength" when the activityType is missing — Load shouldn't read as a
  * run if the source data is unclear, and strength's lower boundaries are
  * the conservative pick.
+ *
+ * "otf" is the catch-all bucket for high-intensity interval / mixed-cardio
+ * formats; it now shares the running zone set so a 60-min OTF at 145 bpm
+ * scores the same as a 60-min run at 145 bpm rather than being inflated.
  */
 export function getActivityContext(
   activityType: string | null | undefined
@@ -71,28 +77,43 @@ export function getActivityContext(
   if (!activityType) return "strength";
   const t = activityType.toLowerCase().trim();
 
-  // OTF + HIIT family — mixed treadmill/floor, peaks below pure running.
+  // OTF + every HIIT / mixed-cardio family that peaks at running-equivalent
+  // intensity. All of these route to the running zone set via WORKOUT_ZONES.
   if (
     t.includes("orangetheory") ||
     t.includes("orange_theory") ||
     t.includes("highintensityintervaltraining") ||
     t.includes("high_intensity_interval_training") ||
     t.includes("hiit") ||
-    t.includes("mixedcardio") ||
-    t.includes("mixed_cardio")
+    t.includes("intervaltraining") ||
+    t.includes("interval_training") ||
+    t.includes("cardio") ||              // mixedCardio, cardioTraining, etc.
+    t.includes("kickboxing") ||
+    t.includes("boxing") ||
+    t.includes("crossfit") ||
+    t.includes("cross_fit") ||
+    t.includes("bootcamp") ||
+    t.includes("boot_camp") ||
+    t.includes("rowing") ||              // rowing machine = cardio intensity
+    t.includes("elliptical") ||
+    t.includes("stairclimbing") ||
+    t.includes("stair_climbing") ||
+    t.includes("jumpingrope") ||
+    t.includes("jump_rope")
   ) {
     return "otf";
   }
 
-  // Continuous-cardio family — running, walking, hiking, cycling. These
-  // share the running zone set because HR responds in a similar steady-
-  // state way to sustained aerobic work.
+  // Continuous-cardio family — running, walking, hiking, cycling, swimming.
+  // These share the running zone set because HR responds in a similar
+  // steady-state way to sustained aerobic work.
   if (
     t.includes("run") ||
     t.includes("walk") ||
     t.includes("hike") ||
     t.includes("cycling") ||
-    t.includes("ride")
+    t.includes("ride") ||
+    t.includes("swim")
   ) {
     return "running";
   }
@@ -102,18 +123,14 @@ export function getActivityContext(
   return "strength";
 }
 
-/** Per-context zone sets. All share the same multipliers; only the bpm
- *  bands shift so a strength session at 120 bpm reads as harder effort
- *  than a long run at 120 bpm. */
+/** Per-context zone sets. Running and OTF share the same bands because
+ *  treadmill intervals reach running-equivalent intensity; only strength
+ *  shifts the boundaries downward so a strength session at 120 bpm reads
+ *  as harder effort than a long run at 120 bpm. */
 export const WORKOUT_ZONES: Record<ActivityContext, HRZone[]> = {
   running: HR_ZONES,
-  otf: [
-    { zone: 1, minPct: 0,    maxPct: 0.57, multiplier: 1.0, label: "Recovery"  },
-    { zone: 2, minPct: 0.57, maxPct: 0.68, multiplier: 1.5, label: "Aerobic"   },
-    { zone: 3, minPct: 0.68, maxPct: 0.76, multiplier: 2.5, label: "Tempo"     },
-    { zone: 4, minPct: 0.76, maxPct: 0.85, multiplier: 4.0, label: "Threshold" },
-    { zone: 5, minPct: 0.85, maxPct: 1.00, multiplier: 6.5, label: "Max"       },
-  ],
+  // OTF / HIIT / cardio formats route here and reuse the running zones.
+  otf: HR_ZONES,
   strength: [
     { zone: 1, minPct: 0,    maxPct: 0.50, multiplier: 1.0, label: "Recovery"  },
     { zone: 2, minPct: 0.50, maxPct: 0.62, multiplier: 1.5, label: "Aerobic"   },
