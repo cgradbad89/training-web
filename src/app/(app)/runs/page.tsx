@@ -21,7 +21,7 @@ import {
   saveManualAssignments,
 } from "@/services/shoes";
 
-import { computeTrainingLoad } from "@/utils/trainingLoad";
+import { computeTrainingLoad, MIN_RUN_MILES_FOR_AVG } from "@/utils/trainingLoad";
 import { formatPace, formatDuration, formatMiles } from "@/utils/pace";
 import { weekStart as getWeekStart } from "@/utils/dates";
 import {
@@ -322,8 +322,12 @@ function YearStats({ runs }: YearStatsProps) {
   //   computeTrainingLoad(duration, HR) → null if HR/duration invalid.
   //   We aggregate the mean of valid scores so the summary tile shows
   //   "average effort per run" rather than total load.
+  //   Short/aborted runs (< MIN_RUN_MILES_FOR_AVG) are excluded so warmups
+  //   and restarts don't drag the average down — their individual badges
+  //   still render in the list below.
   const loadVals: number[] = [];
   for (const r of runs) {
+    if (r.distanceMiles < MIN_RUN_MILES_FOR_AVG) continue;
     const load = computeTrainingLoad(r.durationSeconds, r.avgHeartRate);
     if (load != null) loadVals.push(load);
   }

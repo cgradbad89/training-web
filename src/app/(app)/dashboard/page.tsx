@@ -37,7 +37,11 @@ import {
 } from "@/utils/goalEvaluation";
 
 import { trainingLoadLevel } from "@/utils/metrics";
-import { computeTrainingLoad } from "@/utils/trainingLoad";
+import {
+  computeTrainingLoad,
+  MIN_RUN_MILES_FOR_AVG,
+  MIN_WORKOUT_SECONDS_FOR_AVG,
+} from "@/utils/trainingLoad";
 import {
   formatPace,
   formatDuration,
@@ -156,7 +160,10 @@ function WeeklyStatsBar({ workouts, weekStart, weekEnd, plannedMiles }: WeeklySt
 
   const avgPaceSecPerMile = actualMiles > 0 ? totalMovingTime / actualMiles : 0;
 
+  // Drop short/aborted activities from the averages (badges on individual
+  // runs/workouts are unaffected — only aggregates are filtered).
   const runLoadScores = runs
+    .filter((r) => r.distanceMiles >= MIN_RUN_MILES_FOR_AVG)
     .map((r) => computeTrainingLoad(r.durationSeconds, r.avgHeartRate, r.activityType))
     .filter((s): s is number => s !== null);
   const avgRunLoad =
@@ -165,6 +172,7 @@ function WeeklyStatsBar({ workouts, weekStart, weekEnd, plannedMiles }: WeeklySt
       : null;
 
   const workoutLoadScores = nonRunWorkouts
+    .filter((w) => w.durationSeconds >= MIN_WORKOUT_SECONDS_FOR_AVG)
     .map((w) => computeTrainingLoad(w.durationSeconds, w.avgHeartRate, w.activityType))
     .filter((s): s is number => s !== null);
   const avgWorkoutLoad =

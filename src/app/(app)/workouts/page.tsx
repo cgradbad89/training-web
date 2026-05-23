@@ -35,7 +35,11 @@ import { type HealthWorkout } from "@/types/healthWorkout";
 import { WorkoutDetailModal } from "@/components/WorkoutDetailModal";
 import { ExcludedItemsModal } from "@/components/ExcludedItemsModal";
 import { TrainingLoadBadge } from "@/components/ui/TrainingLoadBadge";
-import { computeTrainingLoad } from "@/utils/trainingLoad";
+import {
+  computeTrainingLoad,
+  MIN_RUN_MILES_FOR_AVG,
+  MIN_WORKOUT_SECONDS_FOR_AVG,
+} from "@/utils/trainingLoad";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -164,7 +168,14 @@ function YearSummary({ workouts, year }: { workouts: HealthWorkout[]; year: numb
         )
       : null;
 
+  // Exclude short/aborted activities from the avg so warmups and restarts
+  // don't drag the mean down. Per-workout badges still render for these.
   const loadScores = workouts
+    .filter((w) =>
+      w.isRunLike
+        ? w.distanceMiles >= MIN_RUN_MILES_FOR_AVG
+        : w.durationSeconds >= MIN_WORKOUT_SECONDS_FOR_AVG
+    )
     .map((w) => computeTrainingLoad(w.durationSeconds, w.avgHeartRate, w.activityType))
     .filter((s): s is number => s !== null);
   const avgTrainingLoad =

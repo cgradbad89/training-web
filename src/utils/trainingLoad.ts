@@ -27,6 +27,13 @@
 
 export const MAX_HR = 185;
 
+// Minimum thresholds for including an activity in a Training Load *average*.
+// Individual badges still render for all activities regardless of these values —
+// these only filter out short/aborted activities (warmups, restarts) so they
+// don't drag down aggregate averages.
+export const MIN_RUN_MILES_FOR_AVG = 1.0;
+export const MIN_WORKOUT_SECONDS_FOR_AVG = 15 * 60; // 15 minutes
+
 export interface HRZone {
   zone: number;
   minPct: number; // inclusive

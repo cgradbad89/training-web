@@ -29,7 +29,7 @@ import { type HealthWorkout } from "@/types/healthWorkout";
 import { type RunningPlan, isRunningPlan } from "@/types/plan";
 import { type Race, RACE_DISTANCE_MILES, RACE_DISTANCE_LABELS } from "@/types/race";
 import { formatPace, formatMiles } from "@/utils/pace";
-import { computeTrainingLoad } from "@/utils/trainingLoad";
+import { computeTrainingLoad, MIN_RUN_MILES_FOR_AVG } from "@/utils/trainingLoad";
 import { weekStart as getWeekStart } from "@/utils/dates";
 import {
   buildQualifyingEfforts,
@@ -671,8 +671,11 @@ export default function PlanInsightsPage() {
 
   function avgLoadStr(bucket: HealthWorkout[]): string {
     // Training Load (TRIMP) per run, averaged — same source as the runs
-    // list and dashboard Load badge.
+    // list and dashboard Load badge. Runs under MIN_RUN_MILES_FOR_AVG are
+    // dropped so aborted / short runs don't skew the bucket average; their
+    // individual badges still appear elsewhere in the app.
     const vals = bucket
+      .filter((r) => r.distanceMiles >= MIN_RUN_MILES_FOR_AVG)
       .map((r) => computeTrainingLoad(r.durationSeconds, r.avgHeartRate))
       .filter((v): v is number => v != null && isFinite(v));
     if (vals.length === 0) return "—";
