@@ -135,6 +135,32 @@ function longRunSupportMultiplier(
   return Math.min(Math.max(multiplier, 0.85), 1.15)
 }
 
+/**
+ * True when at least one RACE-tier effort in the array covers `targetMiles`.
+ *
+ * A recent race effort is the strongest possible long-run anchor: it is both
+ * a real long run AND a real time trial for the prediction. When present, it
+ * makes the "you need recent training-volume long runs" gate unnecessary for
+ * any target at or below the race's own distance — so a runner in post-race
+ * recovery (only short runs in the last 35 days) still gets a valid Riegel
+ * fit for the distance they just raced and anything shorter.
+ *
+ * The 120-day ceiling is also enforced upstream by buildQualifyingEfforts'
+ * raceDaysBack; the redundant check here keeps the helper self-contained for
+ * any caller that passes a raw efforts array.
+ */
+export function hasRaceAnchor(
+  efforts: EffortPoint[],
+  targetMiles: number
+): boolean {
+  return efforts.some(
+    e =>
+      e.tier === 'RACE' &&
+      e.distanceMiles >= targetMiles &&
+      e.ageDays <= 120
+  )
+}
+
 export function fitRiegel(
   efforts: EffortPoint[],
   targetMiles: number,
@@ -145,7 +171,10 @@ export function fitRiegel(
   if (filtered.length < 4) return null
 
   // For half/marathon: require 2+ medium-long runs in last 35 days AND longest ≥ 6
-  if (targetMiles >= 13.109) {
+  // BYPASS: a RACE-tier anchor at or above targetMiles satisfies this gate
+  // on its own — the race effort is itself a recent long run AND a real time
+  // trial, which is stronger evidence than training-volume long runs.
+  if (targetMiles >= 13.109 && !hasRaceAnchor(filtered, targetMiles)) {
     const recentMediumLong = filtered.filter(
       e => e.distanceMiles >= 4.0 && e.ageDays <= 35
     ).length
