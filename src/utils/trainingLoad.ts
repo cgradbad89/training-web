@@ -43,94 +43,65 @@ export const HR_ZONES: HRZone[] = [
   { zone: 5, minPct: 0.90, maxPct: 1.00, multiplier: 6.5, label: "Max"       },
 ];
 
-// ─── Activity context — running vs OTF vs strength ──────────────────────────
+// ─── Activity context — running vs strength ─────────────────────────────────
 //
-// Strength work peaks HR lower than running for the same perceived effort,
-// and OTF (mixed treadmill + floor) sits between. We shift the zone bands
-// for these contexts so the Load score reads similarly across activities:
-// 120 bpm on a strength session shouldn't read "Recovery" the way 120 bpm
-// on a long run does.
+// Strength / low-intensity work peaks HR lower than running for the same
+// perceived effort, so its zone bands shift downward. Everything else —
+// running, OTF, HIIT, dance, cycling, unknown activity types — uses the
+// running zone set, because those formats routinely push HR to
+// running-equivalent intensity.
 
-export type ActivityContext = "running" | "otf" | "strength";
+export type ActivityContext = "running" | "strength";
 
 export const ACTIVITY_CONTEXT_LABEL: Record<ActivityContext, string> = {
-  running: "Running",
-  // OTF + HIIT use the running zone set — treadmill intervals routinely push
-  // HR to running-equivalent intensity, so the same bands score them fairly.
-  otf: "OTF / High Intensity",
-  strength: "Strength",
+  running: "Running / Cardio",
+  strength: "Strength / Low Intensity",
 };
 
 /**
- * Map a HealthKit activityType string to a TRIMP zone-set context. Defaults
- * to "strength" when the activityType is missing — Load shouldn't read as a
- * run if the source data is unclear, and strength's lower boundaries are
- * the conservative pick.
- *
- * "otf" is the catch-all bucket for high-intensity interval / mixed-cardio
- * formats; it now shares the running zone set so a 60-min OTF at 145 bpm
- * scores the same as a 60-min run at 145 bpm rather than being inflated.
+ * Map a HealthKit activityType string to a TRIMP zone-set context. Uses an
+ * allowlist for strength / low-intensity activities; everything else
+ * (including unknown / missing types) defaults to running zones. This avoids
+ * the prior bug where HIIT / unrecognised types fell through to strength's
+ * lower Zone 5 threshold (148 bpm) and produced inflated scores.
  */
 export function getActivityContext(
   activityType: string | null | undefined
 ): ActivityContext {
-  if (!activityType) return "strength";
+  if (!activityType) return "running"; // unknown → running zones (safer default)
   const t = activityType.toLowerCase().trim();
 
-  // OTF + every HIIT / mixed-cardio family that peaks at running-equivalent
-  // intensity. All of these route to the running zone set via WORKOUT_ZONES.
-  if (
-    t.includes("orangetheory") ||
-    t.includes("orange_theory") ||
-    t.includes("highintensityintervaltraining") ||
-    t.includes("high_intensity_interval_training") ||
-    t.includes("hiit") ||
-    t.includes("intervaltraining") ||
-    t.includes("interval_training") ||
-    t.includes("cardio") ||              // mixedCardio, cardioTraining, etc.
-    t.includes("kickboxing") ||
-    t.includes("boxing") ||
-    t.includes("crossfit") ||
-    t.includes("cross_fit") ||
-    t.includes("bootcamp") ||
-    t.includes("boot_camp") ||
-    t.includes("rowing") ||              // rowing machine = cardio intensity
-    t.includes("elliptical") ||
-    t.includes("stairclimbing") ||
-    t.includes("stair_climbing") ||
-    t.includes("jumpingrope") ||
-    t.includes("jump_rope")
-  ) {
-    return "otf";
+  const isLowIntensity =
+    t.includes("strength") ||
+    t.includes("yoga") ||
+    t.includes("pilates") ||
+    t.includes("mindandbody") ||
+    t.includes("mind_and_body") ||
+    t.includes("stretch") ||
+    t.includes("flexibility") ||
+    t.includes("cooldown") ||
+    t.includes("cool_down") ||
+    t.includes("barre") ||
+    t.includes("meditation") ||
+    t.includes("tai") || // tai chi
+    t.includes("qigong");
+
+  const context: ActivityContext = isLowIntensity ? "strength" : "running";
+
+  // Temporary debug logging to verify activityType → context mapping in prod.
+  // Remove once HIIT / OTF mappings are confirmed healthy.
+  if (typeof console !== "undefined") {
+    console.log("[trainingLoad] activityType:", activityType, "→ context:", context);
   }
 
-  // Continuous-cardio family — running, walking, hiking, cycling, swimming.
-  // These share the running zone set because HR responds in a similar
-  // steady-state way to sustained aerobic work.
-  if (
-    t.includes("run") ||
-    t.includes("walk") ||
-    t.includes("hike") ||
-    t.includes("cycling") ||
-    t.includes("ride") ||
-    t.includes("swim")
-  ) {
-    return "running";
-  }
-
-  // Everything else (strength, core, yoga, pilates, dance, etc.) — HR peaks
-  // lower per unit of effort.
-  return "strength";
+  return context;
 }
 
-/** Per-context zone sets. Running and OTF share the same bands because
- *  treadmill intervals reach running-equivalent intensity; only strength
- *  shifts the boundaries downward so a strength session at 120 bpm reads
- *  as harder effort than a long run at 120 bpm. */
+/** Per-context zone sets. Only strength shifts the boundaries downward so a
+ *  strength session at 120 bpm reads as harder effort than a long run at 120
+ *  bpm. Running / cardio / HIIT / OTF all share HR_ZONES. */
 export const WORKOUT_ZONES: Record<ActivityContext, HRZone[]> = {
   running: HR_ZONES,
-  // OTF / HIIT / cardio formats route here and reuse the running zones.
-  otf: HR_ZONES,
   strength: [
     { zone: 1, minPct: 0,    maxPct: 0.50, multiplier: 1.0, label: "Recovery"  },
     { zone: 2, minPct: 0.50, maxPct: 0.62, multiplier: 1.5, label: "Aerobic"   },
@@ -186,8 +157,8 @@ export function getHRZone(bpm: number): HRZone {
  * matching the existing "—" behaviour of the efficiency score it replaces.
  *
  * `activityType` is optional; when provided, zone bands shift per the
- * WORKOUT_ZONES table (running / otf / strength). When omitted, falls back
- * to the running zone set so existing call sites keep their behaviour.
+ * WORKOUT_ZONES table (running / strength). When omitted, falls back to the
+ * running zone set so existing call sites keep their behaviour.
  */
 export function computeTrainingLoad(
   durationSeconds: number,
