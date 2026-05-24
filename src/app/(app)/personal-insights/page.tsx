@@ -60,6 +60,8 @@ import {
 import {
   computeTrainingLoad,
   classifyHrZone,
+  MIN_RUN_MILES_FOR_AVG,
+  MIN_WORKOUT_SECONDS_FOR_AVG,
   type HRZoneNumber,
 } from "@/utils/trainingLoad";
 import { InfoTooltip } from "@/components/ui/InfoTooltip";
@@ -1455,11 +1457,22 @@ export default function PersonalInsightsPage() {
     // Per-session load distributions over the last 6 months — runs vs
     // non-run workouts, excluding sessions with no HR (computeTrainingLoad
     // returns null → not counted as 0).
+    //
+    // Min-activity thresholds match the This Week averages exactly (same
+    // constants, same inclusive >= comparison): sub-1mi runs and sub-15min
+    // workouts are aborted/warmup activities that would drag the typical
+    // and range downward. They still render their individual badges
+    // elsewhere — only this aggregate excludes them.
     const sixMoCutoffMs = today.getTime() - SIXMO_DAYS * 86400 * 1000;
     const runSessionLoads: number[] = [];
     const workoutSessionLoads: number[] = [];
     for (const w of workouts) {
       if (w.startDate.getTime() < sixMoCutoffMs) continue;
+      if (w.isRunLike) {
+        if (w.distanceMiles < MIN_RUN_MILES_FOR_AVG) continue;
+      } else {
+        if (w.durationSeconds < MIN_WORKOUT_SECONDS_FOR_AVG) continue;
+      }
       const score = computeTrainingLoad(
         w.durationSeconds,
         w.avgHeartRate,
