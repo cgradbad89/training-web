@@ -184,63 +184,30 @@ interface SectionStatsProps {
   weekEnd: Date;
 }
 
-function PlanProgressStatsCard({
+function RunningStatsCard({
   workouts,
   weekStart,
   weekEnd,
   plannedMiles,
 }: SectionStatsProps & { plannedMiles: number }) {
-  const weekRuns = workouts.filter(
-    (w) => w.isRunLike && isInWeek(w, weekStart, weekEnd)
-  );
-  const actualMiles = weekRuns.reduce((s, w) => s + w.distanceMiles, 0);
-
-  // Conditional formatting on the Actual Miles value only:
-  //   * Green when actual ≥ planned − 1 (within 1 mile of plan, or ahead).
-  //   * Default text when actual is more than 1 mile short of plan.
-  // Coloring is gated on a real plan existing (plannedMiles > 0) so a
-  // week with no plan never paints green just because actual > −1.
-  // When the user hasn't run yet this week we render "—" in default color
-  // rather than "0.0 mi", which reads better for an empty-week state.
-  const hasActual = actualMiles > 0;
-  const hasPlan = plannedMiles > 0;
-  const milesColor =
-    hasActual && hasPlan && actualMiles >= plannedMiles - 1
-      ? "text-success"
-      : "text-textPrimary";
-
-  return (
-    <Card>
-      <CardTitle>Plan Progress</CardTitle>
-      <div className="grid grid-cols-2 gap-4">
-        <StatItem
-          label="Planned Miles"
-          value={
-            <span className="text-textPrimary">
-              {hasPlan ? `${plannedMiles.toFixed(1)} mi` : "— mi"}
-            </span>
-          }
-        />
-        <StatItem
-          label="Actual Miles"
-          value={
-            <span className={milesColor}>
-              {hasActual ? `${actualMiles.toFixed(1)} mi` : "—"}
-            </span>
-          }
-        />
-      </div>
-    </Card>
-  );
-}
-
-function RunningStatsCard({ workouts, weekStart, weekEnd }: SectionStatsProps) {
   const runs = workouts.filter(
     (w) => w.isRunLike && isInWeek(w, weekStart, weekEnd)
   );
   const totalMiles = runs.reduce((s, w) => s + w.distanceMiles, 0);
   const totalMovingTime = runs.reduce((s, w) => s + w.durationSeconds, 0);
   const avgPaceSecPerMile = totalMiles > 0 ? totalMovingTime / totalMiles : 0;
+
+  // Planned / Actual coloring carried over from the (now-removed) Plan
+  // Progress row:
+  //   * Green when actual ≥ planned − 1 (within 1 mile of plan or ahead).
+  //   * Default text otherwise, or when there's no plan.
+  //   * "—" when the user hasn't run yet this week.
+  const hasActual = totalMiles > 0;
+  const hasPlan = plannedMiles > 0;
+  const actualColor =
+    hasActual && hasPlan && totalMiles >= plannedMiles - 1
+      ? "text-success"
+      : "text-textPrimary";
 
   const hrValues = runs
     .map((r) => r.avgHeartRate)
@@ -268,7 +235,27 @@ function RunningStatsCard({ workouts, weekStart, weekEnd }: SectionStatsProps) {
   return (
     <Card>
       <CardTitle>Running</CardTitle>
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* 6-tile grid: Planned + Actual absorbed from the old Plan Progress
+          row, followed by the original Running tiles. Breakpoint ladder
+          keeps the row readable: 2-up on phones → 3-up on tablets →
+          6-up on lg+. */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+        <StatItem
+          label="Planned"
+          value={
+            <span className="text-textPrimary">
+              {hasPlan ? `${plannedMiles.toFixed(1)} mi` : "— mi"}
+            </span>
+          }
+        />
+        <StatItem
+          label="Actual"
+          value={
+            <span className={actualColor}>
+              {hasActual ? `${totalMiles.toFixed(1)} mi` : "—"}
+            </span>
+          }
+        />
         <StatItem label="Runs" value={runs.length} />
         <StatItem
           label="Avg Pace"
@@ -1489,17 +1476,9 @@ export default function DashboardPage() {
         showTodayReset
       />
 
-      {/* Row 2: Plan Progress (target vs actual miles for the week) */}
-      <PlanProgressStatsCard
-        workouts={workouts}
-        weekStart={selectedWeekStart}
-        weekEnd={selectedWeekEnd}
-        plannedMiles={plannedMiles}
-      />
-
-      {/* Row 2.5: Week Score — single-glance summary of run/load/workout
-          adherence for the selected week. Inserted between Plan Progress
-          and the weekly calendar grid. */}
+      {/* Row 2: Week Score — single-glance summary of run/load/workout
+          adherence for the selected week. (The standalone Plan Progress
+          row was folded into the Running row's first two tiles below.) */}
       <WeekScoreCard input={weekScoreInput} />
 
       {/* Row 3: Mon–Sun weekly activity calendar */}
@@ -1527,11 +1506,14 @@ export default function DashboardPage() {
         <LoadScoreTrainingLoadCard workouts={workouts} />
       </div>
 
-      {/* Row 6: Running KPIs (Runs / Avg Pace / Avg HR / Run Load) */}
+      {/* Row 6: Running KPIs — Planned + Actual miles (absorbed from the
+          removed Plan Progress row) followed by Runs / Avg Pace / Avg HR /
+          Run Load. */}
       <RunningStatsCard
         workouts={workouts}
         weekStart={selectedWeekStart}
         weekEnd={selectedWeekEnd}
+        plannedMiles={plannedMiles}
       />
 
       {/* Row 7: Running row — Running Plan tile (left) + This Week's Runs
