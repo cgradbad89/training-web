@@ -8,7 +8,6 @@ import {
   Bike,
   Zap,
   Activity,
-  EyeOff,
   AlertTriangle,
   ChevronLeft,
   ChevronRight,
@@ -18,7 +17,6 @@ import {
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/layout/PageHeader";
-import { StatBlock } from "@/components/ui/StatBlock";
 import { useAuth } from "@/hooks/useAuth";
 import { onHealthWorkoutsSnapshot } from "@/services/healthWorkouts";
 import { fetchAllOverrides, excludeWorkout } from "@/services/workoutOverrides";
@@ -33,42 +31,63 @@ import { formatDuration } from "@/utils/pace";
 import { weekStart } from "@/utils/dates";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { WorkoutDetailModal } from "@/components/WorkoutDetailModal";
-import { ExcludedItemsModal } from "@/components/ExcludedItemsModal";
 import { TrainingLoadBadge } from "@/components/ui/TrainingLoadBadge";
 import {
   computeTrainingLoad,
   MIN_RUN_MILES_FOR_AVG,
   MIN_WORKOUT_SECONDS_FOR_AVG,
+  getActivityContext,
+  isHiitLikeActivity,
+  isMindfulActivity,
 } from "@/utils/trainingLoad";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-type TabKey = "all" | "active" | "mind-body";
+type TabKey =
+  | "all"
+  | "workout"
+  | "strength"
+  | "pilates"
+  | "yoga"
+  | "excluded";
 
 const TABS: { key: TabKey; label: string }[] = [
-  { key: "all",       label: "All"         },
-  { key: "active",    label: "Active"      },
-  { key: "mind-body", label: "Mind & Body" },
+  { key: "all",      label: "All"      },
+  { key: "workout",  label: "Workout"  },
+  { key: "strength", label: "Strength" },
+  { key: "pilates",  label: "Pilates"  },
+  { key: "yoga",     label: "Yoga"     },
+  { key: "excluded", label: "Excluded" },
 ];
 
 // ─── Classifiers ──────────────────────────────────────────────────────────────
 
-function isMindBody(w: HealthWorkout): boolean {
-  const at = w.activityType;
-  const dt = w.displayType.toLowerCase();
-  return (
-    at === "yoga" ||
-    at === "pilates" ||
-    dt.includes("yoga") ||
-    dt.includes("pilates")
-  );
-}
-
-function matchesTab(tab: TabKey, w: HealthWorkout): boolean {
+/** Whether `w` belongs in the given category tab. The "all" and "excluded"
+ *  tabs short-circuit at the page level — they pick a different SOURCE list
+ *  (active vs. excluded workouts) and don't filter by category here. */
+function matchesCategoryTab(tab: TabKey, w: HealthWorkout): boolean {
+  const at = w.activityType ?? "";
+  const atLower = at.toLowerCase();
   switch (tab) {
-    case "all":       return true;
-    case "active":    return !isMindBody(w);
-    case "mind-body": return isMindBody(w);
+    case "all":
+      return true;
+    case "workout":
+      return isHiitLikeActivity(at);
+    case "strength":
+      // Genuine strength/lifting — uses the same low-intensity context as
+      // mindful work, but isn't classified as mindful. Yoga/pilates/barre
+      // are excluded here and live in their own tabs.
+      return (
+        getActivityContext(at) === "strength" && !isMindfulActivity(at)
+      );
+    case "pilates":
+      return atLower.includes("pilates");
+    case "yoga":
+      return atLower.includes("yoga");
+    case "excluded":
+      // Source list swap happens at the page level; once we're here every
+      // excluded workout is in scope.
+      return true;
   }
 }
 
@@ -151,7 +170,39 @@ function weeksElapsed(year: number): number {
 
 // ─── Year Summary Stats ───────────────────────────────────────────────────────
 
-function YearSummary({ workouts, year }: { workouts: HealthWorkout[]; year: number }) {
+/** Tile shape matches the runs page summary tile exactly — label / value /
+ *  optional subtext, same fonts and spacing. */
+function SummaryTile({
+  label,
+  value,
+  subtext,
+}: {
+  label: string;
+  value: string;
+  subtext?: string;
+}) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-xs text-textSecondary">{label}</span>
+      <span className="text-base font-bold text-textPrimary tabular-nums leading-tight">
+        {value}
+      </span>
+      {subtext && (
+        <span className="text-[10px] text-textSecondary leading-tight">
+          {subtext}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function YearSummary({
+  workouts,
+  year,
+}: {
+  workouts: HealthWorkout[];
+  year: number;
+}) {
   const elapsed = weeksElapsed(year);
   const count = workouts.length;
 
@@ -164,58 +215,82 @@ function YearSummary({ workouts, year }: { workouts: HealthWorkout[]; year: numb
   const avgCalories =
     calorieWorkouts.length > 0
       ? Math.round(
-          calorieWorkouts.reduce((s, w) => s + w.calories, 0) / calorieWorkouts.length
+          calorieWorkouts.reduce((s, w) => s + w.calories, 0) /
+            calorieWorkouts.length
         )
       : null;
 
-  // Exclude short/aborted activities from the avg so warmups and restarts
-  // don't drag the mean down. Per-workout badges still render for these.
+  // Exclude short/aborted activities from the per-session avg so warmups
+  // and restarts don't drag the mean down. Per-workout badges still render
+  // for these in the list.
   const loadScores = workouts
     .filter((w) =>
       w.isRunLike
         ? w.distanceMiles >= MIN_RUN_MILES_FOR_AVG
         : w.durationSeconds >= MIN_WORKOUT_SECONDS_FOR_AVG
     )
-    .map((w) => computeTrainingLoad(w.durationSeconds, w.avgHeartRate, w.activityType))
+    .map((w) =>
+      computeTrainingLoad(w.durationSeconds, w.avgHeartRate, w.activityType)
+    )
     .filter((s): s is number => s !== null);
-  const avgTrainingLoad =
+  const avgLoadPerSession =
     loadScores.length > 0
       ? Math.round(loadScores.reduce((s, v) => s + v, 0) / loadScores.length)
       : null;
 
-  const activeCount = workouts.filter((w) => !isMindBody(w)).length;
-  const mindBodyCount = workouts.filter((w) => isMindBody(w)).length;
+  // Weekly avg total load — sum of ALL non-null per-session loads across the
+  // displayed workouts, divided by elapsed weeks in the selected year. We
+  // include shorter sessions in the SUM because they're part of the week's
+  // total training stress even if they're excluded from the per-session
+  // mean above. Denominator is calendar-weeks-elapsed (year-only — this
+  // page has no month filter), matching the runs-page convention.
+  const totalLoad = workouts
+    .map((w) =>
+      computeTrainingLoad(w.durationSeconds, w.avgHeartRate, w.activityType)
+    )
+    .filter((s): s is number => s !== null)
+    .reduce((a, b) => a + b, 0);
+  const avgWeeklyLoad =
+    totalLoad > 0 && elapsed > 0 ? Math.round(totalLoad / elapsed) : null;
+
+  const avgLoadPerSessionStr =
+    avgLoadPerSession != null ? String(avgLoadPerSession) : "—";
+  const avgWeeklyLoadStr =
+    avgWeeklyLoad != null ? String(avgWeeklyLoad) : "—";
+  const avgLoadValue = `${avgLoadPerSessionStr} / ${avgWeeklyLoadStr}`;
+
+  const tiles: { label: string; value: string; subtext?: string }[] = [
+    { label: "Total Workouts", value: String(count) },
+    {
+      label: "Avg Duration",
+      value:
+        avgDurationSec > 0
+          ? formatDuration(Math.round(avgDurationSec))
+          : "—",
+    },
+    {
+      label: "Avg Calories",
+      value:
+        avgCalories !== null ? `${avgCalories.toLocaleString()} kcal` : "—",
+    },
+    {
+      label: "Avg Training Load",
+      value: avgLoadValue,
+      subtext: "per session / weekly avg",
+    },
+  ];
 
   return (
-    <div className="bg-card rounded-2xl border border-border p-5 flex flex-col gap-5">
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatBlock label="Total Workouts" value={count} />
-        <StatBlock
-          label="Avg Duration"
-          value={avgDurationSec > 0 ? formatDuration(Math.round(avgDurationSec)) : "—"}
-        />
-        <StatBlock
-          label="Avg Calories"
-          value={avgCalories !== null ? avgCalories.toLocaleString() : "—"}
-          unit={avgCalories !== null ? "kcal" : undefined}
-        />
-        <StatBlock
-          label="Avg Training Load"
-          value={avgTrainingLoad !== null ? avgTrainingLoad.toLocaleString() : "—"}
-          unit={avgTrainingLoad !== null ? "score" : undefined}
-        />
-      </div>
-      <div className="grid grid-cols-4 gap-4">
-        <StatBlock label="Active Sessions" value={activeCount} />
-        <StatBlock
-          label="Active Avg/Wk"
-          value={(activeCount / elapsed).toFixed(1)}
-        />
-        <StatBlock label="Mind & Body" value={mindBodyCount} />
-        <StatBlock
-          label="M&B Avg/Wk"
-          value={(mindBodyCount / elapsed).toFixed(1)}
-        />
+    <div className="bg-card rounded-2xl border border-border p-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {tiles.map(({ label, value, subtext }) => (
+          <SummaryTile
+            key={label}
+            label={label}
+            value={value}
+            subtext={subtext}
+          />
+        ))}
       </div>
     </div>
   );
@@ -363,15 +438,39 @@ function WorkoutWeekGroup({
   const weekLabel = wStart.toLocaleDateString("en-US", { month: "short", day: "numeric" });
   const totalSecs = workouts.reduce((s, w) => s + w.durationSeconds, 0);
 
+  // Per-week summary additions — match the runs page header pattern: avg HR
+  // across sessions with a valid HR, total load (sum of computeTrainingLoad
+  // scores, nulls dropped). Each segment is skipped if no qualifying
+  // sessions contributed to it.
+  const hrVals = workouts
+    .map((w) => w.avgHeartRate)
+    .filter((v): v is number => typeof v === "number" && v > 0 && isFinite(v));
+  const avgHR =
+    hrVals.length > 0 ? hrVals.reduce((a, b) => a + b, 0) / hrVals.length : null;
+
+  const loadScores = workouts
+    .map((w) =>
+      computeTrainingLoad(w.durationSeconds, w.avgHeartRate, w.activityType)
+    )
+    .filter((s): s is number => s != null);
+  const totalLoad =
+    loadScores.length > 0 ? loadScores.reduce((a, b) => a + b, 0) : null;
+
+  const summaryParts = [
+    `${workouts.length} ${workouts.length === 1 ? "workout" : "workouts"}`,
+    formatDuration(totalSecs),
+  ];
+  if (avgHR != null) summaryParts.push(`avg ${Math.round(avgHR)}bpm`);
+  if (totalLoad != null) summaryParts.push(`load ${Math.round(totalLoad)}`);
+
   return (
     <div className="mb-6">
-      <div className="flex items-center justify-between border-b border-border pb-1.5 mb-2">
+      <div className="flex items-center justify-between flex-wrap gap-x-3 gap-y-1 border-b border-border pb-1.5 mb-2">
         <span className="text-sm font-semibold text-textSecondary">
           Week of {weekLabel}
         </span>
         <span className="text-xs text-textSecondary tabular-nums">
-          {workouts.length} {workouts.length === 1 ? "workout" : "workouts"} &middot;{" "}
-          {formatDuration(totalSecs)} total
+          {summaryParts.join(" · ")}
         </span>
       </div>
       {workouts.map((w) => (
@@ -443,7 +542,6 @@ export default function WorkoutsPage() {
   const [excludedWorkouts, setExcludedWorkouts] = useState<HealthWorkout[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedWorkout, setSelectedWorkout] = useState<HealthWorkout | null>(null);
-  const [showExcludedModal, setShowExcludedModal] = useState(false);
   const [activeTab, setActiveTab] = useState<TabKey>("all");
   const [dismissedPairKeys, setDismissedPairKeys] = useState<Set<string>>(
     new Set()
@@ -540,13 +638,22 @@ export default function WorkoutsPage() {
     return years;
   }, [allWorkouts, currentYear]);
 
+  // When the Excluded tab is active we swap the SOURCE list from
+  // allWorkouts (active only) to excludedWorkouts. The year filter and
+  // category-tab filter still apply on top of whichever source is chosen.
+  const sourceWorkouts =
+    activeTab === "excluded" ? excludedWorkouts : allWorkouts;
+
   const yearWorkouts = useMemo(
-    () => allWorkouts.filter((w) => getLocalDate(w).getFullYear() === selectedYear),
-    [allWorkouts, selectedYear]
+    () =>
+      sourceWorkouts.filter(
+        (w) => getLocalDate(w).getFullYear() === selectedYear
+      ),
+    [sourceWorkouts, selectedYear]
   );
 
   const filteredWorkouts = useMemo(
-    () => yearWorkouts.filter((w) => matchesTab(activeTab, w)),
+    () => yearWorkouts.filter((w) => matchesCategoryTab(activeTab, w)),
     [yearWorkouts, activeTab]
   );
 
@@ -589,8 +696,9 @@ export default function WorkoutsPage() {
         }
       />
 
-      {/* Row 2: Year summary stats */}
-      <YearSummary workouts={yearWorkouts} year={selectedYear} />
+      {/* Row 2: Year summary stats — reflects the currently displayed
+          (year + category) set so it stays in sync with the list below. */}
+      <YearSummary workouts={filteredWorkouts} year={selectedYear} />
 
       {/* Duplicate suggestion banners */}
       {suggestionPairs.length > 0 && (
@@ -644,29 +752,21 @@ export default function WorkoutsPage() {
         </div>
       )}
 
-      {/* Row 3: Type filter tabs + excluded button */}
-      <div className="flex items-center gap-3">
-        <div className="flex-1">
-          <TabStrip active={activeTab} onChange={setActiveTab} />
-        </div>
-        {excludedWorkouts.length > 0 && (
-          <button
-            onClick={() => setShowExcludedModal(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface border border-border text-xs font-medium text-textSecondary hover:text-textPrimary hover:border-textSecondary transition-colors shrink-0"
-          >
-            <EyeOff className="w-3.5 h-3.5" />
-            {excludedWorkouts.length} Excluded
-          </button>
-        )}
-      </div>
+      {/* Row 3: Type filter tabs — now includes "Excluded" as its own tab,
+          replacing the standalone button + modal entry point. */}
+      <TabStrip active={activeTab} onChange={setActiveTab} />
 
       {/* Row 4: Workout list grouped by week */}
       {filteredWorkouts.length === 0 ? (
         <div className="mt-4">
-          {allWorkouts.length === 0 ? (
+          {allWorkouts.length === 0 && excludedWorkouts.length === 0 ? (
             <EmptyState title="No workouts recorded yet" />
+          ) : activeTab === "excluded" ? (
+            <EmptyState title={`No excluded workouts in ${selectedYear}`} />
           ) : (
-            <EmptyState title={`No ${activeTabLabel} workouts in ${selectedYear}`} />
+            <EmptyState
+              title={`No ${activeTabLabel} workouts in ${selectedYear}`}
+            />
           )}
         </div>
       ) : (
@@ -699,36 +799,30 @@ export default function WorkoutsPage() {
                 updatedAt: new Date().toISOString(),
               },
             }));
+            // Move the workout between the active and excluded lists so the
+            // currently-active tab updates without a refresh. Both directions
+            // are handled here now that the standalone ExcludedItemsModal is
+            // gone — restoration happens via clicking an excluded row.
             if (excluded) {
               setAllWorkouts((prev) =>
                 prev.filter((w) => w.workoutId !== workoutId)
               );
-              setSelectedWorkout(null);
-            }
-          }}
-        />
-      )}
-
-      {uid && (
-        <ExcludedItemsModal
-          isOpen={showExcludedModal}
-          onClose={() => setShowExcludedModal(false)}
-          excludedItems={excludedWorkouts}
-          userId={uid}
-          onRestored={(workoutId) => {
-            setOverrides((prev) => {
-              const updated = { ...prev };
-              delete updated[workoutId];
-              return updated;
-            });
-            // Move restored workout back to visible list
-            const restored = excludedWorkouts.find((w) => w.workoutId === workoutId);
-            if (restored) {
-              setAllWorkouts((prev) => [...prev, restored]);
+              setExcludedWorkouts((prev) =>
+                prev.some((w) => w.workoutId === workoutId)
+                  ? prev
+                  : [...prev, selectedWorkout]
+              );
+            } else {
               setExcludedWorkouts((prev) =>
                 prev.filter((w) => w.workoutId !== workoutId)
               );
+              setAllWorkouts((prev) =>
+                prev.some((w) => w.workoutId === workoutId)
+                  ? prev
+                  : [...prev, selectedWorkout]
+              );
             }
+            setSelectedWorkout(null);
           }}
         />
       )}

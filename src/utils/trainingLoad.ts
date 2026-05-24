@@ -138,7 +138,7 @@ export const WORKOUT_ZONES: Record<ActivityContext, HRZone[]> = {
 // ~30% vs. Strava Relative Effort, so we apply HIIT_LOAD_FACTOR. Strength /
 // low-intensity is detected via getActivityContext's existing allowlist —
 // not duplicated here.
-function isHiitLikeActivity(activityType: string): boolean {
+export function isHiitLikeActivity(activityType: string): boolean {
   const t = activityType.toLowerCase().trim();
   return (
     t.includes("hiit") ||
@@ -159,7 +159,7 @@ function isHiitLikeActivity(activityType: string): boolean {
 // still use the strength zone bands via getActivityContext, but get the lower
 // MINDFUL_LOAD_FACTOR in the post-TRIMP scaling step. Traditional strength
 // lifting and cooldown sessions stay in the strength bucket (×0.25).
-function isMindfulActivity(activityType: string): boolean {
+export function isMindfulActivity(activityType: string): boolean {
   const t = activityType.toLowerCase().trim();
   return (
     t.includes("pilates") ||
