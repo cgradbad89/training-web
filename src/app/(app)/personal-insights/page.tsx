@@ -50,6 +50,12 @@ import {
   buildDailyLoadMap,
   buildLoadEwmaSeries,
   CTL_DAYS,
+  valueNWeeksAgo,
+  trendVsPast,
+  rangePosition,
+  typicalLoad,
+  type Trend,
+  type TypicalLoad,
 } from "@/utils/trainingLoadSeries";
 import {
   computeTrainingLoad,
@@ -61,19 +67,25 @@ import { InfoTooltip } from "@/components/ui/InfoTooltip";
 // ─── Training Load KPI tooltip copy ───────────────────────────────────────────
 // Single source of truth so the four KPI cards and any future surfaces stay
 // in sync. Copy approved verbatim by product.
+const SELF_RELATIVE_NOTE =
+  " This is relative to your own training history — not a comparison to other people.";
+
 const KPI_TOOLTIP_COPY = {
   ctl:
     "Chronic Training Load — your 42-day rolling average of daily load. " +
     "A proxy for accumulated fitness: it builds slowly with consistent " +
-    "training and reflects the workload your body is adapted to handle.",
+    "training and reflects the workload your body is adapted to handle." +
+    SELF_RELATIVE_NOTE,
   atl:
     "Acute Training Load — your 7-day rolling average of daily load. A " +
     "proxy for short-term fatigue: it rises fast after hard days and " +
-    "drops quickly with rest.",
+    "drops quickly with rest." +
+    SELF_RELATIVE_NOTE,
   tsb:
     "Training Stress Balance — Fitness minus Fatigue (CTL − ATL). Your " +
     "freshness. Positive = rested and race-ready; negative = absorbing " +
-    "training load (normal and healthy mid-build); near zero = balanced.",
+    "training load (normal and healthy mid-build); near zero = balanced." +
+    SELF_RELATIVE_NOTE,
   peak:
     "Your highest single-run training load over the last 16 weeks, with " +
     "the date it happened — a reference point for your hardest recent " +
@@ -212,6 +224,16 @@ interface TrainingLoadSectionData {
   daysOfData: number;
   peakRunLoad: number | null;
   peakRunDate: Date | null;
+  // Self-relative context — last ~6 months of converged EWMA + per-session
+  // load distributions for runs vs non-run workouts.
+  sixMonthCtl: number[];
+  sixMonthAtl: number[];
+  ctl4wAgo: number | null;
+  atl4wAgo: number | null;
+  runSessionLoads: number[];
+  workoutSessionLoads: number[];
+  thisWeekRunAvg: number | null;
+  thisWeekWorkoutAvg: number | null;
 }
 
 interface WeeklyLoadDatum {
@@ -267,6 +289,187 @@ const ZONE_BPM_LABEL: Record<HRZoneNumber, string> = {
   5: "167+",
 };
 
+// ─── KPI context sub-components ─────────────────────────────────────────────
+
+/** Trend chip — ▲ / ▼ / →, with optional color. */
+function TrendChip({
+  trend,
+  colored,
+}: {
+  trend: Trend | null;
+  // colored=true → green up / red down. colored=false → neutral grey arrows.
+  // Per spec: only CTL gets coloring (rising fitness = positive). ATL and TSB
+  // direction is informational only.
+  colored: boolean;
+}) {
+  if (!trend) {
+    return (
+      <span className="text-[10px] text-textSecondary">— vs 4 wks ago</span>
+    );
+  }
+  const arrow =
+    trend.direction === "up" ? "▲" : trend.direction === "down" ? "▼" : "→";
+  let colorClass = "text-textSecondary";
+  if (colored) {
+    if (trend.direction === "up") colorClass = "text-success";
+    else if (trend.direction === "down") colorClass = "text-danger";
+  }
+  const pctLabel = `${Math.abs(Math.round(trend.pct))}%`;
+  return (
+    <span className={`text-[10px] font-medium tabular-nums ${colorClass}`}>
+      {arrow} {pctLabel} vs 4 wks ago
+    </span>
+  );
+}
+
+/** Small horizontal range bar with a marker for `current` within [min, max]. */
+function RangeBar({
+  pct,
+  label,
+}: {
+  // 0..1 position within the 6-month [min, max] range
+  pct: number;
+  label: string;
+}) {
+  const left = `${Math.round(pct * 100)}%`;
+  return (
+    <div className="mt-1.5">
+      <div className="relative h-1.5 rounded-full bg-surface overflow-visible">
+        <div
+          className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-2.5 h-2.5 rounded-full bg-primary border border-card shadow-sm"
+          style={{ left }}
+        />
+      </div>
+      <p className="text-[10px] text-textSecondary mt-1">{label}</p>
+    </div>
+  );
+}
+
+/** Render a status line beneath the range bar. */
+function StatusLine({ label }: { label: string }) {
+  return (
+    <p className="text-[10px] font-medium text-textPrimary mt-1">{label}</p>
+  );
+}
+
+/**
+ * Compare a current-week avg to a personal typical (median) and return a
+ * short qualitative phrase. Bands chosen to be self-relative — no fixed
+ * thresholds carry across users.
+ */
+function compareVsTypical(current: number, median: number): string {
+  if (median <= 0) return "—";
+  const ratio = current / median;
+  if (ratio >= 1.25) return "well above your typical";
+  if (ratio >= 1.1) return "a bit above your typical";
+  if (ratio >= 0.9) return "right around your typical";
+  if (ratio >= 0.75) return "a bit below your typical";
+  return "well below your typical";
+}
+
+function TypicalLoadCard({
+  runTypical,
+  workoutTypical,
+  runSessionsCount,
+  workoutSessionsCount,
+  thisWeekRunAvg,
+  thisWeekWorkoutAvg,
+}: {
+  runTypical: TypicalLoad | null;
+  workoutTypical: TypicalLoad | null;
+  runSessionsCount: number;
+  workoutSessionsCount: number;
+  thisWeekRunAvg: number | null;
+  thisWeekWorkoutAvg: number | null;
+}) {
+  function renderRow(
+    label: string,
+    typical: TypicalLoad | null,
+    sessionsCount: number,
+    thisWeekAvg: number | null
+  ) {
+    // Thin-history empty state.
+    if (!typical) {
+      return (
+        <div className="flex items-center justify-between py-1.5">
+          <span className="text-sm font-medium text-textPrimary">{label}</span>
+          <span className="text-xs text-textSecondary">
+            Building your baseline ({sessionsCount} sessions)
+          </span>
+        </div>
+      );
+    }
+    const median = Math.round(typical.median);
+    const min = Math.round(typical.min);
+    const max = Math.round(typical.max);
+    return (
+      <div className="py-1.5">
+        <div className="flex items-baseline justify-between gap-3">
+          <span className="text-sm font-medium text-textPrimary">{label}</span>
+          <span className="text-xs text-textSecondary tabular-nums">
+            typical <span className="font-semibold text-textPrimary">{median}</span> · range {min}–{max}
+          </span>
+        </div>
+        {thisWeekAvg != null && (
+          <p className="text-[11px] text-textSecondary mt-0.5">
+            This week avg <span className="tabular-nums font-medium text-textPrimary">
+              {Math.round(thisWeekAvg)}
+            </span>{" "}
+            → {compareVsTypical(thisWeekAvg, typical.median)}
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <Card>
+      <h3 className="text-sm font-semibold text-textPrimary mb-1">
+        Your Typical Load
+      </h3>
+      <p className="text-xs text-textSecondary mb-3">
+        Median session load over the last 6 months — your personal reference
+        for the per-session scores you see throughout the app.
+      </p>
+      <div className="flex flex-col divide-y divide-border/60">
+        {renderRow("Runs", runTypical, runSessionsCount, thisWeekRunAvg)}
+        {renderRow(
+          "Workouts",
+          workoutTypical,
+          workoutSessionsCount,
+          thisWeekWorkoutAvg
+        )}
+      </div>
+    </Card>
+  );
+}
+
+function ctlStatusLabel(trend: Trend | null): string {
+  if (!trend) return "—";
+  if (trend.direction === "up") return "Building";
+  if (trend.direction === "down") return "Detraining";
+  return "Maintaining";
+}
+
+function atlStatusLabel(
+  current: number,
+  values: number[]
+): string {
+  if (values.length === 0) return "—";
+  const sorted = [...values].sort((a, b) => a - b);
+  const below = sorted.filter((v) => v < current).length;
+  const percentile = (below / sorted.length) * 100;
+  if (percentile >= 70) return "Elevated";
+  if (percentile < 30) return "Low";
+  return "Typical";
+}
+
+function tsbStatusLabel(tsb: number): string {
+  const base = tsbBand(tsb);
+  if (tsb < 0) return `${base} (normal mid-build)`;
+  return base;
+}
+
 function TrainingLoadSection({
   data,
   weeklyData,
@@ -282,13 +485,72 @@ function TrainingLoadSection({
   } | null;
   intensityLoading: boolean;
 }) {
-  const { displaySeries, last, daysOfData, peakRunLoad, peakRunDate } = data;
+  const {
+    displaySeries,
+    last,
+    daysOfData,
+    peakRunLoad,
+    peakRunDate,
+    sixMonthCtl,
+    sixMonthAtl,
+    ctl4wAgo,
+    atl4wAgo,
+    runSessionLoads,
+    workoutSessionLoads,
+    thisWeekRunAvg,
+    thisWeekWorkoutAvg,
+  } = data;
   const hasLoadData = displaySeries.some((p) => p.load > 0);
   const baselineBuilding = daysOfData < CTL_DAYS;
 
   const ctlValue = last && hasLoadData ? Math.round(last.ctl) : null;
   const atlValue = last && hasLoadData ? Math.round(last.atl) : null;
   const tsbValue = last && hasLoadData ? last.tsb : null;
+
+  // ── Self-relative context for each KPI ──
+  const ctlTrend =
+    last && ctl4wAgo != null ? trendVsPast(last.ctl, ctl4wAgo) : null;
+  const atlTrend =
+    last && atl4wAgo != null ? trendVsPast(last.atl, atl4wAgo) : null;
+  // TSB trend is shown vs 4w-ago derived TSB. We don't store a tsb4wAgo
+  // explicitly; reconstruct it as ctl4w − atl4w.
+  const tsb4wAgo =
+    ctl4wAgo != null && atl4wAgo != null ? ctl4wAgo - atl4wAgo : null;
+  // For TSB, % vs past has degenerate semantics around 0; show only the
+  // absolute "vs" arrow + magnitude difference rather than a percentage.
+  // trendVsPast guards past <= 0 so we feed |tsb4wAgo| as a denominator
+  // surrogate; if 4w-ago tsb was 0 we skip the chip.
+  const tsbTrend =
+    last && tsb4wAgo != null && Math.abs(tsb4wAgo) > 0
+      ? trendVsPast(last.tsb, Math.abs(tsb4wAgo))
+      : null;
+
+  const ctlRange =
+    last && sixMonthCtl.length > 0 ? rangePosition(last.ctl, sixMonthCtl) : null;
+  const atlRange =
+    last && sixMonthAtl.length > 0 ? rangePosition(last.atl, sixMonthAtl) : null;
+  // TSB range — built from per-day tsb derived from CTL/ATL pairs in the
+  // 6-month tail.
+  const sixMonthTsb = sixMonthCtl.map((c, i) => c - (sixMonthAtl[i] ?? 0));
+  const tsbRange =
+    last && sixMonthTsb.length > 0 ? rangePosition(last.tsb, sixMonthTsb) : null;
+
+  // Typical run/workout load distributions (last 6 months, per session).
+  const MIN_SESSIONS_FOR_TYPICAL = 8;
+  const runTypical: TypicalLoad | null =
+    runSessionLoads.length >= MIN_SESSIONS_FOR_TYPICAL
+      ? typicalLoad(runSessionLoads)
+      : null;
+  const workoutTypical: TypicalLoad | null =
+    workoutSessionLoads.length >= MIN_SESSIONS_FOR_TYPICAL
+      ? typicalLoad(workoutSessionLoads)
+      : null;
+
+  // Quiet anchor under Peak Run Load: "vs ~N typical run".
+  const peakVsTypicalSubtext: string | null =
+    peakRunLoad != null && runTypical
+      ? `vs ~${Math.round(runTypical.median)} typical run`
+      : null;
 
   // Recharts data — round CTL/ATL for chart readability; keep raw TSB for tooltip.
   const chartData = displaySeries.map((p) => ({
@@ -320,6 +582,20 @@ function TrainingLoadSection({
               {ctlValue != null ? ctlValue : "—"}
             </p>
             <p className="text-xs text-textSecondary mt-1">42-day load</p>
+            {ctlValue != null && (
+              <>
+                <div className="mt-2">
+                  {/* CTL is the one metric where up=positive (fitness rising),
+                      so its trend arrow is colored. ATL/TSB direction is
+                      neutral grey. */}
+                  <TrendChip trend={ctlTrend} colored />
+                </div>
+                {ctlRange && (
+                  <RangeBar pct={ctlRange.pct} label={ctlRange.label} />
+                )}
+                <StatusLine label={ctlStatusLabel(ctlTrend)} />
+              </>
+            )}
           </div>
           <div className="text-center">
             <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-2 inline-flex items-center justify-center w-full">
@@ -333,6 +609,19 @@ function TrainingLoadSection({
               {atlValue != null ? atlValue : "—"}
             </p>
             <p className="text-xs text-textSecondary mt-1">7-day load</p>
+            {atlValue != null && (
+              <>
+                <div className="mt-2">
+                  <TrendChip trend={atlTrend} colored={false} />
+                </div>
+                {atlRange && (
+                  <RangeBar pct={atlRange.pct} label={atlRange.label} />
+                )}
+                <StatusLine
+                  label={atlStatusLabel(atlValue, sixMonthAtl)}
+                />
+              </>
+            )}
           </div>
           <div className="text-center">
             <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-2 inline-flex items-center justify-center w-full">
@@ -348,6 +637,17 @@ function TrainingLoadSection({
             <p className="text-xs text-textSecondary mt-1">
               {tsbValue != null ? tsbBand(tsbValue) : "—"}
             </p>
+            {tsbValue != null && (
+              <>
+                <div className="mt-2">
+                  <TrendChip trend={tsbTrend} colored={false} />
+                </div>
+                {tsbRange && (
+                  <RangeBar pct={tsbRange.pct} label={tsbRange.label} />
+                )}
+                <StatusLine label={tsbStatusLabel(tsbValue)} />
+              </>
+            )}
           </div>
           <div className="text-center">
             <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-2 inline-flex items-center justify-center w-full">
@@ -368,6 +668,11 @@ function TrainingLoadSection({
                   })
                 : "—"}
             </p>
+            {peakVsTypicalSubtext && (
+              <p className="text-[10px] text-textSecondary mt-2">
+                {peakVsTypicalSubtext}
+              </p>
+            )}
           </div>
         </div>
 
@@ -377,6 +682,18 @@ function TrainingLoadSection({
           </p>
         )}
       </Card>
+
+      {/* Your Typical Load — anchor card for the KPI values above. Placed
+          directly after the KPIs so the "vs typical" framing reads as a
+          reference, not a sidebar. */}
+      <TypicalLoadCard
+        runTypical={runTypical}
+        workoutTypical={workoutTypical}
+        runSessionsCount={runSessionLoads.length}
+        workoutSessionsCount={workoutSessionLoads.length}
+        thisWeekRunAvg={thisWeekRunAvg}
+        thisWeekWorkoutAvg={thisWeekWorkoutAvg}
+      />
 
       {/* Fitness curve */}
       <Card>
@@ -1122,6 +1439,59 @@ export default function PersonalInsightsPage() {
       }
     }
 
+    // ── Self-relative context inputs ──
+    // 6-month tail of the converged EWMA for the personal-range bars.
+    const SIXMO_DAYS = 180;
+    const sixMonthSeries = fullSeries.slice(
+      Math.max(0, fullSeries.length - SIXMO_DAYS)
+    );
+    const sixMonthCtl = sixMonthSeries.map((p) => p.ctl);
+    const sixMonthAtl = sixMonthSeries.map((p) => p.atl);
+
+    // CTL/ATL value 4 weeks (28 days) ago, for the trend chips.
+    const ctl4wAgo = valueNWeeksAgo(fullSeries, 4, "ctl");
+    const atl4wAgo = valueNWeeksAgo(fullSeries, 4, "atl");
+
+    // Per-session load distributions over the last 6 months — runs vs
+    // non-run workouts, excluding sessions with no HR (computeTrainingLoad
+    // returns null → not counted as 0).
+    const sixMoCutoffMs = today.getTime() - SIXMO_DAYS * 86400 * 1000;
+    const runSessionLoads: number[] = [];
+    const workoutSessionLoads: number[] = [];
+    for (const w of workouts) {
+      if (w.startDate.getTime() < sixMoCutoffMs) continue;
+      const score = computeTrainingLoad(
+        w.durationSeconds,
+        w.avgHeartRate,
+        w.activityType
+      );
+      if (score == null) continue;
+      if (w.isRunLike) runSessionLoads.push(score);
+      else workoutSessionLoads.push(score);
+    }
+
+    // This week's avg session load — runs vs non-run workouts. Mirrors the
+    // dashboard WeeklyStatsBar logic but inlined to avoid coupling.
+    const weekStartLocal = new Date(today);
+    weekStartLocal.setDate(today.getDate() - 6); // trailing 7 days incl. today
+    const weekStartMs = weekStartLocal.getTime();
+    const thisWeekRuns: number[] = [];
+    const thisWeekWorkouts: number[] = [];
+    for (const w of workouts) {
+      if (w.startDate.getTime() < weekStartMs) continue;
+      if (w.startDate.getTime() > today.getTime() + 86400 * 1000) continue;
+      const score = computeTrainingLoad(
+        w.durationSeconds,
+        w.avgHeartRate,
+        w.activityType
+      );
+      if (score == null) continue;
+      if (w.isRunLike) thisWeekRuns.push(score);
+      else thisWeekWorkouts.push(score);
+    }
+    const avg = (xs: number[]): number | null =>
+      xs.length > 0 ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
+
     return {
       dailyMap,
       displaySeries,
@@ -1131,6 +1501,14 @@ export default function PersonalInsightsPage() {
       peakRunDate,
       displayStart,
       today,
+      sixMonthCtl,
+      sixMonthAtl,
+      ctl4wAgo,
+      atl4wAgo,
+      runSessionLoads,
+      workoutSessionLoads,
+      thisWeekRunAvg: avg(thisWeekRuns),
+      thisWeekWorkoutAvg: avg(thisWeekWorkouts),
     };
   }, [workouts]);
 

@@ -206,3 +206,125 @@ export function buildLoadEwmaSeries(
 function startOfLocalDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
+
+// ─── Self-relative context helpers ──────────────────────────────────────────
+//
+// These power the "vs your own history" framing on Personal Insights. Every
+// helper here is intentionally pure and percentile/range-based — none of it
+// references population norms or peer comparisons.
+
+/**
+ * Value of a CTL/ATL/TSB field N weeks before the latest series point.
+ * Returns null when the series is shorter than the requested lookback.
+ */
+export function valueNWeeksAgo(
+  series: LoadEwmaPoint[],
+  weeksAgo: number,
+  field: "ctl" | "atl" | "tsb" = "ctl"
+): number | null {
+  if (series.length === 0 || weeksAgo < 0) return null;
+  const idx = series.length - 1 - weeksAgo * 7;
+  if (idx < 0) return null;
+  const point = series[idx];
+  return point[field];
+}
+
+export type TrendDirection = "up" | "down" | "flat";
+
+export interface Trend {
+  /** Signed percentage change (current − past) / past × 100. */
+  pct: number;
+  direction: TrendDirection;
+}
+
+/**
+ * Trend from `past` to `current`. Flat band ±3% to avoid noisy ▲/▼ flicker.
+ * Returns null when either value is non-finite or `past` is ≤ 0
+ * (no baseline to compare against).
+ */
+export function trendVsPast(current: number, past: number): Trend | null {
+  if (!isFinite(current) || !isFinite(past) || past <= 0) return null;
+  const pct = ((current - past) / past) * 100;
+  let direction: TrendDirection;
+  if (pct > 3) direction = "up";
+  else if (pct < -3) direction = "down";
+  else direction = "flat";
+  return { pct, direction };
+}
+
+export interface RangePosition {
+  min: number;
+  max: number;
+  /** Where `current` sits in [min, max] as a 0..1 fraction. */
+  pct: number;
+  /** Plain-language band derived from `current`'s percentile in `values`. */
+  label: string;
+}
+
+/**
+ * Where `current` sits inside the historical `values` distribution. Labels by
+ * percentile rank, using thresholds the spec calls out:
+ *   ≥85 → "near your high"
+ *   ≤15 → "near your low"
+ *   40–60 → "mid-range for you"
+ *   otherwise → "above/below your typical"
+ *
+ * Returns null when `values` is empty (no baseline).
+ */
+export function rangePosition(
+  current: number,
+  values: number[]
+): RangePosition | null {
+  if (values.length === 0 || !isFinite(current)) return null;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min;
+  const pct = span > 0 ? (current - min) / span : 0.5;
+
+  const sorted = [...values].sort((a, b) => a - b);
+  const below = sorted.filter((v) => v < current).length;
+  const percentile = (below / sorted.length) * 100;
+
+  let label: string;
+  if (percentile >= 85) label = "near your high";
+  else if (percentile <= 15) label = "near your low";
+  else if (percentile >= 40 && percentile <= 60) label = "mid-range for you";
+  else if (percentile > 60) label = "above your typical";
+  else label = "below your typical";
+
+  return { min, max, pct: Math.max(0, Math.min(1, pct)), label };
+}
+
+export interface TypicalLoad {
+  median: number;
+  p25: number;
+  p75: number;
+  min: number;
+  max: number;
+}
+
+/**
+ * Quartile summary of a per-session load distribution. Used to anchor the
+ * "Your Typical Load" card on Personal Insights.
+ *
+ * Linear interpolation between order statistics (same convention as numpy's
+ * default "linear" method). Returns null when the input is empty.
+ */
+export function typicalLoad(sessionLoads: number[]): TypicalLoad | null {
+  if (sessionLoads.length === 0) return null;
+  const sorted = [...sessionLoads].sort((a, b) => a - b);
+  function quantile(p: number): number {
+    const idx = (sorted.length - 1) * p;
+    const lo = Math.floor(idx);
+    const hi = Math.ceil(idx);
+    if (lo === hi) return sorted[lo];
+    return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+  }
+  return {
+    median: quantile(0.5),
+    p25: quantile(0.25),
+    p75: quantile(0.75),
+    min: sorted[0],
+    max: sorted[sorted.length - 1],
+  };
+}
