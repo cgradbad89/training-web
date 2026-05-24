@@ -336,11 +336,14 @@ function YearNavigator({
   onChange: (y: number) => void;
 }) {
   const idx = years.indexOf(selected);
+  // `years` is sorted DESC (newest at index 0), so older = higher index.
+  // ← goes older (idx + 1), → goes newer (idx - 1) — matches the standard
+  // timeline convention where left is earlier in time.
   return (
     <div className="flex items-center gap-1">
       <button
-        onClick={() => { if (idx > 0) onChange(years[idx - 1]); }}
-        disabled={idx <= 0}
+        onClick={() => { if (idx < years.length - 1) onChange(years[idx + 1]); }}
+        disabled={idx >= years.length - 1}
         className="p-1.5 rounded-lg hover:bg-surface text-textSecondary disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
         aria-label="Previous year"
       >
@@ -350,8 +353,8 @@ function YearNavigator({
         {selected}
       </span>
       <button
-        onClick={() => { if (idx < years.length - 1) onChange(years[idx + 1]); }}
-        disabled={idx >= years.length - 1}
+        onClick={() => { if (idx > 0) onChange(years[idx - 1]); }}
+        disabled={idx <= 0}
         className="p-1.5 rounded-lg hover:bg-surface text-textSecondary disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
         aria-label="Next year"
       >
