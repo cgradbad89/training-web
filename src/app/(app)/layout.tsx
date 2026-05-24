@@ -37,14 +37,14 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/dashboard",          label: "This Week",          icon: LayoutDashboard },
   { href: "/plan-insights",      label: "Plan Insights",      icon: BarChart2 },
   { href: "/personal-insights",  label: "Personal Insights",  icon: TrendingUp },
-  { href: "/coach",              label: "AI Coach",           icon: BotMessageSquare },
   { href: "/health",             label: "Health",             icon: Heart },
+  { href: "/workouts",           label: "Workouts",           icon: Dumbbell },
   { href: "/runs",               label: "Runs",               icon: Footprints },
   { href: "/routes",             label: "Routes",             icon: Map },
-  { href: "/workouts",           label: "Workouts",           icon: Dumbbell },
   { href: "/plans",              label: "Plans",              icon: ClipboardList },
   { href: "/races",              label: "Races",              icon: Trophy },
   { href: "/shoes",              label: "Shoes",              icon: CircleDot },
+  { href: "/coach",              label: "AI Coach",           icon: BotMessageSquare },
 ];
 
 // iOS tab-bar convention: max 5 primary items. Everything else goes in "More".
