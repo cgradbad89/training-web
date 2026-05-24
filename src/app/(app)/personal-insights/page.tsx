@@ -91,7 +91,7 @@ const KPI_TOOLTIP_COPY = {
     "training load (normal and healthy mid-build); near zero = balanced." +
     SELF_RELATIVE_NOTE,
   peak:
-    "Your highest single-run training load over the last 16 weeks, with " +
+    "Your highest single-run training load over the last 30 days, with " +
     "the date it happened — a reference point for your hardest recent " +
     "effort.",
 } as const;
@@ -935,8 +935,8 @@ function TrainingLoadSection({
           Running Intensity by HR Zone
         </h3>
         <p className="text-xs text-textSecondary mb-3">
-          Based on per-mile HR from your last 8 weeks of GPS runs. Fills in as
-          more runs sync.
+          Percentage of running miles in each HR zone, weighted by distance.
+          Based on per-mile HR from your last 8 weeks of GPS runs.
         </p>
 
         {intensityLoading ? (
@@ -1666,6 +1666,9 @@ export default function PersonalInsightsPage() {
   const trainingLoadData = useMemo(() => {
     // Window the user sees on the chart.
     const DISPLAY_DAYS = 112; // 16 weeks
+    // Peak Run Load has its own (shorter) window — decoupled from the chart
+    // window so we can shrink it without also shrinking the curve/bars.
+    const PEAK_RUN_LOAD_DAYS = 30;
     // Seed window — 180 days is well past 3× CTL_DAYS (42), so the EWMA has
     // converged by the time we hit the displayed range.
     const SEED_DAYS = 180;
@@ -1711,13 +1714,16 @@ export default function PersonalInsightsPage() {
     // proxy for "days of data" available for baselining.
     const daysOfData = fullSeries.length;
 
-    // Peak single-run training load over the displayed (112d) window.
-    const displayStartTime = displayStart.getTime();
+    // Peak single-run training load over its own 30-day window (separate
+    // from the chart's 112-day display window).
+    const peakStart = new Date(today);
+    peakStart.setDate(today.getDate() - (PEAK_RUN_LOAD_DAYS - 1));
+    const peakStartTime = peakStart.getTime();
     let peakRunLoad = 0;
     let peakRunDate: Date | null = null;
     for (const w of workouts) {
       if (!w.isRunLike) continue;
-      if (w.startDate.getTime() < displayStartTime) continue;
+      if (w.startDate.getTime() < peakStartTime) continue;
       const score = computeTrainingLoad(
         w.durationSeconds,
         w.avgHeartRate,
