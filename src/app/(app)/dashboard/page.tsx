@@ -62,6 +62,12 @@ import { type WorkoutOverride } from "@/types/workoutOverride";
 import { fetchAllOverrides } from "@/services/workoutOverrides";
 import { WorkoutDetailModal } from "@/components/WorkoutDetailModal";
 import {
+  computeWeekScore,
+  isWeekEmpty,
+  type WeekScoreInput,
+  type WeekScoreResult,
+} from "@/utils/weekScore";
+import {
   type RunningPlan,
   type WorkoutPlan,
   type PlannedWorkoutEntry,
@@ -1077,6 +1083,159 @@ function LoadScoreTrainingLoadCard({
   );
 }
 
+// ─── Week Score Card ─────────────────────────────────────────────────────────
+
+/** Single ring + three sub-score bars summarising the current week's
+ *  adherence and load. Pure presentation — all numbers come from
+ *  computeWeekScore() at the page level. */
+function WeekScoreCard({ input }: { input: WeekScoreInput }) {
+  const empty = isWeekEmpty(input);
+
+  // Compute the score unconditionally so we still render *something* on an
+  // empty week; the rendered branch decides whether to show the gauge or
+  // the placeholder.
+  const result: WeekScoreResult = computeWeekScore(input);
+
+  if (empty) {
+    return (
+      <Card>
+        <div className="flex items-center gap-4">
+          <div className="flex-1">
+            <p className="text-xs font-semibold uppercase tracking-widest text-textSecondary mb-2">
+              Week Score
+            </p>
+            <p className="text-sm text-textSecondary">
+              Check back as your week builds.
+            </p>
+          </div>
+        </div>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <div className="flex items-center gap-6">
+        {/* Left — ring gauge */}
+        <WeekScoreRing result={result} />
+
+        {/* Right — label + sub-score bars */}
+        <div className="flex-1 min-w-0 flex flex-col gap-3">
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-textSecondary mb-1">
+              Week Score
+            </p>
+            <p
+              className="font-medium leading-tight"
+              style={{ fontSize: 22, color: result.color }}
+            >
+              {result.label}
+            </p>
+            <p className="text-xs text-textSecondary mt-0.5">
+              {result.descriptionLine}
+            </p>
+          </div>
+
+          <div className="h-px bg-border" />
+
+          <div className="flex flex-col gap-2">
+            <WeekScoreBar label="Run miles"     points={result.runScore}     max={40} />
+            <WeekScoreBar label="Training load" points={result.loadScore}    max={35} />
+            <WeekScoreBar label="Workouts"      points={result.workoutScore} max={25} />
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function WeekScoreRing({ result }: { result: WeekScoreResult }) {
+  const RADIUS = 52;
+  const CIRC = 2 * Math.PI * RADIUS;
+  const filled = (result.total / 100) * CIRC;
+  return (
+    <svg viewBox="0 0 130 130" width="110" height="110" className="shrink-0">
+      <circle
+        cx={65}
+        cy={65}
+        r={RADIUS}
+        fill="none"
+        stroke="var(--color-background-secondary)"
+        strokeWidth={11}
+      />
+      <circle
+        cx={65}
+        cy={65}
+        r={RADIUS}
+        fill="none"
+        stroke={result.color}
+        strokeWidth={11}
+        strokeLinecap="round"
+        strokeDasharray={`${filled} ${CIRC}`}
+        transform="rotate(-90 65 65)"
+      />
+      <text
+        x={65}
+        y={60}
+        textAnchor="middle"
+        fontSize={26}
+        fontWeight={500}
+        fill="var(--color-text-primary)"
+      >
+        {result.total}
+      </text>
+      <text
+        x={65}
+        y={76}
+        textAnchor="middle"
+        fontSize={11}
+        fill="var(--color-text-secondary)"
+      >
+        /100
+      </text>
+    </svg>
+  );
+}
+
+const WEEK_SCORE_BAR_FILL = "#7F77DD";
+
+function WeekScoreBar({
+  label,
+  points,
+  max,
+}: {
+  label: string;
+  points: number;
+  max: number;
+}) {
+  const pct = max > 0 ? Math.min(100, (points / max) * 100) : 0;
+  return (
+    <div className="flex items-center gap-3">
+      <span className="text-xs text-textSecondary shrink-0" style={{ width: 62 }}>
+        {label}
+      </span>
+      <div
+        className="flex-1 rounded-full overflow-hidden"
+        style={{
+          height: 6,
+          background: "var(--color-background-secondary)",
+        }}
+      >
+        <div
+          className="h-full rounded-full transition-all duration-500"
+          style={{ width: `${pct}%`, background: WEEK_SCORE_BAR_FILL }}
+        />
+      </div>
+      <span
+        className="text-right tabular-nums shrink-0"
+        style={{ width: 36, fontSize: 11, color: WEEK_SCORE_BAR_FILL }}
+      >
+        {points}/{max}
+      </span>
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
@@ -1224,6 +1383,88 @@ export default function DashboardPage() {
     [workouts, selectedWeekStart, selectedWeekEnd]
   );
 
+  // ── Week Score inputs ────────────────────────────────────────────────────
+  // All six numbers fed into computeWeekScore() live here so the score
+  // updates in lockstep with the week-navigator selection. Each value
+  // mirrors the formula the corresponding tile below uses, so the score
+  // never contradicts the numbers the user sees in the stats cards.
+
+  const actualMiles = useMemo(
+    () =>
+      workouts
+        .filter((w) => w.isRunLike && isInWeek(w, selectedWeekStart, selectedWeekEnd))
+        .reduce((s, w) => s + w.distanceMiles, 0),
+    [workouts, selectedWeekStart, selectedWeekEnd]
+  );
+
+  // Sum of in-week per-session loads, matching the filters the Running
+  // and Workouts stats cards apply for their "load XXX" totals. Sessions
+  // below the min thresholds are excluded so the score doesn't reward
+  // warmup/aborted activity.
+  const thisWeekTotalLoad = useMemo(() => {
+    let total = 0;
+    for (const w of workouts) {
+      if (!isInWeek(w, selectedWeekStart, selectedWeekEnd)) continue;
+      if (w.isRunLike) {
+        if (w.distanceMiles < MIN_RUN_MILES_FOR_AVG) continue;
+      } else {
+        if (w.durationSeconds < MIN_WORKOUT_SECONDS_FOR_AVG) continue;
+      }
+      const load = computeTrainingLoad(
+        w.durationSeconds,
+        w.avgHeartRate,
+        w.activityType
+      );
+      if (load == null) continue;
+      total += load;
+    }
+    return total;
+  }, [workouts, selectedWeekStart, selectedWeekEnd]);
+
+  // 28-day rolling baseline ending TODAY — same value the Load Score
+  // Training Load card surfaces as "28-Day Avg/Wk". Anchored on today
+  // (not selectedWeekStart) by design: this represents the user's typical
+  // weekly capacity, which doesn't shift when they navigate to a past
+  // week.
+  const avgWeeklyLoad = useMemo(() => {
+    const dailyMap = buildDailyLoadMap(workouts);
+    const total28 = rollingLoad(dailyMap, new Date(), 28);
+    return total28 / 4;
+  }, [workouts]);
+
+  // Workout-plan session counts for the selected week — mirrors the
+  // derivation inside WorkoutPlanProgressCard.
+  const { sessionsCompleted, sessionsPlanned } = useMemo(() => {
+    if (!activeWorkoutPlan) {
+      return { sessionsCompleted: 0, sessionsPlanned: 0 };
+    }
+    const planStart = new Date(activeWorkoutPlan.startDate + "T00:00:00");
+    const weekIndex = Math.floor(
+      (selectedWeekStart.getTime() - planStart.getTime()) /
+        (7 * 24 * 60 * 60 * 1000)
+    );
+    if (weekIndex < 0 || weekIndex >= activeWorkoutPlan.weeks.length) {
+      return { sessionsCompleted: 0, sessionsPlanned: 0 };
+    }
+    const sessionEntries = activeWorkoutPlan.weeks[weekIndex].entries.filter(
+      (e): e is PlannedWorkoutEntry => e.type === "workout"
+    );
+    return {
+      sessionsCompleted: sessionEntries.filter((e) => e.completed === true)
+        .length,
+      sessionsPlanned: sessionEntries.length,
+    };
+  }, [activeWorkoutPlan, selectedWeekStart]);
+
+  const weekScoreInput: WeekScoreInput = {
+    actualMiles,
+    plannedMiles,
+    thisWeekTotalLoad,
+    avgWeeklyLoad,
+    sessionsCompleted,
+    sessionsPlanned,
+  };
+
   // ─── KPI data ────────────────────────────────────────────────────────────────
 
   if (loading) {
@@ -1255,6 +1496,11 @@ export default function DashboardPage() {
         weekEnd={selectedWeekEnd}
         plannedMiles={plannedMiles}
       />
+
+      {/* Row 2.5: Week Score — single-glance summary of run/load/workout
+          adherence for the selected week. Inserted between Plan Progress
+          and the weekly calendar grid. */}
+      <WeekScoreCard input={weekScoreInput} />
 
       {/* Row 3: Mon–Sun weekly activity calendar */}
       <section>
