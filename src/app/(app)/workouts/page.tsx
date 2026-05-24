@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import {
   Dumbbell,
   Wind,
@@ -31,6 +31,7 @@ import { formatDuration } from "@/utils/pace";
 import { weekStart } from "@/utils/dates";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { WorkoutDetailModal } from "@/components/WorkoutDetailModal";
+import { MiniCalendar, toLocalIsoDateForCalendar } from "@/components/MiniCalendar";
 import { TrainingLoadBadge } from "@/components/ui/TrainingLoadBadge";
 import {
   computeTrainingLoad,
@@ -432,10 +433,13 @@ function WorkoutWeekGroup({
   wKey,
   workouts,
   onSelect,
+  innerRef,
 }: {
   wKey: string;
   workouts: HealthWorkout[];
   onSelect: (w: HealthWorkout) => void;
+  /** Ref the parent uses to scrollIntoView when a calendar day is clicked. */
+  innerRef?: (el: HTMLDivElement | null) => void;
 }) {
   const wStart = new Date(wKey + "T00:00:00");
   const weekLabel = wStart.toLocaleDateString("en-US", { month: "short", day: "numeric" });
@@ -467,7 +471,7 @@ function WorkoutWeekGroup({
   if (totalLoad != null) summaryParts.push(`load ${Math.round(totalLoad)}`);
 
   return (
-    <div className="mb-6">
+    <div ref={innerRef} className="mb-6">
       <div className="flex items-center justify-between flex-wrap gap-x-3 gap-y-1 border-b border-border pb-1.5 mb-2">
         <span className="text-sm font-semibold text-textSecondary">
           Week of {weekLabel}
@@ -675,6 +679,29 @@ export default function WorkoutsPage() {
     return Object.entries(map).sort(([a], [b]) => b.localeCompare(a));
   }, [filteredWorkouts]);
 
+  // Per-day session count for the shared MiniCalendar. Reflects the active
+  // filter (year + category tab) so the calendar tracks the list below.
+  // Count-per-day is the cleanest visual parallel to the runs page's
+  // "miles-per-day" — see Step 0 notes.
+  const workoutsByDate = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const w of filteredWorkouts) {
+      const key = toLocalIsoDateForCalendar(getLocalDate(w));
+      map[key] = (map[key] ?? 0) + 1;
+    }
+    return map;
+  }, [filteredWorkouts]);
+
+  // Refs the calendar uses to scroll the matching WorkoutWeekGroup into
+  // view when a day pill is clicked — same UX as the runs page.
+  const weekRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const scrollToWeek = useCallback((wk: string) => {
+    weekRefs.current[wk]?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  }, []);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -759,7 +786,25 @@ export default function WorkoutsPage() {
           replacing the standalone button + modal entry point. */}
       <TabStrip active={activeTab} onChange={setActiveTab} />
 
-      {/* Row 4: Workout list grouped by week */}
+      {/* Row 4: Monthly activity calendar — same component the runs page
+          uses, adapted to show per-day session count. Reflects the active
+          year + category filters; clicking a populated day scrolls to that
+          week in the list below. */}
+      <div className="bg-card rounded-2xl border border-border p-4">
+        <p className="text-xs font-semibold uppercase tracking-widest text-textSecondary mb-3">
+          Calendar
+        </p>
+        <MiniCalendar
+          year={selectedYear}
+          valuesByDate={workoutsByDate}
+          formatValue={(v) => String(v)}
+          formatTooltip={(v) => `${v} ${v === 1 ? "workout" : "workouts"}`}
+          onDayClick={scrollToWeek}
+          lockedMonth={null}
+        />
+      </div>
+
+      {/* Row 5: Workout list grouped by week */}
       {filteredWorkouts.length === 0 ? (
         <div className="mt-4">
           {allWorkouts.length === 0 && excludedWorkouts.length === 0 ? (
@@ -775,7 +820,15 @@ export default function WorkoutsPage() {
       ) : (
         <div>
           {groupedWeeks.map(([wk, workouts]) => (
-            <WorkoutWeekGroup key={wk} wKey={wk} workouts={workouts} onSelect={setSelectedWorkout} />
+            <WorkoutWeekGroup
+              key={wk}
+              wKey={wk}
+              workouts={workouts}
+              onSelect={setSelectedWorkout}
+              innerRef={(el) => {
+                weekRefs.current[wk] = el;
+              }}
+            />
           ))}
         </div>
       )}

@@ -13,6 +13,7 @@ import { ChevronLeft, ChevronRight, AlertTriangle, EyeOff } from "lucide-react";
 import { TrainingLoadBadge } from "@/components/ui/TrainingLoadBadge";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { MiniCalendar, toLocalIsoDateForCalendar } from "@/components/MiniCalendar";
 import { useAuth } from "@/hooks/useAuth";
 import { onHealthWorkoutsSnapshot } from "@/services/healthWorkouts";
 import {
@@ -117,146 +118,6 @@ function getPaceDisplay(w: HealthWorkout): string {
     return `${formatPace(w.durationSeconds / w.distanceMiles)} /mi`;
   }
   return "—";
-}
-
-// ─── Mini Calendar ────────────────────────────────────────────────────────────
-
-interface MiniCalendarProps {
-  year: number;
-  runs: HealthWorkout[];
-  onDayClick: (wKey: string) => void;
-  /** When set, the calendar forces this month and disables chevron nav. */
-  lockedMonth?: number | null;
-}
-
-function MiniCalendar({ year, runs, onDayClick, lockedMonth }: MiniCalendarProps) {
-  const today = new Date();
-  const isLocked = lockedMonth !== null && lockedMonth !== undefined;
-  const [month, setMonth] = useState<number>(() => {
-    if (isLocked) return lockedMonth as number;
-    return today.getFullYear() === year ? today.getMonth() : 11;
-  });
-
-  useEffect(() => {
-    if (isLocked) {
-      setMonth(lockedMonth as number);
-    } else {
-      setMonth(today.getFullYear() === year ? today.getMonth() : 11);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [year, lockedMonth]);
-
-  const runsByDay = useMemo(() => {
-    const map: Record<string, number> = {};
-    for (const r of runs) {
-      const d = getLocalDate(r);
-      const key = d.toISOString().split("T")[0];
-      map[key] = (map[key] ?? 0) + r.distanceMiles;
-    }
-    return map;
-  }, [runs]);
-
-  const firstDay = new Date(year, month, 1);
-  const startOffset = (firstDay.getDay() + 6) % 7;
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const totalCells = Math.ceil((startOffset + daysInMonth) / 7) * 7;
-
-  const monthLabel = firstDay.toLocaleDateString("en-US", {
-    month: "long",
-    year: "numeric",
-  });
-
-  const canGoPrev = !isLocked && month !== 0;
-  const canGoNext = !isLocked && month !== 11;
-
-  function prevMonth() {
-    if (isLocked || month === 0) return;
-    setMonth((m) => m - 1);
-  }
-  function nextMonth() {
-    if (isLocked || month === 11) return;
-    setMonth((m) => m + 1);
-  }
-
-  return (
-    <div>
-      <div className="flex items-center justify-between mb-2">
-        <button
-          onClick={prevMonth}
-          disabled={!canGoPrev}
-          aria-label="Previous month"
-          className="p-1 rounded-md hover:bg-surface text-textSecondary disabled:opacity-30 transition-colors"
-        >
-          <ChevronLeft size={14} />
-        </button>
-        <span className="text-xs font-semibold text-textSecondary">{monthLabel}</span>
-        <button
-          onClick={nextMonth}
-          disabled={!canGoNext}
-          aria-label="Next month"
-          className="p-1 rounded-md hover:bg-surface text-textSecondary disabled:opacity-30 transition-colors"
-        >
-          <ChevronRight size={14} />
-        </button>
-      </div>
-
-      <div className="grid grid-cols-7 mb-1">
-        {["M", "T", "W", "T", "F", "S", "S"].map((d, i) => (
-          <div key={i} className="text-center text-[10px] font-semibold text-textSecondary py-0.5">
-            {d}
-          </div>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-7 gap-y-0.5">
-        {Array.from({ length: totalCells }).map((_, i) => {
-          const dayNum = i - startOffset + 1;
-          const isThisMonth = dayNum >= 1 && dayNum <= daysInMonth;
-          const cellDate = new Date(year, month, dayNum);
-          const isoDate = cellDate.toISOString().split("T")[0];
-          const miles = runsByDay[isoDate];
-          const hasRun = !!miles;
-          const isToday =
-            cellDate.getFullYear() === today.getFullYear() &&
-            cellDate.getMonth() === today.getMonth() &&
-            cellDate.getDate() === today.getDate();
-
-          if (!isThisMonth) {
-            return <div key={i} className="h-7" />;
-          }
-
-          const wk = weekKey(cellDate);
-
-          return (
-            <button
-              key={i}
-              onClick={() => hasRun && onDayClick(wk)}
-              disabled={!hasRun}
-              className={`flex flex-col items-center justify-center h-7 rounded-full transition-colors
-                ${hasRun ? "cursor-pointer" : "cursor-default"}
-                ${!isThisMonth ? "opacity-40" : ""}
-              `}
-              title={hasRun ? `${miles.toFixed(1)} mi` : undefined}
-            >
-              <div
-                className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-medium transition-colors
-                  ${hasRun ? "bg-primary text-white" : "border border-border text-textSecondary"}
-                  ${isToday ? "ring-2 ring-primary ring-offset-1" : ""}
-                `}
-              >
-                {dayNum}
-              </div>
-              {hasRun && (
-                <span className="text-[9px] text-textSecondary leading-none mt-0.5">
-                  {miles.toFixed(1)}
-                </span>
-              )}
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
 }
 
 // ─── Year Navigator ───────────────────────────────────────────────────────────
@@ -1132,6 +993,20 @@ export default function RunsPage() {
     weekRefs.current[wk]?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
 
+  // Per-day total miles for the shared MiniCalendar component. Uses the
+  // calendar's local-date key helper so the calendar's cell-day lookup
+  // matches what we put in here even for late-evening runs in TZs west of
+  // UTC (the original inline impl used toISOString and silently shifted
+  // those runs forward a day).
+  const runsByDate = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const r of displayedRuns) {
+      const key = toLocalIsoDateForCalendar(getLocalDate(r));
+      map[key] = (map[key] ?? 0) + r.distanceMiles;
+    }
+    return map;
+  }, [displayedRuns]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -1244,7 +1119,9 @@ export default function RunsPage() {
           </p>
           <MiniCalendar
             year={selectedYear}
-            runs={displayedRuns}
+            valuesByDate={runsByDate}
+            formatValue={(v) => v.toFixed(1)}
+            formatTooltip={(v) => `${v.toFixed(1)} mi`}
             onDayClick={scrollToWeek}
             lockedMonth={selectedMonth}
           />
