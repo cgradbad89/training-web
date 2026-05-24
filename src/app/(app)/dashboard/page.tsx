@@ -189,10 +189,19 @@ function PlanProgressStatsCard({
   );
   const actualMiles = weekRuns.reduce((s, w) => s + w.distanceMiles, 0);
 
-  let milesColor = "text-textPrimary";
-  if (plannedMiles > 0) {
-    milesColor = actualMiles >= plannedMiles ? "text-success" : "text-danger";
-  }
+  // Conditional formatting on the Actual Miles value only:
+  //   * Green when actual ≥ planned − 1 (within 1 mile of plan, or ahead).
+  //   * Default text when actual is more than 1 mile short of plan.
+  // Coloring is gated on a real plan existing (plannedMiles > 0) so a
+  // week with no plan never paints green just because actual > −1.
+  // When the user hasn't run yet this week we render "—" in default color
+  // rather than "0.0 mi", which reads better for an empty-week state.
+  const hasActual = actualMiles > 0;
+  const hasPlan = plannedMiles > 0;
+  const milesColor =
+    hasActual && hasPlan && actualMiles >= plannedMiles - 1
+      ? "text-success"
+      : "text-textPrimary";
 
   return (
     <Card>
@@ -202,14 +211,16 @@ function PlanProgressStatsCard({
           label="Planned Miles"
           value={
             <span className="text-textPrimary">
-              {plannedMiles > 0 ? `${plannedMiles.toFixed(1)} mi` : "— mi"}
+              {hasPlan ? `${plannedMiles.toFixed(1)} mi` : "— mi"}
             </span>
           }
         />
         <StatItem
           label="Actual Miles"
           value={
-            <span className={milesColor}>{`${actualMiles.toFixed(1)} mi`}</span>
+            <span className={milesColor}>
+              {hasActual ? `${actualMiles.toFixed(1)} mi` : "—"}
+            </span>
           }
         />
       </div>
@@ -1245,9 +1256,7 @@ export default function DashboardPage() {
         plannedMiles={plannedMiles}
       />
 
-      {/* Row 3: Mon–Sun weekly activity calendar — placed up here so the
-          visual week grid sits between Plan Progress and the Running stats
-          row, matching the post-redesign reading order. */}
+      {/* Row 3: Mon–Sun weekly activity calendar */}
       <section>
         <WeekCalendar
           plans={[
@@ -1259,50 +1268,55 @@ export default function DashboardPage() {
         />
       </section>
 
-      {/* Rows 4–6: Running / Workouts / Health stats sections */}
-      <RunningStatsCard
-        workouts={workouts}
-        weekStart={selectedWeekStart}
-        weekEnd={selectedWeekEnd}
-      />
-      <WorkoutsStatsCard
-        workouts={workouts}
-        weekStart={selectedWeekStart}
-        weekEnd={selectedWeekEnd}
-      />
+      {/* Row 4: Health KPIs */}
       <HealthKpisRow
         metrics={weekMetrics}
         goals={healthGoals}
         totalWeekCalories={totalWeekCalories}
       />
 
-      {/* Row 7: Training Load cards — moved out of the tiles grid below so
-          they sit immediately under Health, before the plan/runs/workouts
-          tiles. Same 2-col layout as the tiles grid below for visual
-          consistency. */}
+      {/* Row 5: Training Load row — Mileage + Load Score side-by-side */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <TrainingLoadCard workouts={workouts} />
         <LoadScoreTrainingLoadCard workouts={workouts} />
       </div>
 
-      {/* ── Two-column tile grid ───────────────────────────────────────────
-        Plan tiles + this-week list tiles. With 2 cols on md+ this puts
-        Running plan on the left, Workout plan on the right, then Runs /
-        Workouts on the next row. On mobile they stack: Running plan,
-        Workout plan, Runs, Workouts. */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {/* Row 6: Running KPIs (Runs / Avg Pace / Avg HR / Run Load) */}
+      <RunningStatsCard
+        workouts={workouts}
+        weekStart={selectedWeekStart}
+        weekEnd={selectedWeekEnd}
+      />
+
+      {/* Row 7: Running row — Running Plan tile (left) + This Week's Runs
+          tile (right). lg breakpoint and items-start so the two tiles take
+          their natural heights instead of stretching to match. */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
         <PlanProgressCard
           activePlan={activePlan}
           workouts={workouts}
           weekStart={selectedWeekStart}
           weekEnd={selectedWeekEnd}
         />
-        <WorkoutPlanProgressCard
-          activeWorkoutPlan={activeWorkoutPlan}
-          weekStart={selectedWeekStart}
-        />
         <ThisWeekRunsCard
           workouts={workouts}
+          weekStart={selectedWeekStart}
+        />
+      </div>
+
+      {/* Row 8: Workout KPIs (Workouts / Avg Dur / Avg HR / Workout Load) */}
+      <WorkoutsStatsCard
+        workouts={workouts}
+        weekStart={selectedWeekStart}
+        weekEnd={selectedWeekEnd}
+      />
+
+      {/* Row 9: Workout row — Workout Plan tile (left) + This Week's
+          Workouts tile (right). Same responsive + items-start pattern as
+          the Running row above. */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+        <WorkoutPlanProgressCard
+          activeWorkoutPlan={activeWorkoutPlan}
           weekStart={selectedWeekStart}
         />
         <WorkoutSummaryCard
