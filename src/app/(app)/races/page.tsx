@@ -116,6 +116,146 @@ function StatBlock({
   );
 }
 
+// ─── Past-race result helpers ────────────────────────────────────────────────
+
+/** Compare actual vs target for "lower is better" metrics (pace, time).
+ *  Returns a semantic color token; null when either input is missing. */
+type ResultColor = "success" | "warning" | "danger" | null;
+
+function compareLowerIsBetter(
+  actual: number | undefined | null,
+  target: number | undefined | null
+): ResultColor {
+  if (!actual || !target || actual <= 0 || target <= 0) return null;
+  const pctOver = ((actual - target) / target) * 100;
+  if (pctOver > 10) return "danger";
+  if (pctOver > 5) return "warning";
+  return "success"; // within 5% over, or under target
+}
+
+function resultColorClass(c: ResultColor): string {
+  switch (c) {
+    case "success": return "text-success";
+    case "warning": return "text-warning";
+    case "danger":  return "text-danger";
+    default:        return "text-textPrimary";
+  }
+}
+
+/** Side-by-side Target / Actual comparison for past races. Replaces the old
+ *  stats grid + "Result" line + "Actual Performance" section so the data
+ *  isn't spread across three blocks that can contradict each other (the
+ *  "No result recorded" bug). */
+function PastRaceResults({
+  race,
+  miles,
+  onAssociate,
+  onDisassociate,
+}: {
+  race: Race;
+  miles: number;
+  onAssociate: (race: Race) => void;
+  onDisassociate: (raceId: string) => void;
+}) {
+  const targetPaceSec = race.targetPaceSecondsPerMile ?? null;
+  const targetTimeSec =
+    targetPaceSec && miles ? targetPaceSec * miles : null;
+
+  const actualPaceSec = race.actualRunAvgPace ?? null;
+  const actualTimeSec = race.actualRunDurationSeconds ?? null;
+  const actualMiles = race.actualRunDistanceMiles ?? null;
+
+  const paceColor = compareLowerIsBetter(actualPaceSec, targetPaceSec);
+  const timeColor = compareLowerIsBetter(actualTimeSec, targetTimeSec);
+
+  const targetPaceStr = targetPaceSec ? `${formatPace(targetPaceSec)}/mi` : "—";
+  const targetTimeStr = targetTimeSec ? formatDuration(targetTimeSec) : "—";
+  const targetDistStr = miles ? `${miles.toFixed(miles < 10 ? 2 : 1)} mi` : "—";
+
+  const actualPaceStr = actualPaceSec ? `${formatPace(actualPaceSec)}/mi` : "—";
+  const actualTimeStr = actualTimeSec ? formatDuration(actualTimeSec) : "—";
+  const actualDistStr =
+    actualMiles != null
+      ? `${actualMiles.toFixed(actualMiles < 10 ? 2 : 1)} mi`
+      : "—";
+
+  return (
+    <div className="flex flex-col gap-3 pt-3 border-t border-border">
+      <div className="grid grid-cols-[auto_1fr_1fr] gap-x-4 gap-y-1.5 items-baseline">
+        {/* Header row */}
+        <span />
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-textSecondary text-right">
+          Target
+        </span>
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-textSecondary text-right">
+          Actual
+        </span>
+
+        {/* Pace row */}
+        <span className="text-xs text-textSecondary">Pace</span>
+        <span className="text-sm font-semibold text-textPrimary tabular-nums text-right">
+          {targetPaceStr}
+        </span>
+        <span
+          className={`text-sm font-semibold tabular-nums text-right ${resultColorClass(
+            paceColor
+          )}`}
+        >
+          {actualPaceStr}
+        </span>
+
+        {/* Time row */}
+        <span className="text-xs text-textSecondary">Time</span>
+        <span className="text-sm font-semibold text-textPrimary tabular-nums text-right">
+          {targetTimeStr}
+        </span>
+        <span
+          className={`text-sm font-semibold tabular-nums text-right ${resultColorClass(
+            timeColor
+          )}`}
+        >
+          {actualTimeStr}
+        </span>
+
+        {/* Distance row — no conditional formatting per spec */}
+        <span className="text-xs text-textSecondary">Distance</span>
+        <span className="text-sm font-semibold text-textPrimary tabular-nums text-right">
+          {targetDistStr}
+        </span>
+        <span className="text-sm font-semibold text-textPrimary tabular-nums text-right">
+          {actualDistStr}
+        </span>
+      </div>
+
+      {/* Footer — actual-run metadata + link/remove action */}
+      <div className="flex items-center justify-between gap-2 text-xs">
+        <span className="text-textSecondary">
+          {race.actualRunId && race.actualRunDate
+            ? `Linked run: ${formatRaceDate(race.actualRunDate)}`
+            : !race.actualRunId
+            ? "No run linked yet"
+            : ""}
+        </span>
+        {race.actualRunId ? (
+          <button
+            onClick={() => onDisassociate(race.id)}
+            className="text-danger hover:text-danger/80 transition-colors shrink-0"
+          >
+            Remove link
+          </button>
+        ) : (
+          <button
+            onClick={() => onAssociate(race)}
+            className="text-primary hover:text-primary/80 transition-colors shrink-0"
+          >
+            ＋ Link actual run
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Empty State ──────────────────────────────────────────────────────────────
 
 function EmptyState({ message }: { message: string }) {
@@ -198,93 +338,82 @@ function RaceCard({
         </div>
       )}
 
-      {/* Stats row */}
-      <div className="grid grid-cols-3 gap-4 py-3 border-t border-border">
-        <StatBlock
-          label="Target Pace"
-          value={
-            race.targetPaceSecondsPerMile
-              ? `${formatPace(race.targetPaceSecondsPerMile)}/mi`
-              : "—"
-          }
+      {/* Stats — different layouts for upcoming vs past. Upcoming shows
+          targets only; past shows side-by-side Target/Actual with
+          conditional coloring (see PastRaceResults). */}
+      {isPast ? (
+        <PastRaceResults
+          race={race}
+          miles={miles}
+          onAssociate={onAssociate}
+          onDisassociate={onDisassociate}
         />
-        <StatBlock
-          label="Goal Time"
-          value={
-            race.targetPaceSecondsPerMile && miles
-              ? goalTime(race.targetPaceSecondsPerMile, miles)
-              : "—"
-          }
-        />
-        <StatBlock
-          label="Distance"
-          value={miles ? `${miles.toFixed(miles < 10 ? 2 : 1)} mi` : "—"}
-        />
-      </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-3 gap-4 py-3 border-t border-border">
+            <StatBlock
+              label="Target Pace"
+              value={
+                race.targetPaceSecondsPerMile
+                  ? `${formatPace(race.targetPaceSecondsPerMile)}/mi`
+                  : "—"
+              }
+            />
+            <StatBlock
+              label="Goal Time"
+              value={
+                race.targetPaceSecondsPerMile && miles
+                  ? goalTime(race.targetPaceSecondsPerMile, miles)
+                  : "—"
+              }
+            />
+            <StatBlock
+              label="Distance"
+              value={miles ? `${miles.toFixed(miles < 10 ? 2 : 1)} mi` : "—"}
+            />
+          </div>
 
-      {/* Past-race extras: result + linked Strava activity */}
-      {isPast && (
-        <div className="flex flex-col gap-2 pt-1 border-t border-border">
-          {race.result ? (
-            <div>
-              <span className="text-xs text-textSecondary">Result</span>
-              <p className="text-lg font-semibold text-primary">{race.result}</p>
+          {/* Race-day link-or-remove for upcoming races where today is the
+              race date (so the runner can pick the actual run as soon as
+              it's synced). Past races handle this inside PastRaceResults. */}
+          {(!!race.actualRunId || days <= 0) && (
+            <div className="flex flex-col gap-2 pt-1 border-t border-border">
+              {race.actualRunId ? (
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="text-xs text-textSecondary">
+                      Actual Performance
+                    </p>
+                    <p className="text-sm font-medium text-textPrimary">
+                      {race.actualRunDistanceMiles?.toFixed(2)} mi
+                      {race.actualRunAvgPace
+                        ? ` · ${formatPace(race.actualRunAvgPace)}/mi`
+                        : ""}
+                    </p>
+                    {race.actualRunDate && (
+                      <p className="text-xs text-textSecondary">
+                        {formatRaceDate(race.actualRunDate)}
+                      </p>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => onDisassociate(race.id)}
+                    className="text-xs text-danger hover:text-danger/80 transition-colors shrink-0"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => onAssociate(race)}
+                  className="text-xs text-primary hover:text-primary/80 transition-colors self-start"
+                >
+                  ＋ Link actual run
+                </button>
+              )}
             </div>
-          ) : (
-            <p className="text-sm text-textSecondary">No result recorded</p>
           )}
-
-          {linkedActivity && (
-            <div className="flex items-center gap-1.5 text-xs text-textSecondary">
-              <Link className="w-3.5 h-3.5 text-primary" />
-              <span className="text-primary font-medium">Linked run</span>
-              <span>
-                {linkedActivity.distanceMiles.toFixed(1)} mi ·{" "}
-                {linkedActivity.avgPaceSecPerMile
-                  ? `${Math.floor(linkedActivity.avgPaceSecPerMile / 60)}:${String(Math.round(linkedActivity.avgPaceSecPerMile % 60)).padStart(2, "0")}/mi`
-                  : "—"}
-              </span>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Actual performance — visible on any tile when a run is linked,
-          or when the race date is today or in the past (link button shown). */}
-      {(!!race.actualRunId || days <= 0) && (
-        <div className="flex flex-col gap-2 pt-1 border-t border-border">
-          {race.actualRunId ? (
-            <div className="flex items-start justify-between gap-2">
-              <div>
-                <p className="text-xs text-textSecondary">Actual Performance</p>
-                <p className="text-sm font-medium text-textPrimary">
-                  {race.actualRunDistanceMiles?.toFixed(2)} mi
-                  {race.actualRunAvgPace
-                    ? ` · ${formatPace(race.actualRunAvgPace)}/mi`
-                    : ""}
-                </p>
-                {race.actualRunDate && (
-                  <p className="text-xs text-textSecondary">
-                    {formatRaceDate(race.actualRunDate)}
-                  </p>
-                )}
-              </div>
-              <button
-                onClick={() => onDisassociate(race.id)}
-                className="text-xs text-danger hover:text-danger/80 transition-colors shrink-0"
-              >
-                Remove
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={() => onAssociate(race)}
-              className="text-xs text-primary hover:text-primary/80 transition-colors self-start"
-            >
-              ＋ Link actual run
-            </button>
-          )}
-        </div>
+        </>
       )}
 
       {/* Footer actions */}
