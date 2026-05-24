@@ -285,7 +285,16 @@ function RunningStatsCard({
   );
 }
 
-function WorkoutsStatsCard({ workouts, weekStart, weekEnd }: SectionStatsProps) {
+function WorkoutsStatsCard({
+  workouts,
+  weekStart,
+  weekEnd,
+  sessionsPlanned,
+  sessionsCompleted,
+}: SectionStatsProps & {
+  sessionsPlanned: number;
+  sessionsCompleted: number;
+}) {
   const weekWorkouts = workouts.filter(
     (w) => !w.isRunLike && isInWeek(w, weekStart, weekEnd)
   );
@@ -319,11 +328,39 @@ function WorkoutsStatsCard({ workouts, weekStart, weekEnd }: SectionStatsProps) 
       ? Math.round(loadScores.reduce((s, v) => s + v, 0) / loadScores.length)
       : null;
 
+  // Conditional formatting on Actual workouts vs the plan:
+  //   * Green   when met or exceeded the plan
+  //   * Yellow  when exactly 1 session short
+  //   * Red     when more than 1 session short
+  //   * Default when there's no plan to compare against
+  const sessionDiff = sessionsCompleted - sessionsPlanned;
+  let actualColor = "text-textPrimary";
+  if (sessionsPlanned > 0) {
+    if (sessionDiff >= 0) actualColor = "text-success";
+    else if (sessionDiff === -1) actualColor = "text-warning";
+    else actualColor = "text-danger";
+  }
+
   return (
     <Card>
       <CardTitle>Workouts</CardTitle>
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatItem label="Workouts" value={weekWorkouts.length} />
+      {/* 5-tile grid: Planned + Actual (vs the active workout plan)
+          followed by the original Workouts tiles. Same responsive ladder
+          as the Running row above: 2-up on phones → 3-up on tablets →
+          5-up on lg+. */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+        <StatItem
+          label="Planned"
+          value={
+            <span className="text-textPrimary">
+              {sessionsPlanned > 0 ? `${sessionsPlanned} sessions` : "—"}
+            </span>
+          }
+        />
+        <StatItem
+          label="Actual workouts"
+          value={<span className={actualColor}>{sessionsCompleted}</span>}
+        />
         <StatItem
           label="Avg Duration"
           value={avgDurationSec > 0 ? formatDuration(avgDurationSec) : "—"}
@@ -1532,11 +1569,14 @@ export default function DashboardPage() {
         />
       </div>
 
-      {/* Row 8: Workout KPIs (Workouts / Avg Dur / Avg HR / Workout Load) */}
+      {/* Row 8: Workout KPIs — Planned + Actual workouts (from the active
+          workout plan) followed by Avg Dur / Avg HR / Workout Load. */}
       <WorkoutsStatsCard
         workouts={workouts}
         weekStart={selectedWeekStart}
         weekEnd={selectedWeekEnd}
+        sessionsPlanned={sessionsPlanned}
+        sessionsCompleted={sessionsCompleted}
       />
 
       {/* Row 9: Workout row — Workout Plan tile (left) + This Week's
