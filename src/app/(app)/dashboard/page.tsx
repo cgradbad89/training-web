@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import Link from "next/link";
 import {
   Dumbbell,
@@ -58,6 +58,9 @@ import {
   isSameWeek,
 } from "@/utils/dates";
 import { type HealthWorkout } from "@/types/healthWorkout";
+import { type WorkoutOverride } from "@/types/workoutOverride";
+import { fetchAllOverrides } from "@/services/workoutOverrides";
+import { WorkoutDetailModal } from "@/components/WorkoutDetailModal";
 import {
   type RunningPlan,
   type WorkoutPlan,
@@ -145,45 +148,46 @@ function StatItem({ label, value }: StatItemProps) {
   );
 }
 
-// ─── Weekly Stats Bar ─────────────────────────────────────────────────────────
+// ─── Weekly Stats Sections ────────────────────────────────────────────────────
 
-interface WeeklyStatsBarProps {
+function StatWithSubtext({
+  label,
+  value,
+  subtext,
+}: {
+  label: string;
+  value: React.ReactNode;
+  subtext: string | null;
+}) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-xs text-textSecondary">{label}</span>
+      <div className="text-2xl font-bold text-textPrimary tabular-nums leading-tight">
+        {value}
+      </div>
+      {subtext && (
+        <span className="text-xs text-textSecondary">{subtext}</span>
+      )}
+    </div>
+  );
+}
+
+interface SectionStatsProps {
   workouts: HealthWorkout[];
   weekStart: Date;
   weekEnd: Date;
-  plannedMiles: number;
 }
 
-function WeeklyStatsBar({ workouts, weekStart, weekEnd, plannedMiles }: WeeklyStatsBarProps) {
-  const weekWorkouts = workouts.filter((w) => isInWeek(w, weekStart, weekEnd));
-  const runs = weekWorkouts.filter((w) => w.isRunLike);
-  const nonRunWorkouts = weekWorkouts.filter((w) => !w.isRunLike);
-
-  const actualMiles = runs.reduce((s, w) => s + w.distanceMiles, 0);
-  const totalMovingTime = runs.reduce((s, w) => s + w.durationSeconds, 0);
-  const totalCalories = weekWorkouts.reduce((s, w) => s + w.calories, 0);
-
-  const avgPaceSecPerMile = actualMiles > 0 ? totalMovingTime / actualMiles : 0;
-
-  // Drop short/aborted activities from the averages (badges on individual
-  // runs/workouts are unaffected — only aggregates are filtered).
-  const runLoadScores = runs
-    .filter((r) => r.distanceMiles >= MIN_RUN_MILES_FOR_AVG)
-    .map((r) => computeTrainingLoad(r.durationSeconds, r.avgHeartRate, r.activityType))
-    .filter((s): s is number => s !== null);
-  const avgRunLoad =
-    runLoadScores.length > 0
-      ? Math.round(runLoadScores.reduce((s, v) => s + v, 0) / runLoadScores.length)
-      : null;
-
-  const workoutLoadScores = nonRunWorkouts
-    .filter((w) => w.durationSeconds >= MIN_WORKOUT_SECONDS_FOR_AVG)
-    .map((w) => computeTrainingLoad(w.durationSeconds, w.avgHeartRate, w.activityType))
-    .filter((s): s is number => s !== null);
-  const avgWorkoutLoad =
-    workoutLoadScores.length > 0
-      ? Math.round(workoutLoadScores.reduce((s, v) => s + v, 0) / workoutLoadScores.length)
-      : null;
+function PlanProgressStatsCard({
+  workouts,
+  weekStart,
+  weekEnd,
+  plannedMiles,
+}: SectionStatsProps & { plannedMiles: number }) {
+  const weekRuns = workouts.filter(
+    (w) => w.isRunLike && isInWeek(w, weekStart, weekEnd)
+  );
+  const actualMiles = weekRuns.reduce((s, w) => s + w.distanceMiles, 0);
 
   let milesColor = "text-textPrimary";
   if (plannedMiles > 0) {
@@ -192,7 +196,8 @@ function WeeklyStatsBar({ workouts, weekStart, weekEnd, plannedMiles }: WeeklySt
 
   return (
     <Card>
-      <div className="grid grid-cols-2 lg:grid-cols-8 gap-4">
+      <CardTitle>Plan Progress</CardTitle>
+      <div className="grid grid-cols-2 gap-4">
         <StatItem
           label="Planned Miles"
           value={
@@ -203,25 +208,138 @@ function WeeklyStatsBar({ workouts, weekStart, weekEnd, plannedMiles }: WeeklySt
         />
         <StatItem
           label="Actual Miles"
-          value={<span className={milesColor}>{`${actualMiles.toFixed(1)} mi`}</span>}
+          value={
+            <span className={milesColor}>{`${actualMiles.toFixed(1)} mi`}</span>
+          }
         />
+      </div>
+    </Card>
+  );
+}
+
+function RunningStatsCard({ workouts, weekStart, weekEnd }: SectionStatsProps) {
+  const runs = workouts.filter(
+    (w) => w.isRunLike && isInWeek(w, weekStart, weekEnd)
+  );
+  const totalMiles = runs.reduce((s, w) => s + w.distanceMiles, 0);
+  const totalMovingTime = runs.reduce((s, w) => s + w.durationSeconds, 0);
+  const avgPaceSecPerMile = totalMiles > 0 ? totalMovingTime / totalMiles : 0;
+
+  const hrValues = runs
+    .map((r) => r.avgHeartRate)
+    .filter((v): v is number => typeof v === "number" && v > 0);
+  const avgHR =
+    hrValues.length > 0
+      ? Math.round(hrValues.reduce((s, v) => s + v, 0) / hrValues.length)
+      : null;
+
+  // Drop short/aborted activities from the load aggregates (badges on
+  // individual runs are unaffected — only the totals/avgs are filtered).
+  const loadScores = runs
+    .filter((r) => r.distanceMiles >= MIN_RUN_MILES_FOR_AVG)
+    .map((r) =>
+      computeTrainingLoad(r.durationSeconds, r.avgHeartRate, r.activityType)
+    )
+    .filter((s): s is number => s !== null);
+  const totalRunLoad =
+    loadScores.length > 0 ? loadScores.reduce((s, v) => s + v, 0) : null;
+  const avgRunLoad =
+    loadScores.length > 0
+      ? Math.round(loadScores.reduce((s, v) => s + v, 0) / loadScores.length)
+      : null;
+
+  return (
+    <Card>
+      <CardTitle>Running</CardTitle>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatItem label="Runs" value={runs.length} />
         <StatItem
           label="Avg Pace"
-          value={avgPaceSecPerMile > 0 ? `${formatPace(avgPaceSecPerMile)} /mi` : "—"}
+          value={
+            avgPaceSecPerMile > 0 ? `${formatPace(avgPaceSecPerMile)} /mi` : "—"
+          }
         />
         <StatItem
-          label="Run Load Avg"
-          value={avgRunLoad !== null ? avgRunLoad.toLocaleString() : "—"}
+          label="Avg HR"
+          value={avgHR != null ? `${avgHR} bpm` : "—"}
         />
-        <StatItem label="Workouts" value={nonRunWorkouts.length} />
+        <StatWithSubtext
+          label="Run load"
+          value={
+            totalRunLoad != null
+              ? Math.round(totalRunLoad).toLocaleString()
+              : "—"
+          }
+          subtext={
+            avgRunLoad != null
+              ? `${avgRunLoad.toLocaleString()} avg / run`
+              : null
+          }
+        />
+      </div>
+    </Card>
+  );
+}
+
+function WorkoutsStatsCard({ workouts, weekStart, weekEnd }: SectionStatsProps) {
+  const weekWorkouts = workouts.filter(
+    (w) => !w.isRunLike && isInWeek(w, weekStart, weekEnd)
+  );
+
+  const qualifying = weekWorkouts.filter(
+    (w) => w.durationSeconds >= MIN_WORKOUT_SECONDS_FOR_AVG
+  );
+  const avgDurationSec =
+    qualifying.length > 0
+      ? qualifying.reduce((s, w) => s + w.durationSeconds, 0) /
+        qualifying.length
+      : 0;
+
+  const hrValues = weekWorkouts
+    .map((w) => w.avgHeartRate)
+    .filter((v): v is number => typeof v === "number" && v > 0);
+  const avgHR =
+    hrValues.length > 0
+      ? Math.round(hrValues.reduce((s, v) => s + v, 0) / hrValues.length)
+      : null;
+
+  const loadScores = qualifying
+    .map((w) =>
+      computeTrainingLoad(w.durationSeconds, w.avgHeartRate, w.activityType)
+    )
+    .filter((s): s is number => s !== null);
+  const totalWorkoutLoad =
+    loadScores.length > 0 ? loadScores.reduce((s, v) => s + v, 0) : null;
+  const avgWorkoutLoad =
+    loadScores.length > 0
+      ? Math.round(loadScores.reduce((s, v) => s + v, 0) / loadScores.length)
+      : null;
+
+  return (
+    <Card>
+      <CardTitle>Workouts</CardTitle>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatItem label="Workouts" value={weekWorkouts.length} />
         <StatItem
-          label="Workout Load Avg"
-          value={avgWorkoutLoad !== null ? avgWorkoutLoad.toLocaleString() : "—"}
+          label="Avg Duration"
+          value={avgDurationSec > 0 ? formatDuration(avgDurationSec) : "—"}
         />
         <StatItem
-          label="Calories"
-          value={`${Math.round(totalCalories).toLocaleString()} kcal`}
+          label="Avg HR"
+          value={avgHR != null ? `${avgHR} bpm` : "—"}
+        />
+        <StatWithSubtext
+          label="Workout load"
+          value={
+            totalWorkoutLoad != null
+              ? Math.round(totalWorkoutLoad).toLocaleString()
+              : "—"
+          }
+          subtext={
+            avgWorkoutLoad != null
+              ? `${avgWorkoutLoad.toLocaleString()} avg / session`
+              : null
+          }
         />
       </div>
     </Card>
@@ -320,9 +438,15 @@ interface WorkoutSummaryCardProps {
   workouts: HealthWorkout[];
   weekStart: Date;
   weekEnd: Date;
+  onSelect: (w: HealthWorkout) => void;
 }
 
-function WorkoutSummaryCard({ workouts, weekStart, weekEnd }: WorkoutSummaryCardProps) {
+function WorkoutSummaryCard({
+  workouts,
+  weekStart,
+  weekEnd,
+  onSelect,
+}: WorkoutSummaryCardProps) {
   const weekWorkouts = workouts.filter(
     (w) => !w.isRunLike && isInWeek(w, weekStart, weekEnd)
   );
@@ -334,42 +458,51 @@ function WorkoutSummaryCard({ workouts, weekStart, weekEnd }: WorkoutSummaryCard
       {weekWorkouts.length === 0 ? (
         <EmptyState title="No workouts this week" />
       ) : (
-        <div className="flex flex-col gap-1">
-          {weekWorkouts.map((w) => {
-            const Icon = WORKOUT_ICONS[w.displayType] ?? Activity;
-            const localDate = getWorkoutLocalDate(w);
-            const dayLabel = localDate.toLocaleDateString("en-US", { weekday: "short" });
+        <>
+          <div className="flex flex-col gap-1">
+            {weekWorkouts.map((w) => {
+              const Icon = WORKOUT_ICONS[w.displayType] ?? Activity;
+              const localDate = getWorkoutLocalDate(w);
+              const dayLabel = localDate.toLocaleDateString("en-US", { weekday: "short" });
 
-            return (
-              <div
-                key={w.workoutId}
-                className="flex items-center justify-between py-2.5 px-1 hover:bg-surface rounded-lg transition-colors gap-2"
-              >
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <Icon size={15} className="text-textSecondary shrink-0" />
-                  <span className="text-xs text-textSecondary w-7 shrink-0">{dayLabel}</span>
-                  <span className="text-sm text-textPrimary truncate">{w.displayType}</span>
-                </div>
-                <div className="flex items-center gap-2 text-xs text-textSecondary whitespace-nowrap">
-                  <span>{formatDuration(w.durationSeconds)}</span>
-                  {w.calories > 0 && (
-                    <>
-                      <span className="text-border">·</span>
-                      <span>{Math.round(w.calories).toLocaleString()} kcal</span>
-                    </>
-                  )}
-                  {w.avgHeartRate && w.durationSeconds > 0 && (
-                    <TrainingLoadBadge
-                      durationSeconds={w.durationSeconds}
-                      avgHeartRate={w.avgHeartRate}
-                      activityType={w.activityType}
-                    />
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
+              return (
+                <button
+                  key={w.workoutId}
+                  onClick={() => onSelect(w)}
+                  className="w-full flex items-center justify-between py-2.5 px-1 hover:bg-surface rounded-lg transition-colors gap-2 text-left cursor-pointer"
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <Icon size={15} className="text-textSecondary shrink-0" />
+                    <span className="text-xs text-textSecondary w-7 shrink-0">{dayLabel}</span>
+                    <span className="text-sm text-textPrimary truncate">{w.displayType}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-xs text-textSecondary whitespace-nowrap">
+                    <span>{formatDuration(w.durationSeconds)}</span>
+                    {w.calories > 0 && (
+                      <>
+                        <span className="text-border">·</span>
+                        <span>{Math.round(w.calories).toLocaleString()} kcal</span>
+                      </>
+                    )}
+                    {w.avgHeartRate && w.durationSeconds > 0 && (
+                      <TrainingLoadBadge
+                        durationSeconds={w.durationSeconds}
+                        avgHeartRate={w.avgHeartRate}
+                        activityType={w.activityType}
+                      />
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="mt-4 pt-3 border-t border-border">
+            <Link href="/workouts" className="text-sm text-primary hover:underline">
+              View all workouts →
+            </Link>
+          </div>
+        </>
       )}
     </Card>
   );
@@ -672,6 +805,7 @@ function WorkoutPlanProgressCard({
 interface HealthKpisRowProps {
   metrics: HealthMetric[];
   goals: HealthGoals | null;
+  totalWeekCalories: number;
 }
 
 /** Tailwind text-color token for a GoalStatus. Neutral → primary text. */
@@ -690,7 +824,7 @@ function goalStatusTextClass(status: GoalStatus): string {
  * tile applies goal-driven conditional formatting when a sleep goal is set;
  * the other tiles stay neutral (their goal coloring lives on the Health page).
  */
-function HealthKpisRow({ metrics, goals }: HealthKpisRowProps) {
+function HealthKpisRow({ metrics, goals, totalWeekCalories }: HealthKpisRowProps) {
   const weeklyAvg = (field: keyof HealthMetric): number | null => {
     const values = metrics
       .map((m) => m[field])
@@ -715,6 +849,7 @@ function HealthKpisRow({ metrics, goals }: HealthKpisRowProps) {
     label: string;
     value: string;
     valueClass?: string;
+    caption?: string;
   }[] = [
     {
       label: "Steps",
@@ -749,11 +884,19 @@ function HealthKpisRow({ metrics, goals }: HealthKpisRowProps) {
       value: avgSleep == null ? "—" : `${avgSleep.toFixed(1)} hrs`,
       valueClass: goalStatusTextClass(sleepStatus),
     },
+    {
+      label: "Total Calories",
+      value:
+        totalWeekCalories > 0
+          ? `${Math.round(totalWeekCalories).toLocaleString()} kcal`
+          : "—",
+      caption: "this week",
+    },
   ];
 
   return (
     <Card>
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
         {tiles.map((t) => (
           <div key={t.label} className="flex flex-col gap-0.5">
             <div
@@ -765,7 +908,7 @@ function HealthKpisRow({ metrics, goals }: HealthKpisRowProps) {
             </div>
             <span className="text-xs text-textPrimary">{t.label}</span>
             <span className="text-[10px] text-textSecondary uppercase tracking-wide">
-              avg/day
+              {t.caption ?? "avg/day"}
             </span>
           </div>
         ))}
@@ -942,6 +1085,33 @@ export default function DashboardPage() {
   const [healthGoals, setHealthGoals] = useState<HealthGoals | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Workout detail modal state — matches the workouts-page pattern so the
+  // "This Week's Workouts" tile can pop the same modal on row click.
+  const [selectedWorkout, setSelectedWorkout] = useState<HealthWorkout | null>(
+    null
+  );
+  const [overrides, setOverrides] = useState<Record<string, WorkoutOverride>>(
+    {}
+  );
+  const overridesRef = useRef<Record<string, WorkoutOverride>>({});
+
+  useEffect(() => {
+    if (!uid) return;
+    fetchAllOverrides(uid)
+      .then((o) => {
+        overridesRef.current = o;
+        setOverrides(o);
+      })
+      .catch((err) => console.error("[fetchAllOverrides]", err));
+  }, [uid]);
+
+  useEffect(() => {
+    document.body.style.overflow = selectedWorkout ? "hidden" : "";
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [selectedWorkout]);
+
   // One-time fetch for user-defined health goals. Drives the Sleep KPI
   // tile's conditional formatting on the row below the weekly stats bar.
   useEffect(() => {
@@ -1032,6 +1202,16 @@ export default function DashboardPage() {
     return activePlan.weeks[weekIndex].entries.reduce((s, e) => s + e.distanceMiles, 0);
   }, [activePlan, selectedWeekStart]);
 
+  // Sum of calories across ALL workouts (runs + non-runs) in the selected
+  // week — moved out of the old stats bar and into the Health section.
+  const totalWeekCalories = useMemo(
+    () =>
+      workouts
+        .filter((w) => isInWeek(w, selectedWeekStart, selectedWeekEnd))
+        .reduce((s, w) => s + w.calories, 0),
+    [workouts, selectedWeekStart, selectedWeekEnd]
+  );
+
   // ─── KPI data ────────────────────────────────────────────────────────────────
 
   if (loading) {
@@ -1056,16 +1236,29 @@ export default function DashboardPage() {
         showTodayReset
       />
 
-      {/* Row 2: Weekly Stats Bar */}
-      <WeeklyStatsBar
+      {/* Row 2: Weekly stats — four labelled sections (Plan Progress,
+          Running, Workouts, Health). */}
+      <PlanProgressStatsCard
         workouts={workouts}
         weekStart={selectedWeekStart}
         weekEnd={selectedWeekEnd}
         plannedMiles={plannedMiles}
       />
-
-      {/* Row 3: Health KPIs for the selected week (per-day averages) */}
-      <HealthKpisRow metrics={weekMetrics} goals={healthGoals} />
+      <RunningStatsCard
+        workouts={workouts}
+        weekStart={selectedWeekStart}
+        weekEnd={selectedWeekEnd}
+      />
+      <WorkoutsStatsCard
+        workouts={workouts}
+        weekStart={selectedWeekStart}
+        weekEnd={selectedWeekEnd}
+      />
+      <HealthKpisRow
+        metrics={weekMetrics}
+        goals={healthGoals}
+        totalWeekCalories={totalWeekCalories}
+      />
 
       {/* Week calendar — tracks the selected week via weekStart prop */}
       <section>
@@ -1103,10 +1296,37 @@ export default function DashboardPage() {
           workouts={workouts}
           weekStart={selectedWeekStart}
           weekEnd={selectedWeekEnd}
+          onSelect={setSelectedWorkout}
         />
         <TrainingLoadCard workouts={workouts} />
         <LoadScoreTrainingLoadCard workouts={workouts} />
       </div>
+
+      {selectedWorkout && uid && (
+        <WorkoutDetailModal
+          workout={selectedWorkout}
+          override={overrides[selectedWorkout.workoutId] ?? null}
+          userId={uid}
+          onClose={() => setSelectedWorkout(null)}
+          onExcludeChange={(workoutId, excluded) => {
+            setOverrides((prev) => ({
+              ...prev,
+              [workoutId]: {
+                ...prev[workoutId],
+                workoutId,
+                userId: uid,
+                isExcluded: excluded,
+                excludedAt: excluded ? new Date().toISOString() : null,
+                excludedReason: null,
+                distanceMilesOverride: null,
+                durationSecondsOverride: null,
+                runTypeOverride: null,
+                updatedAt: new Date().toISOString(),
+              },
+            }));
+          }}
+        />
+      )}
     </div>
   );
 }
