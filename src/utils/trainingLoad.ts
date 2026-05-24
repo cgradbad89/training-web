@@ -144,7 +144,8 @@ function isHiitLikeActivity(activityType: string): boolean {
     t.includes("crossfit") ||
     t.includes("bootcamp") ||
     t.includes("boot_camp") ||
-    t.includes("kickbox")
+    t.includes("kickbox") ||
+    t.includes("workout")
   );
 }
 
