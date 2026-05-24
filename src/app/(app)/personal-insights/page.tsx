@@ -1902,6 +1902,21 @@ export default function PersonalInsightsPage() {
         </button>
       </div>
 
+      {/* ── Cardio Fitness (VO₂ max) ─────────────────────── */}
+      <SectionHeader icon={Heart} title="Cardio Fitness (VO₂ max)" />
+
+      <CardioFitnessCard history={vo2History} loading={vo2Loading} />
+
+      {/* ── Training Load ─────────────────────────────────── */}
+      <SectionHeader icon={Activity} title="Training Load" />
+
+      <TrainingLoadSection
+        data={trainingLoadData}
+        weeklyData={weeklyLoadData}
+        intensity={intensityData}
+        intensityLoading={intensityLoading}
+      />
+
       {/* ── Predicted Race Times ─────────────────────────── */}
       <SectionHeader icon={Timer} title="Predicted Race Times" />
 
@@ -1959,21 +1974,6 @@ export default function PersonalInsightsPage() {
           Ask about my race predictions
         </button>
       </Card>
-
-      {/* ── Cardio Fitness (VO₂ max) ─────────────────────── */}
-      <SectionHeader icon={Heart} title="Cardio Fitness (VO₂ max)" />
-
-      <CardioFitnessCard history={vo2History} loading={vo2Loading} />
-
-      {/* ── Training Load ─────────────────────────────────── */}
-      <SectionHeader icon={Activity} title="Training Load" />
-
-      <TrainingLoadSection
-        data={trainingLoadData}
-        weeklyData={weeklyLoadData}
-        intensity={intensityData}
-        intensityLoading={intensityLoading}
-      />
 
       {/* ── Personal Records by Year ─────────────────────── */}
       <SectionHeader icon={Trophy} title="Personal Records by Year" />
