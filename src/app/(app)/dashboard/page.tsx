@@ -896,6 +896,7 @@ function HealthKpisRow({ metrics, goals, totalWeekCalories }: HealthKpisRowProps
 
   return (
     <Card>
+      <CardTitle>Health</CardTitle>
       <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
         {tiles.map((t) => (
           <div key={t.label} className="flex flex-col gap-0.5">
@@ -1236,14 +1237,29 @@ export default function DashboardPage() {
         showTodayReset
       />
 
-      {/* Row 2: Weekly stats — four labelled sections (Plan Progress,
-          Running, Workouts, Health). */}
+      {/* Row 2: Plan Progress (target vs actual miles for the week) */}
       <PlanProgressStatsCard
         workouts={workouts}
         weekStart={selectedWeekStart}
         weekEnd={selectedWeekEnd}
         plannedMiles={plannedMiles}
       />
+
+      {/* Row 3: Mon–Sun weekly activity calendar — placed up here so the
+          visual week grid sits between Plan Progress and the Running stats
+          row, matching the post-redesign reading order. */}
+      <section>
+        <WeekCalendar
+          plans={[
+            ...(activePlan ? [activePlan] : []),
+            ...(activeWorkoutPlan ? [activeWorkoutPlan] : []),
+          ]}
+          actualRuns={workouts}
+          weekStart={selectedWeekStart}
+        />
+      </section>
+
+      {/* Rows 4–6: Running / Workouts / Health stats sections */}
       <RunningStatsCard
         workouts={workouts}
         weekStart={selectedWeekStart}
@@ -1260,23 +1276,20 @@ export default function DashboardPage() {
         totalWeekCalories={totalWeekCalories}
       />
 
-      {/* Week calendar — tracks the selected week via weekStart prop */}
-      <section>
-        <WeekCalendar
-          plans={[
-            ...(activePlan ? [activePlan] : []),
-            ...(activeWorkoutPlan ? [activeWorkoutPlan] : []),
-          ]}
-          actualRuns={workouts}
-          weekStart={selectedWeekStart}
-        />
-      </section>
+      {/* Row 7: Training Load cards — moved out of the tiles grid below so
+          they sit immediately under Health, before the plan/runs/workouts
+          tiles. Same 2-col layout as the tiles grid below for visual
+          consistency. */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <TrainingLoadCard workouts={workouts} />
+        <LoadScoreTrainingLoadCard workouts={workouts} />
+      </div>
 
       {/* ── Two-column tile grid ───────────────────────────────────────────
-        Tiles flow left-to-right then wrap. With 2 cols on md+ this puts
-        Running on the left, Workout on the right, etc. With 1 col on
-        mobile they stack in interleaved order: Running plan, Workout plan,
-        Runs, Workouts, Load. */}
+        Plan tiles + this-week list tiles. With 2 cols on md+ this puts
+        Running plan on the left, Workout plan on the right, then Runs /
+        Workouts on the next row. On mobile they stack: Running plan,
+        Workout plan, Runs, Workouts. */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <PlanProgressCard
           activePlan={activePlan}
@@ -1298,8 +1311,6 @@ export default function DashboardPage() {
           weekEnd={selectedWeekEnd}
           onSelect={setSelectedWorkout}
         />
-        <TrainingLoadCard workouts={workouts} />
-        <LoadScoreTrainingLoadCard workouts={workouts} />
       </div>
 
       {selectedWorkout && uid && (
