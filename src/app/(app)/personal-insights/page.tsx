@@ -1483,16 +1483,28 @@ export default function PersonalInsightsPage() {
       else workoutSessionLoads.push(score);
     }
 
-    // This week's avg session load — runs vs non-run workouts. Mirrors the
-    // dashboard WeeklyStatsBar logic but inlined to avoid coupling.
-    const weekStartLocal = new Date(today);
-    weekStartLocal.setDate(today.getDate() - 6); // trailing 7 days incl. today
-    const weekStartMs = weekStartLocal.getTime();
+    // This week's avg session load — runs vs non-run workouts.
+    //
+    // Aligned to the dashboard's WeeklyStatsBar exactly so all three surfaces
+    // (Personal Insights typical-vs-current line, This Week stats bar, and
+    // any future consumer) report the same value:
+    //   • Monday-start week via the shared `weekStart()` helper (was: rolling
+    //     trailing 7 days from `today`).
+    //   • Sub-1mi runs and sub-15min workouts excluded — same MIN_* constants
+    //     and inclusive >= semantics the dashboard uses.
+    const weekStartMonday = getWeekStart(today);
+    const weekStartMs = weekStartMonday.getTime();
+    const weekEndMs = weekStartMs + 7 * 86400 * 1000; // exclusive end of Sunday
     const thisWeekRuns: number[] = [];
     const thisWeekWorkouts: number[] = [];
     for (const w of workouts) {
-      if (w.startDate.getTime() < weekStartMs) continue;
-      if (w.startDate.getTime() > today.getTime() + 86400 * 1000) continue;
+      const ts = w.startDate.getTime();
+      if (ts < weekStartMs || ts >= weekEndMs) continue;
+      if (w.isRunLike) {
+        if (w.distanceMiles < MIN_RUN_MILES_FOR_AVG) continue;
+      } else {
+        if (w.durationSeconds < MIN_WORKOUT_SECONDS_FOR_AVG) continue;
+      }
       const score = computeTrainingLoad(
         w.durationSeconds,
         w.avgHeartRate,
