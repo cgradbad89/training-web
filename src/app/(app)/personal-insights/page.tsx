@@ -429,9 +429,13 @@ function TypicalLoadCard({
       <h3 className="text-sm font-semibold text-textPrimary mb-1">
         Your Typical Load
       </h3>
-      <p className="text-xs text-textSecondary mb-3">
+      <p className="text-xs text-textSecondary mb-1">
         Median session load over the last 6 months — your personal reference
         for the per-session scores you see throughout the app.
+      </p>
+      <p className="text-xs text-textSecondary mb-3">
+        Load reflects duration × intensity — so a long easy workout can score
+        the same as a short hard run.
       </p>
       <div className="flex flex-col divide-y divide-border/60">
         {renderRow("Runs", runTypical, runSessionsCount, thisWeekRunAvg)}
