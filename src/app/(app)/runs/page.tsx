@@ -296,13 +296,124 @@ function YearNavigator({
   );
 }
 
+// ─── Filter Pills ─────────────────────────────────────────────────────────────
+
+type DistanceFilter = "all" | "1-3" | "3-5" | "5-7" | "7-9" | "9+";
+type LoadFilter = "all" | "easy" | "medium" | "heavy";
+
+const DISTANCE_OPTIONS: { value: DistanceFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "1-3", label: "1–2.9 mi" },
+  { value: "3-5", label: "3–4.9 mi" },
+  { value: "5-7", label: "5–6.9 mi" },
+  { value: "7-9", label: "7–8.9 mi" },
+  { value: "9+", label: "9+ mi" },
+];
+
+const LOAD_OPTIONS: { value: LoadFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "easy", label: "Easy (<80)" },
+  { value: "medium", label: "Medium (80–200)" },
+  { value: "heavy", label: "Heavy (200+)" },
+];
+
+function matchesDistanceFilter(miles: number, f: DistanceFilter): boolean {
+  switch (f) {
+    case "all": return true;
+    case "1-3": return miles >= 1 && miles < 3;
+    case "3-5": return miles >= 3 && miles < 5;
+    case "5-7": return miles >= 5 && miles < 7;
+    case "7-9": return miles >= 7 && miles < 9;
+    case "9+":  return miles >= 9;
+  }
+}
+
+/** Returns true if a run with `load` (null if not computable) matches the load
+ *  filter. Runs with null load are excluded from any non-"All" load view. */
+function matchesLoadFilter(load: number | null, f: LoadFilter): boolean {
+  if (f === "all") return true;
+  if (load == null) return false;
+  switch (f) {
+    case "easy":   return load < 80;
+    case "medium": return load >= 80 && load < 200;
+    case "heavy":  return load >= 200;
+  }
+}
+
+function FilterPills<T extends string>({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  options: { value: T; label: string }[];
+  value: T;
+  onChange: (v: T) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-xs font-semibold uppercase tracking-widest text-textSecondary">
+        {label}
+      </p>
+      <div className="flex flex-wrap gap-1.5">
+        {options.map((opt) => {
+          const active = opt.value === value;
+          return (
+            <button
+              key={opt.value}
+              onClick={() => onChange(opt.value)}
+              className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
+                active
+                  ? "bg-primary text-white border-primary"
+                  : "bg-surface text-textSecondary border-border hover:text-textPrimary"
+              }`}
+            >
+              {opt.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function PrTogglePill({
+  active,
+  onToggle,
+}: {
+  active: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-xs font-semibold uppercase tracking-widest text-textSecondary">
+        PR
+      </p>
+      <button
+        onClick={onToggle}
+        aria-pressed={active}
+        className={`self-start px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
+          active
+            ? "bg-amber-500/15 text-amber-600 border-amber-500/40 dark:text-amber-400"
+            : "bg-surface text-textSecondary border-border hover:text-textPrimary"
+        }`}
+      >
+        {active ? "🏅 PRs only ✓" : "🏅 PRs only"}
+      </button>
+    </div>
+  );
+}
+
 // ─── Year Stats ───────────────────────────────────────────────────────────────
 
 interface YearStatsProps {
   runs: HealthWorkout[];
+  /** Avg of weekly total run loads across elapsed weeks in the window. */
+  avgWeeklyLoad: number | null;
 }
 
-function YearStats({ runs }: YearStatsProps) {
+function YearStats({ runs, avgWeeklyLoad }: YearStatsProps) {
   const count = runs.length;
   const totalMiles = runs.reduce((s, r) => s + r.distanceMiles, 0);
   const avgMiPerRun = count > 0 ? totalMiles / count : 0;
@@ -336,21 +447,35 @@ function YearStats({ runs }: YearStatsProps) {
       ? loadVals.reduce((a, b) => a + b, 0) / loadVals.length
       : null;
 
+  // Dual Avg Load display — "perRun / weeklyAvg". Either side falls back
+  // to "—" if there's no data to compute it from.
+  const avgLoadPerRunStr = avgLoad != null ? String(Math.round(avgLoad)) : "—";
+  const avgWeeklyLoadStr =
+    avgWeeklyLoad != null ? String(Math.round(avgWeeklyLoad)) : "—";
+  const avgLoadValue = `${avgLoadPerRunStr} / ${avgWeeklyLoadStr}`;
+
+  const tiles: { label: string; value: string; subtext?: string }[] = [
+    { label: "Runs", value: String(count) },
+    { label: "Miles", value: `${totalMiles.toFixed(1)} mi` },
+    { label: "Avg Mi/Run", value: `${avgMiPerRun.toFixed(2)} mi` },
+    { label: "Avg Pace", value: avgPaceSec > 0 ? `${formatPace(avgPaceSec)} /mi` : "—" },
+    { label: "Avg HR", value: avgHR != null ? `${Math.round(avgHR)} bpm` : "—" },
+    { label: "Avg Load", value: avgLoadValue, subtext: "per run / weekly avg" },
+  ];
+
   return (
     <div className="grid grid-cols-2 gap-3">
-      {[
-        { label: "Runs", value: String(count) },
-        { label: "Miles", value: `${totalMiles.toFixed(1)} mi` },
-        { label: "Avg Mi/Run", value: `${avgMiPerRun.toFixed(2)} mi` },
-        { label: "Avg Pace", value: avgPaceSec > 0 ? `${formatPace(avgPaceSec)} /mi` : "—" },
-        { label: "Avg HR", value: avgHR != null ? `${Math.round(avgHR)} bpm` : "—" },
-        { label: "Avg Load", value: avgLoad != null ? String(Math.round(avgLoad)) : "—" },
-      ].map(({ label, value }) => (
+      {tiles.map(({ label, value, subtext }) => (
         <div key={label} className="flex flex-col gap-0.5">
           <span className="text-xs text-textSecondary">{label}</span>
           <span className="text-base font-bold text-textPrimary tabular-nums leading-tight">
             {value}
           </span>
+          {subtext && (
+            <span className="text-[10px] text-textSecondary leading-tight">
+              {subtext}
+            </span>
+          )}
         </div>
       ))}
     </div>
@@ -563,14 +688,38 @@ function WeekGroup({
   const weekLabel = wStart.toLocaleDateString("en-US", { month: "short", day: "numeric" });
   const totalMiles = runs.reduce((s, r) => s + r.distanceMiles, 0);
 
+  // Per-week summary additions: avg HR (across runs with a valid HR) and
+  // total load (sum of computeTrainingLoad scores, nulls dropped). Each
+  // segment is skipped if no qualifying runs contributed to it.
+  const hrVals = runs
+    .map((r) => r.avgHeartRate)
+    .filter((v): v is number => typeof v === "number" && v > 0 && isFinite(v));
+  const avgHR =
+    hrVals.length > 0 ? hrVals.reduce((a, b) => a + b, 0) / hrVals.length : null;
+
+  const loadScores = runs
+    .map((r) =>
+      computeTrainingLoad(r.durationSeconds, r.avgHeartRate, r.activityType)
+    )
+    .filter((s): s is number => s != null);
+  const totalLoad =
+    loadScores.length > 0 ? loadScores.reduce((a, b) => a + b, 0) : null;
+
+  const summaryParts = [
+    `${totalMiles.toFixed(1)} mi`,
+    `${runs.length} ${runs.length === 1 ? "run" : "runs"}`,
+  ];
+  if (avgHR != null) summaryParts.push(`avg ${Math.round(avgHR)}bpm`);
+  if (totalLoad != null) summaryParts.push(`load ${Math.round(totalLoad)}`);
+
   return (
     <div ref={innerRef} className="mb-6">
-      <div className="flex items-center justify-between border-b border-border pb-1.5 mb-1">
+      <div className="flex items-center justify-between flex-wrap gap-x-3 gap-y-1 border-b border-border pb-1.5 mb-1">
         <span className="text-sm font-semibold text-textSecondary">
           Week of {weekLabel}
         </span>
         <span className="text-xs text-textSecondary tabular-nums">
-          {totalMiles.toFixed(1)} mi &middot; {runs.length} {runs.length === 1 ? "run" : "runs"}
+          {summaryParts.join(" · ")}
         </span>
       </div>
 
@@ -689,6 +838,18 @@ export default function RunsPage() {
   useEffect(() => {
     setSelectedMonth(null);
   }, [selectedYear]);
+
+  // Combinable run filters — applied AFTER year/month windowing. Reset to
+  // defaults when the time window changes so the user doesn't get stuck in
+  // a filter that hides everything in a freshly-selected month.
+  const [distanceFilter, setDistanceFilter] = useState<DistanceFilter>("all");
+  const [loadFilter, setLoadFilter] = useState<LoadFilter>("all");
+  const [prOnly, setPrOnly] = useState<boolean>(false);
+  useEffect(() => {
+    setDistanceFilter("all");
+    setLoadFilter("all");
+    setPrOnly(false);
+  }, [selectedYear, selectedMonth]);
 
   const weekRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
@@ -850,6 +1011,71 @@ export default function RunsPage() {
     );
   }, [filteredRuns, selectedMonth]);
 
+  // Distance / Load / PR filters applied on top of windowRuns. This is the
+  // canonical "what the user sees" set — drives summary, week groups,
+  // calendar dots, and shoes-used aggregation.
+  const displayedRuns = useMemo(() => {
+    return windowRuns.filter((r) => {
+      if (!matchesDistanceFilter(r.distanceMiles, distanceFilter)) return false;
+      const load = computeTrainingLoad(
+        r.durationSeconds,
+        r.avgHeartRate,
+        r.activityType
+      );
+      if (!matchesLoadFilter(load, loadFilter)) return false;
+      if (prOnly && !(r.prBadges && r.prBadges.length > 0)) return false;
+      return true;
+    });
+  }, [windowRuns, distanceFilter, loadFilter, prOnly]);
+
+  const filtersActive =
+    distanceFilter !== "all" || loadFilter !== "all" || prOnly;
+
+  // Weekly avg load — sum of weekly run loads over the displayed (filtered)
+  // runs, divided by the number of elapsed weeks in the year/month window.
+  // "Elapsed weeks" uses Monday-anchored buckets, clamped to today so a
+  // partially-elapsed current month doesn't deflate the average. The time
+  // window comes from year/month only; distance/load/PR filters affect the
+  // numerator (which loads count) but NOT the denominator (calendar weeks
+  // elapsed) — otherwise an aggressive filter would inflate the avg.
+  const avgWeeklyLoad = useMemo<number | null>(() => {
+    const totalLoad = displayedRuns.reduce((sum, r) => {
+      const load = computeTrainingLoad(
+        r.durationSeconds,
+        r.avgHeartRate,
+        r.activityType
+      );
+      return sum + (load ?? 0);
+    }, 0);
+    if (totalLoad <= 0) return null;
+
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+    let windowStart: Date;
+    let windowEnd: Date;
+    if (selectedMonth !== null) {
+      windowStart = new Date(selectedYear, selectedMonth, 1);
+      windowEnd = new Date(selectedYear, selectedMonth + 1, 0);
+    } else {
+      windowStart = new Date(selectedYear, 0, 1);
+      windowEnd = new Date(selectedYear, 11, 31);
+    }
+    if (windowEnd > today) windowEnd = today;
+    if (windowStart > today) return null;
+
+    const startMonday = getWeekStart(windowStart);
+    const endMonday = getWeekStart(windowEnd);
+    const weeksSpanned =
+      Math.max(
+        0,
+        Math.round((endMonday.getTime() - startMonday.getTime()) / (7 * 86400 * 1000))
+      ) + 1;
+    if (weeksSpanned <= 0) return null;
+
+    return totalLoad / weeksSpanned;
+  }, [displayedRuns, selectedYear, selectedMonth]);
+
   // Detect duplicate pairs and derive badge IDs
   const duplicatePairs = useMemo(
     () => detectDuplicatePairs(visibleRuns),
@@ -885,7 +1111,7 @@ export default function RunsPage() {
 
   const groupedWeeks = useMemo(() => {
     const map: Record<string, HealthWorkout[]> = {};
-    for (const run of windowRuns) {
+    for (const run of displayedRuns) {
       const k = weekKey(getLocalDate(run));
       if (!map[k]) map[k] = [];
       map[k].push(run);
@@ -897,7 +1123,7 @@ export default function RunsPage() {
       map[k].sort((a, b) => getLocalDate(b).getTime() - getLocalDate(a).getTime());
     }
     return Object.entries(map).sort(([a], [b]) => b.localeCompare(a));
-  }, [windowRuns]);
+  }, [displayedRuns]);
 
   const scrollToWeek = useCallback((wk: string) => {
     weekRefs.current[wk]?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -911,7 +1137,7 @@ export default function RunsPage() {
     );
   }
 
-  const totalWindowMiles = windowRuns.reduce((s, r) => s + r.distanceMiles, 0);
+  const totalWindowMiles = displayedRuns.reduce((s, r) => s + r.distanceMiles, 0);
 
   // Title for the summary tile — month-aware.
   const monthName =
@@ -960,6 +1186,26 @@ export default function RunsPage() {
               </option>
             ))}
           </select>
+
+          {/* Additional filters — combinable with each other and with the
+              year/month window above. Reset on year/month change so a
+              freshly-selected window never starts empty. */}
+          <FilterPills
+            label="Distance"
+            options={DISTANCE_OPTIONS}
+            value={distanceFilter}
+            onChange={setDistanceFilter}
+          />
+          <FilterPills
+            label="Load"
+            options={LOAD_OPTIONS}
+            value={loadFilter}
+            onChange={setLoadFilter}
+          />
+          <PrTogglePill
+            active={prOnly}
+            onToggle={() => setPrOnly((v) => !v)}
+          />
         </div>
 
         {/* Summary tile */}
@@ -967,10 +1213,12 @@ export default function RunsPage() {
           <p className="text-xs font-semibold uppercase tracking-widest text-textSecondary">
             {summaryTitle}
           </p>
-          {windowRuns.length === 0 ? (
-            <p className="text-xs text-textSecondary">No runs yet</p>
+          {displayedRuns.length === 0 ? (
+            <p className="text-xs text-textSecondary">
+              {filtersActive ? "No runs match filters" : "No runs yet"}
+            </p>
           ) : (
-            <YearStats runs={windowRuns} />
+            <YearStats runs={displayedRuns} avgWeeklyLoad={avgWeeklyLoad} />
           )}
         </div>
 
@@ -980,7 +1228,7 @@ export default function RunsPage() {
             Shoes Used
           </p>
           <ShoesUsed
-            runs={windowRuns}
+            runs={displayedRuns}
             shoes={shoes}
             manualAssignments={manualAssignments}
           />
@@ -993,7 +1241,7 @@ export default function RunsPage() {
           </p>
           <MiniCalendar
             year={selectedYear}
-            runs={windowRuns}
+            runs={displayedRuns}
             onDayClick={scrollToWeek}
             lockedMonth={selectedMonth}
           />
@@ -1014,7 +1262,7 @@ export default function RunsPage() {
             </button>
           )}
           <span className="text-sm text-textSecondary tabular-nums">
-            {windowRuns.length} {windowRuns.length === 1 ? "run" : "runs"}{" "}
+            {displayedRuns.length} {displayedRuns.length === 1 ? "run" : "runs"}{" "}
             &middot; {totalWindowMiles.toFixed(1)} miles
           </span>
         </div>
@@ -1093,12 +1341,17 @@ export default function RunsPage() {
         )}
 
         {/* Run list */}
-        {windowRuns.length === 0 ? (
+        {displayedRuns.length === 0 ? (
           <div className="mt-8">
             {allRuns.length === 0 ? (
               <EmptyState
                 title="No runs synced"
                 description="Sync workouts from the iOS app to see your runs here."
+              />
+            ) : filtersActive && windowRuns.length > 0 ? (
+              <EmptyState
+                title="No runs match your filters"
+                description="Try widening the distance/load range or turning off PRs only."
               />
             ) : (
               <EmptyState
