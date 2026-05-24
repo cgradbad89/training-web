@@ -50,6 +50,16 @@ export const HR_ZONES: HRZone[] = [
   { zone: 5, minPct: 0.90, maxPct: 1.00, multiplier: 6.5, label: "Max"       },
 ];
 
+// Post-TRIMP scaling factors calibrated against Strava Relative Effort.
+// Corrects for TRIMP over-crediting duration at low HR for non-aerobic
+// activities. Applied as the final step in computeTrainingLoad, after the
+// duration × zone-multiplier product is computed.
+//   Running / other aerobic  → factor 1.0 (no scaling applied)
+//   HIIT / OTF               → factor 0.75 (~30% over before scaling)
+//   Strength / Pilates / yoga → factor 0.20 (~400% over before scaling)
+export const HIIT_LOAD_FACTOR = 0.75;
+export const STRENGTH_LOAD_FACTOR = 0.20;
+
 // ─── Activity context — running vs strength ─────────────────────────────────
 //
 // Strength / low-intensity work peaks HR lower than running for the same
@@ -117,6 +127,26 @@ export const WORKOUT_ZONES: Record<ActivityContext, HRZone[]> = {
     { zone: 5, minPct: 0.80, maxPct: 1.00, multiplier: 6.5, label: "Max"       },
   ],
 };
+
+// HIIT / OTF allowlist. These formats share running HR zone bands (their HR
+// reaches running-equivalent intensity), but TRIMP still over-credits them by
+// ~30% vs. Strava Relative Effort, so we apply HIIT_LOAD_FACTOR. Strength /
+// low-intensity is detected via getActivityContext's existing allowlist —
+// not duplicated here.
+function isHiitLikeActivity(activityType: string): boolean {
+  const t = activityType.toLowerCase().trim();
+  return (
+    t.includes("hiit") ||
+    t.includes("orangetheory") ||
+    t.includes("otf") ||
+    t.includes("highintensityinterval") ||
+    t.includes("high_intensity_interval") ||
+    t.includes("crossfit") ||
+    t.includes("bootcamp") ||
+    t.includes("boot_camp") ||
+    t.includes("kickbox")
+  );
+}
 
 /** Inclusive-min, exclusive-max bpm bounds for a specific zone in a context. */
 export function zoneBoundsBpmForActivity(
@@ -191,7 +221,19 @@ export function computeTrainingLoad(
   const durationMinutes = durationSeconds / 60;
   const context = activityType ? getActivityContext(activityType) : "running";
   const zone = getHRZoneForActivity(avgHeartRate, context);
-  return Math.round(durationMinutes * zone.multiplier);
+  const trimp = durationMinutes * zone.multiplier;
+
+  // Post-TRIMP scaling: TRIMP over-credits duration at low HR for non-aerobic
+  // activities. Strength/low-intensity reuses the existing getActivityContext
+  // allowlist (no string duplication); HIIT/OTF is detected separately
+  // because both classes share running HR zone bands.
+  let factor = 1.0;
+  if (context === "strength") {
+    factor = STRENGTH_LOAD_FACTOR;
+  } else if (activityType && isHiitLikeActivity(activityType)) {
+    factor = HIIT_LOAD_FACTOR;
+  }
+  return Math.round(trimp * factor);
 }
 
 export type TrainingLoadStatus = "low" | "moderate" | "hard" | "very-hard";
