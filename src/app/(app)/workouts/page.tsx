@@ -16,7 +16,6 @@ import {
 
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { PageHeader } from "@/components/layout/PageHeader";
 import { useAuth } from "@/hooks/useAuth";
 import { onHealthWorkoutsSnapshot } from "@/services/healthWorkouts";
 import { fetchAllOverrides, excludeWorkout } from "@/services/workoutOverrides";
@@ -200,9 +199,13 @@ function SummaryTile({
 function YearSummary({
   workouts,
   year,
+  summaryTitle,
 }: {
   workouts: HealthWorkout[];
   year: number;
+  /** Title rendered at the top of the card — matches the runs page's
+   *  "<Year> Summary" label so the sidebar cards read consistently. */
+  summaryTitle: string;
 }) {
   const elapsed = weeksElapsed(year);
   const count = workouts.length;
@@ -282,17 +285,27 @@ function YearSummary({
   ];
 
   return (
-    <div className="bg-card rounded-2xl border border-border p-4">
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        {tiles.map(({ label, value, subtext }) => (
-          <SummaryTile
-            key={label}
-            label={label}
-            value={value}
-            subtext={subtext}
-          />
-        ))}
-      </div>
+    <div className="bg-card rounded-2xl border border-border p-4 flex flex-col gap-4">
+      <p className="text-xs font-semibold uppercase tracking-widest text-textSecondary">
+        {summaryTitle}
+      </p>
+      {workouts.length === 0 ? (
+        <p className="text-xs text-textSecondary">No workouts in this view.</p>
+      ) : (
+        // Sidebar is 256px wide on lg, so the four tiles stay in a 2×2
+        // grid — lg:grid-cols-4 was a holdover from the old full-width
+        // layout and would overflow the new sidebar slot.
+        <div className="grid grid-cols-2 gap-3">
+          {tiles.map(({ label, value, subtext }) => (
+            <SummaryTile
+              key={label}
+              label={label}
+              value={value}
+              subtext={subtext}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -306,21 +319,26 @@ function TabStrip({
   active: TabKey;
   onChange: (t: TabKey) => void;
 }) {
+  // Pill styling matches the runs page FilterPills so the sidebar filter
+  // controls read consistently across the two pages.
   return (
-    <div className="flex gap-2 flex-wrap">
-      {TABS.map(({ key, label }) => (
-        <button
-          key={key}
-          onClick={() => onChange(key)}
-          className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
-            key === active
-              ? "bg-primary text-white"
-              : "text-textSecondary hover:text-textPrimary"
-          }`}
-        >
-          {label}
-        </button>
-      ))}
+    <div className="flex gap-1.5 flex-wrap">
+      {TABS.map(({ key, label }) => {
+        const isActive = key === active;
+        return (
+          <button
+            key={key}
+            onClick={() => onChange(key)}
+            className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
+              isActive
+                ? "bg-primary text-white border-primary"
+                : "bg-surface text-textSecondary border-border hover:text-textPrimary"
+            }`}
+          >
+            {label}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -713,125 +731,141 @@ export default function WorkoutsPage() {
   const activeTabLabel = TABS.find((t) => t.key === activeTab)?.label ?? "All";
 
   return (
-    <div className="p-4 lg:p-6 flex flex-col gap-6">
-      {/* Row 1: Header + year selector */}
-      <PageHeader
-        title="Workout History"
-        action={
+    <div className="flex flex-col lg:flex-row gap-6 p-4 lg:p-6 min-h-full">
+      {/* ── Left Sidebar ────────────────────────────────────── */}
+      <aside className="w-full lg:w-64 shrink-0 flex flex-col gap-5">
+        {/* Filters card — Year navigator + category tabs. Same shell as
+            the runs-page filters card so the two pages read consistently. */}
+        <div className="bg-card rounded-2xl border border-border p-4 flex flex-col gap-4">
+          <p className="text-xs font-semibold uppercase tracking-widest text-textSecondary">
+            Year
+          </p>
           <YearNavigator
             years={availableYears}
             selected={selectedYear}
             onChange={setSelectedYear}
           />
-        }
-      />
+          <p className="text-xs font-semibold uppercase tracking-widest text-textSecondary">
+            Type
+          </p>
+          <TabStrip active={activeTab} onChange={setActiveTab} />
+        </div>
 
-      {/* Row 2: Year summary stats — reflects the currently displayed
-          (year + category) set so it stays in sync with the list below. */}
-      <YearSummary workouts={filteredWorkouts} year={selectedYear} />
+        {/* Summary tile — already filter-aware (Prompt 5 + Prompt C). */}
+        <YearSummary
+          workouts={filteredWorkouts}
+          year={selectedYear}
+          summaryTitle={`${selectedYear} Summary`}
+        />
 
-      {/* Duplicate suggestion banners */}
-      {suggestionPairs.length > 0 && (
-        <div className="flex flex-col gap-3">
-          {suggestionPairs.map((pair) => (
-            <DuplicateSuggestionBanner
-              key={pair.otfWorkoutId}
-              pair={pair}
-              onExclude={async () => {
-                if (!uid) return;
-                await excludeWorkout(uid, pair.otfWorkoutId);
-                const newOverride: WorkoutOverride = {
-                  workoutId: pair.otfWorkoutId,
-                  userId: uid,
-                  isExcluded: true,
-                  excludedAt: new Date().toISOString(),
-                  excludedReason: "auto-suggested duplicate",
-                  distanceMilesOverride: null,
-                  durationSecondsOverride: null,
-                  runTypeOverride: null,
-                  updatedAt: new Date().toISOString(),
-                };
-                // Update both state and ref so the snapshot callback stays in sync
-                overridesRef.current = { ...overridesRef.current, [pair.otfWorkoutId]: newOverride };
-                setOverrides((prev) => ({ ...prev, [pair.otfWorkoutId]: newOverride }));
-                setAllWorkouts((prev) =>
-                  prev.filter((w) => w.workoutId !== pair.otfWorkoutId)
-                );
-              }}
-              onDismiss={() => {
-                const key = dismissedPairKey(
-                  pair.otfWorkoutId,
-                  pair.manualWorkoutId
-                );
-                // Optimistic UI — remove immediately, update both state and ref
-                dismissedRef.current = new Set([...dismissedRef.current, key]);
-                setDismissedPairKeys((prev) => new Set([...prev, key]));
-                // Persist to Firestore (fire-and-forget)
-                if (uid) {
-                  dismissDuplicate(
-                    uid,
+        {/* Calendar — hidden on mobile, matches the runs page placement.
+            valuesByDate already comes from filteredWorkouts so the heat
+            map tracks whichever tab is active. */}
+        <div className="hidden lg:block bg-card rounded-2xl border border-border p-4">
+          <p className="text-xs font-semibold uppercase tracking-widest text-textSecondary mb-3">
+            Calendar
+          </p>
+          <MiniCalendar
+            year={selectedYear}
+            valuesByDate={workoutsByDate}
+            formatValue={(v) => String(v)}
+            formatTooltip={(v) => `${v} ${v === 1 ? "workout" : "workouts"}`}
+            onDayClick={scrollToWeek}
+            lockedMonth={null}
+          />
+        </div>
+      </aside>
+
+      {/* ── Right Main Area ──────────────────────────────────── */}
+      <main className="flex-1 min-w-0">
+        {/* Duplicate suggestion banners — moved into the main column so
+            they sit directly above the list they affect. */}
+        {suggestionPairs.length > 0 && (
+          <div className="flex flex-col gap-3 mb-4">
+            {suggestionPairs.map((pair) => (
+              <DuplicateSuggestionBanner
+                key={pair.otfWorkoutId}
+                pair={pair}
+                onExclude={async () => {
+                  if (!uid) return;
+                  await excludeWorkout(uid, pair.otfWorkoutId);
+                  const newOverride: WorkoutOverride = {
+                    workoutId: pair.otfWorkoutId,
+                    userId: uid,
+                    isExcluded: true,
+                    excludedAt: new Date().toISOString(),
+                    excludedReason: "auto-suggested duplicate",
+                    distanceMilesOverride: null,
+                    durationSecondsOverride: null,
+                    runTypeOverride: null,
+                    updatedAt: new Date().toISOString(),
+                  };
+                  // Update both state and ref so the snapshot callback stays in sync
+                  overridesRef.current = {
+                    ...overridesRef.current,
+                    [pair.otfWorkoutId]: newOverride,
+                  };
+                  setOverrides((prev) => ({
+                    ...prev,
+                    [pair.otfWorkoutId]: newOverride,
+                  }));
+                  setAllWorkouts((prev) =>
+                    prev.filter((w) => w.workoutId !== pair.otfWorkoutId)
+                  );
+                }}
+                onDismiss={() => {
+                  const key = dismissedPairKey(
                     pair.otfWorkoutId,
                     pair.manualWorkoutId
-                  ).catch((err) =>
-                    console.error("[Workouts] dismiss write failed:", err)
                   );
-                }
-              }}
-            />
-          ))}
-        </div>
-      )}
+                  // Optimistic UI — remove immediately, update both state and ref
+                  dismissedRef.current = new Set([...dismissedRef.current, key]);
+                  setDismissedPairKeys((prev) => new Set([...prev, key]));
+                  // Persist to Firestore (fire-and-forget)
+                  if (uid) {
+                    dismissDuplicate(
+                      uid,
+                      pair.otfWorkoutId,
+                      pair.manualWorkoutId
+                    ).catch((err) =>
+                      console.error("[Workouts] dismiss write failed:", err)
+                    );
+                  }
+                }}
+              />
+            ))}
+          </div>
+        )}
 
-      {/* Row 3: Type filter tabs — now includes "Excluded" as its own tab,
-          replacing the standalone button + modal entry point. */}
-      <TabStrip active={activeTab} onChange={setActiveTab} />
-
-      {/* Row 4: Monthly activity calendar — same component the runs page
-          uses, adapted to show per-day session count. Reflects the active
-          year + category filters; clicking a populated day scrolls to that
-          week in the list below. */}
-      <div className="bg-card rounded-2xl border border-border p-4">
-        <p className="text-xs font-semibold uppercase tracking-widest text-textSecondary mb-3">
-          Calendar
-        </p>
-        <MiniCalendar
-          year={selectedYear}
-          valuesByDate={workoutsByDate}
-          formatValue={(v) => String(v)}
-          formatTooltip={(v) => `${v} ${v === 1 ? "workout" : "workouts"}`}
-          onDayClick={scrollToWeek}
-          lockedMonth={null}
-        />
-      </div>
-
-      {/* Row 5: Workout list grouped by week */}
-      {filteredWorkouts.length === 0 ? (
-        <div className="mt-4">
-          {allWorkouts.length === 0 && excludedWorkouts.length === 0 ? (
-            <EmptyState title="No workouts recorded yet" />
-          ) : activeTab === "excluded" ? (
-            <EmptyState title={`No excluded workouts in ${selectedYear}`} />
-          ) : (
-            <EmptyState
-              title={`No ${activeTabLabel} workouts in ${selectedYear}`}
-            />
-          )}
-        </div>
-      ) : (
-        <div>
-          {groupedWeeks.map(([wk, workouts]) => (
-            <WorkoutWeekGroup
-              key={wk}
-              wKey={wk}
-              workouts={workouts}
-              onSelect={setSelectedWorkout}
-              innerRef={(el) => {
-                weekRefs.current[wk] = el;
-              }}
-            />
-          ))}
-        </div>
-      )}
+        {/* Workout list grouped by week */}
+        {filteredWorkouts.length === 0 ? (
+          <div className="mt-4">
+            {allWorkouts.length === 0 && excludedWorkouts.length === 0 ? (
+              <EmptyState title="No workouts recorded yet" />
+            ) : activeTab === "excluded" ? (
+              <EmptyState title={`No excluded workouts in ${selectedYear}`} />
+            ) : (
+              <EmptyState
+                title={`No ${activeTabLabel} workouts in ${selectedYear}`}
+              />
+            )}
+          </div>
+        ) : (
+          <div>
+            {groupedWeeks.map(([wk, workouts]) => (
+              <WorkoutWeekGroup
+                key={wk}
+                wKey={wk}
+                workouts={workouts}
+                onSelect={setSelectedWorkout}
+                innerRef={(el) => {
+                  weekRefs.current[wk] = el;
+                }}
+              />
+            ))}
+          </div>
+        )}
+      </main>
 
       {selectedWorkout && uid && (
         <WorkoutDetailModal
