@@ -56,6 +56,29 @@ import {
   classifyHrZone,
   type HRZoneNumber,
 } from "@/utils/trainingLoad";
+import { InfoTooltip } from "@/components/ui/InfoTooltip";
+
+// ─── Training Load KPI tooltip copy ───────────────────────────────────────────
+// Single source of truth so the four KPI cards and any future surfaces stay
+// in sync. Copy approved verbatim by product.
+const KPI_TOOLTIP_COPY = {
+  ctl:
+    "Chronic Training Load — your 42-day rolling average of daily load. " +
+    "A proxy for accumulated fitness: it builds slowly with consistent " +
+    "training and reflects the workload your body is adapted to handle.",
+  atl:
+    "Acute Training Load — your 7-day rolling average of daily load. A " +
+    "proxy for short-term fatigue: it rises fast after hard days and " +
+    "drops quickly with rest.",
+  tsb:
+    "Training Stress Balance — Fitness minus Fatigue (CTL − ATL). Your " +
+    "freshness. Positive = rested and race-ready; negative = absorbing " +
+    "training load (normal and healthy mid-build); near zero = balanced.",
+  peak:
+    "Your highest single-run training load over the last 16 weeks, with " +
+    "the date it happened — a reference point for your hardest recent " +
+    "effort.",
+} as const;
 import {
   collection,
   getDocs,
@@ -286,8 +309,12 @@ function TrainingLoadSection({
         {/* KPI row */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-2">
           <div className="text-center">
-            <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-2">
-              Fitness (CTL)
+            <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-2 inline-flex items-center justify-center w-full">
+              <span>Fitness (CTL)</span>
+              <InfoTooltip
+                ariaLabel="What is Fitness (CTL)?"
+                content={KPI_TOOLTIP_COPY.ctl}
+              />
             </p>
             <p className="text-2xl font-bold text-textPrimary tabular-nums">
               {ctlValue != null ? ctlValue : "—"}
@@ -295,8 +322,12 @@ function TrainingLoadSection({
             <p className="text-xs text-textSecondary mt-1">42-day load</p>
           </div>
           <div className="text-center">
-            <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-2">
-              Fatigue (ATL)
+            <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-2 inline-flex items-center justify-center w-full">
+              <span>Fatigue (ATL)</span>
+              <InfoTooltip
+                ariaLabel="What is Fatigue (ATL)?"
+                content={KPI_TOOLTIP_COPY.atl}
+              />
             </p>
             <p className="text-2xl font-bold text-textPrimary tabular-nums">
               {atlValue != null ? atlValue : "—"}
@@ -304,8 +335,12 @@ function TrainingLoadSection({
             <p className="text-xs text-textSecondary mt-1">7-day load</p>
           </div>
           <div className="text-center">
-            <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-2">
-              Form (TSB)
+            <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-2 inline-flex items-center justify-center w-full">
+              <span>Form (TSB)</span>
+              <InfoTooltip
+                ariaLabel="What is Form (TSB)?"
+                content={KPI_TOOLTIP_COPY.tsb}
+              />
             </p>
             <p className="text-2xl font-bold text-textPrimary tabular-nums">
               {tsbValue != null ? signedRound(tsbValue) : "—"}
@@ -315,8 +350,12 @@ function TrainingLoadSection({
             </p>
           </div>
           <div className="text-center">
-            <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-2">
-              Peak Run Load
+            <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-2 inline-flex items-center justify-center w-full">
+              <span>Peak Run Load</span>
+              <InfoTooltip
+                ariaLabel="What is Peak Run Load?"
+                content={KPI_TOOLTIP_COPY.peak}
+              />
             </p>
             <p className="text-2xl font-bold text-textPrimary tabular-nums">
               {peakRunLoad != null ? Math.round(peakRunLoad) : "—"}
