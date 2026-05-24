@@ -54,11 +54,16 @@ export const HR_ZONES: HRZone[] = [
 // Corrects for TRIMP over-crediting duration at low HR for non-aerobic
 // activities. Applied as the final step in computeTrainingLoad, after the
 // duration × zone-multiplier product is computed.
-//   Running / other aerobic  → factor 1.0 (no scaling applied)
-//   HIIT / OTF               → factor 0.75 (~30% over before scaling)
-//   Strength / Pilates / yoga → factor 0.20 (~400% over before scaling)
+//   Running / other aerobic                  → factor 1.0 (no scaling applied)
+//   HIIT / OTF                               → factor 0.75
+//   Strength (traditional lifting, cooldown) → factor 0.25
+//   Mindful (Pilates, yoga, barre, etc.)     → factor 0.20
+//
+// Strength lifted to 0.25 — validated against Strava RE. Mindful /
+// low-cardiovascular activities stay at 0.20.
 export const HIIT_LOAD_FACTOR = 0.75;
-export const STRENGTH_LOAD_FACTOR = 0.20;
+export const STRENGTH_LOAD_FACTOR = 0.25;   // bumped from 0.20
+export const MINDFUL_LOAD_FACTOR = 0.20;    // Pilates, yoga, barre, meditation, tai chi, qigong
 
 // ─── Activity context — running vs strength ─────────────────────────────────
 //
@@ -149,6 +154,27 @@ function isHiitLikeActivity(activityType: string): boolean {
   );
 }
 
+// Mindful / low-cardiovascular subset of the strength allowlist. These
+// activities (Pilates, yoga, barre, meditation, tai chi, qigong, stretching)
+// still use the strength zone bands via getActivityContext, but get the lower
+// MINDFUL_LOAD_FACTOR in the post-TRIMP scaling step. Traditional strength
+// lifting and cooldown sessions stay in the strength bucket (×0.25).
+function isMindfulActivity(activityType: string): boolean {
+  const t = activityType.toLowerCase().trim();
+  return (
+    t.includes("pilates") ||
+    t.includes("yoga") ||
+    t.includes("barre") ||
+    t.includes("meditation") ||
+    t.includes("tai") || // tai chi
+    t.includes("qigong") ||
+    t.includes("mindandbody") ||
+    t.includes("mind_and_body") ||
+    t.includes("stretch") ||
+    t.includes("flexibility")
+  );
+}
+
 /** Inclusive-min, exclusive-max bpm bounds for a specific zone in a context. */
 export function zoneBoundsBpmForActivity(
   z: HRZone,
@@ -225,11 +251,14 @@ export function computeTrainingLoad(
   const trimp = durationMinutes * zone.multiplier;
 
   // Post-TRIMP scaling: TRIMP over-credits duration at low HR for non-aerobic
-  // activities. Strength/low-intensity reuses the existing getActivityContext
-  // allowlist (no string duplication); HIIT/OTF is detected separately
-  // because both classes share running HR zone bands.
+  // activities. Mindful (Pilates/yoga/etc.) is checked first as the strictest
+  // subset of the strength allowlist; remaining strength types (traditional
+  // lifting, cooldown) fall through to STRENGTH_LOAD_FACTOR. HIIT/OTF is
+  // detected separately because it shares running HR zone bands.
   let factor = 1.0;
-  if (context === "strength") {
+  if (activityType && isMindfulActivity(activityType)) {
+    factor = MINDFUL_LOAD_FACTOR;
+  } else if (context === "strength") {
     factor = STRENGTH_LOAD_FACTOR;
   } else if (activityType && isHiitLikeActivity(activityType)) {
     factor = HIIT_LOAD_FACTOR;
