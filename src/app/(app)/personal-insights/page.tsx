@@ -1070,7 +1070,12 @@ function CardioFitnessCard({
   const currentVo2Date = formatVo2DateShort(latest.date);
   const band = ratingBand(currentVo2);
 
-  const chartData = history.map((h) => ({
+  const twelveMonthsAgo = new Date();
+  twelveMonthsAgo.setFullYear(twelveMonthsAgo.getFullYear() - 1);
+  const recentHistory = history.filter(
+    (e) => new Date(e.date) >= twelveMonthsAgo,
+  );
+  const chartData = recentHistory.map((h) => ({
     date: formatVo2DateShort(h.date),
     value: Number(h.value.toFixed(1)),
   }));
@@ -1144,6 +1149,11 @@ function CardioFitnessCard({
 
       {/* Trend chart */}
       <div className="mt-5">
+        {chartData.length === 0 ? (
+          <p className="text-sm text-textSecondary text-center py-10">
+            No recent Cardio Fitness data — Apple Watch generates readings after outdoor workouts.
+          </p>
+        ) : (
         <ResponsiveContainer width="100%" height={160}>
           <LineChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: 8 }}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-border)" />
@@ -1196,6 +1206,7 @@ function CardioFitnessCard({
             />
           </LineChart>
         </ResponsiveContainer>
+        )}
         <div className="flex items-center justify-center gap-4 mt-2 text-[11px] text-textSecondary">
           <span className="inline-flex items-center gap-1.5">
             <span
