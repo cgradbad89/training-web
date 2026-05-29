@@ -874,16 +874,31 @@ function HealthKpisRow({ metrics, goals, totalWeekCalories }: HealthKpisRowProps
     return values.reduce((a, b) => a + b, 0) / values.length;
   };
 
-  const avgSleep = weeklyAvg("sleep_total_hours");
+  const avgSteps    = weeklyAvg("steps");
+  const avgExercise = weeklyAvg("exercise_mins");
+  const avgMoveCal  = weeklyAvg("move_calories");
+  const avgStand    = weeklyAvg("stand_hours");
+  const avgSleep    = weeklyAvg("sleep_total_hours");
+
+  const stepsStatus: GoalStatus =
+    avgSteps != null && goals?.steps
+      ? evaluateMetricGoal(avgSteps, goals.steps.goal, "higher", goals.steps.warningPct, goals.steps.dangerPct)
+      : "neutral";
+  const exerciseStatus: GoalStatus =
+    avgExercise != null && goals?.exerciseMins
+      ? evaluateMetricGoal(avgExercise, goals.exerciseMins.goal, "higher", goals.exerciseMins.warningPct, goals.exerciseMins.dangerPct)
+      : "neutral";
+  const moveCalStatus: GoalStatus =
+    avgMoveCal != null && goals?.moveCalories
+      ? evaluateMetricGoal(avgMoveCal, goals.moveCalories.goal, "higher", goals.moveCalories.warningPct, goals.moveCalories.dangerPct)
+      : "neutral";
+  const standStatus: GoalStatus =
+    avgStand != null && goals?.standHours
+      ? evaluateMetricGoal(avgStand, goals.standHours.goal, "higher", goals.standHours.warningPct, goals.standHours.dangerPct)
+      : "neutral";
   const sleepStatus: GoalStatus =
     avgSleep != null && goals?.sleep
-      ? evaluateMetricGoal(
-          avgSleep,
-          goals.sleep.goal,
-          "higher",
-          goals.sleep.warningPct,
-          goals.sleep.dangerPct
-        )
+      ? evaluateMetricGoal(avgSleep, goals.sleep.goal, "higher", goals.sleep.warningPct, goals.sleep.dangerPct)
       : "neutral";
 
   const tiles: {
@@ -894,31 +909,23 @@ function HealthKpisRow({ metrics, goals, totalWeekCalories }: HealthKpisRowProps
   }[] = [
     {
       label: "Steps",
-      value: (() => {
-        const v = weeklyAvg("steps");
-        return v == null ? "—" : Math.round(v).toLocaleString();
-      })(),
+      value: avgSteps == null ? "—" : Math.round(avgSteps).toLocaleString(),
+      valueClass: goalStatusTextClass(stepsStatus),
     },
     {
       label: "Exercise Mins",
-      value: (() => {
-        const v = weeklyAvg("exercise_mins");
-        return v == null ? "—" : `${Math.round(v)} min`;
-      })(),
+      value: avgExercise == null ? "—" : `${Math.round(avgExercise)} min`,
+      valueClass: goalStatusTextClass(exerciseStatus),
     },
     {
       label: "Move Calories",
-      value: (() => {
-        const v = weeklyAvg("move_calories");
-        return v == null ? "—" : `${Math.round(v)} kcal`;
-      })(),
+      value: avgMoveCal == null ? "—" : `${Math.round(avgMoveCal)} kcal`,
+      valueClass: goalStatusTextClass(moveCalStatus),
     },
     {
       label: "Stand Hours",
-      value: (() => {
-        const v = weeklyAvg("stand_hours");
-        return v == null ? "—" : `${v.toFixed(1)} hrs`;
-      })(),
+      value: avgStand == null ? "—" : `${avgStand.toFixed(1)} hrs`,
+      valueClass: goalStatusTextClass(standStatus),
     },
     {
       label: "Sleep Hours",
