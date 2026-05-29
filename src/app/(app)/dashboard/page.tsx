@@ -963,20 +963,22 @@ function HealthKpisRow({ metrics, goals, totalWeekCalories }: HealthKpisRowProps
 
 interface TrainingLoadCardProps {
   workouts: HealthWorkout[];
+  weekStart: Date;
+  weekEnd: Date;
 }
 
-function TrainingLoadCard({ workouts }: TrainingLoadCardProps) {
+function TrainingLoadCard({ workouts, weekStart, weekEnd }: TrainingLoadCardProps) {
   const now = new Date();
 
   const runs = workouts.filter((w) => w.isRunLike);
 
-  const cutoff7 = new Date(now);
-  cutoff7.setDate(now.getDate() - 7);
   const cutoff30 = new Date(now);
   cutoff30.setDate(now.getDate() - 30);
 
+  // Acute = sum of miles for runs in the current Mon–Sun week (week-aligned,
+  // matching the Running KPI row's "Actual" tile above).
   const acute = runs
-    .filter((w) => getWorkoutLocalDate(w) >= cutoff7)
+    .filter((w) => isInWeek(w, weekStart, weekEnd))
     .reduce((s, w) => s + w.distanceMiles, 0);
 
   const last30Miles = runs
@@ -1014,7 +1016,7 @@ function TrainingLoadCard({ workouts }: TrainingLoadCardProps) {
 
       <div className="grid grid-cols-2 gap-4 mb-4">
         <div className="flex flex-col gap-0.5">
-          <span className="text-xs text-textSecondary">7-Day</span>
+          <span className="text-xs text-textSecondary">This week</span>
           <span className="text-2xl font-bold text-textPrimary tabular-nums">
             {acute.toFixed(1)}
             <span className="text-sm font-normal text-textSecondary"> mi</span>
@@ -1050,19 +1052,38 @@ function TrainingLoadCard({ workouts }: TrainingLoadCardProps) {
 
 interface LoadScoreTrainingLoadCardProps {
   workouts: HealthWorkout[];
+  weekStart: Date;
+  weekEnd: Date;
 }
 
 function LoadScoreTrainingLoadCard({
   workouts,
+  weekStart,
+  weekEnd,
 }: LoadScoreTrainingLoadCardProps) {
   const now = new Date();
 
-  // Build the daily-load map across ALL workout types (runs + non-runs).
-  // The advantage of this card over the mileage card is that it surfaces
-  // cross-training stress mileage can't see.
-  const dailyMap = useMemo(() => buildDailyLoadMap(workouts), [workouts]);
+  // Acute = sum of load scores for all activities in the current Mon–Sun week.
+  // Direct filter (not rollingLoad) so the window matches isInWeek exactly,
+  // consistent with the Running and Workout KPI rows above.
+  const acute = useMemo(() => {
+    let total = 0;
+    for (const w of workouts) {
+      if (!isInWeek(w, weekStart, weekEnd)) continue;
+      const load = computeTrainingLoad(
+        w.durationSeconds,
+        w.avgHeartRate,
+        w.activityType
+      );
+      if (load == null) continue;
+      total += load;
+    }
+    return total;
+  }, [workouts, weekStart, weekEnd]);
 
-  const acute = rollingLoad(dailyMap, now, 7);          // 7-day total
+  // Chronic = rolling 28-day total / 4 = avg per week. Kept rolling (not
+  // week-aligned) so it represents the user's established baseline capacity.
+  const dailyMap = useMemo(() => buildDailyLoadMap(workouts), [workouts]);
   const chronicTotal = rollingLoad(dailyMap, now, 28);  // 28-day total
   const chronicWeekly = chronicTotal / 4;               // avg per week over 28d
 
@@ -1077,7 +1098,7 @@ function LoadScoreTrainingLoadCard({
 
       <div className="grid grid-cols-2 gap-4 mb-4">
         <div className="flex flex-col gap-0.5">
-          <span className="text-xs text-textSecondary">7-Day Load</span>
+          <span className="text-xs text-textSecondary">This Week</span>
           <span className="text-2xl font-bold text-textPrimary tabular-nums">
             {hasAcute ? Math.round(acute).toLocaleString() : "—"}
             {hasAcute && (
@@ -1539,8 +1560,8 @@ export default function DashboardPage() {
 
       {/* Row 5: Training Load row — Mileage + Load Score side-by-side */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <TrainingLoadCard workouts={workouts} />
-        <LoadScoreTrainingLoadCard workouts={workouts} />
+        <TrainingLoadCard workouts={workouts} weekStart={selectedWeekStart} weekEnd={selectedWeekEnd} />
+        <LoadScoreTrainingLoadCard workouts={workouts} weekStart={selectedWeekStart} weekEnd={selectedWeekEnd} />
       </div>
 
       {/* Row 6: Running KPIs — Planned + Actual miles (absorbed from the
