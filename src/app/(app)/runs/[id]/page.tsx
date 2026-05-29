@@ -16,7 +16,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useUnsavedChanges } from "@/hooks/useUnsavedChanges";
 import { fetchHealthWorkout } from "@/services/healthWorkouts";
 import { fetchRoutePoints, type RoutePoint } from "@/services/routes";
-import { fetchShoes, fetchManualShoeAssignmentsMap } from "@/services/shoes";
+import { fetchShoes, fetchManualShoeAssignmentsMap, saveManualAssignments } from "@/services/shoes";
 import {
   fetchOverride,
   saveOverride,
@@ -94,13 +94,19 @@ export default function RunDetailPage() {
   const [formDistance, setFormDistance] = useState("");
   const [formDuration, setFormDuration] = useState("");
   const [formRunType, setFormRunType] = useState("");
+  const [selectedShoeId, setSelectedShoeId] = useState<string | null>(null);
 
   // Exclude state
   const [excluding, setExcluding] = useState(false);
   const [showExcludeConfirm, setShowExcludeConfirm] = useState(false);
 
   // Unsaved-changes warning for the edit form
-  const editFormDirty = isEditing && (formDistance !== "" || formDuration !== "" || formRunType !== "");
+  const editFormDirty = isEditing && (
+    formDistance !== "" ||
+    formDuration !== "" ||
+    formRunType !== "" ||
+    selectedShoeId !== (assignments[workoutId] ?? null)
+  );
   useUnsavedChanges(editFormDirty);
 
   // Compute mile splits unconditionally (before early returns) to satisfy Rules of Hooks
@@ -204,6 +210,7 @@ export default function RunDetailPage() {
     ? assignedShoe.name ||
       `${assignedShoe.brand} ${assignedShoe.model}`.trim()
     : null;
+  const activeShoes = shoes.filter((s) => !s.isRetired);
 
   // Date formatting
   const startDate = new Date(displayWorkout.startDate);
@@ -243,6 +250,7 @@ export default function RunDetailPage() {
         : ""
     );
     setFormRunType(override?.runTypeOverride ?? displayWorkout.displayType);
+    setSelectedShoeId(assignedShoeId);
     setIsEditing(true);
   }
 
@@ -265,6 +273,10 @@ export default function RunDetailPage() {
     };
     await saveOverride(uid, overrideObj);
     setOverride(overrideObj);
+    if (selectedShoeId !== assignedShoeId) {
+      await saveManualAssignments(uid, { [workout.workoutId]: selectedShoeId });
+      setAssignments((prev) => ({ ...prev, [workout.workoutId]: selectedShoeId }));
+    }
     setIsEditing(false);
     setSaving(false);
   }
@@ -462,6 +474,36 @@ export default function RunDetailPage() {
             </div>
           )}
 
+          <div className="mt-4">
+            <label className="text-xs text-textSecondary block mb-1">
+              Shoe
+            </label>
+            {activeShoes.length === 0 ? (
+              <p className="text-sm text-textSecondary">
+                No shoes registered —{" "}
+                <a href="/shoes" className="text-primary hover:underline">
+                  add shoes on the Shoes page
+                </a>
+              </p>
+            ) : (
+              <select
+                value={selectedShoeId ?? ""}
+                onChange={(e) => setSelectedShoeId(e.target.value || null)}
+                className="w-full bg-surface border border-border rounded-lg px-3 py-2 text-sm text-textPrimary focus:outline-none focus:ring-2 focus:ring-primary"
+              >
+                <option value="">— No shoe —</option>
+                {activeShoes.map((shoe) => {
+                  const name = shoe.name || `${shoe.brand} ${shoe.model}`.trim();
+                  return (
+                    <option key={shoe.id} value={shoe.id}>
+                      {name}{shoe.brand && shoe.name ? ` · ${shoe.brand}` : ""}
+                    </option>
+                  );
+                })}
+              </select>
+            )}
+          </div>
+
           {previewPace && (formDistance || formDuration) && (
             <p className="text-sm text-primary font-medium mt-3">
               New pace: {previewPace} /mi
@@ -587,6 +629,21 @@ export default function RunDetailPage() {
             value={fullDateDisplay}
             sublabel={timeDisplay}
           />
+          <div className="flex flex-col gap-0.5">
+            <span className="text-xs text-textSecondary uppercase tracking-wide">Shoe</span>
+            {assignedShoe ? (
+              <>
+                <span className="text-sm font-semibold text-textPrimary leading-tight">
+                  {assignedShoe.name || `${assignedShoe.brand} ${assignedShoe.model}`.trim()}
+                </span>
+                {assignedShoe.brand && assignedShoe.name && (
+                  <span className="text-xs text-textSecondary">{assignedShoe.brand}</span>
+                )}
+              </>
+            ) : (
+              <span className="text-sm text-textSecondary italic">No shoe assigned</span>
+            )}
+          </div>
         </div>
       </div>
 
