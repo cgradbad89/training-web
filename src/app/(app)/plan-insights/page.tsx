@@ -600,6 +600,60 @@ export default function PlanInsightsPage() {
     ? currentPlanWeek.entries.reduce((s, e) => s + e.distanceMiles, 0)
     : 0;
 
+  // ── Recent Trends time frame: active plan start → today ────────────────────
+  // Replaces the previous hardcoded 30-day (and 56-day) lookbacks. All Recent
+  // Trends KPIs share this single cutoff/label so they describe one window.
+  // Resolution order:
+  //   1) activePlan.startDate (ISO, Monday-normalized) — always present on a
+  //      linked RunningPlan, so this is the live path.
+  //   2) earliest scheduled week's startDateLabel — defensive only; the field
+  //      is not on the current PlanWeek type, so it's read via a cast and is
+  //      tolerated if future data carries it.
+  //   3) 30-day fallback (e.g. race with no linked plan), with a warning.
+  const planStartDate = useMemo<Date | null>(() => {
+    if (activePlan?.startDate) {
+      const d = new Date(activePlan.startDate);
+      if (!isNaN(d.getTime())) return d;
+    }
+    if (activePlan?.weeks?.length) {
+      const sorted = [...activePlan.weeks].sort(
+        (a, b) => a.weekNumber - b.weekNumber
+      );
+      const label = (sorted[0] as { startDateLabel?: string })?.startDateLabel;
+      if (label) {
+        const parsed = new Date(`${label} ${new Date().getFullYear()}`);
+        if (!isNaN(parsed.getTime())) return parsed;
+      }
+    }
+    console.warn(
+      "Plan Insights: could not resolve plan start date, falling back to 30-day window"
+    );
+    return null;
+  }, [activePlan]);
+
+  const trendCutoffMs = planStartDate
+    ? planStartDate.getTime()
+    : Date.now() - 30 * 24 * 60 * 60 * 1000;
+
+  const trendLabel = planStartDate
+    ? `Since plan start · ${planStartDate.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+      })}`
+    : "Last 30 days";
+
+  // runs[].startDate is a Date here; the instanceof branch is the live path.
+  // The string / Timestamp branches are defensive for other shapes.
+  const trendRuns = runs.filter((r) => {
+    const ms =
+      r.startDate instanceof Date
+        ? r.startDate.getTime()
+        : typeof r.startDate === "string"
+          ? new Date(r.startDate).getTime()
+          : (r.startDate as { toMillis?: () => number })?.toMillis?.() ?? 0;
+    return ms >= trendCutoffMs;
+  });
+
   // ── Half Marathon Readiness computations ──────────────────────────────────
 
   function toMs(d: Date): number {
@@ -1274,17 +1328,16 @@ export default function PlanInsightsPage() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <Card>
             <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-1">
-              Last 30 Days
+              {trendLabel}
             </p>
             <p className="text-2xl font-bold text-textPrimary tabular-nums">
-              {runs
-                .filter((r) => r.startDate >= new Date(Date.now() - 30 * 86400000))
+              {trendRuns
                 .reduce((s, r) => s + r.distanceMiles, 0)
                 .toFixed(1)}
               <span className="text-sm font-normal text-textSecondary ml-1">mi</span>
             </p>
             <p className="text-xs text-textSecondary mt-1">
-              {runs.filter((r) => r.startDate >= new Date(Date.now() - 30 * 86400000)).length} runs
+              {trendRuns.length} runs
             </p>
           </Card>
           <Card>
@@ -1292,9 +1345,8 @@ export default function PlanInsightsPage() {
               Avg Run Distance
             </p>
             {(() => {
-              const recent = runs.filter((r) => r.startDate >= new Date(Date.now() - 30 * 86400000));
-              const avg = recent.length > 0
-                ? recent.reduce((s, r) => s + r.distanceMiles, 0) / recent.length
+              const avg = trendRuns.length > 0
+                ? trendRuns.reduce((s, r) => s + r.distanceMiles, 0) / trendRuns.length
                 : 0;
               return (
                 <p className="text-2xl font-bold text-textPrimary tabular-nums">
@@ -1303,15 +1355,15 @@ export default function PlanInsightsPage() {
                 </p>
               );
             })()}
+            <p className="text-xs text-textSecondary mt-1">{trendLabel}</p>
           </Card>
           <Card>
             <p className="text-xs font-semibold text-textSecondary uppercase tracking-wide mb-1">
-              Longest Run (8 wks)
+              Longest Run
             </p>
             {(() => {
-              const recent = runs.filter((r) => r.startDate >= new Date(Date.now() - 56 * 86400000));
-              const longest = recent.length > 0
-                ? Math.max(...recent.map((r) => r.distanceMiles))
+              const longest = trendRuns.length > 0
+                ? Math.max(...trendRuns.map((r) => r.distanceMiles))
                 : 0;
               return (
                 <p className="text-2xl font-bold text-textPrimary tabular-nums">
@@ -1320,6 +1372,7 @@ export default function PlanInsightsPage() {
                 </p>
               );
             })()}
+            <p className="text-xs text-textSecondary mt-1">{trendLabel}</p>
           </Card>
         </div>
       )}

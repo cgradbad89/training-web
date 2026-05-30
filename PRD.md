@@ -168,6 +168,8 @@ Dismissed duplicate workout pairs. Prevents re-surfacing the same duplicate warn
 
 10. **Shoe auto-assign** (`src/utils/shoeAutoAssign.ts`): Rule specificity score: scope≠"any" +10, minDistance +5, maxDistance +5, startDate +3, endDate +3. Highest score wins. Manual assignments always take precedence.
 
+11. **Plan Insights "Recent Trends" window** (`src/app/(app)/plan-insights/page.tsx`): All three Recent Trends KPIs (total miles + run count, avg run distance, longest run) share one cutoff/label derived from the selected race's linked plan. Resolution order: (1) `activePlan.startDate`; (2) earliest week's `startDateLabel` parsed as `"<label> <currentYear>"` (defensive — not on the `PlanWeek` type, read via cast); (3) 30-day fallback with a `console.warn`. Label is `Since plan start · <Mon D>` when resolved, else `Last 30 days`. Previously each KPI used an independent hardcoded 30-day (longest run: 56-day) lookback. The KPIs filter a slice of the already-loaded `runs` array — no extra Firestore read.
+
 ---
 
 ## Section 6 — Known Sharp Edges

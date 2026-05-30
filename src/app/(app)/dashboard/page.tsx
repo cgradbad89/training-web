@@ -404,7 +404,7 @@ function ThisWeekRunsCard({ workouts, weekStart }: ThisWeekRunsCardProps) {
   );
 
   return (
-    <Card className="overflow-hidden">
+    <Card className="overflow-hidden h-full">
       <CardTitle>This Week&apos;s Runs</CardTitle>
 
       {runs.length === 0 ? (
@@ -493,7 +493,7 @@ function WorkoutSummaryCard({
   );
 
   return (
-    <Card className="overflow-hidden">
+    <Card className="overflow-hidden h-full">
       <CardTitle>This Week&apos;s Workouts</CardTitle>
 
       {weekWorkouts.length === 0 ? (
@@ -576,7 +576,7 @@ function PlanProgressCard({ activePlan, workouts, weekStart, weekEnd }: PlanProg
 
   if (!activePlan) {
     return (
-      <Card>
+      <Card className="h-full">
         <CardTitle>Running Plan</CardTitle>
         <EmptyState
           title="No active running plan"
@@ -610,7 +610,7 @@ function PlanProgressCard({ activePlan, workouts, weekStart, weekEnd }: PlanProg
   const progressPct = plannedMiles > 0 ? Math.min(1, actualMiles / plannedMiles) : 0;
 
   return (
-    <Card>
+    <Card className="h-full">
       <CardTitle>Running Plan</CardTitle>
       <p className="text-sm font-semibold text-textPrimary mb-0.5">{activePlan.name}</p>
       <p className="text-xs text-textSecondary mb-4">
@@ -693,7 +693,7 @@ function WorkoutPlanProgressCard({
 }: WorkoutPlanProgressCardProps) {
   if (!activeWorkoutPlan) {
     return (
-      <Card>
+      <Card className="h-full">
         <CardTitle>Workout Plan</CardTitle>
         <EmptyState
           title="No active workout plan"
@@ -747,7 +747,7 @@ function WorkoutPlanProgressCard({
     totalCount > 0 ? Math.min(1, completedCount / totalCount) : 0;
 
   return (
-    <Card>
+    <Card className="h-full">
       <CardTitle>Workout Plan</CardTitle>
       <p className="text-sm font-semibold text-textPrimary mb-0.5">
         {activeWorkoutPlan.name}
@@ -1582,9 +1582,9 @@ export default function DashboardPage() {
       />
 
       {/* Row 7: Running row — Running Plan tile (left) + This Week's Runs
-          tile (right). lg breakpoint and items-start so the two tiles take
-          their natural heights instead of stretching to match. */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+          tile (right). items-stretch + h-full on each card so the pair
+          shares a common height (matches the tallest sibling). */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch">
         <PlanProgressCard
           activePlan={activePlan}
           workouts={workouts}
@@ -1608,9 +1608,9 @@ export default function DashboardPage() {
       />
 
       {/* Row 9: Workout row — Workout Plan tile (left) + This Week's
-          Workouts tile (right). Same responsive + items-start pattern as
-          the Running row above. */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+          Workouts tile (right). Same responsive + items-stretch + h-full
+          pattern as the Running row above. */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch">
         <WorkoutPlanProgressCard
           activeWorkoutPlan={activeWorkoutPlan}
           weekStart={selectedWeekStart}
