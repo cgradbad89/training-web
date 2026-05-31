@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   computePaceAxisDomain,
+  nullifyOutliers,
   MIN_PACE_FLOOR_SEC,
   MAX_PACE_CEIL_SEC,
 } from "../paceAxisDomain";
@@ -47,5 +48,23 @@ describe("computePaceAxisDomain", () => {
     const nonFinite = computePaceAxisDomain([NaN, Infinity, -Infinity]);
     expect(nonFinite).toEqual([MIN_PACE_FLOOR_SEC, MAX_PACE_CEIL_SEC]);
     expect(nonFinite[0]).toBeLessThan(nonFinite[1]);
+  });
+});
+
+describe("nullifyOutliers", () => {
+  it("leaves in-range values untouched", () => {
+    expect(nullifyOutliers([500, 600, 550], [480, 620])).toEqual([
+      500, 600, 550,
+    ]);
+  });
+
+  it("nulls values outside the domain (and preserves existing nulls)", () => {
+    expect(nullifyOutliers([500, 5, 600, null, 1300], [480, 620])).toEqual([
+      500,
+      null,
+      600,
+      null,
+      null,
+    ]);
   });
 });

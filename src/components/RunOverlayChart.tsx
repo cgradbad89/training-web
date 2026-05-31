@@ -14,7 +14,7 @@ import {
 import { type RoutePoint } from "@/services/routes";
 import { type GapPoint } from "@/utils/gradeAdjustedPace";
 import { formatPace, mpsToSecPerMile } from "@/utils/pace";
-import { computePaceAxisDomain } from "@/utils/paceAxisDomain";
+import { computePaceAxisDomain, nullifyOutliers } from "@/utils/paceAxisDomain";
 
 const METERS_PER_MILE = 1609.344;
 const EARTH_RADIUS_MI = 3958.8;
@@ -134,13 +134,30 @@ export function RunOverlayChart({ points, perPointGap }: RunOverlayChartProps) {
 
   if (data.length < 2) return null;
 
-  // Shared left-axis (reversed) domain for pace + GAP. Use a robust
-  // percentile-based domain so GPS-glitch spikes clip at the edge (via
-  // allowDataOverflow) instead of crushing the real pace/GAP band.
+  // Shared left-axis (reversed) domain for pace + GAP, from a robust
+  // percentile range so glitch spikes don't crush the real band.
   const paceVals = data.flatMap((d) =>
     [d.pace, d.gap].filter((v): v is number => v != null)
   );
-  const [paceDomainMin, paceDomainMax] = computePaceAxisDomain(paceVals);
+  const paceDomain = computePaceAxisDomain(paceVals);
+  const [paceDomainMin, paceDomainMax] = paceDomain;
+
+  // Display copy: pace/GAP values outside the domain become null so Recharts
+  // draws a line BREAK (gap) instead of a clamped full-height spike. Source
+  // pace/GAP arrays are untouched; elevation + HR series are unchanged.
+  const paceSeries = nullifyOutliers(
+    data.map((d) => d.pace),
+    paceDomain
+  );
+  const gapSeries = nullifyOutliers(
+    data.map((d) => d.gap),
+    paceDomain
+  );
+  const displayData = data.map((d, i) => ({
+    ...d,
+    pace: paceSeries[i],
+    gap: gapSeries[i],
+  }));
 
   return (
     <div className="bg-card rounded-2xl border border-border p-5">
@@ -156,8 +173,8 @@ export function RunOverlayChart({ points, perPointGap }: RunOverlayChartProps) {
       </div>
       <ResponsiveContainer width="100%" height={260}>
         <ComposedChart
-          data={data}
-          margin={{ left: 8, right: 8, top: 8, bottom: 0 }}
+          data={displayData}
+          margin={{ left: 12, right: 8, top: 8, bottom: 0 }}
         >
           <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.3} />
           <XAxis
@@ -169,21 +186,23 @@ export function RunOverlayChart({ points, perPointGap }: RunOverlayChartProps) {
             tickLine={false}
             axisLine={false}
           />
-          {/* Pace + GAP: left axis, reversed so faster = higher */}
+          {/* Pace + GAP: left axis, reversed so faster = higher.
+              Outliers are nulled (line break), so no allowDataOverflow needed. */}
           <YAxis
             yAxisId="pace"
+            type="number"
             domain={[paceDomainMin, paceDomainMax]}
-            allowDataOverflow
             reversed
             tickFormatter={(v: number) => formatPace(v)}
-            tick={{ fontSize: 11 }}
+            tick={{ fontSize: 11, fill: "var(--color-chart-axis)" }}
             tickLine={false}
             axisLine={false}
-            width={60}
+            width={68}
             label={{
               value: "Pace /mi",
               angle: -90,
               position: "insideLeft",
+              offset: 0,
               style: {
                 fontSize: 11,
                 fill: "var(--color-chart-axis)",

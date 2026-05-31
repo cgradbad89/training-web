@@ -53,3 +53,20 @@ export function computePaceAxisDomain(values: number[]): [number, number] {
 
   return [domainMin, domainMax];
 }
+
+/**
+ * Return a display copy of a pace/GAP series where any finite value outside the
+ * given [min, max] domain is replaced with null. Recharts renders null as a
+ * line BREAK (with connectNulls={false}) rather than a clamped full-height
+ * spike, so GPS-glitch points leave a small gap instead of a jagged spike.
+ * Existing nulls are preserved; in-range values pass through untouched.
+ */
+export function nullifyOutliers(
+  values: (number | null)[],
+  domain: [number, number]
+): (number | null)[] {
+  const [min, max] = domain;
+  return values.map((v) =>
+    v != null && Number.isFinite(v) && v >= min && v <= max ? v : null
+  );
+}
