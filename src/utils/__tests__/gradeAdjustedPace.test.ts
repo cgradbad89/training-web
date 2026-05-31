@@ -23,10 +23,73 @@ function buildRoute(altitudes: number[]): RoutePoint[] {
   }));
 }
 
-const N = 5; // 5 points → 4 segments
+// Routes are long enough (≥ ALT_SMOOTHING_WINDOW points) that the centered
+// altitude moving-average preserves a linear ramp at interior points; a route
+// shorter than the window collapses to its mean (flat) and would hide grade.
+const N = 15; // 15 points → 14 segments
 const flatAlts = Array(N).fill(100);
-const upAlts = [0, 30, 60, 90, 120]; // steady climb
-const downAlts = [120, 90, 60, 30, 0]; // steady descent
+// Steady ~5.9%/seg climb: each ~853 m segment rises 50 m → above the dead-band.
+const upAlts = Array.from({ length: N }, (_, i) => i * 50); // 0 → 700
+const downAlts = Array.from({ length: N }, (_, i) => (N - 1 - i) * 50); // 700 → 0
+
+/**
+ * Deterministic pseudo-random sequence in [-amp, +amp] (seeded LCG) so altitude
+ * noise is reproducible across test runs.
+ */
+function seededNoise(count: number, amp: number, seed = 12345): number[] {
+  const out: number[] = [];
+  let s = seed >>> 0;
+  for (let i = 0; i < count; i++) {
+    s = (Math.imul(s, 1103515245) + 12345) & 0x7fffffff;
+    out.push((s / 0x7fffffff) * 2 * amp - amp);
+  }
+  return out;
+}
+
+/**
+ * Build a realistic-resolution route: ~8.5 m segments (lng step 0.0001° @ lat
+ * 40), 3 s apart, with base elevation `baseAlt(i)` plus ±`noiseAmp` m of GPS
+ * altitude noise — the conditions that expose the Jensen convexity bias.
+ */
+function buildNoisyRoute(
+  count: number,
+  baseAlt: (i: number) => number,
+  noiseAmp: number,
+  secPerSeg = 3,
+  seed = 12345
+): RoutePoint[] {
+  const noise = seededNoise(count, noiseAmp, seed);
+  return Array.from({ length: count }, (_, i) => ({
+    index: i,
+    lat: 40,
+    lng: -100 + i * 0.0001,
+    altitude: baseAlt(i) + noise[i],
+    timestamp: new Date(BASE_MS + i * secPerSeg * 1000).toISOString(),
+    speed: null,
+    hr: null,
+  }));
+}
+
+/** Actual distance-weighted pace (sec/mi) implied by a route's GPS samples. */
+function actualPaceSecPerMile(pts: RoutePoint[]): number {
+  const EARTH_RADIUS_MI = 3958.8;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  let miles = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const dLat = toRad(pts[i].lat - pts[i - 1].lat);
+    const dLng = toRad(pts[i].lng - pts[i - 1].lng);
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(toRad(pts[i - 1].lat)) *
+        Math.cos(toRad(pts[i].lat)) *
+        Math.sin(dLng / 2) ** 2;
+    miles += 2 * EARTH_RADIUS_MI * Math.asin(Math.sqrt(a));
+  }
+  const sec =
+    (Date.parse(pts[pts.length - 1].timestamp) - Date.parse(pts[0].timestamp)) /
+    1000;
+  return miles > 0 ? sec / miles : 0;
+}
 
 describe("gradeAdjustmentFactor", () => {
   it("≈ 1 on flat ground", () => {
@@ -69,6 +132,29 @@ describe("computeRunGap", () => {
     const flat = computeRunGap(buildRoute(flatAlts), 0, (N - 1) * SEC_PER_SEG);
     const down = computeRunGap(buildRoute(downAlts), 0, (N - 1) * SEC_PER_SEG);
     expect(down.runGapSecPerMile).toBeGreaterThan(flat.runGapSecPerMile);
+  });
+
+  // ── Jensen-bias regression: this is the suite's old blind spot ────────────
+  // The original adjacent-point grade logic squared GPS altitude noise into
+  // spurious grades whose convex 1/factor cost does NOT cancel, biasing GAP
+  // systematically slow on flat ground. These tests FAIL against that logic and
+  // PASS with the resampled-baseline + smoothing + dead-band fix.
+
+  it("noisy-flat → run GAP ≈ actual pace (no convexity slow-bias)", () => {
+    // Net-zero elevation, constant pace, ±0.5 m altitude noise on ~8.5 m segs.
+    const pts = buildNoisyRoute(400, () => 100, 0.5);
+    const gap = computeRunGap(pts, 0, 0);
+    const actual = actualPaceSecPerMile(pts);
+    const errPct = Math.abs(gap.runGapSecPerMile - actual) / actual;
+    expect(errPct).toBeLessThanOrEqual(0.015); // within 1.5%
+  });
+
+  it("gentle net uphill + noise → run GAP faster than actual (sign survives)", () => {
+    // ~3% true grade (0.25 m rise per ~8.5 m seg) buried under ±0.5 m noise.
+    const pts = buildNoisyRoute(400, (i) => 100 + i * 0.25, 0.5);
+    const gap = computeRunGap(pts, 0, 0);
+    const actual = actualPaceSecPerMile(pts);
+    expect(gap.runGapSecPerMile).toBeLessThan(actual);
   });
 
   it("empty input → safe (falls back to actual pace, no crash)", () => {

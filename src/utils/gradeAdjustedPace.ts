@@ -33,13 +33,35 @@ export interface RunGap {
 const EARTH_RADIUS_M = 6_371_000;
 const METERS_PER_MILE = 1609.344;
 
-/** Centered moving-average window (in points) used to damp GPS altitude noise. */
-const ALT_SMOOTHING_WINDOW = 5;
+/**
+ * Centered moving-average window (in points) used to damp GPS altitude noise.
+ * Widened from 5 → 11: residual barometric/GPS altitude noise (~±0.3–0.5 m)
+ * survives a narrow window and, because 1/factor is convex, biases GAP slow
+ * (Jensen's inequality on segSec/factor). A linear elevation ramp is unchanged
+ * by a centered average at interior points, so widening costs no real signal.
+ */
+const ALT_SMOOTHING_WINDOW = 11;
 /**
  * Segments shorter than this horizontal distance are treated as flat (grade 0)
  * to avoid divide-by-tiny grade spikes from GPS jitter.
  */
 const MIN_SEGMENT_METERS = 5;
+/**
+ * Horizontal baseline (meters) over which grade is measured. Adjacent GPS
+ * points are only ~3–15 m apart, where ±0.3–0.5 m altitude noise produces
+ * spurious ±5–15% grades; since 1/factor is convex, that symmetric noise does
+ * NOT cancel and systematically inflates grade-adjusted time (GAP too slow).
+ * Grade variance falls super-linearly with baseline length, so resampling to a
+ * ~25 m span collapses the noise-driven bias while preserving real sustained
+ * hills (which persist across many such spans).
+ */
+const GRADE_BASELINE_METERS = 25;
+/**
+ * Grades with |grade%| ≤ this are treated as flat (factor = 1.0). Removes the
+ * residual near-flat noise that survives resampling + smoothing, without
+ * touching genuine grades.
+ */
+const GRADE_DEADBAND_PERCENT = 1.5;
 /** Grade is clamped to ±30% before adjustment to avoid altitude-noise blowups. */
 const MAX_GRADE_PERCENT = 30;
 
@@ -141,6 +163,55 @@ export function computeRunGap(
     smoothAlt[i] = cnt > 0 ? sum / cnt : points[i].altitude;
   }
 
+  // Per-segment horizontal distance (m) and elapsed time (s), computed once.
+  // segHorizM[i] / segSec[i] describe the segment from point i-1 → i.
+  const segHorizM: number[] = new Array(n).fill(0);
+  const segSec: number[] = new Array(n).fill(0);
+  for (let i = 1; i < n; i++) {
+    segHorizM[i] = haversineMeters(
+      points[i - 1].lat,
+      points[i - 1].lng,
+      points[i].lat,
+      points[i].lng
+    );
+    const t0 = new Date(points[i - 1].timestamp).getTime();
+    const t1 = new Date(points[i].timestamp).getTime();
+    let s = (t1 - t0) / 1000;
+    if (!isFinite(s) || s < 0) s = 0;
+    segSec[i] = s;
+  }
+
+  // ─── Resample grade onto a ~25 m horizontal baseline ───────────────────────
+  // Instead of computing grade between adjacent points (~3–15 m apart, where
+  // altitude noise yields spurious ±5–15% grades that bias GAP slow via the
+  // convexity of 1/factor), accumulate horizontal distance into spans of at
+  // least GRADE_BASELINE_METERS and compute ONE grade/factor per span. Every
+  // segment in a span inherits that span's factor, so the noise-driven grade
+  // variance — and the Jensen bias it produces — collapses super-linearly,
+  // while genuine sustained hills (which persist across many spans) survive.
+  const segFactor: number[] = new Array(n).fill(1);
+  let spanStartPoint = 0; // point index where the current span begins
+  let spanFirstSeg = 1; // first segment index belonging to the current span
+  let spanHorizM = 0;
+  for (let i = 1; i < n; i++) {
+    spanHorizM += segHorizM[i];
+    const atEnd = i === n - 1;
+    if (spanHorizM >= GRADE_BASELINE_METERS || atEnd) {
+      let gradePercent = 0;
+      if (spanHorizM >= MIN_SEGMENT_METERS) {
+        gradePercent =
+          ((smoothAlt[i] - smoothAlt[spanStartPoint]) / spanHorizM) * 100;
+      }
+      // Dead-band: near-flat noise that survives resampling + smoothing → flat.
+      if (Math.abs(gradePercent) <= GRADE_DEADBAND_PERCENT) gradePercent = 0;
+      const factor = gradeAdjustmentFactor(gradePercent); // clamps ±30%, floors 0.1
+      for (let k = spanFirstSeg; k <= i; k++) segFactor[k] = factor;
+      spanStartPoint = i;
+      spanFirstSeg = i + 1;
+      spanHorizM = 0;
+    }
+  }
+
   const perPointGap: GapPoint[] = [];
   const mileAdjTime: number[] = [];
   const mileDist: number[] = [];
@@ -150,24 +221,9 @@ export function computeRunGap(
   let totalMiles = 0;
 
   for (let i = 1; i < n; i++) {
-    const prev = points[i - 1];
-    const curr = points[i];
-
-    const horizM = haversineMeters(prev.lat, prev.lng, curr.lat, curr.lng);
-    const segMiles = horizM / METERS_PER_MILE;
-
-    const t0 = new Date(prev.timestamp).getTime();
-    const t1 = new Date(curr.timestamp).getTime();
-    let segSec = (t1 - t0) / 1000;
-    if (!isFinite(segSec) || segSec < 0) segSec = 0;
-
-    // Grade % from smoothed altitude; tiny segments are treated as flat.
-    let gradePercent = 0;
-    if (horizM >= MIN_SEGMENT_METERS) {
-      gradePercent = ((smoothAlt[i] - smoothAlt[i - 1]) / horizM) * 100;
-    }
-    const factor = gradeAdjustmentFactor(gradePercent);
-    const adjSec = segSec / factor;
+    const segMiles = segHorizM[i] / METERS_PER_MILE;
+    const factor = segFactor[i];
+    const adjSec = segSec[i] / factor;
 
     cumMiles += segMiles;
     totalMiles += segMiles;
@@ -184,6 +240,19 @@ export function computeRunGap(
     const bucket = Math.max(0, Math.floor(midMiles)); // 0-indexed mile
     mileAdjTime[bucket] = (mileAdjTime[bucket] ?? 0) + adjSec;
     mileDist[bucket] = (mileDist[bucket] ?? 0) + segMiles;
+  }
+
+  if (process.env.GAP_DEBUG) {
+    // eslint-disable-next-line no-console
+    console.log("GAPDBG", JSON.stringify({
+      n,
+      segHorizM: segHorizM.slice(0, 6),
+      segSec: segSec.slice(0, 6),
+      segFactor: segFactor.slice(0, 6),
+      smoothAlt: smoothAlt.slice(0, 6),
+      totalMiles,
+      totalAdjTimeSec,
+    }));
   }
 
   const denomMiles = totalMiles > 0 ? totalMiles : totalDistanceMiles;
