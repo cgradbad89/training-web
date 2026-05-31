@@ -15,6 +15,7 @@ import { type RoutePoint } from "@/services/routes";
 import { type GapPoint } from "@/utils/gradeAdjustedPace";
 import { formatPace, mpsToSecPerMile } from "@/utils/pace";
 import { computePaceAxisDomain, nullifyOutliers } from "@/utils/paceAxisDomain";
+import { rollingAverage, SMOOTH_WINDOW_SEC } from "@/utils/smoothSeries";
 
 const METERS_PER_MILE = 1609.344;
 const EARTH_RADIUS_MI = 3958.8;
@@ -48,6 +49,8 @@ function haversineMi(
 
 interface OverlayDatum {
   distanceMiles: number;
+  /** Seconds since the start of the run (for time-windowed smoothing) */
+  timeSec: number;
   elevationFt: number;
   pace: number | null;
   gap: number | null;
@@ -104,6 +107,7 @@ export function RunOverlayChart({ points, perPointGap }: RunOverlayChartProps) {
       cumMiles.push(cumMiles[i - 1] + haversineMi(p.lat, p.lng, c.lat, c.lng));
     }
 
+    const baseMs = new Date(points[0].timestamp).getTime();
     const full: OverlayDatum[] = points.map((p, i) => {
       const paceRaw = p.speed != null ? mpsToSecPerMile(p.speed) : 0;
       const pace = paceRaw > 0 && paceRaw <= MAX_PACE ? paceRaw : null;
@@ -112,8 +116,10 @@ export function RunOverlayChart({ points, perPointGap }: RunOverlayChartProps) {
       const gap = gapRaw != null && gapRaw > 0 && gapRaw <= MAX_PACE ? gapRaw : null;
       const hr =
         p.hr != null && p.hr >= MIN_HR && p.hr <= MAX_HR ? p.hr : null;
+      const tMs = new Date(p.timestamp).getTime();
       return {
         distanceMiles: cumMiles[i],
+        timeSec: Number.isFinite(tMs - baseMs) ? (tMs - baseMs) / 1000 : NaN,
         elevationFt: p.altitude * METERS_TO_FEET,
         pace,
         gap,
@@ -153,9 +159,19 @@ export function RunOverlayChart({ points, perPointGap }: RunOverlayChartProps) {
     data.map((d) => d.gap),
     paceDomain
   );
+
+  // Smooth ONLY the pace series — applied AFTER outlier-nulling so glitch
+  // points don't pollute the moving average. GAP is intentionally left
+  // unchanged this session (a separate GAP fix is pending).
+  const smoothedPace = rollingAverage(
+    paceSeries,
+    SMOOTH_WINDOW_SEC,
+    data.map((d) => d.timeSec)
+  );
+
   const displayData = data.map((d, i) => ({
     ...d,
-    pace: paceSeries[i],
+    pace: smoothedPace[i],
     gap: gapSeries[i],
   }));
 
@@ -193,16 +209,17 @@ export function RunOverlayChart({ points, perPointGap }: RunOverlayChartProps) {
             type="number"
             domain={[paceDomainMin, paceDomainMax]}
             reversed
-            tickFormatter={(v: number) => formatPace(v)}
+            tickFormatter={(v: number) => (Number.isFinite(v) ? formatPace(v) : "")}
             tick={{ fontSize: 11, fill: "var(--color-chart-axis)" }}
+            tickMargin={6}
             tickLine={false}
             axisLine={false}
-            width={68}
+            width={84}
             label={{
               value: "Pace /mi",
               angle: -90,
               position: "insideLeft",
-              offset: 0,
+              offset: 10,
               style: {
                 fontSize: 11,
                 fill: "var(--color-chart-axis)",
