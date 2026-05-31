@@ -226,67 +226,65 @@ export const SEPT_HM_PLAN_ENTRIES: PlannedRunEntry[] = [
   sept(1, 6, 7.0, "longRun", paceMidpoint("10:05", "10:25"),
     "7 miles easy"),
 
-  // Week 3 (Base Build) — ~21 mi
+  // ─── Weeks 3–16 restructured: 3–5 day weeks + travel adjustments ──────────
+  // Run-reduction + travel migration (travelRevision "reduced-travel-v1").
+  // Weeks 1–2 above are completed and left untouched.
+
+  // Week 3 (Base Build)
   sept(2, 1, 3.0, "outdoor", paceMidpoint("10:15", "10:45"),
     "3 miles easy"),
   sept(2, 2, 4.5, "outdoor", paceMidpoint("9:40", "9:50"),
     "2 easy + 2.5 @ tempo"),
-  sept(2, 3, 3.0, "outdoor", paceMidpoint("10:15", "10:45"),
-    "3 miles easy"),
-  sept(2, 4, 4.0, "outdoor", paceMidpoint("10:15", "10:45"),
-    "4 miles easy"),
+  sept(2, 4, 5.0, "outdoor", paceMidpoint("10:15", "10:45"),
+    "5 miles easy"),
   sept(2, 6, 8.0, "longRun", paceMidpoint("10:05", "10:25"),
     "8 miles"),
 
-  // Week 4 (Base Build) — ~23 mi
+  // Week 4 (Base Build) — Kentucky travel Sat–Mon (Jun 13–15)
   sept(3, 1, 3.0, "outdoor", paceMidpoint("10:15", "10:45"),
     "3 miles easy"),
   sept(3, 2, 5.0, "outdoor", paceMidpoint("9:35", "9:45"),
     "2 easy + 3 @ tempo"),
-  sept(3, 3, 3.0, "outdoor", paceMidpoint("10:15", "10:45"),
-    "3 miles easy"),
   sept(3, 4, 4.0, "outdoor", paceMidpoint("10:15", "10:45"),
     "4 miles easy"),
-  sept(3, 6, 9.0, "longRun", paceMidpoint("10:00", "10:20"),
-    "9 miles"),
+  sept(3, 5, 9.0, "longRun", paceMidpoint("10:00", "10:20"),
+    "9 miles",
+    "Long run moved to Friday — Kentucky travel Sat–Mon (Jun 13–15)"),
 
-  // Week 5 (Build) — ~25 mi
+  // Week 5 (Build) — Hilton Head travel Wed–Sun (Jun 17–21)
   sept(4, 1, 3.0, "outdoor", paceMidpoint("10:15", "10:45"),
-    "3 miles easy"),
+    "3 miles easy",
+    "Kentucky return day — easy run flexible timing"),
   sept(4, 2, 5.5, "outdoor", paceMidpoint("9:30", "9:40"),
-    "2 easy + 3.5 @ tempo"),
-  sept(4, 3, 3.0, "outdoor", paceMidpoint("10:15", "10:45"),
-    "3 miles easy"),
-  sept(4, 4, 4.0, "outdoor", paceMidpoint("9:50", "10:05"),
-    "4 miles steady"),
-  sept(4, 6, 9.5, "longRun", paceMidpoint("10:00", "10:20"),
-    "9.5 miles"),
+    "2 easy + 3.5 @ tempo",
+    "Run at home before Hilton Head"),
+  sept(4, 4, 4.0, "outdoor", paceMidpoint("10:15", "10:45"),
+    "4 miles easy",
+    "Hilton Head travel Wed–Sun (Jun 17–21) — easy only, max 3–4 mi"),
+  sept(4, 7, 9.5, "longRun", paceMidpoint("10:00", "10:20"),
+    "9.5 miles",
+    "Long run moved to Sunday — Hilton Head travel Wed–Sun (Jun 17–21)"),
 
-  // Week 6 (Cutback) — ~18 mi
-  sept(5, 1, 3.0, "outdoor", paceMidpoint("10:15", "10:45"),
-    "3 miles easy"),
+  // Week 6 (Cutback) — Roanoke travel Fri–Sun
   sept(5, 2, 4.0, "outdoor", paceExact("9:35"),
     "2 easy + 2 @ tempo"),
-  sept(5, 3, 3.0, "outdoor", paceMidpoint("10:15", "10:45"),
-    "3 miles easy"),
-  sept(5, 4, 3.0, "outdoor", paceMidpoint("10:15", "10:45"),
-    "3 miles easy"),
-  sept(5, 6, 7.0, "longRun", paceMidpoint("10:05", "10:25"),
-    "7 miles easy"),
+  sept(5, 4, 4.0, "outdoor", paceMidpoint("10:15", "10:45"),
+    "4 miles easy"),
+  sept(5, 6, 6.0, "longRun", paceMidpoint("10:05", "10:25"),
+    "6 miles easy",
+    "Roanoke travel Fri–Sun — shortened to 6 mi, keep flat/easy"),
 
-  // Week 7 (Build) — ~26 mi
+  // Week 7 (Build)
   sept(6, 1, 3.0, "outdoor", paceMidpoint("10:15", "10:45"),
     "3 miles easy"),
   sept(6, 2, 5.0, "outdoor", paceMidpoint("9:10", "9:20"),
     "2 easy + 4x6 min hard + 2 min jog"),
-  sept(6, 3, 3.0, "outdoor", paceMidpoint("10:15", "10:45"),
-    "3 miles easy"),
-  sept(6, 4, 4.0, "outdoor", paceMidpoint("9:45", "10:00"),
-    "4 miles steady"),
+  sept(6, 4, 5.0, "outdoor", paceMidpoint("9:45", "10:00"),
+    "5 miles steady"),
   sept(6, 6, 10.0, "longRun", paceMidpoint("10:00", "10:20"),
     "10 miles"),
 
-  // Week 8 (Build) — ~28 mi
+  // Week 8 (Build)
   sept(7, 1, 3.0, "outdoor", paceMidpoint("10:15", "10:45"),
     "3 miles easy"),
   sept(7, 2, 6.0, "outdoor", paceMidpoint("9:25", "9:35"),
@@ -298,7 +296,7 @@ export const SEPT_HM_PLAN_ENTRIES: PlannedRunEntry[] = [
   sept(7, 6, 10.5, "longRun", paceMidpoint("10:00", "10:15"),
     "10.5 miles"),
 
-  // Week 9 (Build) — ~29 mi
+  // Week 9 (Build)
   sept(8, 1, 3.0, "outdoor", paceMidpoint("10:15", "10:45"),
     "3 miles easy"),
   sept(8, 2, 8.0, "outdoor", paceMidpoint("9:05", "9:15"),
@@ -310,21 +308,19 @@ export const SEPT_HM_PLAN_ENTRIES: PlannedRunEntry[] = [
   sept(8, 6, 10.5, "longRun", paceMidpoint("10:00", "10:15"),
     "10.5 miles (last 2 @ 9:30)", "Last 2 miles @ 9:30"),
 
-  // Week 10 (Cutback) — ~20 mi
+  // Week 10 (Cutback) — Long Beach travel Fri–Mon (Jul 24–27)
   sept(9, 1, 3.0, "outdoor", paceMidpoint("10:15", "10:45"),
     "3 miles easy"),
   sept(9, 2, 4.5, "outdoor", paceMidpoint("9:25", "9:35"),
     "2 easy + 2.5 @ tempo"),
-  sept(9, 3, 3.0, "outdoor", paceMidpoint("10:15", "10:45"),
-    "3 miles easy"),
-  sept(9, 4, 4.0, "outdoor", paceMidpoint("10:15", "10:45"),
-    "4 miles easy"),
-  sept(9, 6, 8.0, "longRun", paceMidpoint("10:05", "10:25"),
-    "8 miles easy"),
+  sept(9, 4, 8.0, "longRun", paceMidpoint("10:05", "10:25"),
+    "8 miles",
+    "Long run moved to Thursday — Long Beach travel Fri–Mon (Jul 24–27)"),
 
-  // Week 11 (Peak) — ~31 mi
+  // Week 11 (Peak)
   sept(10, 1, 3.0, "outdoor", paceMidpoint("10:15", "10:45"),
-    "3 miles easy"),
+    "3 miles easy",
+    "Long Beach return day — easy run flexible/AM"),
   sept(10, 2, 7.0, "outdoor", paceMidpoint("9:15", "9:25"),
     "2 easy + 5 @ tempo"),
   sept(10, 3, 4.0, "outdoor", paceMidpoint("10:15", "10:45"),
@@ -334,21 +330,23 @@ export const SEPT_HM_PLAN_ENTRIES: PlannedRunEntry[] = [
   sept(10, 6, 11.0, "longRun", paceMidpoint("10:00", "10:15"),
     "11 miles (last 2 @ 9:20)", "Last 2 miles @ 9:20"),
 
-  // Week 12 (Peak) — ~33 mi
+  // Week 12 (Peak) — camping Fri–Sat (Aug 7–8)
   sept(11, 1, 3.0, "outdoor", paceMidpoint("10:15", "10:45"),
     "3 miles easy"),
-  sept(11, 2, 6.0, "outdoor", paceMidpoint("9:00", "9:10"),
+  sept(11, 2, 5.0, "outdoor", paceMidpoint("9:00", "9:10"),
     "2 easy + 5x5 min hard + 2 min jog"),
   sept(11, 3, 4.0, "outdoor", paceMidpoint("10:15", "10:45"),
     "4 miles easy"),
   sept(11, 4, 5.0, "outdoor", paceMidpoint("10:15", "10:45"),
     "5 miles easy"),
-  sept(11, 6, 12.0, "longRun", paceMidpoint("10:00", "10:15"),
-    "12 miles (last 3 @ 9:20)", "Last 3 miles @ 9:20"),
+  sept(11, 7, 12.0, "longRun", paceMidpoint("10:00", "10:15"),
+    "12 miles (last 3 @ 9:20)",
+    "Long run moved to Sunday — camping Fri–Sat (Aug 7–8). Last 3 miles @ 9:20"),
 
-  // Week 13 (Peak) — ~31 mi
+  // Week 13 (Peak)
   sept(12, 1, 3.0, "outdoor", paceMidpoint("10:15", "10:45"),
-    "3 miles easy"),
+    "3 miles easy",
+    "Easy or rest if Sunday's (Wk12) long run was taxing"),
   sept(12, 2, 7.0, "outdoor", paceMidpoint("9:10", "9:20"),
     "2 easy + 5 @ tempo"),
   sept(12, 3, 4.0, "outdoor", paceMidpoint("10:15", "10:45"),
@@ -358,37 +356,29 @@ export const SEPT_HM_PLAN_ENTRIES: PlannedRunEntry[] = [
   sept(12, 6, 12.5, "longRun", paceMidpoint("10:00", "10:15"),
     "12-13 miles (last 3 @ 9:15)", "Last 3 miles @ 9:15"),
 
-  // Week 14 (Sharpen) — ~26 mi
+  // Week 14 (Sharpen)
   sept(13, 1, 3.0, "outdoor", paceMidpoint("10:15", "10:45"),
     "3 miles easy"),
   sept(13, 2, 6.0, "outdoor", paceMidpoint("9:15", "9:25"),
     "2 easy + 4 @ race pace"),
-  sept(13, 3, 3.0, "outdoor", paceMidpoint("10:15", "10:45"),
-    "3 miles easy"),
   sept(13, 4, 4.0, "outdoor", paceMidpoint("10:15", "10:45"),
     "4 miles easy"),
   sept(13, 6, 10.0, "longRun", paceMidpoint("10:00", "10:15"),
-    "10 miles (last 2 @ RP)", "Last 2 miles @ 9:20"),
+    "10 miles (last 2 @ RP)", "Last 2 miles @ race pace"),
 
-  // Week 15 (Pre-Taper) — ~20 mi
-  sept(14, 1, 3.0, "outdoor", paceMidpoint("10:15", "10:45"),
-    "3 miles easy"),
+  // Week 15 (Pre-Taper)
   sept(14, 2, 5.0, "outdoor", paceMidpoint("9:15", "9:25"),
     "2 easy + 3 @ race pace"),
-  sept(14, 3, 3.0, "outdoor", paceMidpoint("10:15", "10:45"),
-    "3 miles easy"),
   sept(14, 4, 3.0, "outdoor", paceMidpoint("10:15", "10:45"),
     "3 miles easy"),
   sept(14, 6, 8.0, "longRun", paceMidpoint("10:00", "10:20"),
     "8 miles easy"),
 
-  // Week 16 (Taper + Race) — ~16 + race
+  // Week 16 (Taper + Race)
   sept(15, 1, 2.5, "outdoor", paceMidpoint("10:15", "10:45"),
     "2.5 miles easy"),
   sept(15, 2, 2.0, "outdoor", paceExact("10:15"),
     "2 miles easy + 4x20s strides"),
-  sept(15, 3, 2.0, "outdoor", paceMidpoint("10:15", "10:45"),
-    "2 miles easy"),
   sept(15, 4, 2.0, "outdoor", paceMidpoint("10:15", "10:45"),
     "2 miles easy"),
   sept(15, 7, 13.1, "longRun", paceMidpoint("9:15", "9:30"),
@@ -471,8 +461,42 @@ export async function seedSeptHMPlan(userId: string): Promise<{
     isActive: false,
     isBuiltInDefault: false,
     linkedRaceId: raceId,
+    // Entries below already include the travel adjustments, so a freshly
+    // seeded plan is stamped current and never re-migrated.
+    travelRevision: "reduced-travel-v1",
     weeks: groupEntriesIntoWeeks(SEPT_HM_PLAN_ENTRIES, numberOfWeeks),
   });
 
   return { plan, raceId, raceCreated };
+}
+
+/**
+ * One-time migration for the pre-existing live September 2026 plan that was
+ * seeded before the run-reduction + travel restructure.
+ *
+ * Returns an updated plan if migration is needed, or null if already current.
+ * Preserves the existing plan's weeks 1–2 (including any logged edits) and
+ * replaces weeks 3–16 from SEPT_HM_PLAN_ENTRIES.
+ */
+export function buildSeptTravelMigration(
+  existingPlan: RunningPlan
+): RunningPlan | null {
+  if (existingPlan.travelRevision === "reduced-travel-v1") return null;
+
+  const newWeeks = groupEntriesIntoWeeks(SEPT_HM_PLAN_ENTRIES, 16);
+  const mergedWeeks = newWeeks.map((newWeek) => {
+    if (newWeek.weekNumber <= 2) {
+      return (
+        existingPlan.weeks.find((w) => w.weekNumber === newWeek.weekNumber) ??
+        newWeek
+      );
+    }
+    return newWeek;
+  });
+
+  return {
+    ...existingPlan,
+    weeks: mergedWeeks,
+    travelRevision: "reduced-travel-v1",
+  };
 }

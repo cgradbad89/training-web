@@ -35,6 +35,8 @@ export interface RunningPlan {
   isBuiltInDefault?: boolean;
   /** Optional link to a race in users/{uid}/halfMarathonRaces */
   linkedRaceId?: string;
+  /** Run-reduction + travel migration version, e.g. "reduced-travel-v1" */
+  travelRevision?: string;
   createdAt: string;
   updatedAt: string;
 }

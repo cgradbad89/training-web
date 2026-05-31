@@ -13,7 +13,11 @@ import {
 } from "@/services/plans";
 import { deepCopyRunningPlan, deepCopyWorkoutPlan } from "@/utils/planCopy";
 import { fetchHealthWorkouts } from "@/services/healthWorkouts";
-import { DEFAULT_HALF_MARATHON_PLAN, seedSeptHMPlan } from "@/lib/seedData";
+import {
+  DEFAULT_HALF_MARATHON_PLAN,
+  seedSeptHMPlan,
+  buildSeptTravelMigration,
+} from "@/lib/seedData";
 import {
   type Plan,
   type PlanType,
@@ -367,6 +371,25 @@ export default function PlansPage() {
         } catch (err) {
           console.error("[SeedSeptHMPlan] error", err);
         }
+      }
+
+      // One-time travel/run-reduction migration for the pre-existing live
+      // Sept 2026 plan. Fresh seeds are already stamped, so they return null.
+      try {
+        const septPlan = finalPlans.find((p) =>
+          p.name.toLowerCase().includes("sept 2026")
+        );
+        if (septPlan && isRunningPlan(septPlan)) {
+          const migrated = buildSeptTravelMigration(septPlan);
+          if (migrated) {
+            await updatePlan(user.uid, migrated);
+            finalPlans = finalPlans.map((p) =>
+              p.id === migrated.id ? migrated : p
+            );
+          }
+        }
+      } catch (err) {
+        console.error("[SeptTravelMigration] error", err);
       }
 
       setPlans(finalPlans);
