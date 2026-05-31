@@ -242,19 +242,6 @@ export function computeRunGap(
     mileDist[bucket] = (mileDist[bucket] ?? 0) + segMiles;
   }
 
-  if (process.env.GAP_DEBUG) {
-    // eslint-disable-next-line no-console
-    console.log("GAPDBG", JSON.stringify({
-      n,
-      segHorizM: segHorizM.slice(0, 6),
-      segSec: segSec.slice(0, 6),
-      segFactor: segFactor.slice(0, 6),
-      smoothAlt: smoothAlt.slice(0, 6),
-      totalMiles,
-      totalAdjTimeSec,
-    }));
-  }
-
   const denomMiles = totalMiles > 0 ? totalMiles : totalDistanceMiles;
   const runGapSecPerMile = denomMiles > 0 ? totalAdjTimeSec / denomMiles : 0;
 
