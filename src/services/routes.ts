@@ -13,6 +13,8 @@ export interface RoutePoint {
   altitude: number;
   timestamp: string; // ISO string
   speed: number | null;
+  /** Per-point heart rate in bpm (added iOS-side, commit 84dfbf3). Null when absent. */
+  hr: number | null;
 }
 
 function docToRoutePoint(data: Record<string, unknown>): RoutePoint {
@@ -24,6 +26,7 @@ function docToRoutePoint(data: Record<string, unknown>): RoutePoint {
     altitude: (data.altitude as number) ?? 0,
     timestamp: ts?.toDate?.()?.toISOString() ?? "",
     speed: (data.speed as number | null) ?? null,
+    hr: (data.hr as number | null) ?? null,
   };
 }
 

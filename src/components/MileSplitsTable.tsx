@@ -8,12 +8,15 @@ interface MileSplitsTableProps {
   splits: MileSplit[];
   routeLoading: boolean;
   hasRoute: boolean;
+  /** Per-mile grade-adjusted pace, sec/mi; index = mile-1. Optional. */
+  gapPerMile?: number[];
 }
 
 export function MileSplitsTable({
   splits,
   routeLoading,
   hasRoute,
+  gapPerMile,
 }: MileSplitsTableProps) {
 
   // No GPS route at all
@@ -75,11 +78,14 @@ export function MileSplitsTable({
             <tr className="text-xs text-textSecondary uppercase tracking-wide border-b border-border">
               <th className="text-left py-2 pr-4 font-medium">Mile</th>
               <th className="text-right py-2 px-4 font-medium">Pace</th>
+              <th className="text-right py-2 px-4 font-medium">GAP</th>
               <th className="text-right py-2 pl-4 font-medium">Heart Rate</th>
             </tr>
           </thead>
           <tbody>
-            {splits.map((split: MileSplit) => (
+            {splits.map((split: MileSplit) => {
+              const gap = gapPerMile?.[split.mile - 1];
+              return (
               <tr
                 key={split.mile}
                 className="border-b border-border/50 last:border-0"
@@ -92,6 +98,13 @@ export function MileSplitsTable({
                 <td className="py-2.5 px-4 text-right text-textPrimary tabular-nums">
                   {formatPace(split.paceSecPerMile)} /mi
                 </td>
+                <td className="py-2.5 px-4 text-right text-textPrimary tabular-nums">
+                  {gap != null && gap > 0 ? (
+                    <span>{formatPace(gap)} /mi</span>
+                  ) : (
+                    <span className="text-textSecondary">{"—"}</span>
+                  )}
+                </td>
                 <td className="py-2.5 pl-4 text-right text-textPrimary tabular-nums">
                   {split.avgBpm ? (
                     <span>{Math.round(split.avgBpm)} bpm</span>
@@ -100,7 +113,8 @@ export function MileSplitsTable({
                   )}
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>

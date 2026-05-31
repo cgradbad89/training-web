@@ -8,6 +8,8 @@ import { ArrowLeft, Pencil, RotateCcw } from "lucide-react";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { MileSplitsTable } from "@/components/MileSplitsTable";
 import { MileSplitCharts } from "@/components/MileSplitCharts";
+import { RunOverlayChart } from "@/components/RunOverlayChart";
+import { ZoneBreakdown } from "@/components/ZoneBreakdown";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { StatBlock } from "@/components/ui/StatBlock";
 import { MetricBadge } from "@/components/ui/MetricBadge";
@@ -38,6 +40,8 @@ import {
   driftLevel,
 } from "@/utils/metrics";
 import { computeMileSplits, type MileSplit } from "@/utils/mileSplits";
+import { computeRunGap, type RunGap } from "@/utils/gradeAdjustedPace";
+import { maxHRForAge } from "@/utils/zones";
 import {
   collection,
   getDocs,
@@ -122,6 +126,22 @@ export default function RunDetailPage() {
       }));
     },
     [routePoints, displayWorkoutForSplits, perMileHR]
+  );
+
+  // Compute grade-adjusted pace once from the already-fetched route points.
+  // (No new Firestore read.) Kept before any early return per Rules of Hooks.
+  const runGap = useMemo<RunGap>(
+    () => {
+      if (routePoints.length < 2 || !displayWorkoutForSplits) {
+        return { runGapSecPerMile: 0, perPointGap: [], perMileGapSecPerMile: [] };
+      }
+      return computeRunGap(
+        routePoints,
+        displayWorkoutForSplits.distanceMiles,
+        displayWorkoutForSplits.durationSeconds
+      );
+    },
+    [routePoints, displayWorkoutForSplits]
   );
 
   useEffect(() => {
@@ -560,6 +580,15 @@ export default function RunDetailPage() {
             unit={displayWorkout.avgPaceSecPerMile ? "/mi" : undefined}
           />
           <StatBlock
+            label="GAP"
+            value={
+              runGap.runGapSecPerMile > 0
+                ? formatPace(runGap.runGapSecPerMile)
+                : "\u2014"
+            }
+            unit={runGap.runGapSecPerMile > 0 ? "/mi" : undefined}
+          />
+          <StatBlock
             label="Duration"
             value={formatDuration(displayWorkout.durationSeconds)}
           />
@@ -619,10 +648,10 @@ export default function RunDetailPage() {
             label="Elevation Gain"
             value={
               displayWorkout.elevationGainM != null
-                ? Math.round(displayWorkout.elevationGainM).toString()
+                ? Math.round(displayWorkout.elevationGainM * 3.28084).toString()
                 : "\u2014"
             }
-            unit={displayWorkout.elevationGainM != null ? "m" : undefined}
+            unit={displayWorkout.elevationGainM != null ? "ft" : undefined}
           />
           <StatBlock
             label="Date & Time"
@@ -689,6 +718,7 @@ export default function RunDetailPage() {
         splits={mileSplits}
         routeLoading={routeLoading}
         hasRoute={displayWorkout.hasRoute}
+        gapPerMile={runGap.perMileGapSecPerMile}
       />
 
       {/* ── Pace & HR Charts ───────────────────────────────── */}
@@ -696,6 +726,20 @@ export default function RunDetailPage() {
         splits={mileSplits}
         hasRoute={displayWorkout.hasRoute}
       />
+
+      {/* ── Overlaid Analysis Chart (elevation + pace + GAP + HR) ─ */}
+      {displayWorkout.hasRoute && routePoints.length > 1 && (
+        <RunOverlayChart points={routePoints} perPointGap={runGap.perPointGap} />
+      )}
+
+      {/* ── HR & Pace Zone Breakdowns ──────────────────────── */}
+      {displayWorkout.hasRoute && routePoints.length > 1 && (
+        <ZoneBreakdown
+          points={routePoints}
+          perPointGap={runGap.perPointGap}
+          maxHR={maxHRForAge(null)}
+        />
+      )}
     </div>
   );
 }
