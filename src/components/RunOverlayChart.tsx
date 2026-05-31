@@ -160,19 +160,18 @@ export function RunOverlayChart({ points, perPointGap }: RunOverlayChartProps) {
     paceDomain
   );
 
-  // Smooth ONLY the pace series — applied AFTER outlier-nulling so glitch
-  // points don't pollute the moving average. GAP is intentionally left
-  // unchanged this session (a separate GAP fix is pending).
-  const smoothedPace = rollingAverage(
-    paceSeries,
-    SMOOTH_WINDOW_SEC,
-    data.map((d) => d.timeSec)
-  );
+  // Smooth pace AND GAP for display — applied AFTER outlier-nulling so glitch
+  // points don't pollute the moving average and so smoothing never bridges the
+  // line breaks (connectNulls={false}). Same window + timestamps for both, so
+  // the two curves stay comparable. Underlying GAP (KPI / per-mile) untouched.
+  const timeSec = data.map((d) => d.timeSec);
+  const smoothedPace = rollingAverage(paceSeries, SMOOTH_WINDOW_SEC, timeSec);
+  const smoothedGap = rollingAverage(gapSeries, SMOOTH_WINDOW_SEC, timeSec);
 
   const displayData = data.map((d, i) => ({
     ...d,
     pace: smoothedPace[i],
-    gap: gapSeries[i],
+    gap: smoothedGap[i],
   }));
 
   return (

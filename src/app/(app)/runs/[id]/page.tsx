@@ -732,13 +732,9 @@ export default function RunDetailPage() {
         <RunOverlayChart points={routePoints} perPointGap={runGap.perPointGap} />
       )}
 
-      {/* ── HR & Pace Zone Breakdowns ──────────────────────── */}
+      {/* ── Heart Rate Zone Breakdown ──────────────────────── */}
       {displayWorkout.hasRoute && routePoints.length > 1 && (
-        <ZoneBreakdown
-          points={routePoints}
-          perPointGap={runGap.perPointGap}
-          maxHR={maxHRForAge(null)}
-        />
+        <ZoneBreakdown points={routePoints} maxHR={maxHRForAge(null)} />
       )}
     </div>
   );

@@ -2,12 +2,7 @@
 
 import React, { useMemo } from "react";
 import { type RoutePoint } from "@/services/routes";
-import { type GapPoint } from "@/utils/gradeAdjustedPace";
-import {
-  computeHRZones,
-  computePaceZones,
-  type ZoneBucket,
-} from "@/utils/zones";
+import { computeHRZones, type ZoneBucket } from "@/utils/zones";
 import { formatDuration } from "@/utils/pace";
 
 // Zone palette (token-based; fastest/easiest → green, hardest/slowest → red).
@@ -21,18 +16,12 @@ const ZONE_COLORS = [
 
 interface ZoneBreakdownProps {
   points: RoutePoint[];
-  perPointGap: GapPoint[];
   maxHR: number;
 }
 
-export function ZoneBreakdown({
-  points,
-  perPointGap,
-  maxHR,
-}: ZoneBreakdownProps) {
-  const { hrZones, paceZones } = useMemo(() => {
+export function ZoneBreakdown({ points, maxHR }: ZoneBreakdownProps) {
+  const hrZones = useMemo(() => {
     const hrSamples: { bpm: number; seconds: number }[] = [];
-    const paceSamples: { gapSecPerMile: number; seconds: number }[] = [];
 
     for (let i = 0; i < points.length - 1; i++) {
       const t0 = new Date(points[i].timestamp).getTime();
@@ -43,61 +32,24 @@ export function ZoneBreakdown({
       if (points[i].hr != null) {
         hrSamples.push({ bpm: points[i].hr as number, seconds: dt });
       }
-      // perPointGap[i] is the segment from point i → i+1.
-      const gap = perPointGap[i]?.gradeAdjPaceSecPerMile;
-      if (gap != null) {
-        paceSamples.push({ gapSecPerMile: gap, seconds: dt });
-      }
     }
 
-    return {
-      hrZones: computeHRZones(hrSamples, maxHR),
-      paceZones: computePaceZones(paceSamples),
-    };
-  }, [points, perPointGap, maxHR]);
+    return computeHRZones(hrSamples, maxHR);
+  }, [points, maxHR]);
 
-  if (hrZones.length === 0 && paceZones.length === 0) return null;
+  if (hrZones.length === 0) return null;
 
   return (
     <div className="bg-card rounded-2xl border border-border p-5 space-y-5">
-      <h2 className="text-sm font-semibold text-textPrimary">Zones</h2>
+      <h2 className="text-sm font-semibold text-textPrimary">Heart Rate Zones</h2>
 
-      {/* Heart-rate zones */}
       <div>
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="text-xs font-semibold text-textSecondary uppercase tracking-wide">
-            Heart Rate Zones
-          </h3>
+        <div className="flex items-center justify-end mb-2">
           <span className="text-[10px] text-textSecondary">
             max HR {Math.round(maxHR)} bpm
           </span>
         </div>
-        {hrZones.length > 0 ? (
-          <ZoneBar zones={hrZones} />
-        ) : (
-          <p className="text-sm text-textSecondary">
-            Per-point HR not available for this run
-          </p>
-        )}
-      </div>
-
-      {/* Pace zones */}
-      <div>
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="text-xs font-semibold text-textSecondary uppercase tracking-wide">
-            Pace Zones
-          </h3>
-          <span className="text-[10px] text-textSecondary">
-            run-relative (GAP quintiles)
-          </span>
-        </div>
-        {paceZones.length > 0 ? (
-          <ZoneBar zones={paceZones} />
-        ) : (
-          <p className="text-sm text-textSecondary">
-            Not enough data to compute pace zones
-          </p>
-        )}
+        <ZoneBar zones={hrZones} />
       </div>
     </div>
   );
