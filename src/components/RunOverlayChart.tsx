@@ -14,6 +14,7 @@ import {
 import { type RoutePoint } from "@/services/routes";
 import { type GapPoint } from "@/utils/gradeAdjustedPace";
 import { formatPace, mpsToSecPerMile } from "@/utils/pace";
+import { computePaceAxisDomain } from "@/utils/paceAxisDomain";
 
 const METERS_PER_MILE = 1609.344;
 const EARTH_RADIUS_MI = 3958.8;
@@ -133,14 +134,13 @@ export function RunOverlayChart({ points, perPointGap }: RunOverlayChartProps) {
 
   if (data.length < 2) return null;
 
-  // Shared left-axis (reversed) domain for pace + GAP.
+  // Shared left-axis (reversed) domain for pace + GAP. Use a robust
+  // percentile-based domain so GPS-glitch spikes clip at the edge (via
+  // allowDataOverflow) instead of crushing the real pace/GAP band.
   const paceVals = data.flatMap((d) =>
     [d.pace, d.gap].filter((v): v is number => v != null)
   );
-  const minPace = paceVals.length ? Math.min(...paceVals) : 0;
-  const maxPace = paceVals.length ? Math.max(...paceVals) : 0;
-  const paceDomainMin = Math.max(0, Math.floor((minPace - 30) / 10) * 10);
-  const paceDomainMax = Math.ceil((maxPace + 30) / 10) * 10;
+  const [paceDomainMin, paceDomainMax] = computePaceAxisDomain(paceVals);
 
   return (
     <div className="bg-card rounded-2xl border border-border p-5">
@@ -173,12 +173,23 @@ export function RunOverlayChart({ points, perPointGap }: RunOverlayChartProps) {
           <YAxis
             yAxisId="pace"
             domain={[paceDomainMin, paceDomainMax]}
+            allowDataOverflow
             reversed
             tickFormatter={(v: number) => formatPace(v)}
             tick={{ fontSize: 11 }}
             tickLine={false}
             axisLine={false}
-            width={52}
+            width={60}
+            label={{
+              value: "Pace /mi",
+              angle: -90,
+              position: "insideLeft",
+              style: {
+                fontSize: 11,
+                fill: "var(--color-chart-axis)",
+                textAnchor: "middle",
+              },
+            }}
           />
           {/* Elevation: right axis, feet */}
           <YAxis
