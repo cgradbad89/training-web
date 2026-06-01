@@ -41,7 +41,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/workouts",           label: "Workouts",           icon: Dumbbell },
   { href: "/runs",               label: "Runs",               icon: Footprints },
   { href: "/routes",             label: "Routes",             icon: Map },
-  { href: "/plans",              label: "Plans",              icon: ClipboardList },
+  { href: "/plans",              label: "Plans & Goals",      icon: ClipboardList },
   { href: "/races",              label: "Races",              icon: Trophy },
   { href: "/shoes",              label: "Shoes",              icon: CircleDot },
   { href: "/coach",              label: "AI Coach",           icon: BotMessageSquare },

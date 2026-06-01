@@ -52,6 +52,8 @@ import {
   Footprints,
 } from "lucide-react";
 import { CalendarView } from "@/components/CalendarView";
+import { GoalsTab } from "@/components/GoalsTab";
+import { useGoals } from "@/hooks/useGoals";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -281,7 +283,16 @@ export default function PlansPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [mobileView, setMobileView] = useState<"list" | "detail">("list");
-  const [pageView, setPageView] = useState<"plans" | "calendar">("plans");
+  const [pageView, setPageView] = useState<"plans" | "calendar" | "goals">(
+    "plans"
+  );
+
+  // Goals data — hook called unconditionally (before any early return).
+  const {
+    goals,
+    loading: goalsLoading,
+    refresh: refreshGoals,
+  } = useGoals(user?.uid ?? null);
 
   const [showTypePicker, setShowTypePicker] = useState(false);
   const [pendingPlanType, setPendingPlanType] = useState<PlanType | null>(null);
@@ -644,7 +655,7 @@ export default function PlansPage() {
     <div className="flex flex-col h-[calc(100vh-4rem)] overflow-hidden">
       {/* ── Tab toggle ──────────────────────────────────────────────────── */}
       <div className="px-4 py-2 border-b border-border bg-card shrink-0 flex items-center gap-2">
-        {(["plans", "calendar"] as const).map((v) => (
+        {(["plans", "calendar", "goals"] as const).map((v) => (
           <button
             key={v}
             onClick={() => setPageView(v)}
@@ -654,7 +665,7 @@ export default function PlansPage() {
                 : "text-textSecondary hover:text-textPrimary"
             }`}
           >
-            {v === "plans" ? "Plans" : "Calendar"}
+            {v === "plans" ? "Plans" : v === "calendar" ? "Calendar" : "Goals"}
           </button>
         ))}
       </div>
@@ -673,12 +684,20 @@ export default function PlansPage() {
             setMobileView("detail");
           }}
         />
+      ) : pageView === "goals" ? (
+        <GoalsTab
+          uid={user?.uid ?? null}
+          goals={goals}
+          loading={goalsLoading}
+          runs={activities}
+          onChanged={refreshGoals}
+        />
       ) : (
       <div className="flex flex-1 overflow-hidden">
       {/* ── Left Panel: Plan List ────────────────────────────────────────── */}
       <div className={`${mobileView === "detail" ? "hidden lg:flex" : "flex"} w-full lg:w-64 shrink-0 border-r border-border bg-card flex-col`}>
         <div className="p-4 border-b border-border flex items-center justify-between">
-          <h2 className="font-semibold text-textPrimary">Plans</h2>
+          <h2 className="font-semibold text-textPrimary">Plans &amp; Goals</h2>
           <button
             onClick={openTypePicker}
             className="p-1.5 rounded-lg hover:bg-surface text-textSecondary hover:text-primary"
