@@ -21,6 +21,8 @@ export const COLLECTIONS = {
   stravaActivities: "stravaActivities",
   userDoc: (uid: string) => `users/${uid}`,
   runningPlans: (uid: string) => `users/${uid}/runningPlans`,
+  // goals — Firestore security rule must match this exact path
+  goals: (uid: string) => `users/${uid}/goals`,
   // halfMarathonRaces — Firestore security rule must match this exact path
   halfMarathonRaces: (uid: string) => `users/${uid}/halfMarathonRaces`,
   runningShoes: (uid: string) => `users/${uid}/runningShoes`,
