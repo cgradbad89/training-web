@@ -112,7 +112,7 @@ Race goals (general; name predates multi-distance support). Fields: `id`, `name`
 Running shoe inventory. Fields: `id`, `name`, `brand`, `model`, `colorway`, `purchaseDate`, `startMileageOffset`, `retirementMileageTarget`, `notes`, `isRetired`, `addedAt`, `autoAssignRules` (ShoeAutoAssignRule[], inline array). Legacy rules subcollection (`shoeAutoAssignmentRules`) still exists for backward compat.
 
 ### `users/{uid}/shoeAssignments/manual`
-Singleton document. Flat map `{[workoutId: string]: shoeId | null}`. Manual assignments always win over auto-assign rules.
+Singleton document. Flat map `{[workoutId: string]: shoeId | null}`. Manual assignments always win over auto-assign rules. **Auto-assignments are NOT persisted** — `evaluateAutoAssignRules()` derives them in memory; only manual choices (including explicit `null` = "no shoe") are stored here. Both the run listing and run detail pages resolve a run's shoe via the same merge `{ ...autoAssigned, ...manualMap }` (manual wins); the detail page does so through the shared `useResolvedShoeAssignment` hook (`src/hooks/useResolvedShoeAssignment.ts`).
 
 ### `users/{uid}/workoutOverrides/{workoutId}`
 Override layer; never modifies the source healthWorkouts doc. Fields: `workoutId`, `userId`, `isExcluded`, `excludedAt`, `excludedReason`, `distanceMilesOverride`, `durationSecondsOverride`, `runTypeOverride`, `updatedAt`. Deleting this document fully restores original data.
@@ -133,7 +133,7 @@ Dismissed duplicate workout pairs. Prevents re-surfacing the same duplicate warn
 4. **planType backward compat**: Existing RunningPlan docs lack `planType`. `src/services/plans.ts` defaults to `"running"` on every read path. Never rely on `planType` being present.
 5. **setActivePlan type isolation**: Activating a running plan deactivates only other running plans. Workout plans are independent. Uses atomic batch write.
 6. **Plan auto-match (running)**: 4-pass best-fit matcher in `src/utils/planMatching.ts`. Tolerance = `max(0.5, plannedMiles × 0.3)`. A per-week `used` set prevents double-counting the same workout against multiple plan entries.
-7. **Shoe assignment priority**: Manual assignments (in `shoeAssignments/manual`) always win over auto-assign rules. `evaluateAutoAssignRules()` skips any workout already in `existingAssignments`.
+7. **Shoe assignment priority**: Manual assignments (in `shoeAssignments/manual`) always win over auto-assign rules. `evaluateAutoAssignRules()` skips any workout already in `existingAssignments` (including explicit `null`), so an explicit "no shoe" survives a matching auto-rule. Auto-assignments are derived (never persisted); both the listing and detail pages must resolve via `{ ...autoAssigned, ...manualMap }` — the detail page uses `useResolvedShoeAssignment` to stay in sync (a prior bug had it read only the manual map, so auto-assigned shoes never showed on the detail page).
 8. **stripUndefined requirement**: All Firestore writes pass through `stripUndefined()` = `JSON.parse(JSON.stringify(obj))`. Firestore rejects `undefined` values.
 9. **Auth guard**: All `(app)/*` routes require a valid Firebase Auth session. The `AuthGuard` component enforces this. No Firestore call should occur without a confirmed `uid`.
 

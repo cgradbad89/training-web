@@ -19,6 +19,7 @@ import { useUnsavedChanges } from "@/hooks/useUnsavedChanges";
 import { fetchHealthWorkout } from "@/services/healthWorkouts";
 import { fetchRoutePoints, type RoutePoint } from "@/services/routes";
 import { fetchShoes, fetchManualShoeAssignmentsMap, saveManualAssignments } from "@/services/shoes";
+import { useResolvedShoeAssignment } from "@/hooks/useResolvedShoeAssignment";
 import {
   fetchOverride,
   saveOverride,
@@ -144,6 +145,15 @@ export default function RunDetailPage() {
     [routePoints, displayWorkoutForSplits]
   );
 
+  // Resolve the shoe the SAME way the listing page does: auto-assign rules
+  // overlaid with the manual map (manual wins, incl. explicit "no shoe").
+  // Hook called unconditionally before any early return; null workout → null.
+  const resolvedShoeId = useResolvedShoeAssignment(
+    displayWorkoutForSplits,
+    shoes,
+    assignments
+  );
+
   useEffect(() => {
     if (!uid || !workoutId) return;
     setLoading(true);
@@ -223,8 +233,9 @@ export default function RunDetailPage() {
       override.durationSecondsOverride != null ||
       override.runTypeOverride != null);
 
-  // Shoe assignment
-  const assignedShoeId = assignments[workout.workoutId] ?? null;
+  // Shoe assignment — resolved above via useResolvedShoeAssignment so the
+  // detail page matches the listing page (auto-rule overlay; manual wins).
+  const assignedShoeId = resolvedShoeId;
   const assignedShoe = shoes.find((s) => s.id === assignedShoeId) ?? null;
   const shoeName = assignedShoe
     ? assignedShoe.name ||
