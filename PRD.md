@@ -53,9 +53,9 @@
 | Login | `/login` | Done | Google sign-in button via Firebase Auth |
 | This Week | `/(app)/dashboard` | Done | Weekly training overview: runs, workout cards, health tiles, training load, plan progress |
 | Runs | `/(app)/runs` | Done | Paginated run list with week navigator, shoe assignment, training load badges |
-| Run Detail | `/(app)/runs/[id]` | Done | GPS map, mile-split charts/table, workout metrics, shoe picker, override controls |
+| Run Detail | `/(app)/runs/[id]` | Done | GPS map, mile-split charts/table (with GAP column), workout metrics, shoe picker, override controls; Elevation/Pace/HR overlay chart; HR zones; GAP KPI (grade adjusted pace) |
 | Workouts | `/(app)/workouts` | Done | Non-running activity list with duplicate detection and exclusion |
-| Plans | `/(app)/plans` | Done | Running + workout plan management; week calendar; auto-match completion tracking |
+| Plans | `/(app)/plans` | Done | Running + workout plan management; week calendar; auto-match completion tracking; Goals tab (custom date-range distance/time/count goals with progress rings) |
 | Plan Editor | `/(app)/plans/[id]/edit` | Done | Edit running plan entries (distance, pace, run type, notes) |
 | Workout Session | `/(app)/workout/[planId]/[weekIndex]/[weekday]/[[...sessionIndex]]` | Done | Workout plan session detail: exercise list, sets/reps/weight, completion toggle |
 | Health | `/(app)/health` | Done | Daily health metrics (weight, resting HR, steps, sleep, brushing) with trend charts |
@@ -82,10 +82,13 @@ Primary workout data written by iOS HealthKitSyncService.
 Key fields: `workoutId`, `activityType` (raw HK string), `displayType` (human-readable), `startDate` (Timestamp), `endDate`, `durationSeconds`, `sourceName`, `isRunLike` (boolean, pre-computed on iOS), `hasRoute`, `calories`, `avgHeartRate`, `distanceMiles`, `distanceMeters`, `avgPaceSecPerMile`, `avgSpeedMPS`, `hrDriftPct`, `cadenceSPM`, `elevationGainM`, `prBadges` (string[]). Fields `efficiencyRaw` and `efficiencyScore` are legacy; no UI reads them.
 
 ### `users/{uid}/healthWorkouts/{workoutId}/route/{pointIndex}`
-GPS route points subcollection. Fields: `index`, `lat`, `lng`, `altitude`, `timestamp` (Timestamp), `speed`.
+GPS route points subcollection. Fields: `index`, `lat`, `lng`, `altitude`, `timestamp` (Timestamp), `speed`, `hr` (number | null — per-point heart rate in bpm, added by iOS sync, commit 84dfbf3; null when absent).
 
 ### `users/{uid}/healthWorkouts/{workoutId}/mileSplits/{mile}`
-Per-mile split HR from iOS. Fields: `mile` (number, 1-indexed), `avgBpm`. **Partial implementation** — iOS sync for HR-per-mile not yet complete; subcollection may be empty.
+Per-mile split HR from iOS. Fields: `mile` (number, 1-indexed), `avgBpm`, `sampleCount` (read path requires `avgBpm && sampleCount >= 2` before using a split's HR). Security rule now in place (see Section 6 #10). The subcollection may still be empty for older runs — read paths in `runs/[id]/page.tsx` and `personal-insights/page.tsx` handle empty results gracefully.
+
+### `users/{uid}/goals/{goalId}`
+Custom running goals (`RunningGoal`, `src/types/goal.ts`; service `src/services/goals.ts`). Fields: `label` (string), `metric` (`'distance'` | `'time'` | `'count'`), `target` (number — miles / seconds / count, matching `metric`), `startDate` (ISO `'YYYY-MM-DD'` string), `endDate` (ISO string), `isActive` (boolean; soft-delete sets `false`), `createdAt` (Timestamp), `updatedAt` (Timestamp). Security rule: `allow read, write: if isOwner(uid)` — **must be added manually in the Firebase console** (see Section 6 #10). Progress is computed client-side via `computeGoalProgress` (Section 5).
 
 ### `users/{uid}/healthMetrics/{YYYY-MM-DD}`
 Daily health snapshots (one doc per calendar date). Fields: `date`, `weight_lbs`, `bmi`, `resting_hr`, `steps`, `exercise_mins`, `move_calories`, `stand_hours`, `sleep_total_hours`, `sleep_awake_mins`, `sleep_start` (ISO string), `sleep_end` (ISO string), `brush_count`, `brush_avg_duration_mins`, `syncedAt`.
@@ -170,11 +173,19 @@ Dismissed duplicate workout pairs. Prevents re-surfacing the same duplicate warn
 
 11. **Plan Insights "Recent Trends" window** (`src/app/(app)/plan-insights/page.tsx`): All three Recent Trends KPIs (total miles + run count, avg run distance, longest run) share one cutoff/label derived from the selected race's linked plan. Resolution order: (1) `activePlan.startDate`; (2) earliest week's `startDateLabel` parsed as `"<label> <currentYear>"` (defensive — not on the `PlanWeek` type, read via cast); (3) 30-day fallback with a `console.warn`. Label is `Since plan start · <Mon D>` when resolved, else `Last 30 days`. Previously each KPI used an independent hardcoded 30-day (longest run: 56-day) lookback. The KPIs filter a slice of the already-loaded `runs` array — no extra Firestore read.
 
+12. **Grade Adjusted Pace (GAP)** (`src/utils/gradeAdjustedPace.ts`): `gradeAdjustmentFactor(gradePercent)` uses the Minetti et al. (2002) energy-cost polynomial (`factor = C(i)/C(0)`, grade clamped ±30%, floored 0.1). Grade is measured over a **25 m resampled horizontal baseline** (`GRADE_BASELINE_METERS=25`) to suppress the Jensen-inequality bias that GPS altitude noise introduces over short adjacent-point spans (1/factor is convex, so symmetric noise inflates grade-adjusted time = GAP too slow). Altitude is smoothed with an 11-point centered moving average (`ALT_SMOOTHING_WINDOW=11`); a ±1.5% grade dead-band (`GRADE_DEADBAND_PERCENT=1.5`) zeroes residual near-flat noise. **Moving time is derived from route points** (a segment counts as moving only if it covers ≥`MIN_MOVING_DIST_M=1.0` m at ≥`MIN_MOVING_SPEED_MS=0.5` m/s); stopped segments are excluded from the numerator, denominator, and per-mile buckets so stop time can't bias GAP slow. Run-level KPI = `totalAdjTimeSec / totalMovingMiles` (distance-weighted, moving-only).
+
+13. **Goal progress** (`src/utils/goalProgress.ts`): `computeGoalProgress(goal, runs, today) → GoalProgress`. Status by date range: `upcoming` (today < startDate) / `active` / `completed` (today > endDate). `actual` sums each in-range run's `distanceMiles` (distance), `durationSeconds` (time), or +1 (count). Pace status (active only): `ahead` when actual ≥ 102% of expected linear pace (`target × daysElapsed/daysTotal`), `behind` when ≤ 98%, else `on_track`; completed goals report met/missed via `percent`. Time targets are stored in seconds (the form converts hours→seconds on save).
+
+14. **Rolling average** (`src/utils/smoothSeries.ts`): `rollingAverage(values, windowSeconds, timestampsSec)` — time-windowed centered mean (default window `SMOOTH_WINDOW_SEC=25`). Nulls are preserved (window with no finite values → null) so line breaks survive; falls back to a fixed-count window when timestamps are unusable. Used to smooth the pace and GAP display series in `RunOverlayChart` (applied after outlier-nulling; underlying GAP/per-mile values untouched).
+
+15. **Pace axis domain** (`src/utils/paceAxisDomain.ts`): `computePaceAxisDomain(values)` builds a robust y-axis [min,max] from the p5/p95 percentiles of finite pace/GAP values with padding, clamped to `MIN_PACE_FLOOR_SEC=240` (4:00/mi) – `MAX_PACE_CEIL_SEC=1200` (20:00/mi) so GPS-glitch spikes don't crush the real signal band. `nullifyOutliers(values, domain)` returns a display copy with out-of-domain values set to null (Recharts draws a line break instead of a clamped spike). Display-only — neither alters any pace/GAP computation.
+
 ---
 
 ## Section 6 — Known Sharp Edges
 
-1. **No per-point HR in GPS route data**: The `route` subcollection has no HR field per point. Per-split HR requires iOS to bucket `HKQuantitySample` HR into the `mileSplits` subcollection (not yet complete). Always check for empty mileSplits before displaying per-mile HR. `src/utils/mileSplits.ts`
+1. **Per-point HR now exists on the `route` subcollection** (field `hr: number | null`, added iOS commit 84dfbf3). The Run Detail HR-zone breakdown (`ZoneBreakdown`) uses `maxHRForAge(null)` = `FALLBACK_MAX_HR=190` (`src/utils/zones.ts`). **NOTE: this conflicts with `MAX_HR=185` in `src/utils/trainingLoad.ts`** (Section 5 item 4). The two should be unified to 185. Per-mile HR is still sourced separately from the `mileSplits` subcollection (Section 3).
 
 2. **Firestore subcollection security rules**: Every subcollection needs an explicit Firestore security rule. Missing rules produce permission-denied failures, which can be silent or surface as empty data. Always add rules when adding a new subcollection. (`src/lib/firebase.ts` comment)
 
@@ -192,9 +203,17 @@ Dismissed duplicate workout pairs. Prevents re-surfacing the same duplicate warn
 
 9. **Legacy pilates plans**: Documents with `planType: "pilates"` exist in some Firestore instances. The code detects them and renders a "delete me" prompt. No write path creates them. `src/types/plan.ts:LegacyPilatesPlan`
 
-10. **mileSplits subcollection may be empty**: The `users/{uid}/healthWorkouts/{id}/mileSplits` subcollection is read in `runs/[id]/page.tsx` and `personal-insights/page.tsx`, but iOS HR-per-mile sync is incomplete. Gracefully handle empty results.
+10. **Manual console-managed Firestore rules for new subcollections**: The `mileSplits` subcollection security rule is now in place, but rules are still console-managed (no `firestore.rules` in the repo). Adding a subcollection requires manually adding a matching rule in the Firebase console, e.g.:
+   `match /users/{uid}/healthWorkouts/{docId}/mileSplits/{splitId} { allow read, write: if isOwner(uid); }`.
+   The `goals` subcollection requires the same pattern: `match /users/{uid}/goals/{goalId} { allow read, write: if isOwner(uid); }`. Missing rules surface as permission-denied / silently empty data.
 
 11. **Riegel NaN date passthrough (fixed)**: `buildQualifyingEfforts` once allowed runs with NaN `startDate` through the cutoff check (`NaN < cutoff` is false, so they passed). Fixed with `!isFinite(startMs)` guard. `src/utils/riegelFit.ts`
+
+12. **GAP moving-time vs. elapsed-time**: `computeRunGap` derives moving time from route points (segments ≥ `MIN_MOVING_SPEED_MS=0.5` m/s). If route timestamps are degenerate (< `MIN_DERIVED_MOVING_SEC=60` s of derivable moving time), it falls back to the passed `durationSeconds` with a `console.warn` and treats every real-distance segment as moving. The running **pace KPI uses elapsed time** (`durationSeconds`) while **GAP uses derived moving time** — so on stop-heavy city runs the two will differ by design. `src/utils/gradeAdjustedPace.ts`
+
+13. **Shoe auto-assignment is purely derived, never persisted**: `evaluateAutoAssignRules()` returns an in-memory map. Both the run listing page and the run detail page resolve a run's shoe via `{ ...autoAssigned, ...manualMap }` (manual wins). The detail page does so through the `useResolvedShoeAssignment` hook (`src/hooks/useResolvedShoeAssignment.ts`). A prior bug had the detail page read only the manual map, so auto-assigned shoes never showed there.
+
+14. **Orphaned pace-zone code**: `computePaceZones` in `src/utils/zones.ts` is exported (and unit-tested) but **not referenced by any UI**; `PACE_ZONE_LABELS` is module-private. Retained for future use pending a threshold-pace config — only HR zones (`computeHRZones` via `ZoneBreakdown`) are shown today.
 
 ---
 
@@ -202,10 +221,12 @@ Dismissed duplicate workout pairs. Prevents re-surfacing the same duplicate warn
 
 | Feature | Priority | Status | Notes |
 |---|---|---|---|
-| Per-mile HR from iOS | High | Backlog | iOS must bucket `HKQuantitySample` HR by mile and write to `mileSplits` subcollection. Web read infrastructure already in place. |
+| Per-mile HR from iOS | High | Done | Superseded by per-point `hr` on the `route` subcollection (iOS commit 84dfbf3). The `mileSplits` subcollection is still used for per-mile `avgBpm` display in the splits table/charts. |
+| Athlete profile (DOB/maxHR + threshold pace) | High | Backlog | Unlocks real HR zones (replacing the `FALLBACK_MAX_HR=190` / `MAX_HR=185` conflict — see Section 6 #1) and real pace zones (`computePaceZones` exists but is orphaned pending this — Section 6 #14). Also unifies `MAX_HR` between `ZoneBreakdown` and `trainingLoad.ts`. |
+| Training-load trend chart | Medium | Backlog | CTL/ATL/TSB EWMA already implemented in `src/utils/trainingLoadSeries.ts` and shown on Personal Insights. A separate trend chart on Plans & Goals or the calendar page is pending scoping. |
 | `/api/coach` rate limiting | High | Backlog | Needs Vercel KV or Upstash Redis — in-memory rate limiting is stateless on Vercel serverless. Auth check added (post pre-prod review). |
 | Fall 2026 plan activation | High | Backlog | `seedSeptHMPlan()` in `src/lib/seedData.ts` seeds a Sept 2026 half marathon plan. Must be manually triggered after April 2026 race. |
-| Firestore rules version control | Medium | Backlog | Rules managed in Firebase console only. No `firestore.rules` file in this repo. |
+| firestore.rules in version control | Medium | Backlog | Rules still console-managed only — no `firestore.rules` file in this repo. Three collections now require manual console rule additions: `mileSplits`, `route` (with the new `hr` field), and `goals`. |
 | Non-running plan types (strength/OTF/yoga/cycling) | Medium | In Progress | WorkoutPlan type + service + auto-match logic complete. Plan editor only supports RunningPlan today. iOS activityType strings for auto-match documented in `src/types/plan.ts:WORKOUT_CATEGORY_HK_TYPES`. |
 | Remove debug console.log | Low | Backlog | `getActivityContext()` in `src/utils/trainingLoad.ts` has unflagged production debug log. |
 | AI Coach contextual entry points | Low | Backlog | Plan Insights and Personal Insights lack "Ask AI Coach" buttons with pre-filled questions. |
