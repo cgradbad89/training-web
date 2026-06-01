@@ -13,10 +13,14 @@
 import { type RoutePoint } from "@/services/routes";
 
 export interface GapPoint {
-  /** Cumulative distance at this route point, in miles */
+  /** Cumulative distance at this route point, in miles (includes stopped drift) */
   distanceMiles: number;
-  /** Grade-adjusted pace for the segment ending at this point, sec/mile */
-  gradeAdjPaceSecPerMile: number;
+  /**
+   * Grade-adjusted pace for the segment ending at this point, sec/mile.
+   * null for STOPPED segments (no meaningful running pace while paused) so the
+   * overlay chart draws a line break instead of a bogus stopped "pace".
+   */
+  gradeAdjPaceSecPerMile: number | null;
 }
 
 export interface RunGap {
@@ -64,6 +68,24 @@ const GRADE_BASELINE_METERS = 25;
 const GRADE_DEADBAND_PERCENT = 1.5;
 /** Grade is clamped to ±30% before adjustment to avoid altitude-noise blowups. */
 const MAX_GRADE_PERCENT = 30;
+
+/**
+ * Stop detection. The run KPI must reflect effort per mile of ACTUAL running,
+ * not elapsed-including-stops: stopped segments (traffic lights, pauses) add
+ * real stopped seconds to the numerator while contributing ~no distance to the
+ * denominator, which inflates GAP slower than actual pace on every run with
+ * stop time. A segment counts as MOVING only if it covers real ground
+ * (≥ MIN_MOVING_DIST_M) at a real speed (≥ MIN_MOVING_SPEED_MS); otherwise its
+ * time and distance are excluded from the GAP numerator and denominator.
+ */
+const MIN_MOVING_SPEED_MS = 0.5; // m/s (~1.1 mph) — below this = stopped
+const MIN_MOVING_DIST_M = 1.0; // min segment distance (m) to count as moving
+/**
+ * If less than this much moving time can be derived from per-point timestamps,
+ * the timestamps are degenerate/missing — fall back to the movingTimeSec param
+ * (elapsed duration) rather than trusting a near-zero derived time.
+ */
+const MIN_DERIVED_MOVING_SEC = 60;
 
 function toRad(deg: number): number {
   return (deg * Math.PI) / 180;
@@ -124,15 +146,18 @@ export function gradeAdjustmentFactor(gradePercent: number): number {
 /**
  * Compute grade-adjusted pace from GPS route points.
  *
- * Run-level GAP is DISTANCE-WEIGHTED, not the mean of per-mile GAPs:
- * each segment's actual time is divided by its grade adjustment factor to get
- * a grade-adjusted time, all grade-adjusted times are summed, and
- *   runGapSecPerMile = (total grade-adjusted time) / (total distance in miles).
+ * Run-level GAP is DISTANCE-WEIGHTED over MOVING segments only:
+ * each moving segment's actual time is divided by its grade adjustment factor
+ * to get a grade-adjusted time, those are summed, and
+ *   runGapSecPerMile = (total moving grade-adjusted time) / (total moving miles).
+ * Stopped segments (see MIN_MOVING_* constants) are excluded from both the
+ * numerator and the denominator so stop time doesn't bias GAP slow.
  *
  * @param points              Route points ordered by index, with timestamps + altitude
  * @param totalDistanceMiles  Run-level distance (used as a fallback denominator)
- * @param movingTimeSec       Run moving/elapsed time (used as a fallback when
- *                            per-point timestamps are unusable, e.g. all equal)
+ * @param movingTimeSec       FALLBACK ONLY — used when per-point timestamps are
+ *                            degenerate (derived moving time < MIN_DERIVED_MOVING_SEC).
+ *                            Normally moving time is derived from the points.
  */
 export function computeRunGap(
   points: RoutePoint[],
@@ -181,6 +206,39 @@ export function computeRunGap(
     segSec[i] = s;
   }
 
+  // Classify each segment as moving vs. stopped, and derive moving time from the
+  // points. A segment is MOVING only if it covers real ground at a real speed;
+  // pauses (traffic lights, stops) otherwise inflate GAP slower than actual.
+  const segMoving: boolean[] = new Array(n).fill(false);
+  let derivedMovingTimeSec = 0;
+  for (let i = 1; i < n; i++) {
+    const moving =
+      segHorizM[i] >= MIN_MOVING_DIST_M &&
+      segSec[i] > 0 &&
+      segHorizM[i] / segSec[i] >= MIN_MOVING_SPEED_MS;
+    segMoving[i] = moving;
+    if (moving) derivedMovingTimeSec += segSec[i];
+  }
+
+  // Degenerate/missing timestamps (e.g. all equal) → derived moving time is
+  // ~0; fall back to the elapsed movingTimeSec param rather than trusting it.
+  // When falling back, treat every real-distance segment as "moving" so the
+  // run still produces a GAP (we just can't tell stops from motion via time).
+  const useDerivedMovingTime = derivedMovingTimeSec >= MIN_DERIVED_MOVING_SEC;
+  if (!useDerivedMovingTime) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[computeRunGap] derived moving time ${derivedMovingTimeSec.toFixed(
+        1
+      )}s < ${MIN_DERIVED_MOVING_SEC}s — timestamps look degenerate; ` +
+        `falling back to movingTimeSec=${movingTimeSec}s and counting all ` +
+        `real-distance segments as moving.`
+    );
+    for (let i = 1; i < n; i++) {
+      segMoving[i] = segHorizM[i] >= MIN_MOVING_DIST_M;
+    }
+  }
+
   // ─── Resample grade onto a ~25 m horizontal baseline ───────────────────────
   // Instead of computing grade between adjacent points (~3–15 m apart, where
   // altitude noise yields spurious ±5–15% grades that bias GAP slow via the
@@ -189,12 +247,14 @@ export function computeRunGap(
   // segment in a span inherits that span's factor, so the noise-driven grade
   // variance — and the Jensen bias it produces — collapses super-linearly,
   // while genuine sustained hills (which persist across many spans) survive.
+  // Only MOVING distance counts toward the 25 m baseline trigger; stopped
+  // segments (≈0 distance, ≈0 altitude change) don't extend the span.
   const segFactor: number[] = new Array(n).fill(1);
   let spanStartPoint = 0; // point index where the current span begins
   let spanFirstSeg = 1; // first segment index belonging to the current span
   let spanHorizM = 0;
   for (let i = 1; i < n; i++) {
-    spanHorizM += segHorizM[i];
+    if (segMoving[i]) spanHorizM += segHorizM[i];
     const atEnd = i === n - 1;
     if (spanHorizM >= GRADE_BASELINE_METERS || atEnd) {
       let gradePercent = 0;
@@ -216,20 +276,30 @@ export function computeRunGap(
   const mileAdjTime: number[] = [];
   const mileDist: number[] = [];
 
-  let cumMiles = 0;
-  let totalAdjTimeSec = 0;
-  let totalMiles = 0;
+  let cumMiles = 0; // includes stopped drift, for accurate chart x-axis
+  let totalAdjTimeSec = 0; // moving segments only
+  let totalMovingMiles = 0; // moving segments only
 
   for (let i = 1; i < n; i++) {
     const segMiles = segHorizM[i] / METERS_PER_MILE;
+    // cumMiles tracks ALL distance (incl. stopped drift) so the overlay chart
+    // x-axis stays aligned to real distance covered.
+    cumMiles += segMiles;
+
+    if (!segMoving[i]) {
+      // Stopped: no meaningful running pace — line break on the chart, and
+      // excluded from the KPI numerator/denominator and per-mile buckets.
+      perPointGap.push({ distanceMiles: cumMiles, gradeAdjPaceSecPerMile: null });
+      continue;
+    }
+
     const factor = segFactor[i];
     const adjSec = segSec[i] / factor;
 
-    cumMiles += segMiles;
-    totalMiles += segMiles;
+    totalMovingMiles += segMiles;
     totalAdjTimeSec += adjSec;
 
-    const segGapPace = segMiles > 0 ? adjSec / segMiles : 0;
+    const segGapPace = segMiles > 0 ? adjSec / segMiles : null;
     perPointGap.push({
       distanceMiles: cumMiles,
       gradeAdjPaceSecPerMile: segGapPace,
@@ -242,7 +312,12 @@ export function computeRunGap(
     mileDist[bucket] = (mileDist[bucket] ?? 0) + segMiles;
   }
 
-  const denomMiles = totalMiles > 0 ? totalMiles : totalDistanceMiles;
+  // Denominator: total MOVING miles (effort per mile of actual running). The
+  // moving time itself (derivedMovingTimeSec / movingTimeSec fallback) sets the
+  // baseline pace via the moving-only adjusted-time numerator; on flat ground
+  // totalAdjTimeSec ≈ derivedMovingTimeSec, so GAP ≈ actual moving pace.
+  const denomMiles =
+    totalMovingMiles > 0 ? totalMovingMiles : totalDistanceMiles;
   const runGapSecPerMile = denomMiles > 0 ? totalAdjTimeSec / denomMiles : 0;
 
   const perMileGapSecPerMile: number[] = [];

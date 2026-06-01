@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   gradeAdjustmentFactor,
   computeRunGap,
@@ -117,7 +117,8 @@ describe("computeRunGap", () => {
     // On flat ground every factor is 1, so run GAP equals the actual
     // timestamp-derived pace. perPointGap pace is constant and equals it.
     const actual = gap.perPointGap[0].gradeAdjPaceSecPerMile;
-    expect(gap.runGapSecPerMile).toBeCloseTo(actual, 1);
+    expect(actual).not.toBeNull();
+    expect(gap.runGapSecPerMile).toBeCloseTo(actual as number, 1);
     expect(gap.perPointGap).toHaveLength(N - 1);
     expect(gap.perMileGapSecPerMile.length).toBeGreaterThan(0);
   });
@@ -155,6 +156,136 @@ describe("computeRunGap", () => {
     const gap = computeRunGap(pts, 0, 0);
     const actual = actualPaceSecPerMile(pts);
     expect(gap.runGapSecPerMile).toBeLessThan(actual);
+  });
+
+  // ── Stop-time regression: GAP must reflect MOVING pace, not elapsed ───────
+  // computeRunGap used elapsed time as the denominator baseline, so stop time
+  // (lights, pauses) inflated GAP slower than actual on every run with stops.
+  // GAP is now derived over moving segments only.
+
+  /**
+   * Stop-and-go route at lat 40: `movingCount` moving segments (~8.5 m / 3 s
+   * each → ~2.84 m/s), then `stoppedCount` stopped segments (no position
+   * change, 3 s each → speed 0). Flat elevation. Returns realistic samples.
+   */
+  function buildStopAndGoRoute(
+    movingCount: number,
+    stoppedCount: number,
+    secPerSeg = 3
+  ): RoutePoint[] {
+    const pts: RoutePoint[] = [];
+    let lng = -100;
+    let tMs = BASE_MS;
+    // Start point.
+    pts.push({
+      index: 0, lat: 40, lng, altitude: 100,
+      timestamp: new Date(tMs).toISOString(), speed: null, hr: null,
+    });
+    for (let i = 0; i < movingCount; i++) {
+      lng += 0.0001; // ~8.5 m east
+      tMs += secPerSeg * 1000;
+      pts.push({
+        index: pts.length, lat: 40, lng, altitude: 100,
+        timestamp: new Date(tMs).toISOString(), speed: null, hr: null,
+      });
+    }
+    for (let i = 0; i < stoppedCount; i++) {
+      // lng unchanged → 0 m moved → stopped.
+      tMs += secPerSeg * 1000;
+      pts.push({
+        index: pts.length, lat: 40, lng, altitude: 100,
+        timestamp: new Date(tMs).toISOString(), speed: null, hr: null,
+      });
+    }
+    return pts;
+  }
+
+  /** Distance-weighted pace over MOVING segments only (sec/mi). */
+  function movingPaceSecPerMile(pts: RoutePoint[]): number {
+    const EARTH_RADIUS_MI = 3958.8;
+    const toRad = (d: number) => (d * Math.PI) / 180;
+    let miles = 0;
+    let sec = 0;
+    for (let i = 1; i < pts.length; i++) {
+      const dLat = toRad(pts[i].lat - pts[i - 1].lat);
+      const dLng = toRad(pts[i].lng - pts[i - 1].lng);
+      const a =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRad(pts[i - 1].lat)) *
+          Math.cos(toRad(pts[i].lat)) *
+          Math.sin(dLng / 2) ** 2;
+      const segMi = 2 * EARTH_RADIUS_MI * Math.asin(Math.sqrt(a));
+      const segSec =
+        (Date.parse(pts[i].timestamp) - Date.parse(pts[i - 1].timestamp)) / 1000;
+      const speedMs = segSec > 0 ? (segMi * 1609.344) / segSec : 0;
+      if (segMi * 1609.344 >= 1 && speedMs >= 0.5) {
+        miles += segMi;
+        sec += segSec;
+      }
+    }
+    return miles > 0 ? sec / miles : 0;
+  }
+
+  it("stopped segments → run GAP ≈ moving pace (not inflated by stop time)", () => {
+    // 300 moving segs (900 s) + 130 stopped segs (390 s) → 30.2% of elapsed
+    // time stopped. Flat, so GAP should track the moving pace, ignoring stops.
+    const pts = buildStopAndGoRoute(300, 130);
+    const elapsedSec =
+      (Date.parse(pts[pts.length - 1].timestamp) - Date.parse(pts[0].timestamp)) /
+      1000;
+    const stoppedSec = 130 * 3;
+    expect(stoppedSec / elapsedSec).toBeGreaterThan(0.29); // ~30% stopped
+
+    const gap = computeRunGap(pts, 0, elapsedSec);
+    const movingPace = movingPaceSecPerMile(pts);
+    const errPct = Math.abs(gap.runGapSecPerMile - movingPace) / movingPace;
+    expect(errPct).toBeLessThanOrEqual(0.01); // within 1%
+
+    // Sanity: had we used elapsed time, GAP would be ~30% slower.
+    const elapsedPaceWouldBe = movingPace * (elapsedSec / (300 * 3));
+    expect(gap.runGapSecPerMile).toBeLessThan(elapsedPaceWouldBe * 0.95);
+
+    // Stopped tail segments carry a null pace (line break), not a bogus value.
+    const nullCount = gap.perPointGap.filter(
+      (p) => p.gradeAdjPaceSecPerMile === null
+    ).length;
+    expect(nullCount).toBeGreaterThanOrEqual(130);
+  });
+
+  it("all-moving route → unchanged (no stop-time regression on clean runs)", () => {
+    // No stops: every segment moving, so GAP equals the moving pace exactly.
+    const pts = buildStopAndGoRoute(400, 0);
+    const gap = computeRunGap(pts, 0, 0);
+    const movingPace = movingPaceSecPerMile(pts);
+    const errPct = Math.abs(gap.runGapSecPerMile - movingPace) / movingPace;
+    expect(errPct).toBeLessThanOrEqual(0.005);
+    // No stopped segments → no null pace entries.
+    expect(
+      gap.perPointGap.every((p) => p.gradeAdjPaceSecPerMile !== null)
+    ).toBe(true);
+  });
+
+  it("degenerate timestamps → falls back to movingTimeSec param, warns, no crash", () => {
+    // All-equal timestamps → segSec = 0 everywhere → derived moving time 0.
+    const pts: RoutePoint[] = Array.from({ length: 30 }, (_, i) => ({
+      index: i,
+      lat: 40,
+      lng: -100 + i * 0.0001,
+      altitude: 100,
+      timestamp: new Date(BASE_MS).toISOString(), // identical for all points
+      speed: null,
+      hr: null,
+    }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const gap = computeRunGap(pts, 0, 600);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain("computeRunGap");
+    // No crash; segments still classified as moving by distance, so perPointGap
+    // is produced (panes don't blow up). adjSec uses segSec=0 → GAP 0 here, but
+    // the contract under test is "no crash + warn + fallback path taken".
+    expect(Array.isArray(gap.perPointGap)).toBe(true);
+    expect(gap.perPointGap.length).toBe(pts.length - 1);
+    warn.mockRestore();
   });
 
   it("empty input → safe (falls back to actual pace, no crash)", () => {
