@@ -24,6 +24,14 @@ const METERS_TO_FEET = 3.28084;
 /** Downsample threshold — routes denser than this are strided down for responsiveness. */
 const MAX_CHART_POINTS = 300;
 
+/**
+ * GAP gets a wider smoothing window than pace: grade-adjustment amplifies
+ * altitude/grade noise more than raw speed, so the pace window (25s) still
+ * leaves GAP visibly oscillating. 60s damps it without erasing sustained hills.
+ * Pace stays at SMOOTH_WINDOW_SEC (25s).
+ */
+const GAP_SMOOTH_WINDOW_SEC = 60;
+
 // Anomaly filters (consistent with existing charts)
 const MAX_PACE = 1800; // sec/mi
 const MIN_HR = 40;
@@ -162,11 +170,12 @@ export function RunOverlayChart({ points, perPointGap }: RunOverlayChartProps) {
 
   // Smooth pace AND GAP for display — applied AFTER outlier-nulling so glitch
   // points don't pollute the moving average and so smoothing never bridges the
-  // line breaks (connectNulls={false}). Same window + timestamps for both, so
-  // the two curves stay comparable. Underlying GAP (KPI / per-mile) untouched.
+  // line breaks (connectNulls={false}). GAP uses a wider window than pace
+  // (see GAP_SMOOTH_WINDOW_SEC) because grade-adjustment amplifies noise.
+  // HR and the underlying GAP (KPI / per-mile) are untouched.
   const timeSec = data.map((d) => d.timeSec);
   const smoothedPace = rollingAverage(paceSeries, SMOOTH_WINDOW_SEC, timeSec);
-  const smoothedGap = rollingAverage(gapSeries, SMOOTH_WINDOW_SEC, timeSec);
+  const smoothedGap = rollingAverage(gapSeries, GAP_SMOOTH_WINDOW_SEC, timeSec);
 
   const displayData = data.map((d, i) => ({
     ...d,
@@ -213,7 +222,10 @@ export function RunOverlayChart({ points, perPointGap }: RunOverlayChartProps) {
             tickMargin={6}
             tickLine={false}
             axisLine={false}
-            width={84}
+            // 100px (was 84) so two-digit-minute labels like "10:54" render in
+            // full — at 84 the right-anchored 5-char text overflowed left and
+            // the leading digit was clipped ("10:54" → "0:54").
+            width={100}
             label={{
               value: "Pace /mi",
               angle: -90,
