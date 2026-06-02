@@ -17,8 +17,12 @@ export interface ZoneBucket {
   pct: number;
 }
 
-/** Used when the user's age is unknown (no age/DOB field exists in the app). */
-export const FALLBACK_MAX_HR = 190;
+/**
+ * Used when the user's age is unknown (no age/DOB field exists in the app).
+ * Aligned to MAX_HR = 185 in src/utils/trainingLoad.ts (PRD Section 5 item 4)
+ * so HR-zone math is consistent across the app.
+ */
+export const FALLBACK_MAX_HR = 185;
 
 /** HR zone boundaries as fractions of max HR (standard 5-zone model). */
 export const HR_ZONE_BOUNDS = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0] as const;
