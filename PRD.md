@@ -62,7 +62,7 @@
 | Races | `/(app)/races` | Done | Race goal CRUD, active race toggle, associate an actual run with a race result |
 | Shoes | `/(app)/shoes` | Done | Shoe inventory, per-shoe mileage, auto-assign rules editor |
 | Routes | `/(app)/routes` | Done | GPS route viewer (Leaflet) + Google Maps route drawing tool |
-| Personal Insights | `/(app)/personal-insights` | Done | Riegel race predictions, PR table, pace trends, workout trends, CTL/ATL/TSB charts |
+| Personal Insights | `/(app)/personal-insights` | Done | Riegel race predictions, PR table, pace trends, pace-by-distance trend (mileage-range + time-window selector), workout trends, CTL/ATL/TSB charts |
 | Plan Insights | `/(app)/plan-insights` | Done | Running plan adherence, weekly mileage vs plan, predicted vs goal finish time |
 | AI Coach | `/(app)/coach` | Done | Chat with Claude using full training context; streaming response |
 | API: Coach | `/api/coach` | Done | Server-side Anthropic call; requires Firebase ID token; max_tokens=1024 |
@@ -180,6 +180,8 @@ Dismissed duplicate workout pairs. Prevents re-surfacing the same duplicate warn
 14. **Rolling average** (`src/utils/smoothSeries.ts`): `rollingAverage(values, windowSeconds, timestampsSec)` — time-windowed centered mean (default window `SMOOTH_WINDOW_SEC=25`). Nulls are preserved (window with no finite values → null) so line breaks survive; falls back to a fixed-count window when timestamps are unusable. Used to smooth the pace and GAP display series in `RunOverlayChart` (applied after outlier-nulling; underlying GAP/per-mile values untouched).
 
 15. **Pace axis domain** (`src/utils/paceAxisDomain.ts`): `computePaceAxisDomain(values)` builds a robust y-axis [min,max] from the p5/p95 percentiles of finite pace/GAP values with padding, clamped to `MIN_PACE_FLOOR_SEC=240` (4:00/mi) – `MAX_PACE_CEIL_SEC=1200` (20:00/mi) so GPS-glitch spikes don't crush the real signal band. `nullifyOutliers(values, domain)` returns a display copy with out-of-domain values set to null (Recharts draws a line break instead of a clamped spike). Display-only — neither alters any pace/GAP computation.
+
+16. **Pace-by-distance trend** (`src/lib/paceRangeTrend.ts`): `computePaceRangeTrend(runs, minMiles, maxMiles, window, now)` powers the Personal Insights "Pace by distance" section. A run qualifies when its **total** `distanceMiles` is within `[minMiles, maxMiles]` inclusive AND `date >= windowStartDate(window, now)`. Per-period avg pace is **distance-weighted**: `sum(durationSeconds)/sum(distanceMiles)` within the bucket (never the arithmetic mean of per-run paces). Granularity: `1m/2m/3m → week` (Monday-start via `weekStart`), `6m/12m/ytd → month` (month-start computed inline). `windowStartDate`: `ytd → Jan 1 of now's year`, `Nm → now minus N calendar months`. Validity guard drops runs with `distanceMiles ≤ 0`, non-finite pace, or pace outside `[180, 1200]` sec/mi. Returns raw seconds; the section formats with `formatPaceLabel`.
 
 ---
 

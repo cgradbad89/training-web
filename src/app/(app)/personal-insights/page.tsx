@@ -27,6 +27,8 @@ import {
 import { useRouter } from "next/navigation";
 
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
+import { PaceByDistanceSection } from "./PaceByDistanceSection";
+import { type PaceRangeRun } from "@/lib/paceRangeTrend";
 import { MetricBadge } from "@/components/ui/MetricBadge";
 import { WorkoutTrendsSection } from "@/components/WorkoutTrendsSection";
 import { useAuth } from "@/hooks/useAuth";
@@ -37,7 +39,7 @@ import { fetchAllOverrides } from "@/services/workoutOverrides";
 import { applyOverride } from "@/types/workoutOverride";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { type Race, RACE_DISTANCE_MILES } from "@/types/race";
-import { formatPace } from "@/utils/pace";
+import { formatPace, formatPaceLabel } from "@/utils/pace";
 import { weekStart as getWeekStart } from "@/utils/dates";
 import {
   buildQualifyingEfforts,
@@ -163,12 +165,6 @@ function SectionHeader({
       <h2 className="text-lg font-bold text-textPrimary">{title}</h2>
     </div>
   );
-}
-
-function formatPaceLabel(secPerMile: number): string {
-  if (!isFinite(secPerMile) || secPerMile <= 0) return "—";
-  const total = Math.round(secPerMile);
-  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
 }
 
 function formatTotalTime(totalSeconds: number): string {
@@ -1321,6 +1317,19 @@ export default function PersonalInsightsPage() {
 
   const runs = useMemo(() => workouts.filter((w) => w.isRunLike), [workouts]);
 
+  // Mapping for the "Pace by distance" section. startDate is already a JS Date
+  // on HealthWorkout (no .toDate() needed). Memoized so the section's internal
+  // useMemo stays stable across unrelated re-renders.
+  const paceRangeRuns = useMemo<PaceRangeRun[]>(
+    () =>
+      runs.map((r) => ({
+        distanceMiles: r.distanceMiles,
+        durationSeconds: r.durationSeconds,
+        date: r.startDate,
+      })),
+    [runs]
+  );
+
   // Compute fastest 1-mile GPS segment for the selected year
   useEffect(() => {
     if (!uid || runs.length === 0) return;
@@ -2221,6 +2230,9 @@ export default function PersonalInsightsPage() {
           </p>
         </Card>
       )}
+
+      {/* ── Pace by Distance (mileage-range trend) ──────── */}
+      <PaceByDistanceSection runs={paceRangeRuns} />
 
       {/* ── Workout Trends (Phase 3) ────────────────────── */}
       {uid && <WorkoutTrendsSection uid={uid} workouts={workouts} />}

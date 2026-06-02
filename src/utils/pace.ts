@@ -12,6 +12,17 @@ export function formatPace(secPerMile: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
+/**
+ * Format seconds-per-mile as "M:SS", returning an em dash ("—") for invalid
+ * input. Used by the Personal Insights pace charts (tick + tooltip formatter).
+ * Distinct from `formatPace`, which returns "--:--" on invalid input.
+ */
+export function formatPaceLabel(secPerMile: number): string {
+  if (!isFinite(secPerMile) || secPerMile <= 0) return "—";
+  const total = Math.round(secPerMile);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}
+
 /** Format total seconds as "H:MM:SS" or "M:SS" */
 export function formatDuration(totalSeconds: number): string {
   if (!isFinite(totalSeconds) || totalSeconds < 0) return "0:00";
