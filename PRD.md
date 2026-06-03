@@ -62,7 +62,7 @@
 | Races | `/(app)/races` | Done | Race goal CRUD, active race toggle, associate an actual run with a race result |
 | Shoes | `/(app)/shoes` | Done | Shoe inventory, per-shoe mileage, auto-assign rules editor |
 | Routes | `/(app)/routes` | Done | GPS route viewer (Leaflet) + Google Maps route drawing tool |
-| Personal Insights | `/(app)/personal-insights` | Done | Riegel race predictions, PR table, pace trends, pace-by-distance trend (mileage-range + time-window selector), workout trends, CTL/ATL/TSB charts |
+| Personal Insights | `/(app)/personal-insights` | Done | Riegel race predictions, Best Efforts standard-distance records, PR table, pace trends, pace-by-distance trend (mileage-range + time-window selector), workout trends, CTL/ATL/TSB charts |
 | Plan Insights | `/(app)/plan-insights` | Done | Running plan adherence, weekly mileage vs plan, predicted vs goal finish time |
 | AI Coach | `/(app)/coach` | Done | Chat with Claude using full training context; streaming response |
 | API: Coach | `/api/coach` | Done | Server-side Anthropic call; requires Firebase ID token; max_tokens=1024 |
@@ -228,7 +228,7 @@ Dismissed duplicate workout pairs. Prevents re-surfacing the same duplicate warn
 | Per-mile HR from iOS | High | Done | Superseded by per-point `hr` on the `route` subcollection (iOS commit 84dfbf3). The `mileSplits` subcollection is still used for per-mile `avgBpm` display in the splits table/charts. |
 | Athlete profile (DOB/maxHR + threshold pace) | High | Backlog | Unlocks real HR zones (replacing the `FALLBACK_MAX_HR=190` / `MAX_HR=185` conflict — see Section 6 #1) and real pace zones (`computePaceZones` exists but is orphaned pending this — Section 6 #14). Also unifies `MAX_HR` between `ZoneBreakdown` and `trainingLoad.ts`. |
 | Training-load trend chart | Medium | Backlog | CTL/ATL/TSB EWMA already implemented in `src/utils/trainingLoadSeries.ts` and shown on Personal Insights. A separate trend chart on Plans & Goals or the calendar page is pending scoping. |
-| Best Efforts compute layer | High | Done | `computeBestEfforts`, per-run persistence, manual backfill trigger, and run-detail missing-field compute hook are implemented. Personal Insights UI section is pending Prompt 2. |
+| Best Efforts | High | Done | `computeBestEfforts`, per-run persistence, manual backfill trigger, run-detail missing-field compute hook, and Personal Insights UI section are implemented. |
 | `/api/coach` rate limiting | High | Backlog | Needs Vercel KV or Upstash Redis — in-memory rate limiting is stateless on Vercel serverless. Auth check added (post pre-prod review). |
 | Fall 2026 plan activation | High | Backlog | `seedSeptHMPlan()` in `src/lib/seedData.ts` seeds a Sept 2026 half marathon plan. Must be manually triggered after April 2026 race. |
 | firestore.rules in version control | Medium | Backlog | Rules still console-managed only — no `firestore.rules` file in this repo. Three collections now require manual console rule additions: `mileSplits`, `route` (with the new `hr` field), and `goals`. |

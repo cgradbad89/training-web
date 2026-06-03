@@ -28,6 +28,7 @@ import { useRouter } from "next/navigation";
 
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { PaceByDistanceSection } from "./PaceByDistanceSection";
+import { BestEffortsSection } from "./BestEffortsSection";
 import { type PaceRangeRun } from "@/lib/paceRangeTrend";
 import { MetricBadge } from "@/components/ui/MetricBadge";
 import { WorkoutTrendsSection } from "@/components/WorkoutTrendsSection";
@@ -1994,6 +1995,11 @@ export default function PersonalInsightsPage() {
           Ask about my race predictions
         </button>
       </Card>
+
+      {/* ── Best Efforts ─────────────────────────────────── */}
+      <SectionHeader icon={Trophy} title="Best Efforts" />
+
+      <BestEffortsSection runs={runs} />
 
       {/* ── Personal Records by Year ─────────────────────── */}
       <SectionHeader icon={Trophy} title="Personal Records by Year" />

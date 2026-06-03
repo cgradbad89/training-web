@@ -10,7 +10,7 @@
 import { type RoutePoint } from "@/services/routes";
 import { haversineMeters } from "@/utils/mileSplits";
 
-const METERS_PER_MILE = 1609.344;
+export const METERS_PER_MILE = 1609.344;
 
 // Standard best-effort distances, in meters.
 export const BEST_EFFORT_DISTANCES_M = {
