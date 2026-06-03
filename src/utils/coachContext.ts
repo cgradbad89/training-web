@@ -7,7 +7,7 @@ import {
   buildQualifyingEfforts, fitRiegel, predictSeconds
 } from '@/utils/riegelFit'
 import { weekStart as getWeekStart } from '@/utils/dates'
-import { computeTrainingLoad } from '@/utils/trainingLoad'
+import { computeTrainingLoad, DEFAULT_MAX_HR } from '@/utils/trainingLoad'
 import type { WorkoutOverride } from '@/types/workoutOverride'
 
 const RACE_MILES: Record<Exclude<RaceDistance, 'custom'>, number> = {
@@ -55,7 +55,8 @@ export function buildCoachContext(
   activePlan: RunningPlan | null,
   activeRace: Race | null,
   overrides: Record<string, WorkoutOverride>,
-  healthMetrics: HealthMetric[] = []
+  healthMetrics: HealthMetric[] = [],
+  maxHr: number = DEFAULT_MAX_HR
 ) {
   const now = Date.now()
   const thirtyDaysAgo = now - 30 * 86400000
@@ -77,7 +78,12 @@ export function buildCoachContext(
     const d = new Date(r.startDate)
     const miles = r.distanceMiles ?? 0
     const pace = miles > 0 ? formatPaceStr(r.durationSeconds / miles) : null
-    const trainingLoad = computeTrainingLoad(r.durationSeconds, r.avgHeartRate)
+    const trainingLoad = computeTrainingLoad(
+      r.durationSeconds,
+      r.avgHeartRate,
+      undefined,
+      maxHr
+    )
     return {
       date: formatDateStr(d),
       distance: miles,
@@ -317,6 +323,7 @@ export function buildCoachContext(
       avgWeeklyMiles,
       avgPace,
       avgHR,
+      maxHeartRate: maxHr,
       longestRun,
       longRunCount,
       mediumRunCount,

@@ -37,6 +37,7 @@ import { fetchHealthWorkouts } from "@/services/healthWorkouts";
 import { fetchRaces } from "@/services/races";
 import { fetchRoutePoints, type RoutePoint } from "@/services/routes";
 import { fetchAllOverrides } from "@/services/workoutOverrides";
+import { fetchUserSettings } from "@/services/userSettings";
 import { applyOverride } from "@/types/workoutOverride";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { type Race, RACE_DISTANCE_MILES } from "@/types/race";
@@ -65,11 +66,14 @@ import {
 import {
   computeTrainingLoad,
   classifyHrZone,
+  HR_ZONES,
   MIN_RUN_MILES_FOR_AVG,
   MIN_WORKOUT_SECONDS_FOR_AVG,
+  resolveMaxHr,
   type HRZoneNumber,
 } from "@/utils/trainingLoad";
 import { InfoTooltip } from "@/components/ui/InfoTooltip";
+import { type UserSettings } from "@/types/userSettings";
 
 // ─── Training Load KPI tooltip copy ───────────────────────────────────────────
 // Single source of truth so the four KPI cards and any future surfaces stay
@@ -315,17 +319,12 @@ const ZONE_STYLES: Record<
   5: { bg: "bg-red-500",    text: "text-red-500",    label: "Max"       },
 };
 
-// Inclusive-min / exclusive-max bpm bounds per zone, derived from HR_ZONES
-// (60/70/80/90% of MAX_HR=185 → 111/130/149/167). Kept in lock-step by
-// reading the same thresholds at runtime would couple this file to the
-// internals; the values mirror the constants and are commented at source.
-const ZONE_BPM_LABEL: Record<HRZoneNumber, string> = {
-  1: "< 111",
-  2: "111–129",
-  3: "130–148",
-  4: "149–166",
-  5: "167+",
-};
+function zoneBpmLabel(zone: HRZoneNumber, maxHr: number): string {
+  const z = HR_ZONES[zone - 1];
+  if (zone === 1) return `< ${Math.ceil(z.maxPct * maxHr)}`;
+  if (zone === 5) return `${Math.ceil(z.minPct * maxHr)}+`;
+  return `${Math.ceil(z.minPct * maxHr)}–${Math.floor(z.maxPct * maxHr)}`;
+}
 
 // ─── KPI context sub-components ─────────────────────────────────────────────
 
@@ -517,6 +516,7 @@ function TrainingLoadSection({
   weeklyData,
   intensity,
   intensityLoading,
+  maxHr,
 }: {
   data: TrainingLoadSectionData;
   weeklyData: WeeklyLoadDatum[];
@@ -526,6 +526,7 @@ function TrainingLoadSection({
     runsCounted: number;
   } | null;
   intensityLoading: boolean;
+  maxHr: number;
 }) {
   const {
     displaySeries,
@@ -986,7 +987,7 @@ function TrainingLoadSection({
                         Z{z} {ZONE_STYLES[z].label}
                       </span>
                       <span className="text-textSecondary tabular-nums">
-                        {ZONE_BPM_LABEL[z]} bpm
+                        {zoneBpmLabel(z, maxHr)} bpm
                       </span>
                     </div>
                     <span className="text-textPrimary font-semibold tabular-nums">
@@ -1238,6 +1239,7 @@ export default function PersonalInsightsPage() {
 
   const [workouts, setWorkouts] = useState<HealthWorkout[]>([]);
   const [races, setRaces] = useState<Race[]>([]);
+  const [userSettings, setUserSettings] = useState<UserSettings | null>();
   const [loading, setLoading] = useState(true);
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   // Fastest 1-mile segment from GPS route points, keyed by year
@@ -1257,6 +1259,14 @@ export default function PersonalInsightsPage() {
   // Cardio Fitness (VO₂ max) — sparse healthMetrics field, populated by iOS sync.
   const [vo2History, setVo2History] = useState<Vo2Entry[]>([]);
   const [vo2Loading, setVo2Loading] = useState(true);
+  const maxHr = resolveMaxHr(userSettings);
+
+  useEffect(() => {
+    if (!uid) return;
+    fetchUserSettings(uid)
+      .then(setUserSettings)
+      .catch((err) => console.error("[fetchUserSettings]", err));
+  }, [uid]);
 
   useEffect(() => {
     if (!uid) return;
@@ -1473,7 +1483,7 @@ export default function PersonalInsightsPage() {
         if (miles.length === 0) continue;
         runsCounted += 1;
         for (const m of miles) {
-          const z = classifyHrZone(m.bpm);
+          const z = classifyHrZone(m.bpm, maxHr);
           zoneMiles[z] += m.distance;
           totalMiles += m.distance;
         }
@@ -1485,7 +1495,7 @@ export default function PersonalInsightsPage() {
     return () => {
       cancelled = true;
     };
-  }, [uid, runs]);
+  }, [uid, runs, maxHr]);
 
   // ── Available years ─────────────────────────────────────────────────────────
 
@@ -1720,7 +1730,7 @@ export default function PersonalInsightsPage() {
           )
         : seedFromSeedWindow;
 
-    const dailyMap = buildDailyLoadMap(workouts);
+    const dailyMap = buildDailyLoadMap(workouts, maxHr);
     const fullSeries = buildLoadEwmaSeries(dailyMap, seedStart, today);
 
     // Slice for display
@@ -1748,7 +1758,8 @@ export default function PersonalInsightsPage() {
       const score = computeTrainingLoad(
         w.durationSeconds,
         w.avgHeartRate,
-        w.activityType
+        w.activityType,
+        maxHr
       );
       if (score == null) continue;
       if (score > peakRunLoad) {
@@ -1792,7 +1803,8 @@ export default function PersonalInsightsPage() {
       const score = computeTrainingLoad(
         w.durationSeconds,
         w.avgHeartRate,
-        w.activityType
+        w.activityType,
+        maxHr
       );
       if (score == null) continue;
       if (w.isRunLike) runSessionLoads.push(score);
@@ -1824,7 +1836,8 @@ export default function PersonalInsightsPage() {
       const score = computeTrainingLoad(
         w.durationSeconds,
         w.avgHeartRate,
-        w.activityType
+        w.activityType,
+        maxHr
       );
       if (score == null) continue;
       if (w.isRunLike) thisWeekRuns.push(score);
@@ -1851,7 +1864,7 @@ export default function PersonalInsightsPage() {
       thisWeekRunAvg: avg(thisWeekRuns),
       thisWeekWorkoutAvg: avg(thisWeekWorkouts),
     };
-  }, [workouts]);
+  }, [workouts, maxHr]);
 
   const weeklyLoadData = useMemo(() => {
     // Last 16 weeks, Monday-anchored — matches Workout Frequency chart bucketing.
@@ -1936,6 +1949,7 @@ export default function PersonalInsightsPage() {
         weeklyData={weeklyLoadData}
         intensity={intensityData}
         intensityLoading={intensityLoading}
+        maxHr={maxHr}
       />
 
       {/* ── Predicted Race Times ─────────────────────────── */}

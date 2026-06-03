@@ -1,11 +1,13 @@
+import { type UserSettings } from "@/types/userSettings";
+
 /**
  * Training Load — TRIMP-inspired effort score.
  *
  * Combines duration with heart-rate intensity via 5 HR zones. The user's
- * max HR is fixed at 185 bpm; zones are defined as % of max HR with rising
+ * max HR defaults to 185 bpm; zones are defined as % of max HR with rising
  * multipliers so harder + longer efforts score higher than easy jogs.
  *
- * Zone boundaries (% of MAX_HR = 185):
+ * Zone boundaries with the default max HR of 185:
  *   Zone 1 Recovery   < 60%      < 111 bpm  ×1.0
  *   Zone 2 Aerobic    60–70%   111–129 bpm  ×1.5
  *   Zone 3 Tempo      70–80%   130–148 bpm  ×2.5
@@ -25,7 +27,15 @@
  * per-second data.
  */
 
-export const MAX_HR = 185;
+export const DEFAULT_MAX_HR = 185;
+/** @deprecated Use DEFAULT_MAX_HR for fallback behavior or pass a profile max HR. */
+export const MAX_HR = DEFAULT_MAX_HR;
+
+export function resolveMaxHr(
+  settings: UserSettings | null | undefined
+): number {
+  return settings?.maxHeartRate ?? DEFAULT_MAX_HR;
+}
 
 // Minimum thresholds for including an activity in a Training Load *average*.
 // Individual badges still render for all activities regardless of these values —
@@ -178,41 +188,49 @@ export function isMindfulActivity(activityType: string): boolean {
 /** Inclusive-min, exclusive-max bpm bounds for a specific zone in a context. */
 export function zoneBoundsBpmForActivity(
   z: HRZone,
-  context: ActivityContext
+  context: ActivityContext,
+  maxHr: number = DEFAULT_MAX_HR
 ): { min: number; maxLabel: string } {
   const zones = WORKOUT_ZONES[context];
   const idx = zones.findIndex((x) => x.zone === z.zone);
-  const min = Math.ceil(z.minPct * MAX_HR);
+  const min = Math.ceil(z.minPct * maxHr);
   const maxLabel =
     idx === zones.length - 1
-      ? `${Math.ceil(z.minPct * MAX_HR)}+`
-      : `${Math.floor(z.maxPct * MAX_HR)}`;
+      ? `${Math.ceil(z.minPct * maxHr)}+`
+      : `${Math.floor(z.maxPct * maxHr)}`;
   return { min, maxLabel };
 }
 
 /** Pick the zone for an avg HR inside a given activity context. */
 export function getHRZoneForActivity(
   bpm: number,
-  context: ActivityContext
+  context: ActivityContext,
+  maxHr: number = DEFAULT_MAX_HR
 ): HRZone {
   const zones = WORKOUT_ZONES[context];
-  const pct = bpm / MAX_HR;
+  const pct = bpm / maxHr;
   return zones.find((z) => pct < z.maxPct) ?? zones[zones.length - 1];
 }
 
 /** Inclusive-min, exclusive-max bpm bounds (Zone 5 is open-ended). */
-export function zoneBoundsBpm(z: HRZone): { min: number; maxLabel: string } {
-  const min = Math.ceil(z.minPct * MAX_HR);
+export function zoneBoundsBpm(
+  z: HRZone,
+  maxHr: number = DEFAULT_MAX_HR
+): { min: number; maxLabel: string } {
+  const min = Math.ceil(z.minPct * maxHr);
   const maxLabel =
     z.zone === HR_ZONES.length
-      ? `${Math.ceil(z.minPct * MAX_HR)}+`
-      : `${Math.floor(z.maxPct * MAX_HR)}`;
+      ? `${Math.ceil(z.minPct * maxHr)}+`
+      : `${Math.floor(z.maxPct * maxHr)}`;
   return { min, maxLabel };
 }
 
 /** Pick the zone for an avg HR. Falls back to the Max zone for HRs ≥ 90%. */
-export function getHRZone(bpm: number): HRZone {
-  const pct = bpm / MAX_HR;
+export function getHRZone(
+  bpm: number,
+  maxHr: number = DEFAULT_MAX_HR
+): HRZone {
+  const pct = bpm / maxHr;
   return HR_ZONES.find((z) => pct < z.maxPct) ?? HR_ZONES[HR_ZONES.length - 1];
 }
 
@@ -223,8 +241,11 @@ export function getHRZone(bpm: number): HRZone {
  */
 export type HRZoneNumber = 1 | 2 | 3 | 4 | 5;
 
-export function classifyHrZone(bpm: number): HRZoneNumber {
-  const z = getHRZone(bpm).zone;
+export function classifyHrZone(
+  bpm: number,
+  maxHr: number = DEFAULT_MAX_HR
+): HRZoneNumber {
+  const z = getHRZone(bpm, maxHr).zone;
   // HR_ZONES is fixed at 5 entries with zones 1..5, so this narrowing is safe.
   return Math.min(5, Math.max(1, z)) as HRZoneNumber;
 }
@@ -240,14 +261,15 @@ export function classifyHrZone(bpm: number): HRZoneNumber {
 export function computeTrainingLoad(
   durationSeconds: number,
   avgHeartRate: number | null | undefined,
-  activityType?: string | null
+  activityType?: string | null,
+  maxHr: number = DEFAULT_MAX_HR
 ): number | null {
   if (!avgHeartRate || avgHeartRate <= 0) return null;
   if (!durationSeconds || durationSeconds <= 0) return null;
   if (!isFinite(avgHeartRate) || !isFinite(durationSeconds)) return null;
   const durationMinutes = durationSeconds / 60;
   const context = activityType ? getActivityContext(activityType) : "running";
-  const zone = getHRZoneForActivity(avgHeartRate, context);
+  const zone = getHRZoneForActivity(avgHeartRate, context, maxHr);
   const trimp = durationMinutes * zone.multiplier;
 
   // Post-TRIMP scaling: TRIMP over-credits duration at low HR for non-aerobic

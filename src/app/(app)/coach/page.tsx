@@ -9,7 +9,9 @@ import { fetchPlans } from '@/services/plans'
 import { isRunningPlan } from '@/types/plan'
 import { fetchRaces } from '@/services/races'
 import { fetchHealthMetrics } from '@/services/healthMetrics'
+import { fetchUserSettings } from '@/services/userSettings'
 import { buildCoachContext } from '@/utils/coachContext'
+import { resolveMaxHr } from '@/utils/trainingLoad'
 import { applyOverride } from '@/types/workoutOverride'
 import {
   BotMessageSquare, Send, Loader2, RefreshCw, ChevronRight
@@ -56,6 +58,7 @@ export default function CoachPage() {
   useEffect(() => {
     if (!userId) return
     setLoading(true)
+    let cancelled = false
 
     Promise.all([
       fetchHealthWorkouts(userId, { limitCount: 500 }),
@@ -83,13 +86,24 @@ export default function CoachPage() {
         })
       const activeRace = upcomingRaces.find(r => r.isActive) ?? upcomingRaces[0] ?? null
 
-      const ctx = buildCoachContext(runs, activePlan, activeRace, overrides, healthMetrics)
-      setContext(ctx)
+      const buildContext = (maxHr: number) =>
+        buildCoachContext(runs, activePlan, activeRace, overrides, healthMetrics, maxHr)
+
+      if (cancelled) return
+      setContext(buildContext(resolveMaxHr(undefined)))
       setLoading(false)
+
+      fetchUserSettings(userId)
+        .then(settings => {
+          if (!cancelled) setContext(buildContext(resolveMaxHr(settings)))
+        })
+        .catch(err => console.error('[Coach] fetchUserSettings failed:', err))
     }).catch(err => {
+      if (cancelled) return
       setError(err.message)
       setLoading(false)
     })
+    return () => { cancelled = true }
   }, [userId])
 
   // Auto-ask if a question was passed via URL param

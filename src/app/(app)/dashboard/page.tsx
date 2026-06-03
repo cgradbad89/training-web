@@ -25,6 +25,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { onHealthWorkoutsSnapshot } from "@/services/healthWorkouts";
 import { prefetchRoutes } from "@/utils/routeCache";
 import { fetchPlans } from "@/services/plans";
+import { fetchUserSettings } from "@/services/userSettings";
 import {
   fetchHealthMetricsRange,
   fetchHealthGoals,
@@ -41,6 +42,7 @@ import {
   computeTrainingLoad,
   MIN_RUN_MILES_FOR_AVG,
   MIN_WORKOUT_SECONDS_FOR_AVG,
+  resolveMaxHr,
 } from "@/utils/trainingLoad";
 import {
   buildDailyLoadMap,
@@ -58,6 +60,7 @@ import {
   isSameWeek,
 } from "@/utils/dates";
 import { type HealthWorkout } from "@/types/healthWorkout";
+import { type UserSettings } from "@/types/userSettings";
 import { type WorkoutOverride } from "@/types/workoutOverride";
 import { fetchAllOverrides } from "@/services/workoutOverrides";
 import { WorkoutDetailModal } from "@/components/WorkoutDetailModal";
@@ -189,7 +192,8 @@ function RunningStatsCard({
   weekStart,
   weekEnd,
   plannedMiles,
-}: SectionStatsProps & { plannedMiles: number }) {
+  maxHr,
+}: SectionStatsProps & { plannedMiles: number; maxHr: number }) {
   const runs = workouts.filter(
     (w) => w.isRunLike && isInWeek(w, weekStart, weekEnd)
   );
@@ -222,7 +226,7 @@ function RunningStatsCard({
   const loadScores = runs
     .filter((r) => r.distanceMiles >= MIN_RUN_MILES_FOR_AVG)
     .map((r) =>
-      computeTrainingLoad(r.durationSeconds, r.avgHeartRate, r.activityType)
+      computeTrainingLoad(r.durationSeconds, r.avgHeartRate, r.activityType, maxHr)
     )
     .filter((s): s is number => s !== null);
   const totalRunLoad =
@@ -291,9 +295,11 @@ function WorkoutsStatsCard({
   weekEnd,
   sessionsPlanned,
   sessionsCompleted,
+  maxHr,
 }: SectionStatsProps & {
   sessionsPlanned: number;
   sessionsCompleted: number;
+  maxHr: number;
 }) {
   const weekWorkouts = workouts.filter(
     (w) => !w.isRunLike && isInWeek(w, weekStart, weekEnd)
@@ -318,7 +324,7 @@ function WorkoutsStatsCard({
 
   const loadScores = qualifying
     .map((w) =>
-      computeTrainingLoad(w.durationSeconds, w.avgHeartRate, w.activityType)
+      computeTrainingLoad(w.durationSeconds, w.avgHeartRate, w.activityType, maxHr)
     )
     .filter((s): s is number => s !== null);
   const totalWorkoutLoad =
@@ -392,9 +398,10 @@ function WorkoutsStatsCard({
 interface ThisWeekRunsCardProps {
   workouts: HealthWorkout[];
   weekStart: Date;
+  maxHr: number;
 }
 
-function ThisWeekRunsCard({ workouts, weekStart }: ThisWeekRunsCardProps) {
+function ThisWeekRunsCard({ workouts, weekStart, maxHr }: ThisWeekRunsCardProps) {
   const runs = useMemo(
     () =>
       workouts.filter(
@@ -445,6 +452,7 @@ function ThisWeekRunsCard({ workouts, weekStart }: ThisWeekRunsCardProps) {
                       durationSeconds={run.durationSeconds}
                       avgHeartRate={run.avgHeartRate}
                       activityType={run.activityType}
+                      maxHr={maxHr}
                     />
                   </div>
                 </Link>
@@ -479,6 +487,7 @@ interface WorkoutSummaryCardProps {
   workouts: HealthWorkout[];
   weekStart: Date;
   weekEnd: Date;
+  maxHr: number;
   onSelect: (w: HealthWorkout) => void;
 }
 
@@ -486,6 +495,7 @@ function WorkoutSummaryCard({
   workouts,
   weekStart,
   weekEnd,
+  maxHr,
   onSelect,
 }: WorkoutSummaryCardProps) {
   const weekWorkouts = workouts.filter(
@@ -530,6 +540,7 @@ function WorkoutSummaryCard({
                         durationSeconds={w.durationSeconds}
                         avgHeartRate={w.avgHeartRate}
                         activityType={w.activityType}
+                        maxHr={maxHr}
                       />
                     )}
                   </div>
@@ -1061,12 +1072,14 @@ interface LoadScoreTrainingLoadCardProps {
   workouts: HealthWorkout[];
   weekStart: Date;
   weekEnd: Date;
+  maxHr: number;
 }
 
 function LoadScoreTrainingLoadCard({
   workouts,
   weekStart,
   weekEnd,
+  maxHr,
 }: LoadScoreTrainingLoadCardProps) {
   const now = new Date();
 
@@ -1080,17 +1093,21 @@ function LoadScoreTrainingLoadCard({
       const load = computeTrainingLoad(
         w.durationSeconds,
         w.avgHeartRate,
-        w.activityType
+        w.activityType,
+        maxHr
       );
       if (load == null) continue;
       total += load;
     }
     return total;
-  }, [workouts, weekStart, weekEnd]);
+  }, [workouts, weekStart, weekEnd, maxHr]);
 
   // Chronic = rolling 28-day total / 4 = avg per week. Kept rolling (not
   // week-aligned) so it represents the user's established baseline capacity.
-  const dailyMap = useMemo(() => buildDailyLoadMap(workouts), [workouts]);
+  const dailyMap = useMemo(
+    () => buildDailyLoadMap(workouts, maxHr),
+    [workouts, maxHr]
+  );
   const chronicTotal = rollingLoad(dailyMap, now, 28);  // 28-day total
   const chronicWeekly = chronicTotal / 4;               // avg per week over 28d
 
@@ -1306,6 +1323,7 @@ export default function DashboardPage() {
   );
   const [weekMetrics, setWeekMetrics] = useState<HealthMetric[]>([]);
   const [healthGoals, setHealthGoals] = useState<HealthGoals | null>(null);
+  const [userSettings, setUserSettings] = useState<UserSettings | null>();
   const [loading, setLoading] = useState(true);
 
   // Workout detail modal state — matches the workouts-page pattern so the
@@ -1317,6 +1335,15 @@ export default function DashboardPage() {
     {}
   );
   const overridesRef = useRef<Record<string, WorkoutOverride>>({});
+
+  useEffect(() => {
+    if (!uid) return;
+    fetchUserSettings(uid)
+      .then(setUserSettings)
+      .catch((err) => console.error("[fetchUserSettings]", err));
+  }, [uid]);
+
+  const maxHr = resolveMaxHr(userSettings);
 
   useEffect(() => {
     if (!uid) return;
@@ -1465,13 +1492,14 @@ export default function DashboardPage() {
       const load = computeTrainingLoad(
         w.durationSeconds,
         w.avgHeartRate,
-        w.activityType
+        w.activityType,
+        maxHr
       );
       if (load == null) continue;
       total += load;
     }
     return total;
-  }, [workouts, selectedWeekStart, selectedWeekEnd]);
+  }, [workouts, selectedWeekStart, selectedWeekEnd, maxHr]);
 
   // 28-day rolling baseline ending TODAY — same value the Load Score
   // Training Load card surfaces as "28-Day Avg/Wk". Anchored on today
@@ -1479,10 +1507,10 @@ export default function DashboardPage() {
   // weekly capacity, which doesn't shift when they navigate to a past
   // week.
   const avgWeeklyLoad = useMemo(() => {
-    const dailyMap = buildDailyLoadMap(workouts);
+    const dailyMap = buildDailyLoadMap(workouts, maxHr);
     const total28 = rollingLoad(dailyMap, new Date(), 28);
     return total28 / 4;
-  }, [workouts]);
+  }, [workouts, maxHr]);
 
   // Workout-plan session counts for the selected week — mirrors the
   // derivation inside WorkoutPlanProgressCard.
@@ -1568,7 +1596,12 @@ export default function DashboardPage() {
       {/* Row 5: Training Load row — Mileage + Load Score side-by-side */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <TrainingLoadCard workouts={workouts} weekStart={selectedWeekStart} weekEnd={selectedWeekEnd} />
-        <LoadScoreTrainingLoadCard workouts={workouts} weekStart={selectedWeekStart} weekEnd={selectedWeekEnd} />
+        <LoadScoreTrainingLoadCard
+          workouts={workouts}
+          weekStart={selectedWeekStart}
+          weekEnd={selectedWeekEnd}
+          maxHr={maxHr}
+        />
       </div>
 
       {/* Row 6: Running KPIs — Planned + Actual miles (absorbed from the
@@ -1579,6 +1612,7 @@ export default function DashboardPage() {
         weekStart={selectedWeekStart}
         weekEnd={selectedWeekEnd}
         plannedMiles={plannedMiles}
+        maxHr={maxHr}
       />
 
       {/* Row 7: Running row — Running Plan tile (left) + This Week's Runs
@@ -1594,6 +1628,7 @@ export default function DashboardPage() {
         <ThisWeekRunsCard
           workouts={workouts}
           weekStart={selectedWeekStart}
+          maxHr={maxHr}
         />
       </div>
 
@@ -1605,6 +1640,7 @@ export default function DashboardPage() {
         weekEnd={selectedWeekEnd}
         sessionsPlanned={sessionsPlanned}
         sessionsCompleted={sessionsCompleted}
+        maxHr={maxHr}
       />
 
       {/* Row 9: Workout row — Workout Plan tile (left) + This Week's
@@ -1619,6 +1655,7 @@ export default function DashboardPage() {
           workouts={workouts}
           weekStart={selectedWeekStart}
           weekEnd={selectedWeekEnd}
+          maxHr={maxHr}
           onSelect={setSelectedWorkout}
         />
       </div>
@@ -1628,6 +1665,7 @@ export default function DashboardPage() {
           workout={selectedWorkout}
           override={overrides[selectedWorkout.workoutId] ?? null}
           userId={uid}
+          maxHr={maxHr}
           onClose={() => setSelectedWorkout(null)}
           onExcludeChange={(workoutId, excluded) => {
             setOverrides((prev) => ({

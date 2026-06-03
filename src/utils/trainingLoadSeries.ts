@@ -11,7 +11,7 @@
  */
 
 import { type HealthWorkout } from "@/types/healthWorkout";
-import { computeTrainingLoad } from "@/utils/trainingLoad";
+import { computeTrainingLoad, DEFAULT_MAX_HR } from "@/utils/trainingLoad";
 import { trainingLoadLevel, type TrainingLoadLevel } from "@/utils/metrics";
 
 export interface DailyLoad {
@@ -43,7 +43,8 @@ function parseLocalIsoDate(iso: string): Date {
  * totalLoad is the sum of both.
  */
 export function buildDailyLoadMap(
-  workouts: HealthWorkout[]
+  workouts: HealthWorkout[],
+  maxHr: number = DEFAULT_MAX_HR
 ): Map<string, DailyLoad> {
   const map = new Map<string, DailyLoad>();
 
@@ -51,7 +52,8 @@ export function buildDailyLoadMap(
     const score = computeTrainingLoad(
       w.durationSeconds,
       w.avgHeartRate,
-      w.activityType
+      w.activityType,
+      maxHr
     );
     if (score == null) continue;
 

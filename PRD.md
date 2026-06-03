@@ -153,7 +153,7 @@ Dismissed duplicate workout pairs. Prevents re-surfacing the same duplicate warn
 
 4. **Training Load (TRIMP)** (`src/utils/trainingLoad.ts`):
    - Formula: `TRIMP = durationMinutes × zoneMultiplier(avgHR) × factor`
-   - `MAX_HR = 185 bpm`
+   - `DEFAULT_MAX_HR = 185 bpm` fallback. Consumers resolve `users/{uid}/settings/prefs.maxHeartRate` via `resolveMaxHr(settings)` and pass the resolved value into `computeTrainingLoad()`, `buildDailyLoadMap()`, zone-boundary helpers, badges, dashboard/insights summaries, and AI Coach context.
    - Zone multipliers (running zones): Z1 Recovery <60% ×1.0 | Z2 Aerobic 60–70% ×1.5 | Z3 Tempo 70–80% ×2.5 | Z4 Threshold 80–90% ×4.0 | Z5 Max ≥90% ×6.5
    - Strength activities use shifted zone bands (Z5 starts at 80%, not 90%)
    - Post-TRIMP scaling factors: running/cardio = 1.0 | HIIT/OTF = 0.75 | strength (lifting/cooldown) = 0.25 | mindful (yoga/pilates/barre) = 0.20
@@ -192,7 +192,7 @@ Dismissed duplicate workout pairs. Prevents re-surfacing the same duplicate warn
 
 ## Section 6 — Known Sharp Edges
 
-1. **Per-point HR now exists on the `route` subcollection** (field `hr: number | null`, added iOS commit 84dfbf3). The Run Detail HR-zone breakdown (`ZoneBreakdown`) now reads `users/{uid}/settings/prefs.maxHeartRate` when set and otherwise falls back to `FALLBACK_MAX_HR=185` (`src/utils/zones.ts`). `src/utils/trainingLoad.ts` still uses its own `MAX_HR=185` constant until the broader training-load rewire. Per-mile HR is still sourced separately from the `mileSplits` subcollection (Section 3).
+1. **Per-point HR now exists on the `route` subcollection** (field `hr: number | null`, added iOS commit 84dfbf3). Run Detail HR-zone breakdown (`ZoneBreakdown`) and Training Load consumers now read `users/{uid}/settings/prefs.maxHeartRate` when set and otherwise fall back to `DEFAULT_MAX_HR=185` through `resolveMaxHr(settings)`. Per-mile HR is still sourced separately from the `mileSplits` subcollection (Section 3).
 
 2. **Firestore subcollection security rules**: Every subcollection needs an explicit Firestore security rule. Missing rules produce permission-denied failures, which can be silent or surface as empty data. Always add rules when adding a new subcollection. (`src/lib/firebase.ts` comment)
 
@@ -229,7 +229,7 @@ Dismissed duplicate workout pairs. Prevents re-surfacing the same duplicate warn
 | Feature | Priority | Status | Notes |
 |---|---|---|---|
 | Per-mile HR from iOS | High | Done | Superseded by per-point `hr` on the `route` subcollection (iOS commit 84dfbf3). The `mileSplits` subcollection is still used for per-mile `avgBpm` display in the splits table/charts. |
-| Athlete profile (maxHR + threshold pace) | High | In Progress | Phase 1 complete: `/settings` stores max HR and threshold pace on `settings/prefs`, computes a user-triggered max-HR suggestion from recent run route HR, derives a threshold suggestion from predicted 10-mile pace, and wires Run Detail HR zones to profile max HR. Phase 2 remains: rewire broader training-load consumers and revive pace zones (`computePaceZones` exists but is orphaned pending this — Section 6 #14). |
+| Athlete profile (maxHR + threshold pace) | High | Done | `/settings` stores max HR and threshold pace on `settings/prefs`, computes a user-triggered max-HR suggestion from recent run route HR, derives a threshold suggestion from predicted 10-mile pace, wires Run Detail HR zones to profile max HR, and rewires Training Load consumers to `resolveMaxHr(settings)` with `DEFAULT_MAX_HR=185` fallback. Deferred: workout-inclusive max-HR suggestion awaits an iOS `maxHeartRate` field; pace-zone UI revival remains separate (`computePaceZones` exists but is orphaned — Section 6 #14). |
 | Training-load trend chart | Medium | Backlog | CTL/ATL/TSB EWMA already implemented in `src/utils/trainingLoadSeries.ts` and shown on Personal Insights. A separate trend chart on Plans & Goals or the calendar page is pending scoping. |
 | Best Efforts | High | Done | `computeBestEfforts`, per-run persistence, manual backfill trigger, run-detail missing-field compute hook, and Personal Insights UI section are implemented. |
 | `/api/coach` rate limiting | High | Backlog | Needs Vercel KV or Upstash Redis — in-memory rate limiting is stateless on Vercel serverless. Auth check added (post pre-prod review). |

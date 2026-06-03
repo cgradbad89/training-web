@@ -46,7 +46,8 @@ import {
 } from "@/utils/metrics";
 import { computeMileSplits, type MileSplit } from "@/utils/mileSplits";
 import { computeRunGap, type RunGap } from "@/utils/gradeAdjustedPace";
-import { FALLBACK_MAX_HR } from "@/utils/zones";
+import { resolveMaxHr } from "@/utils/trainingLoad";
+import { type UserSettings } from "@/types/userSettings";
 import {
   collection,
   getDocs,
@@ -94,7 +95,7 @@ export default function RunDetailPage() {
   );
   const [override, setOverride] = useState<WorkoutOverride | null>(null);
   const [perMileHR, setPerMileHR] = useState<Record<number, number>>({});
-  const [profileMaxHR, setProfileMaxHR] = useState<number | null>(null);
+  const [userSettings, setUserSettings] = useState<UserSettings | null>();
   const [loading, setLoading] = useState(true);
   const [routeLoading, setRouteLoading] = useState(true);
 
@@ -158,7 +159,7 @@ export default function RunDetailPage() {
     shoes,
     assignments
   );
-  const resolvedMaxHR = profileMaxHR ?? FALLBACK_MAX_HR;
+  const resolvedMaxHR = resolveMaxHr(userSettings);
 
   useEffect(() => {
     if (!uid || !workoutId) return;
@@ -176,7 +177,7 @@ export default function RunDetailPage() {
         setShoes(s);
         setAssignments(a);
         setOverride(o);
-        setProfileMaxHR(settings?.maxHeartRate ?? null);
+        setUserSettings(settings);
 
         if (w?.hasRoute) {
           fetchRoutePoints(uid, workoutId)
@@ -652,6 +653,7 @@ export default function RunDetailPage() {
               durationSeconds={displayWorkout.durationSeconds}
               avgHeartRate={displayWorkout.avgHeartRate}
               activityType={displayWorkout.activityType}
+              maxHr={resolvedMaxHR}
               size="large"
             />
           </div>

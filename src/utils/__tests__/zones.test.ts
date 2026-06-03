@@ -14,7 +14,7 @@ describe("maxHRForAge", () => {
   it("falls back to FALLBACK_MAX_HR when age is null", () => {
     expect(maxHRForAge(null)).toBe(FALLBACK_MAX_HR);
   });
-  it("fallback max HR is 185 (aligned with trainingLoad MAX_HR)", () => {
+  it("fallback max HR is 185 (aligned with trainingLoad DEFAULT_MAX_HR)", () => {
     expect(FALLBACK_MAX_HR).toBe(185);
     expect(maxHRForAge(null)).toBe(185);
   });

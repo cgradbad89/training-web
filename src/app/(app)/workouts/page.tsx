@@ -18,6 +18,7 @@ import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useAuth } from "@/hooks/useAuth";
 import { onHealthWorkoutsSnapshot } from "@/services/healthWorkouts";
+import { fetchUserSettings } from "@/services/userSettings";
 import { fetchAllOverrides, excludeWorkout } from "@/services/workoutOverrides";
 import { detectDuplicatePairs, type DuplicatePair } from "@/utils/duplicateDetection";
 import {
@@ -39,7 +40,9 @@ import {
   getActivityContext,
   isHiitLikeActivity,
   isMindfulActivity,
+  resolveMaxHr,
 } from "@/utils/trainingLoad";
+import { type UserSettings } from "@/types/userSettings";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -200,12 +203,14 @@ function YearSummary({
   workouts,
   year,
   summaryTitle,
+  maxHr,
 }: {
   workouts: HealthWorkout[];
   year: number;
   /** Title rendered at the top of the card — matches the runs page's
    *  "<Year> Summary" label so the sidebar cards read consistently. */
   summaryTitle: string;
+  maxHr: number;
 }) {
   const elapsed = weeksElapsed(year);
   const count = workouts.length;
@@ -234,7 +239,7 @@ function YearSummary({
         : w.durationSeconds >= MIN_WORKOUT_SECONDS_FOR_AVG
     )
     .map((w) =>
-      computeTrainingLoad(w.durationSeconds, w.avgHeartRate, w.activityType)
+      computeTrainingLoad(w.durationSeconds, w.avgHeartRate, w.activityType, maxHr)
     )
     .filter((s): s is number => s !== null);
   const avgLoadPerSession =
@@ -250,7 +255,7 @@ function YearSummary({
   // page has no month filter), matching the runs-page convention.
   const totalLoad = workouts
     .map((w) =>
-      computeTrainingLoad(w.durationSeconds, w.avgHeartRate, w.activityType)
+      computeTrainingLoad(w.durationSeconds, w.avgHeartRate, w.activityType, maxHr)
     )
     .filter((s): s is number => s !== null)
     .reduce((a, b) => a + b, 0);
@@ -385,7 +390,15 @@ function YearNavigator({
 
 // ─── Workout Row ──────────────────────────────────────────────────────────────
 
-function WorkoutRow({ workout, onClick }: { workout: HealthWorkout; onClick: () => void }) {
+function WorkoutRow({
+  workout,
+  maxHr,
+  onClick,
+}: {
+  workout: HealthWorkout;
+  maxHr: number;
+  onClick: () => void;
+}) {
   const localDate = getLocalDate(workout);
   const dayAbbrev = DAY_ABBREVS[(localDate.getDay() + 6) % 7];
   const dayNum = localDate.getDate();
@@ -436,6 +449,7 @@ function WorkoutRow({ workout, onClick }: { workout: HealthWorkout; onClick: () 
             durationSeconds={workout.durationSeconds}
             avgHeartRate={workout.avgHeartRate}
             activityType={workout.activityType}
+            maxHr={maxHr}
           />
         ) : (
           <span className="text-xs text-textSecondary w-12 inline-block text-right">—</span>
@@ -450,11 +464,13 @@ function WorkoutRow({ workout, onClick }: { workout: HealthWorkout; onClick: () 
 function WorkoutWeekGroup({
   wKey,
   workouts,
+  maxHr,
   onSelect,
   innerRef,
 }: {
   wKey: string;
   workouts: HealthWorkout[];
+  maxHr: number;
   onSelect: (w: HealthWorkout) => void;
   /** Ref the parent uses to scrollIntoView when a calendar day is clicked. */
   innerRef?: (el: HTMLDivElement | null) => void;
@@ -475,7 +491,7 @@ function WorkoutWeekGroup({
 
   const loadScores = workouts
     .map((w) =>
-      computeTrainingLoad(w.durationSeconds, w.avgHeartRate, w.activityType)
+      computeTrainingLoad(w.durationSeconds, w.avgHeartRate, w.activityType, maxHr)
     )
     .filter((s): s is number => s != null);
   const totalLoad =
@@ -499,7 +515,12 @@ function WorkoutWeekGroup({
         </span>
       </div>
       {workouts.map((w) => (
-        <WorkoutRow key={w.workoutId} workout={w} onClick={() => onSelect(w)} />
+        <WorkoutRow
+          key={w.workoutId}
+          workout={w}
+          maxHr={maxHr}
+          onClick={() => onSelect(w)}
+        />
       ))}
     </div>
   );
@@ -565,6 +586,7 @@ export default function WorkoutsPage() {
   const [allWorkouts, setAllWorkouts] = useState<HealthWorkout[]>([]);
   const [overrides, setOverrides] = useState<Record<string, WorkoutOverride>>({});
   const [excludedWorkouts, setExcludedWorkouts] = useState<HealthWorkout[]>([]);
+  const [userSettings, setUserSettings] = useState<UserSettings | null>();
   const [loading, setLoading] = useState(true);
   const [selectedWorkout, setSelectedWorkout] = useState<HealthWorkout | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>("all");
@@ -598,6 +620,14 @@ export default function WorkoutsPage() {
 
   const currentYear = new Date().getFullYear();
   const [selectedYear, setSelectedYear] = useState<number>(currentYear);
+  const maxHr = resolveMaxHr(userSettings);
+
+  useEffect(() => {
+    if (!uid) return;
+    fetchUserSettings(uid)
+      .then(setUserSettings)
+      .catch((err) => console.error("[fetchUserSettings]", err));
+  }, [uid]);
 
   // Ref for overrides so the onSnapshot callback always reads the latest
   const overridesRef = useRef<Record<string, WorkoutOverride>>({});
@@ -756,6 +786,7 @@ export default function WorkoutsPage() {
           workouts={filteredWorkouts}
           year={selectedYear}
           summaryTitle={`${selectedYear} Summary`}
+          maxHr={maxHr}
         />
 
         {/* Calendar — hidden on mobile, matches the runs page placement.
@@ -857,6 +888,7 @@ export default function WorkoutsPage() {
                 key={wk}
                 wKey={wk}
                 workouts={workouts}
+                maxHr={maxHr}
                 onSelect={setSelectedWorkout}
                 innerRef={(el) => {
                   weekRefs.current[wk] = el;
@@ -872,6 +904,7 @@ export default function WorkoutsPage() {
           workout={selectedWorkout}
           override={overrides[selectedWorkout.workoutId] ?? null}
           userId={uid}
+          maxHr={maxHr}
           onClose={() => setSelectedWorkout(null)}
           onExcludeChange={(workoutId, excluded) => {
             setOverrides((prev) => ({

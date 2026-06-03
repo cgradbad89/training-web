@@ -23,13 +23,18 @@ import { useAuth } from "@/hooks/useAuth";
 import { fetchHealthWorkouts } from "@/services/healthWorkouts";
 import { fetchPlans } from "@/services/plans";
 import { fetchRaces } from "@/services/races";
+import { fetchUserSettings } from "@/services/userSettings";
 import { fetchAllOverrides } from "@/services/workoutOverrides";
 import { applyOverride } from "@/types/workoutOverride";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { type RunningPlan, isRunningPlan } from "@/types/plan";
 import { type Race, RACE_DISTANCE_MILES, RACE_DISTANCE_LABELS } from "@/types/race";
 import { formatPace, formatMiles } from "@/utils/pace";
-import { computeTrainingLoad, MIN_RUN_MILES_FOR_AVG } from "@/utils/trainingLoad";
+import {
+  computeTrainingLoad,
+  MIN_RUN_MILES_FOR_AVG,
+  resolveMaxHr,
+} from "@/utils/trainingLoad";
 import { weekStart as getWeekStart } from "@/utils/dates";
 import {
   buildQualifyingEfforts,
@@ -41,6 +46,7 @@ import {
   type RiegelFit,
 } from "@/utils/riegelFit";
 import { matchPlanToActual } from "@/utils/planMatching";
+import { type UserSettings } from "@/types/userSettings";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -320,7 +326,16 @@ export default function PlanInsightsPage() {
   const [workouts, setWorkouts] = useState<HealthWorkout[]>([]);
   const [plans, setPlans] = useState<RunningPlan[]>([]);
   const [races, setRaces] = useState<Race[]>([]);
+  const [userSettings, setUserSettings] = useState<UserSettings | null>();
   const [loading, setLoading] = useState(true);
+  const maxHr = resolveMaxHr(userSettings);
+
+  useEffect(() => {
+    if (!uid) return;
+    fetchUserSettings(uid)
+      .then(setUserSettings)
+      .catch((err) => console.error("[fetchUserSettings]", err));
+  }, [uid]);
 
   useEffect(() => {
     if (!uid) return;
@@ -525,7 +540,8 @@ export default function PlanInsightsPage() {
           const score = computeTrainingLoad(
             r.durationSeconds,
             r.avgHeartRate,
-            "running"
+            "running",
+            maxHr
           );
           if (score == null) continue;
           runLoad += score;
@@ -539,7 +555,7 @@ export default function PlanInsightsPage() {
           runLoad,
         };
       });
-  }, [activePlan, runs]);
+  }, [activePlan, runs, maxHr]);
 
   // Plan summary stats
   const planStats = useMemo(() => {
@@ -847,7 +863,9 @@ export default function PlanInsightsPage() {
     // individual badges still appear elsewhere in the app.
     const vals = bucket
       .filter((r) => r.distanceMiles >= MIN_RUN_MILES_FOR_AVG)
-      .map((r) => computeTrainingLoad(r.durationSeconds, r.avgHeartRate))
+      .map((r) =>
+        computeTrainingLoad(r.durationSeconds, r.avgHeartRate, undefined, maxHr)
+      )
       .filter((v): v is number => v != null && isFinite(v));
     if (vals.length === 0) return "—";
     const avg = vals.reduce((a, b) => a + b, 0) / vals.length;

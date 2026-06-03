@@ -1,3 +1,5 @@
+import { DEFAULT_MAX_HR } from "@/utils/trainingLoad";
+
 /**
  * Heart-rate and pace zone bucketing for a single run.
  *
@@ -19,10 +21,10 @@ export interface ZoneBucket {
 
 /**
  * Used when the user's age is unknown (no age/DOB field exists in the app).
- * Aligned to MAX_HR = 185 in src/utils/trainingLoad.ts (PRD Section 5 item 4)
- * so HR-zone math is consistent across the app.
+ * Aligned to the Training Load default so HR-zone math is consistent across
+ * the app.
  */
-export const FALLBACK_MAX_HR = 185;
+export const FALLBACK_MAX_HR = DEFAULT_MAX_HR;
 
 /** HR zone boundaries as fractions of max HR (standard 5-zone model). */
 export const HR_ZONE_BOUNDS = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0] as const;

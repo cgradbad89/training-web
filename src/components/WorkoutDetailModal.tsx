@@ -23,6 +23,7 @@ interface WorkoutDetailModalProps {
   workout: HealthWorkout;
   override: WorkoutOverride | null;
   userId: string;
+  maxHr: number;
   onClose: () => void;
   onExcludeChange: (workoutId: string, excluded: boolean) => void;
 }
@@ -31,6 +32,7 @@ export function WorkoutDetailModal({
   workout,
   override,
   userId,
+  maxHr,
   onClose,
   onExcludeChange,
 }: WorkoutDetailModalProps) {
@@ -183,6 +185,7 @@ export function WorkoutDetailModal({
                 durationSeconds={workout.durationSeconds}
                 avgHeartRate={workout.avgHeartRate}
                 activityType={workout.activityType}
+                maxHr={maxHr}
                 size="large"
               />
             </div>

@@ -2,8 +2,8 @@
 
 import { useRef, useState } from "react";
 import {
-  MAX_HR,
   ACTIVITY_CONTEXT_LABEL,
+  DEFAULT_MAX_HR,
   WORKOUT_ZONES,
   computeTrainingLoad,
   getActivityContext,
@@ -21,6 +21,8 @@ interface TrainingLoadBadgeProps {
   /** HealthKit activityType string. Drives the zone-set used for both the
    *  score and the tooltip table. Omit/undefined → running default. */
   activityType?: string | null;
+  /** Resolved profile max HR. Omitted → DEFAULT_MAX_HR fallback. */
+  maxHr?: number;
   /** "compact" = list/dashboard sizing, "large" = run / workout detail. */
   size?: "compact" | "large";
 }
@@ -46,18 +48,24 @@ export function TrainingLoadBadge({
   durationSeconds,
   avgHeartRate,
   activityType,
+  maxHr = DEFAULT_MAX_HR,
   size = "compact",
 }: TrainingLoadBadgeProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
 
   const context: ActivityContext = getActivityContext(activityType);
-  const score = computeTrainingLoad(durationSeconds, avgHeartRate, activityType);
+  const score = computeTrainingLoad(
+    durationSeconds,
+    avgHeartRate,
+    activityType,
+    maxHr
+  );
   const hasScore = score != null;
   const status = hasScore ? trainingLoadStatus(score) : null;
   const runZone =
     hasScore && avgHeartRate && avgHeartRate > 0
-      ? getHRZoneForActivity(avgHeartRate, context)
+      ? getHRZoneForActivity(avgHeartRate, context, maxHr)
       : null;
 
   const colorClasses = status ? STATUS_CLASSES[status] : NEUTRAL_CLASSES;
@@ -111,7 +119,11 @@ export function TrainingLoadBadge({
           <div className="space-y-1 text-[11px] mb-2">
             {zones.map((z) => {
               const isYour = runZone?.zone === z.zone;
-              const { min, maxLabel } = zoneBoundsBpmForActivity(z, context);
+              const { min, maxLabel } = zoneBoundsBpmForActivity(
+                z,
+                context,
+                maxHr
+              );
               const bpmRange =
                 z.zone === zones.length ? `${maxLabel} bpm` : `${min}–${maxLabel}`;
               return (
@@ -142,7 +154,7 @@ export function TrainingLoadBadge({
             </>
           )}
           <p className="text-[10px] text-textSecondary italic">
-            Higher score = harder effort. Max HR {MAX_HR} bpm.
+            Higher score = harder effort. Max HR {maxHr} bpm.
           </p>
         </div>
       )}
