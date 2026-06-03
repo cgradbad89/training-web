@@ -1,3 +1,5 @@
+import { type BestEffortsMap } from "@/utils/bestEfforts";
+
 /**
  * HealthWorkout — mirrors the Firestore document stored at
  * users/{uid}/healthWorkouts/{workoutId}
@@ -33,6 +35,8 @@ export interface HealthWorkout {
   /** PR badge labels held by this run, e.g. ["5K PR", "1 Mile PR"].
    *  Computed by PRComputerRunner; absent or empty = no PRs. */
   prBadges?: string[];
+  /** Standard-distance best efforts, keyed by distance → timeSeconds | null. */
+  bestEfforts?: BestEffortsMap;
 }
 
 export function isRunWorkout(w: HealthWorkout): boolean {

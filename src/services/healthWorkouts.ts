@@ -34,6 +34,7 @@ import {
   doc,
   getDocs,
   getDoc,
+  setDoc,
   onSnapshot,
   query,
   where,
@@ -45,6 +46,41 @@ import {
 import { db } from "@/lib/firebase";
 import { toDate } from "@/utils/dates";
 import { type HealthWorkout } from "@/types/healthWorkout";
+import {
+  computeBestEfforts,
+  EMPTY_BEST_EFFORTS,
+  type BestEffortsMap,
+} from "@/utils/bestEfforts";
+import { fetchRoutePoints, type RoutePoint } from "@/services/routes";
+
+function stripUndefined<T extends object>(obj: T): T {
+  return JSON.parse(JSON.stringify(obj)) as T;
+}
+
+const BEST_EFFORT_KEYS = Object.keys(EMPTY_BEST_EFFORTS) as Array<
+  keyof BestEffortsMap
+>;
+
+function parseBestEfforts(value: unknown): BestEffortsMap | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as Record<string, unknown>;
+  const parsed = { ...EMPTY_BEST_EFFORTS };
+
+  for (const key of BEST_EFFORT_KEYS) {
+    const v = raw[key];
+    parsed[key] = typeof v === "number" && Number.isFinite(v) ? v : null;
+  }
+
+  return parsed;
+}
+
+function bestEffortsEqual(
+  a: BestEffortsMap | undefined,
+  b: BestEffortsMap
+): boolean {
+  if (!a) return false;
+  return BEST_EFFORT_KEYS.every((key) => a[key] === b[key]);
+}
 
 function docToHealthWorkout(
   id: string,
@@ -82,6 +118,7 @@ function docToHealthWorkout(
           (v): v is string => typeof v === "string"
         )
       : undefined,
+    bestEfforts: parseBestEfforts(data.bestEfforts),
   };
 }
 
@@ -149,4 +186,68 @@ export function onHealthWorkoutsSnapshot(
       onError?.(err);
     }
   );
+}
+
+export async function computeAndStoreBestEfforts(
+  uid: string,
+  workoutId: string,
+  points: RoutePoint[]
+): Promise<BestEffortsMap> {
+  const bestEfforts = computeBestEfforts(points);
+  const ref = doc(db, "users", uid, "healthWorkouts", workoutId);
+  const snap = await getDoc(ref);
+  const existing = snap.exists()
+    ? parseBestEfforts((snap.data() as Record<string, unknown>).bestEfforts)
+    : undefined;
+
+  if (bestEffortsEqual(existing, bestEfforts)) {
+    return bestEfforts;
+  }
+
+  await setDoc(ref, stripUndefined({ bestEfforts }), { merge: true });
+  return bestEfforts;
+}
+
+export async function backfillBestEfforts(uid: string): Promise<{
+  scanned: number;
+  computed: number;
+  skippedAlreadyDone: number;
+  skippedNoRoute: number;
+}> {
+  const stats = {
+    scanned: 0,
+    computed: 0,
+    skippedAlreadyDone: 0,
+    skippedNoRoute: 0,
+  };
+
+  const q = query(
+    collection(db, "users", uid, "healthWorkouts"),
+    where("hasRoute", "==", true),
+    orderBy("startDate", "desc")
+  );
+  const snap = await getDocs(q);
+
+  for (const workoutDoc of snap.docs) {
+    stats.scanned++;
+    const data = workoutDoc.data() as Record<string, unknown>;
+
+    // Idempotent resume path: do not spend route reads on already-backfilled
+    // docs. Safe to interrupt and re-run.
+    if (data.bestEfforts !== undefined) {
+      stats.skippedAlreadyDone++;
+      continue;
+    }
+
+    const points = await fetchRoutePoints(uid, workoutDoc.id);
+    if (points.length < 2) {
+      stats.skippedNoRoute++;
+      continue;
+    }
+
+    await computeAndStoreBestEfforts(uid, workoutDoc.id, points);
+    stats.computed++;
+  }
+
+  return stats;
 }

@@ -16,7 +16,10 @@ import { MetricBadge } from "@/components/ui/MetricBadge";
 import { TrainingLoadBadge } from "@/components/ui/TrainingLoadBadge";
 import { useAuth } from "@/hooks/useAuth";
 import { useUnsavedChanges } from "@/hooks/useUnsavedChanges";
-import { fetchHealthWorkout } from "@/services/healthWorkouts";
+import {
+  computeAndStoreBestEfforts,
+  fetchHealthWorkout,
+} from "@/services/healthWorkouts";
 import { fetchRoutePoints, type RoutePoint } from "@/services/routes";
 import { fetchShoes, fetchManualShoeAssignmentsMap, saveManualAssignments } from "@/services/shoes";
 import { useResolvedShoeAssignment } from "@/hooks/useResolvedShoeAssignment";
@@ -172,7 +175,22 @@ export default function RunDetailPage() {
 
         if (w?.hasRoute) {
           fetchRoutePoints(uid, workoutId)
-            .then(setRoutePoints)
+            .then((points) => {
+              setRoutePoints(points);
+
+              // Natural new-run hook: the detail page already reads route
+              // points for maps/splits/GAP, so computing missing best efforts
+              // here avoids adding heavy route reads to the runs list hot path.
+              if (w.bestEfforts === undefined && points.length >= 2) {
+                computeAndStoreBestEfforts(uid, workoutId, points)
+                  .then((bestEfforts) => {
+                    setWorkout((current) =>
+                      current ? { ...current, bestEfforts } : current
+                    );
+                  })
+                  .catch(console.error);
+              }
+            })
             .catch(console.error)
             .finally(() => setRouteLoading(false));
 

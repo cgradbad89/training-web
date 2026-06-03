@@ -23,13 +23,14 @@ export interface MileSplit {
 // ─── Haversine ──────────────────────────────────────────────────────────────
 
 const EARTH_RADIUS_MI = 3958.8;
+const METERS_PER_MILE = 1609.344;
 
 function toRad(deg: number): number {
   return (deg * Math.PI) / 180;
 }
 
 /** Haversine distance between two lat/lng points, in miles. */
-function haversineMi(
+export function haversineMi(
   lat1: number,
   lng1: number,
   lat2: number,
@@ -41,6 +42,16 @@ function haversineMi(
     Math.sin(dLat / 2) ** 2 +
     Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
   return 2 * EARTH_RADIUS_MI * Math.asin(Math.sqrt(a));
+}
+
+/** Same 2D haversine as mile splits, converted to meters. */
+export function haversineMeters(
+  lat1: number,
+  lng1: number,
+  lat2: number,
+  lng2: number
+): number {
+  return haversineMi(lat1, lng1, lat2, lng2) * METERS_PER_MILE;
 }
 
 // ─── Split computation ──────────────────────────────────────────────────────
