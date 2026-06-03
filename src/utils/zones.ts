@@ -45,19 +45,29 @@ export interface PaceZoneResult {
   percent: number;
 }
 
+export interface PaceZoneRange {
+  zone: PaceZoneNumber;
+  label: PaceZoneResult["label"];
+  /** Faster edge of the range. Null means open-ended faster than this band. */
+  minPaceSecPerMile: number | null;
+  /** Slower edge of the range. Null means open-ended slower than this band. */
+  maxPaceSecPerMile: number | null;
+}
+
 /**
  * Threshold-pace zone bands expressed as pace / threshold pace.
  *
  * ratio > 1 means slower than threshold pace. These are standard-style
  * threshold-pace approximations for run intensity: easy running is much slower
  * than threshold, while interval/repetition work is faster than threshold.
+ * A ratio of exactly 1.0 (pace equals threshold pace) is Z3 Threshold.
  */
 export const PACE_ZONE_RATIO_BOUNDS = {
-  recoveryMin: 1.29, // Z1 Recovery: ratio >= 1.29
-  easyMin: 1.14, // Z2 Easy: 1.14 <= ratio < 1.29
-  thresholdMin: 1.06, // Z3 Threshold: 1.06 <= ratio < 1.14
-  intervalMin: 0.97, // Z4 Interval: 0.97 <= ratio < 1.06
-  // Z5 Repetition: ratio < 0.97
+  recoveryMin: 1.2, // Z1 Recovery: ratio >= 1.20
+  easyMin: 1.1, // Z2 Easy: 1.10 <= ratio < 1.20
+  thresholdMin: 0.97, // Z3 Threshold: 0.97 <= ratio < 1.10
+  intervalMin: 0.9, // Z4 Interval: 0.90 <= ratio < 0.97
+  // Z5 Repetition: ratio < 0.90
 } as const;
 
 export const PACE_ZONE_LABELS: PaceZoneResult["label"][] = [
@@ -124,6 +134,55 @@ function paceZoneForRatio(ratio: number): PaceZoneNumber {
   if (ratio >= PACE_ZONE_RATIO_BOUNDS.thresholdMin) return 3;
   if (ratio >= PACE_ZONE_RATIO_BOUNDS.intervalMin) return 4;
   return 5;
+}
+
+export function paceZoneRanges(
+  thresholdPaceSecPerMile: number
+): PaceZoneRange[] {
+  if (!isFinite(thresholdPaceSecPerMile) || thresholdPaceSecPerMile <= 0) {
+    return [];
+  }
+
+  const t = thresholdPaceSecPerMile;
+  const {
+    recoveryMin,
+    easyMin,
+    thresholdMin,
+    intervalMin,
+  } = PACE_ZONE_RATIO_BOUNDS;
+
+  return [
+    {
+      zone: 1,
+      label: "Recovery",
+      minPaceSecPerMile: recoveryMin * t,
+      maxPaceSecPerMile: null,
+    },
+    {
+      zone: 2,
+      label: "Easy",
+      minPaceSecPerMile: easyMin * t,
+      maxPaceSecPerMile: recoveryMin * t,
+    },
+    {
+      zone: 3,
+      label: "Threshold",
+      minPaceSecPerMile: thresholdMin * t,
+      maxPaceSecPerMile: easyMin * t,
+    },
+    {
+      zone: 4,
+      label: "Interval",
+      minPaceSecPerMile: intervalMin * t,
+      maxPaceSecPerMile: thresholdMin * t,
+    },
+    {
+      zone: 5,
+      label: "Repetition",
+      minPaceSecPerMile: null,
+      maxPaceSecPerMile: intervalMin * t,
+    },
+  ];
 }
 
 /**

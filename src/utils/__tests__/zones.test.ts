@@ -5,6 +5,7 @@ import {
   hrZoneIndex,
   maxHRForAge,
   FALLBACK_MAX_HR,
+  paceZoneRanges,
 } from "../zones";
 
 describe("maxHRForAge", () => {
@@ -62,21 +63,21 @@ describe("computePaceZones", () => {
     return Array.from({ length: count }, (_, i) => i * stepSeconds);
   }
 
-  it("classifies threshold-pace samples into the requested interval band", () => {
+  it("classifies exact-threshold samples into the threshold band", () => {
     const zones = computePaceZones(
       [480, 480, 480, 480, 480, 480],
       timestamps(6),
       480
     );
     expect(zones).toHaveLength(5);
-    expect(zones[3].label).toBe("Interval");
-    expect(zones[3].secondsInZone).toBe(300);
-    expect(zones[3].percent).toBeCloseTo(100, 5);
+    expect(zones[2].label).toBe("Threshold");
+    expect(zones[2].secondsInZone).toBe(300);
+    expect(zones[2].percent).toBeCloseTo(100, 5);
   });
 
   it("weights a fast run toward interval and repetition zones", () => {
     const zones = computePaceZones(
-      [470, 470, 430, 430, 430, 430],
+      [460, 460, 430, 430, 430, 430],
       timestamps(6),
       480
     );
@@ -87,7 +88,7 @@ describe("computePaceZones", () => {
 
   it("weights a slow recovery run toward recovery and easy zones", () => {
     const zones = computePaceZones(
-      [650, 650, 580, 580, 580, 580],
+      [650, 650, 550, 550, 550, 550],
       timestamps(6),
       480
     );
@@ -103,9 +104,9 @@ describe("computePaceZones", () => {
       timestamps(5),
       480
     );
-    expect(zones[2].secondsInZone).toBe(60); // 528 / 480 = 1.10
-    expect(zones.slice(0, 2).every((z) => z.secondsInZone === 0)).toBe(true);
-    expect(zones[3].secondsInZone).toBe(0); // final point has no following segment
+    expect(zones[1].secondsInZone).toBe(60); // 528 / 480 = 1.10
+    expect(zones[0].secondsInZone).toBe(0);
+    expect(zones[2].secondsInZone).toBe(0); // final point has no following segment
   });
 
   it("empty or invalid threshold input returns [] safely", () => {
@@ -124,5 +125,31 @@ describe("computePaceZones", () => {
     expect(totalSeconds).toBe(300);
     const totalPct = zones.reduce((a, z) => a + z.percent, 0);
     expect(totalPct).toBeCloseTo(100, 5);
+  });
+});
+
+describe("paceZoneRanges", () => {
+  it("computes threshold-derived pace edges and open-ended zones", () => {
+    const ranges = paceZoneRanges(600);
+    expect(ranges).toHaveLength(5);
+
+    expect(ranges[0]).toMatchObject({
+      zone: 1,
+      label: "Recovery",
+      minPaceSecPerMile: 720,
+      maxPaceSecPerMile: null,
+    });
+    expect(ranges[2]).toMatchObject({
+      zone: 3,
+      label: "Threshold",
+      minPaceSecPerMile: 582,
+      maxPaceSecPerMile: 660,
+    });
+    expect(ranges[4]).toMatchObject({
+      zone: 5,
+      label: "Repetition",
+      minPaceSecPerMile: null,
+      maxPaceSecPerMile: 540,
+    });
   });
 });

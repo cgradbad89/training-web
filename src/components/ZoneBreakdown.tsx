@@ -2,10 +2,13 @@
 
 import React, { useMemo } from "react";
 import Link from "next/link";
+import { InfoTooltip } from "@/components/ui/InfoTooltip";
 import { type RoutePoint } from "@/services/routes";
 import {
   computeHRZones,
   computePaceZones,
+  paceZoneRanges,
+  type PaceZoneRange,
   type ZoneBucket,
 } from "@/utils/zones";
 import { formatDuration, formatPace, mpsToSecPerMile } from "@/utils/pace";
@@ -23,6 +26,21 @@ interface ZoneBreakdownProps {
   points: RoutePoint[];
   maxHR: number;
   thresholdPaceSecPerMile?: number | null;
+}
+
+function formatPaceRange(range: PaceZoneRange): string {
+  if (range.minPaceSecPerMile == null && range.maxPaceSecPerMile != null) {
+    return `faster than ${formatPace(range.maxPaceSecPerMile)} /mi`;
+  }
+  if (range.maxPaceSecPerMile == null && range.minPaceSecPerMile != null) {
+    return `slower than ${formatPace(range.minPaceSecPerMile)} /mi`;
+  }
+  if (range.minPaceSecPerMile != null && range.maxPaceSecPerMile != null) {
+    return `${formatPace(range.minPaceSecPerMile)}–${formatPace(
+      range.maxPaceSecPerMile
+    )} /mi`;
+  }
+  return "—";
 }
 
 export function ZoneBreakdown({
@@ -69,6 +87,14 @@ export function ZoneBreakdown({
     isFinite(thresholdPaceSecPerMile) &&
     thresholdPaceSecPerMile > 0;
 
+  const paceRanges = useMemo(
+    () =>
+      hasThresholdPace
+        ? paceZoneRanges(thresholdPaceSecPerMile)
+        : [],
+    [hasThresholdPace, thresholdPaceSecPerMile]
+  );
+
   const paceZoneBuckets: DisplayZone[] = paceZones.map((zone) => ({
     zone: zone.zone,
     label: `Z${zone.zone} ${zone.label}`,
@@ -96,7 +122,33 @@ export function ZoneBreakdown({
 
       <div>
         <div className="mb-2">
-          <h3 className="text-xs font-semibold text-textPrimary">Pace Zones</h3>
+          <h3 className="text-xs font-semibold text-textPrimary inline-flex items-center">
+            <span>Pace Zones</span>
+            {hasThresholdPace && (
+              <InfoTooltip
+                ariaLabel="About Pace Zones"
+                widthPx={320}
+                content={
+                  <div>
+                    <p className="mb-2">
+                      Based on your threshold pace of{" "}
+                      {formatPace(thresholdPaceSecPerMile)} /mi:
+                    </p>
+                    <ul className="space-y-1">
+                      {paceRanges.map((range) => (
+                        <li key={range.zone} className="flex gap-1">
+                          <span className="font-medium text-textPrimary">
+                            {range.label}:
+                          </span>
+                          <span>{formatPaceRange(range)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                }
+              />
+            )}
+          </h3>
           {hasThresholdPace ? (
             <p className="text-[11px] text-textSecondary mt-1">
               Pace zones based on your threshold pace (
