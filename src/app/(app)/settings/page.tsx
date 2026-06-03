@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Activity, HeartPulse, Save, Sparkles } from "lucide-react";
 
+import { InfoTooltip } from "@/components/ui/InfoTooltip";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { useAuth } from "@/hooks/useAuth";
 import {
@@ -66,6 +67,27 @@ function sourceLabel(source: ThresholdPaceSuggestion["source"]): string {
   return source === "10mi"
     ? "your predicted 10-mile pace"
     : "your predicted half-marathon pace";
+}
+
+function FieldLabel({
+  htmlFor,
+  label,
+  tooltip,
+}: {
+  htmlFor: string;
+  label: string;
+  tooltip: string;
+}) {
+  return (
+    <div className="flex items-center text-sm font-medium text-textPrimary mb-1">
+      <label htmlFor={htmlFor}>{label}</label>
+      <InfoTooltip
+        ariaLabel={`About ${label}`}
+        content={tooltip}
+        widthPx={300}
+      />
+    </div>
+  );
 }
 
 export default function SettingsPage() {
@@ -270,11 +292,14 @@ export default function SettingsPage() {
           subtitle="Used for heart-rate zones on run detail pages."
         />
 
-        <label className="block text-sm font-medium text-textPrimary mb-1">
-          Max heart rate
-        </label>
+        <FieldLabel
+          htmlFor="max-heart-rate"
+          label="Max heart rate"
+          tooltip="Your highest sustainable heart rate, in beats per minute. Used to calculate your heart-rate training zones (Z1-Z5) shown on each run. Tap 'Suggest from my runs' to estimate it from the highest heart rates recorded in your recent runs, or enter it manually if you know it."
+        />
         <div className="flex flex-col sm:flex-row gap-3">
           <input
+            id="max-heart-rate"
             type="number"
             inputMode="numeric"
             min={100}
@@ -322,10 +347,13 @@ export default function SettingsPage() {
           subtitle="Manual threshold pace, with a prediction-based suggestion."
         />
 
-        <label className="block text-sm font-medium text-textPrimary mb-1">
-          Threshold pace
-        </label>
+        <FieldLabel
+          htmlFor="threshold-pace"
+          label="Threshold pace"
+          tooltip="Roughly the fastest pace you could hold for about an hour (near 10-mile to half-marathon race effort). Used as the reference point for pace-based training zones. The suggested value comes from your predicted 10-mile pace; override it if you have a more accurate number."
+        />
         <input
+          id="threshold-pace"
           type="text"
           value={thresholdPace}
           onChange={(e) => setThresholdPace(e.target.value)}
@@ -369,10 +397,13 @@ export default function SettingsPage() {
 
         <div className="grid sm:grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm font-medium text-textPrimary mb-1">
-              Display name
-            </label>
+            <FieldLabel
+              htmlFor="display-name"
+              label="Display name"
+              tooltip="The name shown for your profile within the app."
+            />
             <input
+              id="display-name"
               type="text"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
@@ -381,10 +412,13 @@ export default function SettingsPage() {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-textPrimary mb-1">
-              Default target pace
-            </label>
+            <FieldLabel
+              htmlFor="default-target-pace"
+              label="Default target pace"
+              tooltip="Your default goal pace, used to pre-fill pace targets when planning runs. This is a planning default, not a fitness measurement."
+            />
             <input
+              id="default-target-pace"
               type="text"
               value={defaultTargetPace}
               onChange={(e) => setDefaultTargetPace(e.target.value)}
