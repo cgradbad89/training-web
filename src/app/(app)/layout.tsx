@@ -16,6 +16,7 @@ import {
   TrendingUp,
   Heart,
   BotMessageSquare,
+  Settings,
   MoreHorizontal,
   X,
 } from "lucide-react";
@@ -46,6 +47,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/races",              label: "Races",              icon: Trophy },
   { href: "/shoes",              label: "Shoes",              icon: CircleDot },
   { href: "/coach",              label: "AI Coach",           icon: BotMessageSquare },
+  { href: "/settings",           label: "Settings",           icon: Settings },
 ];
 
 // iOS tab-bar convention: max 5 primary items. Everything else goes in "More".

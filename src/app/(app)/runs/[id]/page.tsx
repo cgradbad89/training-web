@@ -21,6 +21,7 @@ import {
   fetchHealthWorkout,
 } from "@/services/healthWorkouts";
 import { fetchRoutePoints, type RoutePoint } from "@/services/routes";
+import { fetchUserSettings } from "@/services/userSettings";
 import { fetchShoes, fetchManualShoeAssignmentsMap, saveManualAssignments } from "@/services/shoes";
 import { useResolvedShoeAssignment } from "@/hooks/useResolvedShoeAssignment";
 import {
@@ -45,7 +46,7 @@ import {
 } from "@/utils/metrics";
 import { computeMileSplits, type MileSplit } from "@/utils/mileSplits";
 import { computeRunGap, type RunGap } from "@/utils/gradeAdjustedPace";
-import { maxHRForAge } from "@/utils/zones";
+import { FALLBACK_MAX_HR } from "@/utils/zones";
 import {
   collection,
   getDocs,
@@ -93,6 +94,7 @@ export default function RunDetailPage() {
   );
   const [override, setOverride] = useState<WorkoutOverride | null>(null);
   const [perMileHR, setPerMileHR] = useState<Record<number, number>>({});
+  const [profileMaxHR, setProfileMaxHR] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [routeLoading, setRouteLoading] = useState(true);
 
@@ -156,6 +158,7 @@ export default function RunDetailPage() {
     shoes,
     assignments
   );
+  const resolvedMaxHR = profileMaxHR ?? FALLBACK_MAX_HR;
 
   useEffect(() => {
     if (!uid || !workoutId) return;
@@ -166,12 +169,14 @@ export default function RunDetailPage() {
       fetchShoes(uid),
       fetchManualShoeAssignmentsMap(uid),
       fetchOverride(uid, workoutId),
+      fetchUserSettings(uid),
     ])
-      .then(([w, s, a, o]) => {
+      .then(([w, s, a, o, settings]) => {
         setWorkout(w);
         setShoes(s);
         setAssignments(a);
         setOverride(o);
+        setProfileMaxHR(settings?.maxHeartRate ?? null);
 
         if (w?.hasRoute) {
           fetchRoutePoints(uid, workoutId)
@@ -763,7 +768,7 @@ export default function RunDetailPage() {
 
       {/* ── Heart Rate Zone Breakdown ──────────────────────── */}
       {displayWorkout.hasRoute && routePoints.length > 1 && (
-        <ZoneBreakdown points={routePoints} maxHR={maxHRForAge(null)} />
+        <ZoneBreakdown points={routePoints} maxHR={resolvedMaxHR} />
       )}
     </div>
   );

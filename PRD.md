@@ -65,6 +65,7 @@
 | Personal Insights | `/(app)/personal-insights` | Done | Riegel race predictions, Best Efforts standard-distance records, PR table, pace trends, pace-by-distance trend (mileage-range + time-window selector), workout trends, CTL/ATL/TSB charts |
 | Plan Insights | `/(app)/plan-insights` | Done | Running plan adherence, weekly mileage vs plan, predicted vs goal finish time |
 | AI Coach | `/(app)/coach` | Done | Chat with Claude using full training context; streaming response |
+| Settings | `/(app)/settings` | Done | Athlete profile settings: max heart rate, threshold pace, prediction-based threshold suggestion, run-HR max suggestion, and general preferences |
 | API: Coach | `/api/coach` | Done | Server-side Anthropic call; requires Firebase ID token; max_tokens=1024 |
 
 ---
@@ -97,7 +98,7 @@ Daily health snapshots (one doc per calendar date). Fields: `date`, `weight_lbs`
 Special singleton document (not a date-keyed record). Fields: `hourlyAvgBpm` (Record<"0"–"23", number>), `sampleCount`, `updatedAt`, `periodDays`.
 
 ### `users/{uid}/settings/prefs`
-UserSettings singleton. Fields: `uid`, `displayName`, `email`, `weightThresholdGreen` (default 173 lbs), `weightThresholdYellow` (default 180 lbs), `defaultTargetPaceSecPerMile` (default 600 = 10:00/mi), `createdAt`, `updatedAt`.
+UserSettings singleton. Fields: `uid`, `displayName`, `email`, `weightThresholdGreen` (default 173 lbs), `weightThresholdYellow` (default 180 lbs), `defaultTargetPaceSecPerMile` (default 600 = 10:00/mi), `maxHeartRate` (optional user-set bpm), `thresholdPaceSecPerMile` (optional user-set threshold pace), `suggestedMaxHeartRate` (optional last computed bpm suggestion), `suggestedThresholdPaceSecPerMile` (optional prediction-based threshold suggestion), `suggestionsUpdatedAt` (Firestore Timestamp), `createdAt`, `updatedAt`.
 
 ### `users/{uid}/settings/healthGoals`
 HealthGoals singleton. Optional per-metric goal objects: `weight` (WeightGoal with tolerance band), `bmi` (BMIGoal with min/max range), `restingHR`, `steps`, `sleep`, `brushing`, `exerciseMins`, `moveCalories`, `standHours`, `awakeMins`, `avgBrushMins` (all MetricGoal with `warningPct`/`dangerPct`). Field `updatedAt` is a Firestore serverTimestamp.
@@ -185,11 +186,13 @@ Dismissed duplicate workout pairs. Prevents re-surfacing the same duplicate warn
 
 17. **Best Efforts** (`src/utils/bestEfforts.ts`): `computeBestEfforts(points)` computes each run's fastest continuous elapsed-time segment for `1mi`, `5k`, `10k`, `10mi`, and `half`. It builds cumulative 2D haversine distance and elapsed-time arrays from route points, then uses an O(n) two-pointer sliding window per target distance. The right boundary is linearly interpolated when the window overshoots the target distance (`t = t0 + ((D - d0) / (d1 - d0)) * (t1 - t0)`) so results represent exactly the standard distance, not the next sampled route point. Stopped/micro-pause time is intentionally included, matching Strava-style elapsed best efforts; GAP's moving-time stop filtering is not used here. Runs shorter than a target distance store `null` for that key. Results are persisted on `users/{uid}/healthWorkouts/{workoutId}.bestEfforts`; the manual backfill is exposed as `trainingBackfillBestEfforts()` in the browser console and is safe to interrupt/re-run because existing `bestEfforts` docs are skipped before route points are fetched.
 
+18. **Athlete Profile suggestions** (`src/utils/maxHrSuggestion.ts`, `src/utils/thresholdPaceSuggestion.ts`): Max-HR suggestion is an explicit user-triggered calculation, not a page-load hot path. The service reads up to 30 recent GPS run route subcollections, collects per-point `hr`, filters values outside 40–220 bpm, requires at least 50 valid samples, and returns the rounded 99th percentile. Threshold-pace suggestion reuses the existing Riegel model output: predicted 10-mile pace is preferred (`predictSeconds(fitTen, 10.0) / 10`), with predicted half-marathon pace as fallback. Treating 10-mile predicted pace as threshold pace is a domain assumption to validate against user preference.
+
 ---
 
 ## Section 6 — Known Sharp Edges
 
-1. **Per-point HR now exists on the `route` subcollection** (field `hr: number | null`, added iOS commit 84dfbf3). The Run Detail HR-zone breakdown (`ZoneBreakdown`) uses `maxHRForAge(null)` = `FALLBACK_MAX_HR=190` (`src/utils/zones.ts`). **NOTE: this conflicts with `MAX_HR=185` in `src/utils/trainingLoad.ts`** (Section 5 item 4). The two should be unified to 185. Per-mile HR is still sourced separately from the `mileSplits` subcollection (Section 3).
+1. **Per-point HR now exists on the `route` subcollection** (field `hr: number | null`, added iOS commit 84dfbf3). The Run Detail HR-zone breakdown (`ZoneBreakdown`) now reads `users/{uid}/settings/prefs.maxHeartRate` when set and otherwise falls back to `FALLBACK_MAX_HR=185` (`src/utils/zones.ts`). `src/utils/trainingLoad.ts` still uses its own `MAX_HR=185` constant until the broader training-load rewire. Per-mile HR is still sourced separately from the `mileSplits` subcollection (Section 3).
 
 2. **Firestore subcollection security rules**: Every subcollection needs an explicit Firestore security rule. Missing rules produce permission-denied failures, which can be silent or surface as empty data. Always add rules when adding a new subcollection. (`src/lib/firebase.ts` comment)
 
@@ -226,7 +229,7 @@ Dismissed duplicate workout pairs. Prevents re-surfacing the same duplicate warn
 | Feature | Priority | Status | Notes |
 |---|---|---|---|
 | Per-mile HR from iOS | High | Done | Superseded by per-point `hr` on the `route` subcollection (iOS commit 84dfbf3). The `mileSplits` subcollection is still used for per-mile `avgBpm` display in the splits table/charts. |
-| Athlete profile (DOB/maxHR + threshold pace) | High | Backlog | Unlocks real HR zones (replacing the `FALLBACK_MAX_HR=190` / `MAX_HR=185` conflict — see Section 6 #1) and real pace zones (`computePaceZones` exists but is orphaned pending this — Section 6 #14). Also unifies `MAX_HR` between `ZoneBreakdown` and `trainingLoad.ts`. |
+| Athlete profile (maxHR + threshold pace) | High | In Progress | Phase 1 complete: `/settings` stores max HR and threshold pace on `settings/prefs`, computes a user-triggered max-HR suggestion from recent run route HR, derives a threshold suggestion from predicted 10-mile pace, and wires Run Detail HR zones to profile max HR. Phase 2 remains: rewire broader training-load consumers and revive pace zones (`computePaceZones` exists but is orphaned pending this — Section 6 #14). |
 | Training-load trend chart | Medium | Backlog | CTL/ATL/TSB EWMA already implemented in `src/utils/trainingLoadSeries.ts` and shown on Personal Insights. A separate trend chart on Plans & Goals or the calendar page is pending scoping. |
 | Best Efforts | High | Done | `computeBestEfforts`, per-run persistence, manual backfill trigger, run-detail missing-field compute hook, and Personal Insights UI section are implemented. |
 | `/api/coach` rate limiting | High | Backlog | Needs Vercel KV or Upstash Redis — in-memory rate limiting is stateless on Vercel serverless. Auth check added (post pre-prod review). |
