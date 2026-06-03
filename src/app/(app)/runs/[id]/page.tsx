@@ -770,7 +770,11 @@ export default function RunDetailPage() {
 
       {/* ── Heart Rate Zone Breakdown ──────────────────────── */}
       {displayWorkout.hasRoute && routePoints.length > 1 && (
-        <ZoneBreakdown points={routePoints} maxHR={resolvedMaxHR} />
+        <ZoneBreakdown
+          points={routePoints}
+          maxHR={resolvedMaxHR}
+          thresholdPaceSecPerMile={userSettings?.thresholdPaceSecPerMile}
+        />
       )}
     </div>
   );

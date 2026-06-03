@@ -58,21 +58,71 @@ describe("computeHRZones", () => {
 });
 
 describe("computePaceZones", () => {
-  it("splits the run's GAP distribution into 5 run-relative buckets", () => {
-    const samples = Array.from({ length: 10 }, (_, i) => ({
-      gapSecPerMile: 480 + i * 10, // 480..570, spread across quintiles
-      seconds: 30,
-    }));
-    const zones = computePaceZones(samples);
+  function timestamps(count: number, stepSeconds = 60): number[] {
+    return Array.from({ length: count }, (_, i) => i * stepSeconds);
+  }
+
+  it("classifies threshold-pace samples into the requested interval band", () => {
+    const zones = computePaceZones(
+      [480, 480, 480, 480, 480, 480],
+      timestamps(6),
+      480
+    );
     expect(zones).toHaveLength(5);
-    const totalSeconds = zones.reduce((a, z) => a + z.seconds, 0);
-    expect(totalSeconds).toBe(300); // 10 × 30s
-    const totalPct = zones.reduce((a, z) => a + z.pct, 0);
-    expect(totalPct).toBeCloseTo(100, 5);
+    expect(zones[3].label).toBe("Interval");
+    expect(zones[3].secondsInZone).toBe(300);
+    expect(zones[3].percent).toBeCloseTo(100, 5);
   });
 
-  it("empty / no-valid input → []", () => {
-    expect(computePaceZones([])).toEqual([]);
-    expect(computePaceZones([{ gapSecPerMile: 0, seconds: 0 }])).toEqual([]);
+  it("weights a fast run toward interval and repetition zones", () => {
+    const zones = computePaceZones(
+      [470, 470, 430, 430, 430, 430],
+      timestamps(6),
+      480
+    );
+    expect(zones[3].secondsInZone).toBe(120);
+    expect(zones[4].secondsInZone).toBe(180);
+    expect(zones[4].percent).toBeCloseTo(60, 5);
+  });
+
+  it("weights a slow recovery run toward recovery and easy zones", () => {
+    const zones = computePaceZones(
+      [650, 650, 580, 580, 580, 580],
+      timestamps(6),
+      480
+    );
+    expect(zones[0].secondsInZone).toBe(120);
+    expect(zones[1].secondsInZone).toBe(180);
+    expect(zones[0].label).toBe("Recovery");
+    expect(zones[1].label).toBe("Easy");
+  });
+
+  it("excludes null, invalid, and spike pace points", () => {
+    const zones = computePaceZones(
+      [null, 0, 1901, 528, 480],
+      timestamps(5),
+      480
+    );
+    expect(zones[2].secondsInZone).toBe(60); // 528 / 480 = 1.10
+    expect(zones.slice(0, 2).every((z) => z.secondsInZone === 0)).toBe(true);
+    expect(zones[3].secondsInZone).toBe(0); // final point has no following segment
+  });
+
+  it("empty or invalid threshold input returns [] safely", () => {
+    expect(computePaceZones([], [], 480)).toEqual([]);
+    expect(computePaceZones([480, 480], [0, 60], 0)).toEqual([]);
+    expect(computePaceZones([null, 0], [0, 60], 480)).toEqual([]);
+  });
+
+  it("percentages sum to 100 when valid samples exist", () => {
+    const zones = computePaceZones(
+      [650, 580, 528, 480, 430, 430],
+      timestamps(6),
+      480
+    );
+    const totalSeconds = zones.reduce((a, z) => a + z.secondsInZone, 0);
+    expect(totalSeconds).toBe(300);
+    const totalPct = zones.reduce((a, z) => a + z.percent, 0);
+    expect(totalPct).toBeCloseTo(100, 5);
   });
 });

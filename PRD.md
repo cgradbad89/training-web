@@ -53,7 +53,7 @@
 | Login | `/login` | Done | Google sign-in button via Firebase Auth |
 | This Week | `/(app)/dashboard` | Done | Weekly training overview: runs, workout cards, health tiles, training load, plan progress |
 | Runs | `/(app)/runs` | Done | Paginated run list with week navigator, shoe assignment, training load badges |
-| Run Detail | `/(app)/runs/[id]` | Done | GPS map, mile-split charts/table (with GAP column), workout metrics, shoe picker, override controls; Elevation/Pace/HR overlay chart; HR zones; GAP KPI (grade adjusted pace) |
+| Run Detail | `/(app)/runs/[id]` | Done | GPS map, mile-split charts/table (with GAP column), workout metrics, shoe picker, override controls; Elevation/Pace/HR overlay chart; HR zones + threshold-based pace zones; GAP KPI (grade adjusted pace) |
 | Workouts | `/(app)/workouts` | Done | Non-running activity list with duplicate detection and exclusion |
 | Plans | `/(app)/plans` | Done | Running + workout plan management; week calendar; auto-match completion tracking; Goals tab (custom date-range distance/time/count goals with progress rings) |
 | Plan Editor | `/(app)/plans/[id]/edit` | Done | Edit running plan entries (distance, pace, run type, notes) |
@@ -188,6 +188,8 @@ Dismissed duplicate workout pairs. Prevents re-surfacing the same duplicate warn
 
 18. **Athlete Profile suggestions** (`src/utils/maxHrSuggestion.ts`, `src/utils/thresholdPaceSuggestion.ts`): Max-HR suggestion is an explicit user-triggered calculation, not a page-load hot path. The service reads up to 30 recent GPS run route subcollections, collects per-point `hr`, filters values outside 40–220 bpm, requires at least 50 valid samples, and returns the rounded 99th percentile. Threshold-pace suggestion reuses the existing Riegel model output: predicted 10-mile pace is preferred (`predictSeconds(fitTen, 10.0) / 10`), with predicted half-marathon pace as fallback. Treating 10-mile predicted pace as threshold pace is a domain assumption to validate against user preference.
 
+19. **Pace Zones** (`src/utils/zones.ts`, `src/components/ZoneBreakdown.tsx`): Run Detail shows threshold-based pace zones below HR zones when `users/{uid}/settings/prefs.thresholdPaceSecPerMile` is set. The model uses actual per-point pace (not GAP) and attributes elapsed time between consecutive route points to the earlier point's pace. Zone bands use pace/threshold ratio, where ratio > 1 is slower than threshold: Z1 Recovery ≥1.29, Z2 Easy 1.14–1.29, Z3 Threshold 1.06–1.14, Z4 Interval 0.97–1.06, Z5 Repetition <0.97. Invalid/null pace and spikes >1800 sec/mi are excluded. When threshold pace is unset, Run Detail shows a settings prompt instead of a run-relative fake bar.
+
 ---
 
 ## Section 6 — Known Sharp Edges
@@ -220,7 +222,7 @@ Dismissed duplicate workout pairs. Prevents re-surfacing the same duplicate warn
 
 13. **Shoe auto-assignment is purely derived, never persisted**: `evaluateAutoAssignRules()` returns an in-memory map. Both the run listing page and the run detail page resolve a run's shoe via `{ ...autoAssigned, ...manualMap }` (manual wins). The detail page does so through the `useResolvedShoeAssignment` hook (`src/hooks/useResolvedShoeAssignment.ts`). A prior bug had the detail page read only the manual map, so auto-assigned shoes never showed there.
 
-14. **Orphaned pace-zone code**: `computePaceZones` in `src/utils/zones.ts` is exported (and unit-tested) but **not referenced by any UI**; `PACE_ZONE_LABELS` is module-private. Retained for future use pending a threshold-pace config — only HR zones (`computeHRZones` via `ZoneBreakdown`) are shown today.
+14. **Pace zones require threshold pace**: `computePaceZones` is now threshold-based and used by Run Detail's `ZoneBreakdown`. It intentionally does not fall back to GAP quintiles or run-relative buckets; when `thresholdPaceSecPerMile` is unset, the UI shows a link to `/settings` instead of fabricating zones.
 
 ---
 
@@ -229,7 +231,7 @@ Dismissed duplicate workout pairs. Prevents re-surfacing the same duplicate warn
 | Feature | Priority | Status | Notes |
 |---|---|---|---|
 | Per-mile HR from iOS | High | Done | Superseded by per-point `hr` on the `route` subcollection (iOS commit 84dfbf3). The `mileSplits` subcollection is still used for per-mile `avgBpm` display in the splits table/charts. |
-| Athlete profile (maxHR + threshold pace) | High | Done | `/settings` stores max HR and threshold pace on `settings/prefs`, computes a user-triggered max-HR suggestion from recent run route HR, derives a threshold suggestion from predicted 10-mile pace, wires Run Detail HR zones to profile max HR, and rewires Training Load consumers to `resolveMaxHr(settings)` with `DEFAULT_MAX_HR=185` fallback. Deferred: workout-inclusive max-HR suggestion awaits an iOS `maxHeartRate` field; pace-zone UI revival remains separate (`computePaceZones` exists but is orphaned — Section 6 #14). |
+| Athlete profile (maxHR + threshold pace) | High | Done | `/settings` stores max HR and threshold pace on `settings/prefs`, computes a user-triggered max-HR suggestion from recent run route HR, derives a threshold suggestion from predicted 10-mile pace, wires Run Detail HR zones to profile max HR, restores threshold-based Run Detail pace zones, and rewires Training Load consumers to `resolveMaxHr(settings)` with `DEFAULT_MAX_HR=185` fallback. Deferred: workout-inclusive max-HR suggestion awaits an iOS `maxHeartRate` field. |
 | Training-load trend chart | Medium | Backlog | CTL/ATL/TSB EWMA already implemented in `src/utils/trainingLoadSeries.ts` and shown on Personal Insights. A separate trend chart on Plans & Goals or the calendar page is pending scoping. |
 | Best Efforts | High | Done | `computeBestEfforts`, per-run persistence, manual backfill trigger, run-detail missing-field compute hook, and Personal Insights UI section are implemented. |
 | `/api/coach` rate limiting | High | Backlog | Needs Vercel KV or Upstash Redis — in-memory rate limiting is stateless on Vercel serverless. Auth check added (post pre-prod review). |

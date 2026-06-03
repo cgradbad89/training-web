@@ -4,9 +4,8 @@ import { DEFAULT_MAX_HR } from "@/utils/trainingLoad";
  * Heart-rate and pace zone bucketing for a single run.
  *
  * HR zones are the standard 5-zone model as a percentage of max HR
- * (maxHR = 220 − age). Pace zones are RUN-RELATIVE: they are derived from the
- * run's own grade-adjusted-pace distribution (quintiles), NOT from a
- * threshold/race-time configuration, because no such config exists in the app.
+ * (maxHR = 220 − age). Pace zones are based on the user's threshold pace:
+ * the faster the pace relative to threshold, the higher the zone.
  */
 
 export interface ZoneBucket {
@@ -37,13 +36,40 @@ const HR_ZONE_LABELS = [
   "Z5 90–100%",
 ];
 
-const PACE_ZONE_LABELS = [
-  "Z1 Fastest",
-  "Z2 Fast",
-  "Z3 Moderate",
-  "Z4 Easy",
-  "Z5 Slowest",
+export type PaceZoneNumber = 1 | 2 | 3 | 4 | 5;
+
+export interface PaceZoneResult {
+  zone: PaceZoneNumber;
+  label: "Recovery" | "Easy" | "Threshold" | "Interval" | "Repetition";
+  secondsInZone: number;
+  percent: number;
+}
+
+/**
+ * Threshold-pace zone bands expressed as pace / threshold pace.
+ *
+ * ratio > 1 means slower than threshold pace. These are standard-style
+ * threshold-pace approximations for run intensity: easy running is much slower
+ * than threshold, while interval/repetition work is faster than threshold.
+ */
+export const PACE_ZONE_RATIO_BOUNDS = {
+  recoveryMin: 1.29, // Z1 Recovery: ratio >= 1.29
+  easyMin: 1.14, // Z2 Easy: 1.14 <= ratio < 1.29
+  thresholdMin: 1.06, // Z3 Threshold: 1.06 <= ratio < 1.14
+  intervalMin: 0.97, // Z4 Interval: 0.97 <= ratio < 1.06
+  // Z5 Repetition: ratio < 0.97
+} as const;
+
+export const PACE_ZONE_LABELS: PaceZoneResult["label"][] = [
+  "Recovery",
+  "Easy",
+  "Threshold",
+  "Interval",
+  "Repetition",
 ];
+
+/** Actual-pace anomaly filter shared in intent with RunOverlayChart. */
+export const MAX_VALID_PACE_SEC_PER_MILE = 1800;
 
 /** maxHR = 220 − age, or FALLBACK_MAX_HR when age is unavailable. */
 export function maxHRForAge(age: number | null): number {
@@ -92,40 +118,66 @@ export function computeHRZones(
   return finalizeBuckets(secondsByZone, HR_ZONE_LABELS);
 }
 
+function paceZoneForRatio(ratio: number): PaceZoneNumber {
+  if (ratio >= PACE_ZONE_RATIO_BOUNDS.recoveryMin) return 1;
+  if (ratio >= PACE_ZONE_RATIO_BOUNDS.easyMin) return 2;
+  if (ratio >= PACE_ZONE_RATIO_BOUNDS.thresholdMin) return 3;
+  if (ratio >= PACE_ZONE_RATIO_BOUNDS.intervalMin) return 4;
+  return 5;
+}
+
 /**
- * Run-relative pace zones from grade-adjusted-pace samples. Zone boundaries are
- * the 20/40/60/80th percentiles of the run's own GAP values (quintiles), so
- * Z1 = the run's fastest fifth and Z5 = its slowest fifth. Returns [] when no
- * valid samples. NOTE: these are relative to THIS run, not threshold-based.
+ * Threshold-based pace zones from actual per-point pace.
+ *
+ * Each segment's elapsed time is attributed to the earlier point's pace, which
+ * mirrors the HR-zone time-weighting pattern. GAP is intentionally not used:
+ * this is actual pace relative to the user's threshold pace.
  */
 export function computePaceZones(
-  samples: { gapSecPerMile: number; seconds: number }[]
-): ZoneBucket[] {
-  const valid = samples.filter(
-    (s) =>
-      isFinite(s.gapSecPerMile) &&
-      s.gapSecPerMile > 0 &&
-      isFinite(s.seconds) &&
-      s.seconds > 0
-  );
-  if (valid.length === 0) return [];
-
-  const sorted = valid.map((s) => s.gapSecPerMile).sort((a, b) => a - b);
-  const pct = (p: number) =>
-    sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))];
-  const t = [pct(0.2), pct(0.4), pct(0.6), pct(0.8)];
-
-  const zoneOf = (gap: number): number => {
-    if (gap <= t[0]) return 1;
-    if (gap <= t[1]) return 2;
-    if (gap <= t[2]) return 3;
-    if (gap <= t[3]) return 4;
-    return 5;
-  };
+  perPointPaceSecPerMile: (number | null)[],
+  perPointTimestampsSec: number[],
+  thresholdPaceSecPerMile: number
+): PaceZoneResult[] {
+  if (
+    thresholdPaceSecPerMile <= 0 ||
+    !isFinite(thresholdPaceSecPerMile) ||
+    perPointPaceSecPerMile.length < 2 ||
+    perPointTimestampsSec.length < 2
+  ) {
+    return [];
+  }
 
   const secondsByZone = [0, 0, 0, 0, 0];
-  for (const s of valid) {
-    secondsByZone[zoneOf(s.gapSecPerMile) - 1] += s.seconds;
+  const n = Math.min(
+    perPointPaceSecPerMile.length,
+    perPointTimestampsSec.length
+  );
+
+  for (let i = 0; i < n - 1; i++) {
+    const pace = perPointPaceSecPerMile[i];
+    const dt = perPointTimestampsSec[i + 1] - perPointTimestampsSec[i];
+    if (!isFinite(dt) || dt <= 0) continue;
+    if (
+      pace == null ||
+      !isFinite(pace) ||
+      pace <= 0 ||
+      pace > MAX_VALID_PACE_SEC_PER_MILE
+    ) {
+      continue;
+    }
+
+    const ratio = pace / thresholdPaceSecPerMile;
+    const zone = paceZoneForRatio(ratio);
+    secondsByZone[zone - 1] += dt;
   }
-  return finalizeBuckets(secondsByZone, PACE_ZONE_LABELS);
+
+  const total = secondsByZone.reduce((sum, seconds) => sum + seconds, 0);
+  if (total <= 0) return [];
+
+  return secondsByZone.map((secondsInZone, i) => ({
+    zone: (i + 1) as PaceZoneNumber,
+    label: PACE_ZONE_LABELS[i],
+    secondsInZone,
+    percent: (secondsInZone / total) * 100,
+  }));
 }

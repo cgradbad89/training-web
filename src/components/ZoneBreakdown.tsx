@@ -1,9 +1,14 @@
 "use client";
 
 import React, { useMemo } from "react";
+import Link from "next/link";
 import { type RoutePoint } from "@/services/routes";
-import { computeHRZones, type ZoneBucket } from "@/utils/zones";
-import { formatDuration } from "@/utils/pace";
+import {
+  computeHRZones,
+  computePaceZones,
+  type ZoneBucket,
+} from "@/utils/zones";
+import { formatDuration, formatPace, mpsToSecPerMile } from "@/utils/pace";
 
 // Zone palette (token-based; fastest/easiest → green, hardest/slowest → red).
 const ZONE_COLORS = [
@@ -17,9 +22,14 @@ const ZONE_COLORS = [
 interface ZoneBreakdownProps {
   points: RoutePoint[];
   maxHR: number;
+  thresholdPaceSecPerMile?: number | null;
 }
 
-export function ZoneBreakdown({ points, maxHR }: ZoneBreakdownProps) {
+export function ZoneBreakdown({
+  points,
+  maxHR,
+  thresholdPaceSecPerMile,
+}: ZoneBreakdownProps) {
   const hrZones = useMemo(() => {
     const hrSamples: { bpm: number; seconds: number }[] = [];
 
@@ -37,25 +47,91 @@ export function ZoneBreakdown({ points, maxHR }: ZoneBreakdownProps) {
     return computeHRZones(hrSamples, maxHR);
   }, [points, maxHR]);
 
-  if (hrZones.length === 0) return null;
+  const paceZones = useMemo(() => {
+    if (!thresholdPaceSecPerMile || thresholdPaceSecPerMile <= 0) return [];
+
+    const perPointPaceSecPerMile = points.map((point) =>
+      point.speed != null ? mpsToSecPerMile(point.speed) : null
+    );
+    const perPointTimestampsSec = points.map(
+      (point) => new Date(point.timestamp).getTime() / 1000
+    );
+
+    return computePaceZones(
+      perPointPaceSecPerMile,
+      perPointTimestampsSec,
+      thresholdPaceSecPerMile
+    );
+  }, [points, thresholdPaceSecPerMile]);
+
+  const hasThresholdPace =
+    thresholdPaceSecPerMile != null &&
+    isFinite(thresholdPaceSecPerMile) &&
+    thresholdPaceSecPerMile > 0;
+
+  const paceZoneBuckets: DisplayZone[] = paceZones.map((zone) => ({
+    zone: zone.zone,
+    label: `Z${zone.zone} ${zone.label}`,
+    seconds: zone.secondsInZone,
+    pct: zone.percent,
+  }));
 
   return (
     <div className="bg-card rounded-2xl border border-border p-5 space-y-5">
-      <h2 className="text-sm font-semibold text-textPrimary">Heart Rate Zones</h2>
+      <h2 className="text-sm font-semibold text-textPrimary">Zones</h2>
+
+      {hrZones.length > 0 && (
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-xs font-semibold text-textPrimary">
+              Heart Rate Zones
+            </h3>
+            <span className="text-[10px] text-textSecondary">
+              max HR {Math.round(maxHR)} bpm
+            </span>
+          </div>
+          <ZoneBar zones={hrZones} />
+        </div>
+      )}
 
       <div>
-        <div className="flex items-center justify-end mb-2">
-          <span className="text-[10px] text-textSecondary">
-            max HR {Math.round(maxHR)} bpm
-          </span>
+        <div className="mb-2">
+          <h3 className="text-xs font-semibold text-textPrimary">Pace Zones</h3>
+          {hasThresholdPace ? (
+            <p className="text-[11px] text-textSecondary mt-1">
+              Pace zones based on your threshold pace (
+              {formatPace(thresholdPaceSecPerMile)} /mi).
+            </p>
+          ) : (
+            <p className="text-[11px] text-textSecondary mt-1">
+              Set your threshold pace to see pace zones.{" "}
+              <Link href="/settings" className="text-primary hover:underline">
+                Open settings
+              </Link>
+            </p>
+          )}
         </div>
-        <ZoneBar zones={hrZones} />
+
+        {hasThresholdPace && paceZoneBuckets.length > 0 ? (
+          <ZoneBar zones={paceZoneBuckets} />
+        ) : hasThresholdPace ? (
+          <p className="text-sm text-textSecondary">
+            Pace zone data is unavailable for this run.
+          </p>
+        ) : null}
       </div>
     </div>
   );
 }
 
-function ZoneBar({ zones }: { zones: ZoneBucket[] }) {
+interface DisplayZone {
+  zone: number;
+  label: string;
+  seconds: number;
+  pct: number;
+}
+
+function ZoneBar({ zones }: { zones: DisplayZone[] | ZoneBucket[] }) {
   return (
     <div>
       <div className="flex w-full h-7 rounded-lg overflow-hidden">
