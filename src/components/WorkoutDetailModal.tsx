@@ -88,33 +88,43 @@ export function WorkoutDetailModal({
     });
 
   return (
-    <>
-      {/* Backdrop */}
-      <div className="fixed inset-0 bg-black/40 z-40" onClick={onClose} />
-
-      {/* Slide-up drawer / centered modal */}
-      <div className="fixed bottom-0 left-0 right-0 z-50 bg-card rounded-t-2xl shadow-xl max-h-[90vh] overflow-y-auto lg:inset-0 lg:flex lg:items-center lg:justify-center lg:bg-transparent lg:shadow-none">
-        <div className="lg:bg-card lg:rounded-2xl lg:shadow-xl lg:w-full lg:max-w-md lg:max-h-[90vh] lg:overflow-y-auto">
-          {/* Header */}
-          <div className="flex items-center justify-between p-5 border-b border-border sticky top-0 bg-card z-10">
-            <div>
-              <h2 className="text-base font-semibold text-textPrimary">
-                {workout.displayType}
-              </h2>
-              {isExcluded && (
-                <span className="text-xs bg-danger/10 text-danger px-2 py-0.5 rounded-full">
-                  Excluded
-                </span>
-              )}
-            </div>
-            <button
-              onClick={onClose}
-              className="p-1.5 rounded-lg hover:bg-surface text-textSecondary transition-colors"
+    <div
+      className="fixed inset-0 z-[70] flex items-end justify-center bg-black/40 lg:items-center lg:p-4"
+      onClick={onClose}
+    >
+      {/* Slide-up drawer on mobile, centered modal on desktop. */}
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="workout-detail-title"
+        className="flex max-h-[calc(100dvh-1rem)] w-full flex-col overflow-hidden rounded-t-2xl bg-card shadow-xl lg:max-h-[90vh] lg:max-w-md lg:rounded-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex shrink-0 items-center justify-between p-5 border-b border-border bg-card z-10">
+          <div>
+            <h2
+              id="workout-detail-title"
+              className="text-base font-semibold text-textPrimary"
             >
-              <X size={18} />
-            </button>
+              {workout.displayType}
+            </h2>
+            {isExcluded && (
+              <span className="text-xs bg-danger/10 text-danger px-2 py-0.5 rounded-full">
+                Excluded
+              </span>
+            )}
           </div>
+          <button
+            onClick={onClose}
+            aria-label="Close workout details"
+            className="p-1.5 rounded-lg hover:bg-surface text-textSecondary transition-colors"
+          >
+            <X size={18} />
+          </button>
+        </div>
 
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-[calc(1.25rem+env(safe-area-inset-bottom))]">
           {/* Stats grid */}
           <div className="p-5 grid grid-cols-2 gap-4">
             {/* Date & Time */}
@@ -208,7 +218,7 @@ export function WorkoutDetailModal({
           </div>
 
           {/* Exclude / Restore section */}
-          <div className="px-5 pb-5">
+          <div className="px-5">
             {!isExcluded ? (
               <>
                 {!showConfirm ? (
@@ -260,6 +270,6 @@ export function WorkoutDetailModal({
           </div>
         </div>
       </div>
-    </>
+    </div>
   );
 }
