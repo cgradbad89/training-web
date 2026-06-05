@@ -145,7 +145,8 @@ export default function RunDetailPage() {
       return computeRunGap(
         routePoints,
         displayWorkoutForSplits.distanceMiles,
-        displayWorkoutForSplits.durationSeconds
+        displayWorkoutForSplits.durationSeconds,
+        displayWorkoutForSplits.avgPaceSecPerMile
       );
     },
     [routePoints, displayWorkoutForSplits]

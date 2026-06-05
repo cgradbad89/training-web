@@ -24,7 +24,12 @@ export interface GapPoint {
 }
 
 export interface RunGap {
-  /** Distance-weighted run-level GAP, sec/mile (see computeRunGap notes) */
+  /**
+   * Run-level GAP, sec/mile. Computed as the trusted raw pace
+   * (avgPaceSecPerMile) scaled by a unitless grade ratio derived from the
+   * aggregate smoothed elevation profile (see computeRunGap notes). Flat ground
+   * → GAP == raw pace; net-uphill → faster; net-downhill → slower.
+   */
   runGapSecPerMile: number;
   /** One entry per route segment, for the overlay chart */
   perPointGap: GapPoint[];
@@ -146,30 +151,40 @@ export function gradeAdjustmentFactor(gradePercent: number): number {
 /**
  * Compute grade-adjusted pace from GPS route points.
  *
- * Run-level GAP is DISTANCE-WEIGHTED over MOVING segments only:
- * each moving segment's actual time is divided by its grade adjustment factor
- * to get a grade-adjusted time, those are summed, and
- *   runGapSecPerMile = (total moving grade-adjusted time) / (total moving miles).
- * Stopped segments (see MIN_MOVING_* constants) are excluded from both the
- * numerator and the denominator so stop time doesn't bias GAP slow.
+ * Run-level GAP is RATIO-BASED: the grade effect is expressed as a unitless
+ * ratio (grade-adjusted time / actual time) and applied to the trusted raw pace:
+ *   runGapSecPerMile = avgPaceSecPerMile × (1 / aggregateFactor)
+ * The aggregate factor comes from the run's NET smoothed elevation change over
+ * total moving horizontal distance (a single Minetti factor), which both avoids
+ * the Jensen convexity slow-bias of summing per-span 1/factor values and keeps
+ * GAP on the SAME basis as the displayed pace (so flat ground → GAP == pace).
+ * Stopped segments (see MIN_MOVING_* constants) are excluded from the moving
+ * distance/time so stop time doesn't bias the basis pace.
  *
  * @param points              Route points ordered by index, with timestamps + altitude
  * @param totalDistanceMiles  Run-level distance (used as a fallback denominator)
  * @param movingTimeSec       FALLBACK ONLY — used when per-point timestamps are
  *                            degenerate (derived moving time < MIN_DERIVED_MOVING_SEC).
  *                            Normally moving time is derived from the points.
+ * @param avgPaceSecPerMile   Trusted device pace (sec/mi) the grade ratio is
+ *                            applied to. When null/absent, falls back to the
+ *                            GPS-derived raw moving pace as the basis.
  */
 export function computeRunGap(
   points: RoutePoint[],
   totalDistanceMiles: number,
-  movingTimeSec: number
+  movingTimeSec: number,
+  avgPaceSecPerMile?: number | null
 ): RunGap {
-  // Empty / single point → safe: return actual pace if derivable, else 0.
+  // Empty / single point → safe: return the trusted device pace when available,
+  // else the elapsed pace, else 0.
   if (!points || points.length < 2) {
     const pace =
-      totalDistanceMiles > 0 && movingTimeSec > 0
-        ? movingTimeSec / totalDistanceMiles
-        : 0;
+      avgPaceSecPerMile != null && avgPaceSecPerMile > 0
+        ? avgPaceSecPerMile
+        : totalDistanceMiles > 0 && movingTimeSec > 0
+          ? movingTimeSec / totalDistanceMiles
+          : 0;
     return { runGapSecPerMile: pace, perPointGap: [], perMileGapSecPerMile: [] };
   }
 
@@ -277,8 +292,10 @@ export function computeRunGap(
   const mileDist: number[] = [];
 
   let cumMiles = 0; // includes stopped drift, for accurate chart x-axis
-  let totalAdjTimeSec = 0; // moving segments only
   let totalMovingMiles = 0; // moving segments only
+  // Endpoints of the moving portion, for the aggregate net-grade computation.
+  let firstMovingStartPt = -1;
+  let lastMovingEndPt = -1;
 
   for (let i = 1; i < n; i++) {
     const segMiles = segHorizM[i] / METERS_PER_MILE;
@@ -293,11 +310,13 @@ export function computeRunGap(
       continue;
     }
 
+    if (firstMovingStartPt < 0) firstMovingStartPt = i - 1;
+    lastMovingEndPt = i;
+
     const factor = segFactor[i];
     const adjSec = segSec[i] / factor;
 
     totalMovingMiles += segMiles;
-    totalAdjTimeSec += adjSec;
 
     const segGapPace = segMiles > 0 ? adjSec / segMiles : null;
     perPointGap.push({
@@ -312,20 +331,72 @@ export function computeRunGap(
     mileDist[bucket] = (mileDist[bucket] ?? 0) + segMiles;
   }
 
-  // Denominator: total MOVING miles (effort per mile of actual running). The
-  // moving time itself (derivedMovingTimeSec / movingTimeSec fallback) sets the
-  // baseline pace via the moving-only adjusted-time numerator; on flat ground
-  // totalAdjTimeSec ≈ derivedMovingTimeSec, so GAP ≈ actual moving pace.
-  const denomMiles =
-    totalMovingMiles > 0 ? totalMovingMiles : totalDistanceMiles;
-  const runGapSecPerMile = denomMiles > 0 ? totalAdjTimeSec / denomMiles : 0;
+  // ─── Run-level GAP: ratio applied to the trusted raw pace ──────────────────
+  // Root cause #1 (basis mismatch): the displayed "Pace" KPI is the device's
+  // avgPaceSecPerMile, but GAP was previously recomputed on GPS 2D-haversine
+  // distance — which runs shorter than device distance, making GAP read slower
+  // than pace even on flat ground. Instead, express the grade effect as a
+  // UNITLESS ratio (adjusted time / actual time) and apply it to the trusted
+  // device pace. This makes flat-ground GAP == displayed Pace exactly.
+  //
+  // Moving-time basis (GPS-derived; param fallback for degenerate timestamps).
+  const totalMovingTimeSec = useDerivedMovingTime
+    ? derivedMovingTimeSec
+    : movingTimeSec;
+  // GPS raw moving pace — same basis as the per-span series below.
+  const gpsRawPace =
+    totalMovingMiles > 0 ? totalMovingTimeSec / totalMovingMiles : 0;
+
+  // Root causes #2 (Jensen convexity) + #3 (dead-band): derive ONE grade factor
+  // from the AGGREGATE smoothed elevation profile — net smoothed rise over total
+  // moving horizontal distance — rather than summing many per-span 1/factor
+  // values. Summing per-span 1/factor inflates GAP slow on symmetric rolling
+  // terrain (1/factor is convex); a single net-grade factor cannot accumulate
+  // that bias, so symmetric rolling (net ≈ 0) → factor ≈ 1 → no slow-bias. No
+  // dead-band is applied to this aggregate grade, so a gentle sustained net climb
+  // (avg grade < 1.5%) still earns a faster GAP. The ±1.5% dead-band remains in
+  // force above for per-span NOISE rejection feeding the chart/table series only.
+  const totalMovingHorizM = totalMovingMiles * METERS_PER_MILE;
+  const netRiseM =
+    firstMovingStartPt >= 0 && lastMovingEndPt >= 0
+      ? smoothAlt[lastMovingEndPt] - smoothAlt[firstMovingStartPt]
+      : 0;
+  const aggregateGradePercent =
+    totalMovingHorizM > 0 ? (netRiseM / totalMovingHorizM) * 100 : 0;
+  const aggregateFactor = gradeAdjustmentFactor(aggregateGradePercent);
+  // adjusted time / actual time: < 1 net-uphill (faster GAP), > 1 net-downhill.
+  const gradeRatio = aggregateFactor > 0 ? 1 / aggregateFactor : 1;
+
+  // Trusted base pace: device avgPaceSecPerMile when available, else GPS raw.
+  const basePace =
+    avgPaceSecPerMile != null && avgPaceSecPerMile > 0
+      ? avgPaceSecPerMile
+      : gpsRawPace;
+
+  const runGapSecPerMile = basePace > 0 ? basePace * gradeRatio : 0;
+
+  // Align the GPS-derived per-point / per-mile series onto the trusted base-pace
+  // basis so they read consistently with the KPI (same root-cause-#1 correction).
+  const baseCorrection = gpsRawPace > 0 ? basePace / gpsRawPace : 1;
+
+  const perPointGapScaled: GapPoint[] = perPointGap.map((p) => ({
+    distanceMiles: p.distanceMiles,
+    gradeAdjPaceSecPerMile:
+      p.gradeAdjPaceSecPerMile != null
+        ? p.gradeAdjPaceSecPerMile * baseCorrection
+        : null,
+  }));
 
   const perMileGapSecPerMile: number[] = [];
   for (let b = 0; b < mileDist.length; b++) {
     const d = mileDist[b] ?? 0;
     const t = mileAdjTime[b] ?? 0;
-    perMileGapSecPerMile[b] = d > 0 ? t / d : 0;
+    perMileGapSecPerMile[b] = d > 0 ? (t / d) * baseCorrection : 0;
   }
 
-  return { runGapSecPerMile, perPointGap, perMileGapSecPerMile };
+  return {
+    runGapSecPerMile,
+    perPointGap: perPointGapScaled,
+    perMileGapSecPerMile,
+  };
 }

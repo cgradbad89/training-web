@@ -301,3 +301,70 @@ describe("computeRunGap", () => {
     expect(gap.perPointGap).toEqual([]);
   });
 });
+
+// ─── Ratio-based GAP (root causes #1/#2/#3) ─────────────────────────────────
+// GAP is now the TRUSTED raw pace (avgPaceSecPerMile) scaled by a unitless grade
+// ratio from the aggregate smoothed elevation profile. Flat → identity; net-up →
+// faster; net-down → slower; symmetric rolling → no slow-bias; gentle sub-1.5%
+// sustained climb still earns credit (dead-band no longer eats the aggregate).
+describe("computeRunGap — ratio applied to trusted raw pace", () => {
+  const AVG_PACE = 588; // 9:48/mi — arbitrary trusted device pace
+
+  // Long enough that 11-pt smoothing preserves interior grade; ~8.5 m segs.
+  function makeAlts(fn: (i: number) => number, count = 400): number[] {
+    return Array.from({ length: count }, (_, i) => fn(i));
+  }
+
+  it("flat run → GAP == avgPaceSecPerMile exactly (identity regression guard)", () => {
+    const pts = buildNoisyRoute(400, () => 100, 0); // perfectly flat, no noise
+    const gap = computeRunGap(pts, 0, 0, AVG_PACE);
+    expect(gap.runGapSecPerMile).toBeCloseTo(AVG_PACE, 6);
+  });
+
+  it("net-uphill run → GAP < avgPaceSecPerMile (faster)", () => {
+    // +0.25 m per ~8.5 m seg ≈ +3% sustained climb.
+    const pts = buildNoisyRoute(400, (i) => 100 + i * 0.25, 0);
+    const gap = computeRunGap(pts, 0, 0, AVG_PACE);
+    expect(gap.runGapSecPerMile).toBeLessThan(AVG_PACE);
+  });
+
+  it("net-downhill run → GAP > avgPaceSecPerMile (slower)", () => {
+    const pts = buildNoisyRoute(400, (i) => 100 - i * 0.25, 0);
+    const gap = computeRunGap(pts, 0, 0, AVG_PACE);
+    expect(gap.runGapSecPerMile).toBeGreaterThan(AVG_PACE);
+  });
+
+  it("symmetric rolling grades → no slow-bias vs flat (Jensen convexity fixed)", () => {
+    // Up to +100 m then back to 0 over the route → net 0, but each span's grade
+    // far exceeds the dead-band. Old per-span 1/factor summation biased slow.
+    const half = 200;
+    const rolling = makeAlts((i) =>
+      i <= half ? 100 + i * 0.5 : 100 + (400 - i) * 0.5
+    );
+    const pts = buildNoisyRoute(400, (i) => rolling[i], 0);
+    const gap = computeRunGap(pts, 0, 0, AVG_PACE);
+    // Net elevation ≈ 0 → ratio ≈ 1 → GAP ≈ avg pace, NOT inflated slower.
+    const errPct = Math.abs(gap.runGapSecPerMile - AVG_PACE) / AVG_PACE;
+    expect(errPct).toBeLessThan(0.01); // within 1% of flat — no Jensen slow-bias
+    expect(gap.runGapSecPerMile).toBeLessThanOrEqual(AVG_PACE + 1);
+  });
+
+  it("gentle sustained sub-1.5% climb → still earns a faster GAP (dead-band re-scope)", () => {
+    // ~0.4% average grade: every per-span grade sits BELOW the ±1.5% dead-band,
+    // so the old logic would zero it and return GAP == pace. The aggregate net
+    // grade (no dead-band) must still credit the climb → GAP faster.
+    const pts = buildNoisyRoute(400, (i) => 100 + i * 0.035, 0);
+    const gap = computeRunGap(pts, 0, 0, AVG_PACE);
+    expect(gap.runGapSecPerMile).toBeLessThan(AVG_PACE);
+    // But only slightly faster — a gentle grade, not a wall.
+    expect(gap.runGapSecPerMile).toBeGreaterThan(AVG_PACE * 0.9);
+  });
+
+  it("omitting avgPaceSecPerMile → falls back to GPS raw-pace basis (back-compat)", () => {
+    const pts = buildNoisyRoute(400, () => 100, 0);
+    const withArg = computeRunGap(pts, 0, 0);
+    const actual = actualPaceSecPerMile(pts);
+    // No trusted pace → basis is GPS raw moving pace; flat → GAP ≈ actual.
+    expect(withArg.runGapSecPerMile).toBeCloseTo(actual, 1);
+  });
+});
