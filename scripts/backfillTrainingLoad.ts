@@ -1,6 +1,16 @@
 /**
- * Admin backfill: compute & STORE trainingLoadV2 + trainingLoadMethod for the
- * user's runs over the last 12 months.
+ * Admin backfill: compute & STORE trainingLoadV2 + trainingLoadMethod for ALL
+ * of the user's HR-bearing workouts over the last 12 months (not runs-only).
+ *
+ * Selection (widened in this follow-up): every healthWorkouts doc with
+ * startDate within the last 365 days that has a usable HR basis —
+ * hasRoute || hasHRStream || a finite positive avgHeartRate. Firestore can't
+ * cleanly OR those three predicates with the date inequality, so the query is
+ * the date window only (startDate >= cutoff, newest-first) and the OR is applied
+ * in memory; docs with NO basis are counted as skipped(no-HR-basis) and never
+ * compute (they could only yield a null load). The per-workout 3-tier compute
+ * (route → hrStream → avg-HR) is UNCHANGED — selection decides which workouts
+ * are iterated, the chain decides each workout's method.
  *
  * KEPT script. There is no TS runner (tsx/ts-node) in this repo, so it is driven
  * by an env-gated Vitest entry (scripts/backfillTrainingLoad.test.ts) which
@@ -47,10 +57,20 @@ export interface BackfillSummary {
   usedRestingHrDefault: boolean;
   maxHr: number;
   restingHr: number;
+  /** Total docs returned by the 365-day date-window query (pre HR-basis filter). */
+  selectedInWindow: number;
+  /** Docs with a usable HR basis — the ones actually computed. */
   selected: number;
+  /** Excluded pre-compute: no route, no hrStream, no finite positive avgHR. */
+  skippedNoHrBasis: number;
   processed: number;
-  streamed: number;
+  /** method "streamed" sourced from the route subcollection. */
+  streamedRoute: number;
+  /** method "streamed" sourced from the hrStream subcollection. */
+  streamedHrStream: number;
+  /** method "avg-hr-fallback" (incl. route/stream that fell back on low coverage). */
   fallback: number;
+  /** Computed but load was null (not written; UI falls back to "—"). */
   skipped: number;
   written: number;
   committed: boolean;
@@ -103,8 +123,11 @@ function fmtDate(d: Date): string {
 interface Row {
   workoutId: string;
   date: string;
+  type: string;
   distanceMiles: number;
   avgHR: number | null;
+  /** Which tier's data fed the compute (independent of the resulting method). */
+  source: "route" | "hrStream" | "avg-hr";
   method: "streamed" | "avg-hr-fallback";
   hrCoverage: number;
   load: number | null;
@@ -137,19 +160,21 @@ export async function runBackfillTrainingLoad(
     );
   }
 
-  // Select run-like workouts in the last 12 months.
+  // Select ALL workouts in the last 12 months by the date window only; the
+  // hasRoute || hasHRStream || finite-avgHR basis filter is applied in memory
+  // below (Firestore can't OR those field predicates with the date inequality).
   const cutoffMs = nowMs - TWELVE_MONTHS_MS;
   const cutoffTs = admin.firestore.Timestamp.fromMillis(cutoffMs);
   const snap = await db
     .collection(`users/${uid}/healthWorkouts`)
-    .where("isRunLike", "==", true)
     .where("startDate", ">=", cutoffTs)
     .orderBy("startDate", "desc")
     .get();
 
   console.log(
     `[backfill] uid=${uid} mode=${commit ? "COMMIT" : "DRY-RUN"} ` +
-      `maxHr=${maxHr} restingHr=${restingHr} selected=${snap.size} (last 12mo)`
+      `maxHr=${maxHr} restingHr=${restingHr} selectedInWindow=${snap.size} ` +
+      `(last 12mo, all types — HR-basis filtered in memory)`
   );
 
   const rows: Row[] = [];
@@ -158,9 +183,12 @@ export async function runBackfillTrainingLoad(
     usedRestingHrDefault,
     maxHr,
     restingHr,
-    selected: snap.size,
+    selectedInWindow: snap.size,
+    selected: 0,
+    skippedNoHrBasis: 0,
     processed: 0,
-    streamed: 0,
+    streamedRoute: 0,
+    streamedHrStream: 0,
     fallback: 0,
     skipped: 0,
     written: 0,
@@ -179,13 +207,28 @@ export async function runBackfillTrainingLoad(
     const hasRoute = (data.hasRoute as boolean) ?? false;
     const hasHRStream = (data.hasHRStream as boolean) ?? false;
     const distanceMiles = (data.distanceMiles as number) ?? 0;
+    const displayType = (data.displayType as string) ?? (activityType ?? "Workout");
     const startDate =
       data.startDate && typeof (data.startDate as { toDate?: () => Date }).toDate === "function"
         ? (data.startDate as { toDate: () => Date }).toDate()
         : new Date(0);
 
+    // HR-basis filter (in-memory OR): only compute workouts that can yield a
+    // non-null load. No route, no stream, and no finite positive avgHR ⇒ the
+    // 3-tier chain could only return null, so exclude pre-compute.
+    const hasFiniteAvgHr =
+      typeof avgHeartRate === "number" &&
+      Number.isFinite(avgHeartRate) &&
+      avgHeartRate > 0;
+    if (!hasRoute && !hasHRStream && !hasFiniteAvgHr) {
+      summary.skippedNoHrBasis += 1;
+      continue;
+    }
+    summary.selected += 1;
+
     let load: number | null;
     let method: "streamed" | "avg-hr-fallback";
+    let source: "route" | "hrStream" | "avg-hr";
     let hrCoverage = 0;
 
     // 3-tier method-selection — matches computeAndStoreTrainingLoad:
@@ -216,6 +259,7 @@ export async function runBackfillTrainingLoad(
       load = result.load;
       method = result.method;
       hrCoverage = result.hrCoverage;
+      source = "route";
     } else if (hasHRStream) {
       // Read users/{uid}/healthWorkouts/{id}/hrStream ascending by chunkIndex;
       // concatenate each doc's samples ({ t: Timestamp, hr: Int }) in order.
@@ -248,6 +292,7 @@ export async function runBackfillTrainingLoad(
         load = result.load;
         method = result.method;
         hrCoverage = result.hrCoverage;
+        source = "hrStream";
       } else {
         // Empty/too-sparse stream despite the flag → avg-HR fallback.
         load = computeTrainingLoadV2(
@@ -258,6 +303,7 @@ export async function runBackfillTrainingLoad(
           activityType
         );
         method = "avg-hr-fallback";
+        source = "avg-hr";
       }
     } else {
       load = computeTrainingLoadV2(
@@ -268,13 +314,16 @@ export async function runBackfillTrainingLoad(
         activityType
       );
       method = "avg-hr-fallback";
+      source = "avg-hr";
     }
 
     rows.push({
       workoutId: docSnap.id,
       date: fmtDate(startDate),
+      type: displayType,
       distanceMiles: Math.round(distanceMiles * 100) / 100,
       avgHR: avgHeartRate,
+      source,
       method,
       hrCoverage: Math.round(hrCoverage * 100) / 100,
       load,
@@ -286,8 +335,12 @@ export async function runBackfillTrainingLoad(
       summary.skipped += 1;
       continue;
     }
-    if (method === "streamed") summary.streamed += 1;
-    else summary.fallback += 1;
+    if (method === "streamed") {
+      if (source === "route") summary.streamedRoute += 1;
+      else summary.streamedHrStream += 1;
+    } else {
+      summary.fallback += 1;
+    }
 
     writes.push({
       ref: docSnap.ref,
@@ -295,19 +348,23 @@ export async function runBackfillTrainingLoad(
     });
   }
 
-  // Per-run table (dry-run shows the full picture; commit shows it too).
+  // Per-workout table (dry-run shows the full picture; commit shows it too).
   console.log(
-    `[backfill] per-run (${rows.length} rows): date | dist | avgHR | method | cov | load`
+    `[backfill] per-workout (${rows.length} rows): date | type | dist | avgHR | source | method | cov | load`
   );
   console.table(rows);
 
-  const weeklyTotal = rows
+  const totalLoad = rows
     .map((r) => r.load)
     .filter((v): v is number => v != null)
     .reduce((a, b) => a + b, 0);
   console.log(
-    `[backfill] totals: streamed=${summary.streamed} fallback=${summary.fallback} ` +
-      `skipped(null)=${summary.skipped} | sum(load)=${weeklyTotal}`
+    `[backfill] method breakdown (of ${summary.selectedInWindow} in window): ` +
+      `streamed(route)=${summary.streamedRoute} ` +
+      `streamed(hrStream)=${summary.streamedHrStream} ` +
+      `avg-hr-fallback=${summary.fallback} ` +
+      `skipped(no-HR-basis)=${summary.skippedNoHrBasis} ` +
+      `| skipped(null-load)=${summary.skipped} | sum(load)=${totalLoad}`
   );
 
   if (commit && writes.length > 0) {
