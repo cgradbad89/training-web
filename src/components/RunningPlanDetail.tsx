@@ -480,6 +480,22 @@ export function RunningPlanDetail({
 
   // ── Render ────────────────────────────────────────────────────────────────
 
+  const isCompleted = plan.status === "completed";
+
+  const planEditor = (
+    <PlanEditor
+      plan={plan}
+      entriesForWeek={entriesForWeek}
+      config={editorConfig}
+      isEditMode={isEditMode}
+      onToggleEdit={() => setIsEditMode((v) => !v)}
+      onUpdateWeek={handleUpdateWeek}
+      onMarkDirty={() => setHasUnsavedChanges(true)}
+      onClearDirty={() => setHasUnsavedChanges(false)}
+      initialWeekIndex={initialWeekIndex}
+    />
+  );
+
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
@@ -594,20 +610,18 @@ export function RunningPlanDetail({
         </div>
       </div>
 
-      {/* Completion summary — renders only when status === "completed". */}
-      <PlanCompletionSummary plan={plan} activities={activities} />
-
-      <PlanEditor
-        plan={plan}
-        entriesForWeek={entriesForWeek}
-        config={editorConfig}
-        isEditMode={isEditMode}
-        onToggleEdit={() => setIsEditMode((v) => !v)}
-        onUpdateWeek={handleUpdateWeek}
-        onMarkDirty={() => setHasUnsavedChanges(true)}
-        onClearDirty={() => setHasUnsavedChanges(false)}
-        initialWeekIndex={initialWeekIndex}
-      />
+      {/* When completed, the summary + editor share ONE scroll region so the
+          summary renders at full height and all of it is reachable (the editor's
+          own internal week-list scroll goes inert here). For active/draft plans
+          (no summary) the editor keeps its own flex-1 scroll, unchanged. */}
+      {isCompleted ? (
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          <PlanCompletionSummary plan={plan} activities={activities} />
+          {planEditor}
+        </div>
+      ) : (
+        planEditor
+      )}
 
       {/* ── Dialogs ── */}
 

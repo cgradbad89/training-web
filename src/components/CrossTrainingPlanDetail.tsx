@@ -844,6 +844,21 @@ export function CrossTrainingPlanDetail({
 
   // ── Render ──────────────────────────────────────────────────────────────
 
+  const isCompleted = plan.status === "completed";
+
+  const planEditor = (
+    <PlanEditor
+      plan={plan}
+      entriesForWeek={entriesForWeek}
+      config={editorConfig}
+      isEditMode={isEditMode}
+      onToggleEdit={() => setIsEditMode((v) => !v)}
+      onUpdateWeek={handleUpdateWeek}
+      onMarkDirty={() => setHasUnsavedChanges(true)}
+      onClearDirty={() => setHasUnsavedChanges(false)}
+    />
+  );
+
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
@@ -945,19 +960,18 @@ export function CrossTrainingPlanDetail({
         </div>
       </div>
 
-      {/* Completion summary — renders only when status === "completed". */}
-      <PlanCompletionSummary plan={plan} />
-
-      <PlanEditor
-        plan={plan}
-        entriesForWeek={entriesForWeek}
-        config={editorConfig}
-        isEditMode={isEditMode}
-        onToggleEdit={() => setIsEditMode((v) => !v)}
-        onUpdateWeek={handleUpdateWeek}
-        onMarkDirty={() => setHasUnsavedChanges(true)}
-        onClearDirty={() => setHasUnsavedChanges(false)}
-      />
+      {/* When completed, the summary + editor share ONE scroll region so the
+          summary renders at full height and all of it is reachable (the editor's
+          own internal scroll goes inert here). For active/draft plans (no
+          summary) the editor keeps its own flex-1 scroll, unchanged. */}
+      {isCompleted ? (
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          <PlanCompletionSummary plan={plan} />
+          {planEditor}
+        </div>
+      ) : (
+        planEditor
+      )}
 
       {/* ── Dialogs ── */}
 
