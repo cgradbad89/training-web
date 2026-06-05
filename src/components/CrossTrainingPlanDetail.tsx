@@ -49,6 +49,7 @@ import {
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { deepCopyWorkoutEntry } from "@/utils/planCopy";
 import { formatCompletedAt } from "@/utils/planFormat";
+import { PlanCompletionSummary } from "@/components/PlanCompletionSummary";
 import { PlanEditor, type PlanEditorConfig } from "@/components/PlanEditor";
 import {
   makeNewWorkoutEntry,
@@ -943,6 +944,9 @@ export function CrossTrainingPlanDetail({
           </button>
         </div>
       </div>
+
+      {/* Completion summary — renders only when status === "completed". */}
+      <PlanCompletionSummary plan={plan} />
 
       <PlanEditor
         plan={plan}

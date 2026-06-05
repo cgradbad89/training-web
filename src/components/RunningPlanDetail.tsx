@@ -37,6 +37,7 @@ import { formatPace, parsePaceString } from "@/utils/pace";
 import { deepCopyRunEntry } from "@/utils/planCopy";
 import { formatCompletedAt } from "@/utils/planFormat";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { PlanCompletionSummary } from "@/components/PlanCompletionSummary";
 import { PlanEditor, type PlanEditorConfig } from "@/components/PlanEditor";
 import {
   makeNewRunEntry,
@@ -592,6 +593,9 @@ export function RunningPlanDetail({
           </button>
         </div>
       </div>
+
+      {/* Completion summary — renders only when status === "completed". */}
+      <PlanCompletionSummary plan={plan} activities={activities} />
 
       <PlanEditor
         plan={plan}
