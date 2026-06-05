@@ -35,6 +35,13 @@ export interface RunGap {
   perPointGap: GapPoint[];
   /** Per-mile GAP, sec/mile; index = mile-1, aligned to computeMileSplits buckets */
   perMileGapSecPerMile: number[];
+  /**
+   * Run NET elevation change in meters (end − start), endpoint-averaged and
+   * smoothed — the same value that drives the aggregate grade for GAP. Negative
+   * = net descent. null when no usable route geometry (e.g. < 2 points). This
+   * is NET, distinct from the device's TOTAL cumulative `elevationGainM`.
+   */
+  netRiseM: number | null;
 }
 
 // ─── Constants & guards ───────────────────────────────────────────────────────
@@ -73,6 +80,21 @@ const GRADE_BASELINE_METERS = 25;
 const GRADE_DEADBAND_PERCENT = 1.5;
 /** Grade is clamped to ±30% before adjustment to avoid altitude-noise blowups. */
 const MAX_GRADE_PERCENT = 30;
+/**
+ * Number of moving points averaged at each end to derive the run's NET rise.
+ * Averaging the first/last N smoothed altitudes (rather than a single endpoint)
+ * keeps one noisy first/last GPS sample from tilting the whole-run net grade.
+ */
+const NET_GRADE_ENDPOINT_SAMPLES = 5;
+/**
+ * Dead-band on the AGGREGATE net grade (separate from the per-span
+ * GRADE_DEADBAND_PERCENT). Snaps pure endpoint-noise jitter to flat
+ * (→ aggregateFactor 1.0 → GAP == pace) WITHOUT erasing real shallow descents:
+ * measured real-vs-noise endpoint variance is ≈ 0.02%, while genuine net grades
+ * (e.g. the −0.229% reference run) sit well above this, so 0.10% lands safely
+ * between noise and signal. TUNABLE — product owner may adjust.
+ */
+const AGGREGATE_GRADE_DEADBAND_PERCENT = 0.1;
 
 /**
  * Stop detection. The run KPI must reflect effort per mile of ACTUAL running,
@@ -185,7 +207,12 @@ export function computeRunGap(
         : totalDistanceMiles > 0 && movingTimeSec > 0
           ? movingTimeSec / totalDistanceMiles
           : 0;
-    return { runGapSecPerMile: pace, perPointGap: [], perMileGapSecPerMile: [] };
+    return {
+      runGapSecPerMile: pace,
+      perPointGap: [],
+      perMileGapSecPerMile: [],
+      netRiseM: null,
+    };
   }
 
   const n = points.length;
@@ -352,17 +379,43 @@ export function computeRunGap(
   // moving horizontal distance — rather than summing many per-span 1/factor
   // values. Summing per-span 1/factor inflates GAP slow on symmetric rolling
   // terrain (1/factor is convex); a single net-grade factor cannot accumulate
-  // that bias, so symmetric rolling (net ≈ 0) → factor ≈ 1 → no slow-bias. No
-  // dead-band is applied to this aggregate grade, so a gentle sustained net climb
-  // (avg grade < 1.5%) still earns a faster GAP. The ±1.5% dead-band remains in
-  // force above for per-span NOISE rejection feeding the chart/table series only.
+  // that bias, so symmetric rolling (net ≈ 0) → factor ≈ 1 → no slow-bias. The
+  // per-span ±1.5% dead-band above is for NOISE rejection feeding the chart/table
+  // series only; the aggregate grade gets its own tight dead-band below.
   const totalMovingHorizM = totalMovingMiles * METERS_PER_MILE;
-  const netRiseM =
-    firstMovingStartPt >= 0 && lastMovingEndPt >= 0
-      ? smoothAlt[lastMovingEndPt] - smoothAlt[firstMovingStartPt]
+
+  // Endpoint-averaged net rise (Phase 1): average the first/last
+  // NET_GRADE_ENDPOINT_SAMPLES MOVING points' smoothed altitudes so one noisy
+  // first/last GPS sample can't tilt the whole-run net grade. Small runs
+  // (< 2× the sample count of moving points) fall back to single endpoints.
+  let netRiseM: number | null = null;
+  if (firstMovingStartPt >= 0 && lastMovingEndPt >= 0) {
+    const movingSpan = lastMovingEndPt - firstMovingStartPt + 1;
+    if (movingSpan >= 2 * NET_GRADE_ENDPOINT_SAMPLES) {
+      let startSum = 0;
+      let endSum = 0;
+      for (let k = 0; k < NET_GRADE_ENDPOINT_SAMPLES; k++) {
+        startSum += smoothAlt[firstMovingStartPt + k];
+        endSum += smoothAlt[lastMovingEndPt - k];
+      }
+      const startAlt = startSum / NET_GRADE_ENDPOINT_SAMPLES;
+      const endAlt = endSum / NET_GRADE_ENDPOINT_SAMPLES;
+      netRiseM = endAlt - startAlt;
+    } else {
+      // Small-run guard: single-endpoint net.
+      netRiseM = smoothAlt[lastMovingEndPt] - smoothAlt[firstMovingStartPt];
+    }
+  }
+
+  let aggregateGradePercent =
+    totalMovingHorizM > 0 && netRiseM != null
+      ? (netRiseM / totalMovingHorizM) * 100
       : 0;
-  const aggregateGradePercent =
-    totalMovingHorizM > 0 ? (netRiseM / totalMovingHorizM) * 100 : 0;
+  // Aggregate-grade dead-band (Phase 2): snap pure endpoint-noise jitter to flat
+  // so true loops read GAP == pace, without erasing real shallow descents.
+  if (Math.abs(aggregateGradePercent) <= AGGREGATE_GRADE_DEADBAND_PERCENT) {
+    aggregateGradePercent = 0;
+  }
   const aggregateFactor = gradeAdjustmentFactor(aggregateGradePercent);
   // adjusted time / actual time: < 1 net-uphill (faster GAP), > 1 net-downhill.
   const gradeRatio = aggregateFactor > 0 ? 1 / aggregateFactor : 1;
@@ -398,5 +451,6 @@ export function computeRunGap(
     runGapSecPerMile,
     perPointGap: perPointGapScaled,
     perMileGapSecPerMile,
+    netRiseM,
   };
 }

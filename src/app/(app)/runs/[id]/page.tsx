@@ -140,7 +140,12 @@ export default function RunDetailPage() {
   const runGap = useMemo<RunGap>(
     () => {
       if (routePoints.length < 2 || !displayWorkoutForSplits) {
-        return { runGapSecPerMile: 0, perPointGap: [], perMileGapSecPerMile: [] };
+        return {
+          runGapSecPerMile: 0,
+          perPointGap: [],
+          perMileGapSecPerMile: [],
+          netRiseM: null,
+        };
       }
       return computeRunGap(
         routePoints,
@@ -151,6 +156,18 @@ export default function RunDetailPage() {
     },
     [routePoints, displayWorkoutForSplits]
   );
+
+  // NET elevation (ft) for the elevation KPI's secondary line. Sourced from the
+  // GAP computation so Total (cumulative ascent) and Net stay consistent.
+  // Negative = net descent. Hidden when unavailable (no NaN).
+  const netRiseFt =
+    runGap.netRiseM != null ? Math.round(runGap.netRiseM * 3.28084) : null;
+  const netElevationLabel =
+    netRiseFt != null
+      ? `Net ${netRiseFt > 0 ? "+" : netRiseFt < 0 ? "−" : ""}${Math.abs(
+          netRiseFt
+        )} ft`
+      : undefined;
 
   // Resolve the shoe the SAME way the listing page does: auto-assign rules
   // overlaid with the manual map (manual wins, incl. explicit "no shoe").
@@ -682,13 +699,14 @@ export default function RunDetailPage() {
         {/* Second row */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-5 mt-5 pt-5 border-t border-border">
           <StatBlock
-            label="Elevation Gain"
+            label="Total Ascent"
             value={
               displayWorkout.elevationGainM != null
                 ? Math.round(displayWorkout.elevationGainM * 3.28084).toString()
                 : "\u2014"
             }
             unit={displayWorkout.elevationGainM != null ? "ft" : undefined}
+            sublabel={netElevationLabel}
           />
           <StatBlock
             label="Date & Time"

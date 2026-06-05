@@ -368,3 +368,94 @@ describe("computeRunGap — ratio applied to trusted raw pace", () => {
     expect(withArg.runGapSecPerMile).toBeCloseTo(actual, 1);
   });
 });
+
+// ─── Phase 1: robust net-grade endpoints ────────────────────────────────────
+// A single noisy altitude at the first/last MOVING point must not tilt the
+// whole-run net grade, because the net is averaged over the first/last 5 points.
+describe("computeRunGap — endpoint-averaged net grade (Phase 1)", () => {
+  const AVG_PACE = 588;
+
+  /** Linear-ramp route: ~8.5 m segs, controllable per-segment slope (m). */
+  function buildRamp(
+    count: number,
+    startAlt: number,
+    slopePerSeg: number
+  ): RoutePoint[] {
+    return Array.from({ length: count }, (_, i) => ({
+      index: i,
+      lat: 40,
+      lng: -100 + i * 0.0001,
+      altitude: startAlt + i * slopePerSeg,
+      timestamp: new Date(BASE_MS + i * 3 * 1000).toISOString(),
+      speed: null,
+      hr: null,
+    }));
+  }
+
+  it("outlier at the FIRST moving point barely moves GAP (vs clean)", () => {
+    const clean = buildRamp(800, 100, 0.2); // sustained ~2.35% climb
+    const outlier = clean.map((p, i) =>
+      i === 0 ? { ...p, altitude: p.altitude + 25 } : p
+    );
+    const gClean = computeRunGap(clean, 0, 0, AVG_PACE);
+    const gOut = computeRunGap(outlier, 0, 0, AVG_PACE);
+    expect(Math.abs(gClean.runGapSecPerMile - gOut.runGapSecPerMile)).toBeLessThan(2);
+  });
+
+  it("outlier at the LAST moving point barely moves GAP (vs clean)", () => {
+    const clean = buildRamp(800, 100, 0.2);
+    const outlier = clean.map((p, i) =>
+      i === clean.length - 1 ? { ...p, altitude: p.altitude - 25 } : p
+    );
+    const gClean = computeRunGap(clean, 0, 0, AVG_PACE);
+    const gOut = computeRunGap(outlier, 0, 0, AVG_PACE);
+    expect(Math.abs(gClean.runGapSecPerMile - gOut.runGapSecPerMile)).toBeLessThan(2);
+  });
+
+  it("exposes netRiseM (negative for net descent)", () => {
+    const down = buildRamp(800, 200, -0.1);
+    const g = computeRunGap(down, 0, 0, AVG_PACE);
+    expect(g.netRiseM).not.toBeNull();
+    expect(g.netRiseM as number).toBeLessThan(0);
+  });
+});
+
+// ─── Phase 2: tight aggregate-grade dead-band ───────────────────────────────
+// Pure endpoint-noise jitter (|grade| ≤ 0.10%) snaps to flat (GAP == pace), but
+// real shallow descents (e.g. the −0.229% reference run) must NOT be snapped.
+describe("computeRunGap — aggregate-grade dead-band (Phase 2)", () => {
+  const AVG_PACE = 588;
+
+  function buildRamp(count: number, startAlt: number, slope: number): RoutePoint[] {
+    return Array.from({ length: count }, (_, i) => ({
+      index: i,
+      lat: 40,
+      lng: -100 + i * 0.0001,
+      altitude: startAlt + i * slope,
+      timestamp: new Date(BASE_MS + i * 3 * 1000).toISOString(),
+      speed: null,
+      hr: null,
+    }));
+  }
+
+  it("net grade ≈ +0.05% → snapped to flat (GAP == avgPace)", () => {
+    // slope chosen so net grade lands ~0.05% (< 0.10% dead-band).
+    const pts = buildRamp(400, 100, 0.0043);
+    const g = computeRunGap(pts, 0, 0, AVG_PACE);
+    expect(g.runGapSecPerMile).toBeCloseTo(AVG_PACE, 6);
+  });
+
+  it("net grade ≈ −0.05% → snapped to flat (GAP == avgPace)", () => {
+    const pts = buildRamp(400, 120, -0.0043);
+    const g = computeRunGap(pts, 0, 0, AVG_PACE);
+    expect(g.runGapSecPerMile).toBeCloseTo(AVG_PACE, 6);
+  });
+
+  it("reference net grade ≈ −0.229% → NOT snapped, GAP stays ~+7 sec slower", () => {
+    // slope chosen so net grade ≈ −0.229% (the real reference-run value).
+    const pts = buildRamp(400, 200, -0.0198);
+    const g = computeRunGap(pts, 0, 0, AVG_PACE);
+    expect(g.runGapSecPerMile).toBeGreaterThan(AVG_PACE + 5); // clearly not snapped
+    expect(g.runGapSecPerMile).toBeLessThan(AVG_PACE + 10);
+  });
+});
