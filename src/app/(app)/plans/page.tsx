@@ -142,51 +142,6 @@ function RunTypeBadge({ type }: { type: PlanRunType }) {
   );
 }
 
-// ─── Week Summary Bar ─────────────────────────────────────────────────────────
-
-function WeekSummaryBar({
-  week,
-  matchMap,
-}: {
-  week: PlanWeek;
-  matchMap: Map<string, PlanMatch | null>;
-}) {
-  const runEntries = week.entries.filter((e) => e.runType !== "rest");
-  const completedEntries = runEntries.filter((e) => matchMap.get(e.id));
-  const plannedMiles = runEntries.reduce((s, e) => s + e.distanceMiles, 0);
-  const actualMiles = completedEntries.reduce((s, e) => {
-    const m = matchMap.get(e.id);
-    return s + (m ? m.activity.distanceMiles : 0);
-  }, 0);
-  const pct = plannedMiles > 0 ? Math.min(actualMiles / plannedMiles, 1) : 0;
-
-  return (
-    <div className="mt-4 p-3 rounded-xl bg-surface border border-border">
-      <div className="flex items-center justify-between text-sm mb-2">
-        <span className="text-textSecondary">
-          {completedEntries.length} / {runEntries.length} runs ·{" "}
-          {actualMiles.toFixed(1)} / {plannedMiles.toFixed(1)} mi
-        </span>
-        <span
-          className={`font-medium ${
-            pct >= 1 ? "text-success" : "text-textSecondary"
-          }`}
-        >
-          {Math.round(pct * 100)}%
-        </span>
-      </div>
-      <div className="h-2 rounded-full bg-border overflow-hidden">
-        <div
-          className={`h-full rounded-full transition-all ${
-            pct >= 1 ? "bg-success" : "bg-primary"
-          }`}
-          style={{ width: `${pct * 100}%` }}
-        />
-      </div>
-    </div>
-  );
-}
-
 // ─── Sidebar plan item ───────────────────────────────────────────────────────
 
 function SidebarPlanItem({
@@ -874,12 +829,16 @@ export default function PlansPage() {
           </div>
         )}
 
-        {/* Running plan detail (existing rendering) */}
+        {/* Running plan detail — in-place editor. Keyed by plan id + the
+            page-level selected week so a calendar deep-link (which sets
+            selectedWeekIndex) remounts onto its target week; normal in-editor
+            pagination doesn't touch selectedWeekIndex, so it never remounts. */}
         {selectedRunningPlan ? (
           <RunningPlanDetail
-            key={selectedRunningPlan.id}
+            key={`${selectedRunningPlan.id}-${selectedWeekIndex}`}
             plan={selectedRunningPlan}
             activities={activities}
+            initialWeekIndex={selectedWeekIndex}
             onUpdate={handleRunningPlanUpdate}
             onDelete={async () => {
               if (!user) return;

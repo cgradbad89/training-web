@@ -127,6 +127,60 @@ export function runningWeekSummaryLabel(entries: PlannedRunEntry[]): string {
   return `${miles.toFixed(1)} mi`;
 }
 
+/** Per-week completion summary for the running progress bar. */
+export interface WeekCompletion {
+  completedRuns: number;
+  totalRuns: number;
+  plannedMiles: number;
+  actualMiles: number;
+  /** Matched-vs-planned miles ratio, clamped to [0, 1]. */
+  pct: number;
+}
+
+/**
+ * Compute a running week's completion from its planned entries and a resolver
+ * that returns the matched actual miles for an entry id (null = no match).
+ * Mirrors the legacy WeekSummaryBar exactly — a run counts as completed when it
+ * has a match; planned/actual mileage drive the percent. Pure (the caller pulls
+ * matches from the existing matchPlanToActual map) — no new match logic.
+ */
+export function computeWeekCompletion(
+  entries: PlannedRunEntry[],
+  matchedMilesFor: (entryId: string) => number | null
+): WeekCompletion {
+  const runEntries = entries.filter((e) => e.runType !== "rest");
+  const completed = runEntries.filter((e) => matchedMilesFor(e.id) != null);
+  const plannedMiles = runEntries.reduce((s, e) => s + e.distanceMiles, 0);
+  const actualMiles = completed.reduce(
+    (s, e) => s + (matchedMilesFor(e.id) ?? 0),
+    0
+  );
+  const pct = plannedMiles > 0 ? Math.min(actualMiles / plannedMiles, 1) : 0;
+  return {
+    completedRuns: completed.length,
+    totalRuns: runEntries.length,
+    plannedMiles,
+    actualMiles,
+    pct,
+  };
+}
+
+// ─── Initial week resolution ──────────────────────────────────────────────────
+
+/**
+ * Resolve a plan editor's initial week index. An explicit `override` (e.g. a
+ * calendar deep-link's target week) wins; otherwise fall back to `defaultWeek`
+ * (the active-plan current-week landing). Always clamped to a valid index so an
+ * out-of-range deep-link can't land off the plan.
+ */
+export function resolveInitialWeekIndex(
+  override: number | undefined,
+  defaultWeek: number,
+  weekCount: number
+): number {
+  return clampWeekIndex(override ?? defaultWeek, weekCount);
+}
+
 // ─── Dirty-state lifecycle ────────────────────────────────────────────────────
 
 /**

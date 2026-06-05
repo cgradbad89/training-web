@@ -8,6 +8,8 @@ import {
   makeNewRunEntry,
   workoutWeekSummaryLabel,
   runningWeekSummaryLabel,
+  computeWeekCompletion,
+  resolveInitialWeekIndex,
   runMutationWithDirty,
 } from "@/utils/planEditorLogic";
 import type { PlannedWorkoutEntry, PlannedRunEntry } from "@/types/plan";
@@ -277,6 +279,79 @@ describe("buildCopyWeekEntries / buildCopyDayEntries with PlannedRunEntry", () =
     expect(result.some((e) => e.id === "rest")).toBe(true);
     expect(result.some((e) => e.id === "x")).toBe(false);
     expect(result.filter((e) => e.weekday === 2 && e.runType !== "rest")).toHaveLength(1);
+  });
+});
+
+// ─── Per-week completion (progress bar) ───────────────────────────────────────
+
+describe("computeWeekCompletion", () => {
+  function run(id: string, miles: number, runType: PlannedRunEntry["runType"] = "outdoor"): PlannedRunEntry {
+    return { id, weekIndex: 0, weekday: 1, dayOfWeek: 0, distanceMiles: miles, runType };
+  }
+
+  it("counts matched runs and sums planned vs matched miles", () => {
+    const entries = [run("a", 5), run("b", 8), run("c", 3)];
+    // 'a' matched to a 4.8-mi actual, 'b' matched to 8, 'c' unmatched.
+    const matched: Record<string, number> = { a: 4.8, b: 8 };
+    const r = computeWeekCompletion(entries, (id) => matched[id] ?? null);
+    expect(r.completedRuns).toBe(2);
+    expect(r.totalRuns).toBe(3);
+    expect(r.plannedMiles).toBe(16);
+    expect(r.actualMiles).toBeCloseTo(12.8, 5);
+    expect(r.pct).toBeCloseTo(12.8 / 16, 5);
+  });
+
+  it("reports zeros and pct 0 for an empty week", () => {
+    const r = computeWeekCompletion([], () => null);
+    expect(r).toEqual({ completedRuns: 0, totalRuns: 0, plannedMiles: 0, actualMiles: 0, pct: 0 });
+  });
+
+  it("excludes rest entries and yields pct 0 for a rest-only week", () => {
+    const r = computeWeekCompletion([run("x", 0, "rest")], () => null);
+    expect(r.totalRuns).toBe(0);
+    expect(r.pct).toBe(0);
+  });
+
+  it("clamps pct to 1 when actual exceeds planned", () => {
+    const r = computeWeekCompletion([run("a", 5)], () => 9);
+    expect(r.pct).toBe(1);
+    expect(r.actualMiles).toBe(9);
+  });
+
+  it("treats a 0-mile matched activity as completed (match present, not miles)", () => {
+    const r = computeWeekCompletion([run("a", 5)], () => 0);
+    expect(r.completedRuns).toBe(1);
+    expect(r.actualMiles).toBe(0);
+    expect(r.pct).toBe(0);
+  });
+});
+
+// ─── Initial-week resolution (deep-link landing) ──────────────────────────────
+
+describe("resolveInitialWeekIndex", () => {
+  it("uses the default current-week when no override is given", () => {
+    expect(resolveInitialWeekIndex(undefined, 4, 13)).toBe(4);
+  });
+
+  it("an in-range override wins over the default", () => {
+    expect(resolveInitialWeekIndex(7, 4, 13)).toBe(7);
+  });
+
+  it("clamps an out-of-range (too high) override to the last week", () => {
+    expect(resolveInitialWeekIndex(99, 4, 13)).toBe(12);
+  });
+
+  it("clamps a negative override to week 0", () => {
+    expect(resolveInitialWeekIndex(-3, 4, 13)).toBe(0);
+  });
+
+  it("clamps an out-of-range default when no override is present", () => {
+    expect(resolveInitialWeekIndex(undefined, 99, 13)).toBe(12);
+  });
+
+  it("week 0 and last week round-trip exactly", () => {
+    expect(resolveInitialWeekIndex(0, 5, 13)).toBe(0);
+    expect(resolveInitialWeekIndex(12, 5, 13)).toBe(12);
   });
 });
 

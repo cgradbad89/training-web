@@ -27,6 +27,7 @@ import {
   pageWeekIndex,
   buildCopyWeekEntries,
   buildCopyDayEntries,
+  resolveInitialWeekIndex,
   type WeekdayEntry,
 } from "@/utils/planEditorLogic";
 
@@ -55,7 +56,7 @@ function weekDateRange(startDate: string, weekIdx: number): string {
 }
 
 /** Week containing today for active plans; week 1 for inactive/template plans. */
-function initialWeekIndex(plan: Plan): number {
+function defaultWeekForPlan(plan: Plan): number {
   if (!plan.isActive) return 0;
   const start = new Date(plan.startDate + "T00:00:00");
   const today = new Date();
@@ -112,6 +113,12 @@ export interface PlanEditorConfig<TEntry> {
   ) => TEntry;
   /** True for rest-placeholder entries (excluded from the day grid + copy). */
   isRest: (entry: TEntry) => boolean;
+  /**
+   * Optional per-week accessory rendered below the day grid (e.g. the running
+   * completion progress bar). Omitted by the workout plan, keeping PlanEditor
+   * free of type-specific concepts.
+   */
+  renderWeekAccessory?: (entries: TEntry[], weekIndex: number) => React.ReactNode;
 }
 
 export interface PlanEditorProps<TEntry> {
@@ -127,6 +134,11 @@ export interface PlanEditorProps<TEntry> {
   onMarkDirty: () => void;
   /** Cancel-with-no-change, or exit of edit mode. */
   onClearDirty: () => void;
+  /**
+   * 0-based week to land on initially (e.g. a calendar deep-link target).
+   * Overrides the default current-week landing; clamped to a valid index.
+   */
+  initialWeekIndex?: number;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -139,9 +151,14 @@ export function PlanEditor<TEntry extends PlanEditorEntryBase>({
   onUpdateWeek,
   onMarkDirty,
   onClearDirty,
+  initialWeekIndex,
 }: PlanEditorProps<TEntry>) {
   const [selectedWeekIndex, setSelectedWeekIndex] = useState<number>(() =>
-    initialWeekIndex(plan)
+    resolveInitialWeekIndex(
+      initialWeekIndex,
+      defaultWeekForPlan(plan),
+      plan.weeks.length
+    )
   );
 
   // Editing state — null when no day is being edited. Either editing an existing
@@ -618,6 +635,8 @@ export function PlanEditor<TEntry extends PlanEditorEntryBase>({
             );
           })}
         </div>
+
+        {config.renderWeekAccessory?.(weekEntries, selectedWeekIndex)}
       </div>
 
       {/* ── Dialogs ── */}

@@ -40,6 +40,7 @@ import { PlanEditor, type PlanEditorConfig } from "@/components/PlanEditor";
 import {
   makeNewRunEntry,
   runningWeekSummaryLabel,
+  computeWeekCompletion,
 } from "@/utils/planEditorLogic";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -229,6 +230,8 @@ interface RunningPlanDetailProps {
   onDelete: () => void;
   onSetActive: () => void;
   onCopyPlan: (newName: string) => void | Promise<void>;
+  /** 0-based week to land on initially (e.g. calendar deep-link). Optional. */
+  initialWeekIndex?: number;
 }
 
 export function RunningPlanDetail({
@@ -238,6 +241,7 @@ export function RunningPlanDetail({
   onDelete,
   onSetActive,
   onCopyPlan,
+  initialWeekIndex,
 }: RunningPlanDetailProps) {
   const [isEditMode, setIsEditMode] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -247,9 +251,9 @@ export function RunningPlanDetail({
   const [copyPlanName, setCopyPlanName] = useState("");
   const [copyPlanSaving, setCopyPlanSaving] = useState(false);
 
-  // Rename modal
-  const [renameOpen, setRenameOpen] = useState(false);
-  const [renameInput, setRenameInput] = useState("");
+  // Inline plan-name editing (in edit mode) — replaces the standalone rename
+  // pencil/modal. Persists on blur via onUpdate (mirrors the legacy /edit route).
+  const [nameDraft, setNameDraft] = useState(plan.name);
 
   // Real dirty-state: true only while a mutation's autosave is in flight (same
   // model as the workout flow) — NOT the edit-mode boolean.
@@ -309,10 +313,12 @@ export function RunningPlanDetail({
     }
   }
 
-  function handleRename() {
-    const name = renameInput.trim();
-    setRenameOpen(false);
-    if (!name || name === plan.name) return;
+  function handleNameBlur() {
+    const name = nameDraft.trim();
+    if (!name || name === plan.name) {
+      setNameDraft(plan.name);
+      return;
+    }
     void persist({ ...plan, name });
   }
 
@@ -430,6 +436,39 @@ export function RunningPlanDetail({
     weekSummaryLabel: runningWeekSummaryLabel,
     copyEntryToDay: deepCopyRunEntry,
     isRest: (e) => e.runType === "rest",
+    renderWeekAccessory: (entries) => {
+      if (entries.filter((e) => e.runType !== "rest").length === 0) return null;
+      const { completedRuns, totalRuns, plannedMiles, actualMiles, pct } =
+        computeWeekCompletion(entries, (id) => {
+          const m = matchMap.get(id);
+          return m ? m.activity.distanceMiles : null;
+        });
+      return (
+        <div className="mt-4 p-3 rounded-xl bg-surface border border-border">
+          <div className="flex items-center justify-between text-sm mb-2">
+            <span className="text-textSecondary">
+              {completedRuns} / {totalRuns} runs · {actualMiles.toFixed(1)} /{" "}
+              {plannedMiles.toFixed(1)} mi
+            </span>
+            <span
+              className={`font-medium ${
+                pct >= 1 ? "text-success" : "text-textSecondary"
+              }`}
+            >
+              {Math.round(pct * 100)}%
+            </span>
+          </div>
+          <div className="h-2 rounded-full bg-border overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-all ${
+                pct >= 1 ? "bg-success" : "bg-primary"
+              }`}
+              style={{ width: `${pct * 100}%` }}
+            />
+          </div>
+        </div>
+      );
+    },
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -440,9 +479,28 @@ export function RunningPlanDetail({
       <div className="px-6 py-4 border-b border-border bg-card flex items-start gap-4">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-3 flex-wrap">
-            <h1 className="text-lg font-bold text-textPrimary truncate">
-              {plan.name}
-            </h1>
+            {isEditMode ? (
+              <input
+                value={nameDraft}
+                onChange={(e) => setNameDraft(e.target.value)}
+                onBlur={handleNameBlur}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") e.currentTarget.blur();
+                  if (e.key === "Escape") {
+                    setNameDraft(plan.name);
+                    e.currentTarget.blur();
+                  }
+                }}
+                placeholder="Plan name"
+                aria-label="Plan name"
+                className="text-lg font-bold text-textPrimary bg-transparent border-b border-primary outline-none min-w-0 max-w-xs"
+                autoFocus
+              />
+            ) : (
+              <h1 className="text-lg font-bold text-textPrimary truncate">
+                {plan.name}
+              </h1>
+            )}
             {plan.isActive && (
               <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-success/10 text-success">
                 Active
@@ -470,14 +528,13 @@ export function RunningPlanDetail({
               Set Active
             </button>
           )}
-          {/* Edit Plan / Done toggle — now toggles in-place edit (no route nav).
-              Label intentionally kept as "Edit Plan" pending the Prompt 3 cleanup
-              that collapses the separate rename pencil. */}
+          {/* Edit / Done toggle — toggles in-place edit. In edit mode the plan
+              name above becomes inline-editable (no separate rename control). */}
           <button
             onClick={() => setIsEditMode((v) => !v)}
             className="text-sm px-3 py-1.5 rounded-lg border border-border text-textPrimary font-medium hover:bg-surface"
           >
-            {isEditMode ? "Done" : "Edit Plan"}
+            {isEditMode ? "Done" : "Edit"}
           </button>
           {/* Copy plan */}
           <button
@@ -490,17 +547,6 @@ export function RunningPlanDetail({
           >
             <Copy className="w-3.5 h-3.5" />
             Copy plan
-          </button>
-          {/* Rename */}
-          <button
-            onClick={() => {
-              setRenameInput(plan.name);
-              setRenameOpen(true);
-            }}
-            title="Rename plan"
-            className="p-1.5 rounded-lg hover:bg-surface text-textSecondary hover:text-textPrimary"
-          >
-            <Pencil className="w-4 h-4" />
           </button>
           {/* Delete */}
           <button
@@ -522,6 +568,7 @@ export function RunningPlanDetail({
         onUpdateWeek={handleUpdateWeek}
         onMarkDirty={() => setHasUnsavedChanges(true)}
         onClearDirty={() => setHasUnsavedChanges(false)}
+        initialWeekIndex={initialWeekIndex}
       />
 
       {/* ── Dialogs ── */}
@@ -550,46 +597,6 @@ export function RunningPlanDetail({
         }}
         onCancel={() => setConfirmDelete(false)}
       />
-
-      {/* Rename modal */}
-      {renameOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setRenameOpen(false);
-          }}
-        >
-          <div className="bg-card rounded-2xl shadow-xl border border-border w-full max-w-xs p-5">
-            <h3 className="font-bold text-textPrimary text-sm mb-4">Rename plan</h3>
-            <input
-              type="text"
-              value={renameInput}
-              onChange={(e) => setRenameInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleRename();
-                if (e.key === "Escape") setRenameOpen(false);
-              }}
-              className="w-full text-sm border border-border rounded-lg px-3 py-2 bg-card text-textPrimary mb-4"
-              autoFocus
-            />
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setRenameOpen(false)}
-                className="px-4 py-2 rounded-xl border border-border text-sm text-textSecondary hover:bg-surface transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleRename}
-                disabled={!renameInput.trim()}
-                className="px-4 py-2 rounded-xl bg-primary text-white text-sm font-medium hover:bg-primary/90 disabled:opacity-40 transition-colors"
-              >
-                Save
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Copy-plan modal */}
       {copyPlanOpen && (

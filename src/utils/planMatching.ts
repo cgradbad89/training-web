@@ -8,14 +8,6 @@ export interface PlanMatch {
   quality: MatchQuality;
 }
 
-export type WeekMatchStatus = "met" | "partial" | "missed" | "upcoming";
-
-export interface WeekMatchResult {
-  planned: number;
-  actual: number;
-  status: WeekMatchStatus;
-}
-
 function toISODate(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -266,38 +258,4 @@ export function statusForRunEntry(
   const startOfToday = new Date(now);
   startOfToday.setHours(0, 0, 0, 0);
   return entryDate < startOfToday ? "missed" : "upcoming";
-}
-
-/**
- * Compute week-level completion result for a given week index.
- */
-export function matchWeekRuns(
-  plan: RunningPlan,
-  weekIndex: number,
-  workouts: HealthWorkout[]
-): WeekMatchResult {
-  const week = plan.weeks[weekIndex];
-  if (!week) return { planned: 0, actual: 0, status: "upcoming" };
-
-  const matchMap = matchPlanToActual(plan, workouts);
-  const runEntries = week.entries.filter((e) => e.runType !== "rest");
-
-  const planned = runEntries.reduce((s, e) => s + e.distanceMiles, 0);
-  const actual = runEntries.reduce((s, e) => {
-    const m = matchMap.get(e.id);
-    return s + (m ? m.activity.distanceMiles : 0);
-  }, 0);
-
-  // Determine status
-  const weekStart = new Date(plan.startDate + "T00:00:00");
-  weekStart.setDate(weekStart.getDate() + weekIndex * 7);
-  const weekEnd = new Date(weekStart);
-  weekEnd.setDate(weekStart.getDate() + 6);
-  const now = new Date();
-
-  if (weekEnd > now) return { planned, actual, status: "upcoming" };
-  if (planned === 0) return { planned, actual, status: "upcoming" };
-  if (actual >= planned * 0.85) return { planned, actual, status: "met" };
-  if (actual > 0) return { planned, actual, status: "partial" };
-  return { planned, actual, status: "missed" };
 }
