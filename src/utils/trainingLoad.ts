@@ -524,6 +524,12 @@ export const TRAINING_LOAD_DT_CLAMP_SEC = 10;
  *  below this we fall back to the avg-HR model. TUNABLE. */
 export const STREAMED_HR_COVERAGE_MIN = 0.5;
 
+/** Minimum number of hrStream samples required to score a non-route workout
+ *  from its streamed HR integral. Below this (or an empty/absent stream despite
+ *  the hasHRStream flag) the compute path falls through to the avg-HR baseline.
+ *  Matches computeStreamedTrainingLoad's own `< 2` degenerate guard. TUNABLE. */
+export const MIN_HRSTREAM_SAMPLES = 2;
+
 export interface StreamedLoadResult {
   load: number | null;
   method: "streamed" | "avg-hr-fallback";

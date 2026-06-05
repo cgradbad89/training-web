@@ -19,6 +19,10 @@ export interface HealthWorkout {
   sourceName: string;
   isRunLike: boolean;
   hasRoute: boolean;
+  /** True when iOS wrote a per-sample HR stream subcollection (hrStream) for
+   *  this workout. Drives the streamed-load path for non-route workouts.
+   *  Absent/false ⇒ no stream (fall back to avg HR). */
+  hasHRStream?: boolean;
   syncedAt: Date;
   sourceBundle?: string;
   calories: number;

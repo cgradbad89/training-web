@@ -57,8 +57,10 @@ import {
   computeStreamedTrainingLoad,
   resolveMaxHr,
   resolveRestingHr,
+  MIN_HRSTREAM_SAMPLES,
 } from "@/utils/trainingLoad";
 import { fetchRoutePoints, type RoutePoint } from "@/services/routes";
+import { fetchHRStream } from "@/services/hrStream";
 
 function stripUndefined<T extends object>(obj: T): T {
   return JSON.parse(JSON.stringify(obj)) as T;
@@ -107,6 +109,7 @@ function docToHealthWorkout(
     sourceName: (data.sourceName as string) ?? "Apple Watch",
     isRunLike: (data.isRunLike as boolean) ?? false,
     hasRoute: (data.hasRoute as boolean) ?? false,
+    hasHRStream: (data.hasHRStream as boolean) ?? false,
     syncedAt: toDate(data.syncedAt),
     sourceBundle: data.sourceBundle as string | undefined,
     calories: (data.calories as number) ?? 0,
@@ -230,12 +233,22 @@ export async function computeAndStoreBestEfforts(
 /**
  * Compute Training Load V2 for a single workout and persist it.
  *
- * Mirrors computeAndStoreBestEfforts: resolves the profile HR anchors, prefers
- * the per-second streamed integral when the run hasRoute (dense HR), otherwise
- * the avg-HR baseline, and merges the result back via owner setDoc(merge:true) —
- * the same write pattern computeAndStoreBestEfforts uses in production (so no
- * new Firestore rule is required). NEVER writes 0 for a null load: a null is
- * written explicitly so the UI renders "—".
+ * Mirrors computeAndStoreBestEfforts: resolves the profile HR anchors, then
+ * selects the load model via a 3-tier chain and merges the result back via
+ * owner setDoc(merge:true) — the same write pattern computeAndStoreBestEfforts
+ * uses in production (so no new Firestore rule is required). NEVER writes 0 for
+ * a null load: a null is written explicitly so the UI renders "—".
+ *
+ * Method-selection (3-tier):
+ *   1. hasRoute       → per-second streamed integral over route-point HR
+ *                       (UNCHANGED run path). method "streamed".
+ *   2. hasHRStream    → per-sample streamed integral over the iOS hrStream
+ *                       subcollection. method "streamed". Teaches non-route
+ *                       workouts (HIIT/OTF/strength) a true intensity basis.
+ *   3. else           → avg-HR Banister baseline. method "avg-hr-fallback".
+ *
+ * An empty/too-sparse hrStream despite hasHRStream falls through to tier 3
+ * (defensive — never errors).
  */
 export async function computeAndStoreTrainingLoad(
   uid: string,
@@ -253,10 +266,12 @@ export async function computeAndStoreTrainingLoad(
   const avgHeartRate = (data.avgHeartRate as number | null) ?? null;
   const activityType = (data.activityType as string) ?? undefined;
   const hasRoute = (data.hasRoute as boolean) ?? false;
+  const hasHRStream = (data.hasHRStream as boolean) ?? false;
 
   let load: number | null;
   let method: "streamed" | "avg-hr-fallback";
 
+  // Tier 1 — route runs: per-second integral over route-point HR (UNCHANGED).
   if (hasRoute) {
     const points = await fetchRoutePoints(uid, workoutId);
     const result = computeStreamedTrainingLoad(
@@ -269,7 +284,35 @@ export async function computeAndStoreTrainingLoad(
     );
     load = result.load;
     method = result.method;
+  } else if (hasHRStream) {
+    // Tier 2 — non-route workouts with an iOS hrStream: integrate over the
+    // per-sample HR. The hrStream samples ARE the points array (reuse
+    // computeStreamedTrainingLoad verbatim — same Δt-clamp/coverage logic).
+    const samples = await fetchHRStream(uid, workoutId);
+    if (samples.length >= MIN_HRSTREAM_SAMPLES) {
+      const result = computeStreamedTrainingLoad(
+        samples.map((s) => ({ timestamp: s.timestamp, hr: s.hr })),
+        durationSeconds,
+        avgHeartRate,
+        maxHr,
+        restingHr,
+        activityType
+      );
+      load = result.load;
+      method = result.method;
+    } else {
+      // Empty/too-sparse stream despite the flag → avg-HR fallback (no error).
+      load = computeTrainingLoadV2(
+        durationSeconds,
+        avgHeartRate,
+        maxHr,
+        restingHr,
+        activityType
+      );
+      method = "avg-hr-fallback";
+    }
   } else {
+    // Tier 3 — avg-HR Banister baseline.
     load = computeTrainingLoadV2(
       durationSeconds,
       avgHeartRate,

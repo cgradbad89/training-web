@@ -1,0 +1,135 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+// Verifies the 3-tier method-selection in computeAndStoreTrainingLoad:
+//   1. hasRoute                 → route path (UNCHANGED)   → method "streamed"
+//   2. !hasRoute && hasHRStream → hrStream path            → method "streamed"
+//   3. neither                  → avg-HR baseline          → method "avg-hr-fallback"
+//
+// Firestore reads/writes and the two subcollection fetchers are mocked so the
+// test exercises only the branch selection (no live Firestore).
+
+vi.mock("@/lib/firebase", () => ({ db: {} }));
+
+let workoutData: Record<string, unknown> = {};
+const setDocMock = vi.fn(() => Promise.resolve());
+
+vi.mock("firebase/firestore", () => ({
+  doc: (...args: unknown[]) => ({ args }),
+  getDoc: async () => ({ exists: () => true, data: () => workoutData }),
+  setDoc: (...args: unknown[]) => setDocMock(...args),
+  // Unused by computeAndStoreTrainingLoad but imported by the module.
+  collection: vi.fn(),
+  getDocs: vi.fn(),
+  onSnapshot: vi.fn(),
+  query: vi.fn(),
+  where: vi.fn(),
+  orderBy: vi.fn(),
+  limit: vi.fn(),
+}));
+
+const fetchRoutePointsMock = vi.fn();
+const fetchHRStreamMock = vi.fn();
+
+vi.mock("@/services/routes", () => ({
+  fetchRoutePoints: (...args: unknown[]) => fetchRoutePointsMock(...args),
+}));
+vi.mock("@/services/hrStream", () => ({
+  fetchHRStream: (...args: unknown[]) => fetchHRStreamMock(...args),
+}));
+
+import { computeAndStoreTrainingLoad } from "@/services/healthWorkouts";
+
+const START = Date.parse("2024-01-01T00:00:00Z");
+// Spiky 1 Hz HR stream — dense enough to engage the streamed integral.
+const spikyStream = Array.from({ length: 120 }, (_, i) => ({
+  timestamp: new Date(START + i * 1000).toISOString(),
+  hr: i % 2 === 0 ? 180 : 110,
+}));
+
+afterEach(() => {
+  workoutData = {};
+  vi.clearAllMocks();
+});
+
+describe("computeAndStoreTrainingLoad — 3-tier method selection", () => {
+  it("tier 1: hasRoute → route path, method 'streamed' (run path unchanged)", async () => {
+    workoutData = {
+      hasRoute: true,
+      hasHRStream: false,
+      durationSeconds: 120,
+      avgHeartRate: 145,
+      activityType: "running",
+    };
+    fetchRoutePointsMock.mockResolvedValue(
+      spikyStream.map((s) => ({ timestamp: s.timestamp, hr: s.hr }))
+    );
+
+    const result = await computeAndStoreTrainingLoad("uid", "w1", null);
+
+    expect(result?.method).toBe("streamed");
+    expect(fetchRoutePointsMock).toHaveBeenCalledTimes(1);
+    expect(fetchHRStreamMock).not.toHaveBeenCalled();
+    // Stored method matches.
+    expect(setDocMock.mock.calls[0][1]).toMatchObject({
+      trainingLoadMethod: "streamed",
+    });
+  });
+
+  it("tier 2: !hasRoute && hasHRStream → hrStream path, method 'streamed'", async () => {
+    workoutData = {
+      hasRoute: false,
+      hasHRStream: true,
+      durationSeconds: 120,
+      avgHeartRate: 145,
+      activityType: "highIntensityIntervalTraining",
+    };
+    fetchHRStreamMock.mockResolvedValue(spikyStream);
+
+    const result = await computeAndStoreTrainingLoad("uid", "w2", null);
+
+    expect(result?.method).toBe("streamed");
+    expect(fetchHRStreamMock).toHaveBeenCalledTimes(1);
+    expect(fetchRoutePointsMock).not.toHaveBeenCalled();
+    expect(setDocMock.mock.calls[0][1]).toMatchObject({
+      trainingLoadMethod: "streamed",
+    });
+  });
+
+  it("tier 3: neither flag → avg-HR baseline, method 'avg-hr-fallback'", async () => {
+    workoutData = {
+      hasRoute: false,
+      hasHRStream: false,
+      durationSeconds: 1800,
+      avgHeartRate: 150,
+      activityType: "running",
+    };
+
+    const result = await computeAndStoreTrainingLoad("uid", "w3", null);
+
+    expect(result?.method).toBe("avg-hr-fallback");
+    expect(fetchRoutePointsMock).not.toHaveBeenCalled();
+    expect(fetchHRStreamMock).not.toHaveBeenCalled();
+    expect(setDocMock.mock.calls[0][1]).toMatchObject({
+      trainingLoadMethod: "avg-hr-fallback",
+    });
+  });
+
+  it("defensive: hasHRStream but empty stream → avg-HR fallback, no error", async () => {
+    workoutData = {
+      hasRoute: false,
+      hasHRStream: true,
+      durationSeconds: 1800,
+      avgHeartRate: 150,
+      activityType: "highIntensityIntervalTraining",
+    };
+    fetchHRStreamMock.mockResolvedValue([]); // empty despite the flag
+
+    const result = await computeAndStoreTrainingLoad("uid", "w4", null);
+
+    expect(result?.method).toBe("avg-hr-fallback");
+    expect(fetchHRStreamMock).toHaveBeenCalledTimes(1);
+    expect(setDocMock.mock.calls[0][1]).toMatchObject({
+      trainingLoadMethod: "avg-hr-fallback",
+    });
+  });
+});

@@ -28,6 +28,7 @@ import {
   resolveRestingHr,
   DEFAULT_RESTING_HR,
   STREAMED_HR_COVERAGE_MIN,
+  MIN_HRSTREAM_SAMPLES,
 } from "@/utils/trainingLoad";
 import { type UserSettings } from "@/types/userSettings";
 
@@ -176,6 +177,7 @@ export async function runBackfillTrainingLoad(
     const avgHeartRate = (data.avgHeartRate as number | null) ?? null;
     const activityType = (data.activityType as string) ?? undefined;
     const hasRoute = (data.hasRoute as boolean) ?? false;
+    const hasHRStream = (data.hasHRStream as boolean) ?? false;
     const distanceMiles = (data.distanceMiles as number) ?? 0;
     const startDate =
       data.startDate && typeof (data.startDate as { toDate?: () => Date }).toDate === "function"
@@ -186,6 +188,10 @@ export async function runBackfillTrainingLoad(
     let method: "streamed" | "avg-hr-fallback";
     let hrCoverage = 0;
 
+    // 3-tier method-selection — matches computeAndStoreTrainingLoad:
+    //   1. hasRoute    → streamed integral over route-point HR (UNCHANGED).
+    //   2. hasHRStream → streamed integral over the iOS hrStream subcollection.
+    //   3. else        → avg-HR Banister baseline.
     if (hasRoute) {
       const routeSnap = await db
         .collection(`users/${uid}/healthWorkouts/${docSnap.id}/route`)
@@ -210,6 +216,49 @@ export async function runBackfillTrainingLoad(
       load = result.load;
       method = result.method;
       hrCoverage = result.hrCoverage;
+    } else if (hasHRStream) {
+      // Read users/{uid}/healthWorkouts/{id}/hrStream ascending by chunkIndex;
+      // concatenate each doc's samples ({ t: Timestamp, hr: Int }) in order.
+      const streamSnap = await db
+        .collection(`users/${uid}/healthWorkouts/${docSnap.id}/hrStream`)
+        .orderBy("chunkIndex", "asc")
+        .get();
+      const samples: { timestamp: string; hr: number }[] = [];
+      for (const d of streamSnap.docs) {
+        const r = d.data() as Record<string, unknown>;
+        const chunk = Array.isArray(r.samples)
+          ? (r.samples as Array<{ t?: { toDate?: () => Date } | null; hr?: number }>)
+          : [];
+        for (const s of chunk) {
+          samples.push({
+            timestamp: s.t?.toDate?.()?.toISOString() ?? "",
+            hr: (s.hr as number) ?? 0,
+          });
+        }
+      }
+      if (samples.length >= MIN_HRSTREAM_SAMPLES) {
+        const result = computeStreamedTrainingLoad(
+          samples,
+          durationSeconds,
+          avgHeartRate,
+          maxHr,
+          restingHr,
+          activityType
+        );
+        load = result.load;
+        method = result.method;
+        hrCoverage = result.hrCoverage;
+      } else {
+        // Empty/too-sparse stream despite the flag → avg-HR fallback.
+        load = computeTrainingLoadV2(
+          durationSeconds,
+          avgHeartRate,
+          maxHr,
+          restingHr,
+          activityType
+        );
+        method = "avg-hr-fallback";
+      }
     } else {
       load = computeTrainingLoadV2(
         durationSeconds,
