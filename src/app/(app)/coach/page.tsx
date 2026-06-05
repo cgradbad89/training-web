@@ -74,7 +74,7 @@ export default function CoachPage() {
 
       // Find active plan and race (running plans only — coach is running-focused)
       const runningPlans = plans.filter(isRunningPlan)
-      const activePlan = runningPlans.find(p => p.isActive) ?? runningPlans[0] ?? null
+      const activePlan = runningPlans.find(p => p.status === "active") ?? runningPlans[0] ?? null
       const now = new Date()
       const upcomingRaces = races
         .filter(r => {

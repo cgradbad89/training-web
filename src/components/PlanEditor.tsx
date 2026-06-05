@@ -57,7 +57,7 @@ function weekDateRange(startDate: string, weekIdx: number): string {
 
 /** Week containing today for active plans; week 1 for inactive/template plans. */
 function defaultWeekForPlan(plan: Plan): number {
-  if (!plan.isActive) return 0;
+  if (plan.status !== "active") return 0;
   const start = new Date(plan.startDate + "T00:00:00");
   const today = new Date();
   const diff = Math.floor(

@@ -58,7 +58,8 @@ export default function AutoMatchRunner() {
           plans
             .filter(
               (p) =>
-                (p as { planType?: string }).planType === 'workout' && p.isActive
+                (p as { planType?: string }).planType === 'workout' &&
+                (p as { status?: string }).status === 'active'
             )
             .map((p) => p.name)
         )

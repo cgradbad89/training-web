@@ -46,7 +46,7 @@ export function buildCalendarEvents(
   const events: CalendarEvent[] = [];
 
   for (const plan of plans) {
-    if (!plan.isActive) continue;
+    if (plan.status !== "active") continue;
 
     if (plan.planType === "workout") {
       // Track per-weekday counters so each emitted event gets a stable

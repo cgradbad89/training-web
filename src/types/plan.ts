@@ -1,3 +1,34 @@
+// ─── Plan status ─────────────────────────────────────────────────────────────
+
+/**
+ * Lifecycle state of a plan.
+ *   - "active"    — the one in-progress plan of its type (≤1 per type)
+ *   - "completed" — finished; reversible via Reopen (Session B)
+ *   - "draft"     — not active and not completed
+ *
+ * `status` is the in-app source of truth. The legacy `isActive` boolean is kept
+ * in sync on every write (the iOS app reads it) — see derivePlanStatus /
+ * isActiveFromStatus and the dual-write rule in services/plans.ts.
+ */
+export type PlanStatus = "active" | "completed" | "draft";
+
+/**
+ * Derive a plan's status from a raw Firestore doc. Explicit status wins; legacy
+ * docs (status absent) fall back to the isActive mirror. A legacy isActive flag
+ * never yields "completed" — completion is a new state set only by the app.
+ */
+export function derivePlanStatus(raw: { status?: string; isActive?: boolean }): PlanStatus {
+  if (raw.status === "active" || raw.status === "completed" || raw.status === "draft") {
+    return raw.status;
+  }
+  return raw.isActive ? "active" : "draft";
+}
+
+/** The isActive mirror for a given status — true only when active. */
+export function isActiveFromStatus(status: PlanStatus): boolean {
+  return status === "active";
+}
+
 // ─── Running plan types (existing — unchanged) ──────────────────────────────
 
 export type PlanRunType = "outdoor" | "treadmill" | "otf" | "longRun" | "rest";
@@ -31,6 +62,11 @@ export interface RunningPlan {
   planType?: "running";
   startDate: string; // ISO date (Monday-normalized)
   weeks: PlanWeek[];
+  /** In-app source of truth for lifecycle. Derived at read boundary for legacy docs. */
+  status: PlanStatus;
+  /** ISO timestamp; set only when status === "completed" (Session B). */
+  completedAt?: string;
+  /** Legacy mirror of status === "active". Kept in sync for the iOS reader. */
   isActive: boolean;
   isBuiltInDefault?: boolean;
   /** Optional link to a race in users/{uid}/halfMarathonRaces */
@@ -189,6 +225,11 @@ export interface WorkoutPlan {
   planType: "workout";
   startDate: string;
   weeks: PlanWorkoutWeek[];
+  /** In-app source of truth for lifecycle. Derived at read boundary for legacy docs. */
+  status: PlanStatus;
+  /** ISO timestamp; set only when status === "completed" (Session B). */
+  completedAt?: string;
+  /** Legacy mirror of status === "active". Kept in sync for the iOS reader. */
   isActive: boolean;
   /** Optional link to a race in users/{uid}/races */
   raceId?: string;
@@ -209,6 +250,11 @@ export interface LegacyPilatesPlan {
   planType: "pilates";
   startDate: string;
   weeks: Array<{ weekNumber: number; entries: unknown[]; notes?: string }>;
+  /** In-app source of truth for lifecycle. Derived at read boundary for legacy docs. */
+  status: PlanStatus;
+  /** ISO timestamp; set only when status === "completed" (Session B). */
+  completedAt?: string;
+  /** Legacy mirror of status === "active". Kept in sync for the iOS reader. */
   isActive: boolean;
   createdAt: string;
   updatedAt: string;

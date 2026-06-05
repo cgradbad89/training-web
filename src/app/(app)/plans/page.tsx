@@ -11,6 +11,7 @@ import {
   updatePlan,
   deletePlan,
   setActivePlan,
+  nextStatusForSibling,
 } from "@/services/plans";
 import { deepCopyRunningPlan, deepCopyWorkoutPlan } from "@/utils/planCopy";
 import { fetchHealthWorkouts } from "@/services/healthWorkouts";
@@ -179,7 +180,7 @@ function SidebarPlanItem({
           )}
         </div>
       </div>
-      {plan.isActive && (
+      {plan.status === "active" && (
         <span
           className="w-2 h-2 rounded-full bg-success shrink-0"
           title="Active"
@@ -362,7 +363,7 @@ export default function PlansPage() {
       setPlans(finalPlans);
       setActivities(loadedActivities);
 
-      const active = finalPlans.find((p) => p.isActive) ?? finalPlans[0];
+      const active = finalPlans.find((p) => p.status === "active") ?? finalPlans[0];
       if (active) {
         setSelectedPlanId(active.id);
         setSelectedWeekIndex(currentWeekIndex(active));
@@ -378,7 +379,7 @@ export default function PlansPage() {
     // eslint-disable-next-line no-console
     console.log("[currentWeekIndex]", {
       name: plan.name,
-      isActive: plan.isActive,
+      status: plan.status,
       startDate: plan.startDate,
       weeksLength: plan.weeks?.length,
     });
@@ -386,7 +387,7 @@ export default function PlansPage() {
     // template or browsing an archived plan want to see the start, not a
     // computed "current week" that's meaningless for an unstarted plan.
     // Only active plans auto-jump to the week containing today's date.
-    if (!plan.isActive) return 0;
+    if (plan.status !== "active") return 0;
     const start = new Date(plan.startDate + "T00:00:00");
     const today = new Date();
     const diff = Math.floor(
@@ -405,7 +406,9 @@ export default function PlansPage() {
       await setActivePlan(user.uid, planId, plans);
       // Mirror the service's same-type-only behaviour locally so a running
       // plan activation never flips the active workout plan's flag (and
-      // vice versa). Plans of the other type keep their existing isActive.
+      // vice versa). Plans of the other type keep their existing status. A
+      // same-type "completed" sibling is left unchanged (not demoted), via
+      // the same nextStatusForSibling rule the service uses.
       const target = plans.find((p) => p.id === planId);
       const targetIsRunning = !!target && isRunningPlan(target);
       const targetIsWorkout = !!target && isWorkoutPlan(target);
@@ -415,7 +418,9 @@ export default function PlansPage() {
             (targetIsRunning && isRunningPlan(p)) ||
             (targetIsWorkout && isWorkoutPlan(p));
           if (!sameType) return p;
-          return { ...p, isActive: p.id === planId };
+          const next = nextStatusForSibling(p, planId);
+          if (!next) return p; // completed sibling — leave unchanged
+          return { ...p, ...next };
         })
       );
     } finally {
@@ -442,6 +447,7 @@ export default function PlansPage() {
           name: nameInput.trim(),
           planType: "running",
           startDate: startDateInput,
+          status: "draft",
           isActive: false,
           weeks: Array.from({ length: numWeeks }, (_, i) => ({
             weekNumber: i + 1,
@@ -453,6 +459,7 @@ export default function PlansPage() {
           name: nameInput.trim(),
           planType: "workout",
           startDate: startDateInput,
+          status: "draft",
           isActive: false,
           weeks: Array.from({ length: numWeeks }, (_, i) => ({
             weekNumber: i + 1,

@@ -862,7 +862,7 @@ export function CrossTrainingPlanDetail({
             <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">
               Workout Plan
             </span>
-            {plan.isActive && (
+            {plan.status === "active" && (
               <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-success/10 text-success">
                 Active
               </span>
@@ -880,7 +880,7 @@ export function CrossTrainingPlanDetail({
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
-          {!plan.isActive && (
+          {plan.status !== "active" && (
             <button
               onClick={onSetActive}
               disabled={saving}

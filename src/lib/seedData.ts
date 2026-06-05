@@ -130,6 +130,7 @@ const SEED_WEEKS = [
 export const DEFAULT_HALF_MARATHON_PLAN: Omit<RunningPlan, "id" | "createdAt" | "updatedAt"> = {
   name: "Half Marathon — Spring 2026",
   startDate: "2026-01-19",
+  status: "active",
   isActive: true,
   isBuiltInDefault: true,
   weeks: SEED_WEEKS.map((entries, i) => ({
@@ -458,6 +459,7 @@ export async function seedSeptHMPlan(userId: string): Promise<{
     name: "Half Marathon — Sept 2026 (Sub 9:30)",
     planType: "running",
     startDate: "2026-05-18",
+    status: "draft",
     isActive: false,
     isBuiltInDefault: false,
     linkedRaceId: raceId,

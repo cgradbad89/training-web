@@ -86,6 +86,7 @@ export function deepCopyWorkoutPlan(
     name: newName,
     planType: "workout",
     startDate: plan.startDate,
+    status: "draft",
     isActive: false,
     weeks: plan.weeks.map((week, i) => deepCopyWorkoutWeek(week, i)),
   };
@@ -99,6 +100,7 @@ export function deepCopyRunningPlan(
     name: newName,
     planType: "running",
     startDate: plan.startDate,
+    status: "draft",
     isActive: false,
     isBuiltInDefault: false,
     weeks: plan.weeks.map((week, i) => deepCopyRunWeek(week, i)),

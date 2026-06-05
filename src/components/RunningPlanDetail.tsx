@@ -501,7 +501,7 @@ export function RunningPlanDetail({
                 {plan.name}
               </h1>
             )}
-            {plan.isActive && (
+            {plan.status === "active" && (
               <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-success/10 text-success">
                 Active
               </span>
@@ -520,7 +520,7 @@ export function RunningPlanDetail({
         </div>
 
         <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
-          {!plan.isActive && (
+          {plan.status !== "active" && (
             <button
               onClick={onSetActive}
               className="text-sm px-3 py-1.5 rounded-lg bg-primary text-white font-medium hover:bg-primary/90"

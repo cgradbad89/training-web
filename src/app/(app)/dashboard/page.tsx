@@ -1394,10 +1394,10 @@ export default function DashboardPage() {
     fetchPlans(uid)
       .then((plans) => {
         const runningPlans = plans.filter(isRunningPlan);
-        setActivePlan(runningPlans.find((p) => p.isActive) ?? null);
+        setActivePlan(runningPlans.find((p) => p.status === "active") ?? null);
         const workoutPlansList = plans.filter(isWorkoutPlan);
         setActiveWorkoutPlan(
-          workoutPlansList.find((p) => p.isActive) ?? null
+          workoutPlansList.find((p) => p.status === "active") ?? null
         );
       })
       .catch(console.error);

@@ -128,7 +128,7 @@ export function CalendarView({ plans, actualRuns = [], onRunningEventClick }: Ca
 
   const events = useMemo(() => buildCalendarEvents(plans, actualRuns), [plans, actualRuns]);
 
-  const hasActivePlans = plans.some((p) => p.isActive);
+  const hasActivePlans = plans.some((p) => p.status === "active");
 
   const periodLabel =
     calView === "week"

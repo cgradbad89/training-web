@@ -10,9 +10,12 @@ import {
 import { db } from "@/lib/firebase";
 import {
   type Plan,
+  type PlanStatus,
   type RunningPlan,
   isRunningPlan,
   isWorkoutPlan,
+  derivePlanStatus,
+  isActiveFromStatus,
 } from "@/types/plan";
 import { toDate } from "@/utils/dates";
 
@@ -29,10 +32,17 @@ export async function fetchPlans(uid: string): Promise<Plan[]> {
     // Backward compat: documents written before Phase 1 have no planType.
     // Default to "running" so existing plans continue to work unchanged.
     const planType = (data.planType as string | undefined) ?? "running";
+    // status is the in-app source of truth; legacy docs derive it from isActive.
+    // isActive is normalized from the resolved status so the in-memory object is
+    // internally consistent. NO write-back here — Firestore stays as-is until a
+    // normal edit re-saves the doc.
+    const status = derivePlanStatus(data);
     return {
       ...data,
       id: d.id,
       planType,
+      status,
+      isActive: isActiveFromStatus(status),
       startDate: toDate(data.startDate).toISOString().split("T")[0],
       createdAt: toDate(data.createdAt).toISOString(),
     } as Plan;
@@ -44,10 +54,13 @@ export async function fetchPlan(uid: string, planId: string): Promise<Plan | nul
   if (!snap.exists()) return null;
   const data = snap.data();
   const planType = (data.planType as string | undefined) ?? "running";
+  const status = derivePlanStatus(data);
   return {
     ...data,
     id: snap.id,
     planType,
+    status,
+    isActive: isActiveFromStatus(status),
     startDate: toDate(data.startDate).toISOString().split("T")[0],
     createdAt: toDate(data.createdAt).toISOString(),
   } as Plan;
@@ -78,9 +91,31 @@ export async function deletePlan(uid: string, planId: string): Promise<void> {
 }
 
 /**
+ * Pure decision for what a same-type plan's status+isActive should become when
+ * `targetId` is being activated.
+ *   - The target itself          → { status: "active",  isActive: true }
+ *   - A sibling that's "completed" → null (LEAVE UNCHANGED — don't un-complete it)
+ *   - Any other sibling           → { status: "draft",  isActive: false }
+ * Returning null means "write nothing for this plan", which preserves the
+ * ≤1-active-per-type invariant without demoting a completed plan.
+ */
+export function nextStatusForSibling(
+  plan: { id: string; status: PlanStatus },
+  targetId: string
+): { status: PlanStatus; isActive: boolean } | null {
+  if (plan.id === targetId) return { status: "active", isActive: true };
+  if (plan.status === "completed") return null;
+  return { status: "draft", isActive: false };
+}
+
+/**
  * Atomically sets one plan as active, deactivating other plans of the
  * SAME TYPE. Running and Workout plans are independent — activating a
  * workout plan does not affect the active running plan and vice versa.
+ *
+ * Dual-writes status (in-app truth) and isActive (iOS mirror) together. A
+ * same-type sibling that is already "completed" is left untouched so
+ * activating another plan never silently un-completes it.
  *
  * Legacy pilates plans are always deactivated (we no longer honor an
  * active flag on them since the type is unsupported).
@@ -98,15 +133,14 @@ export async function setActivePlan(
   const batch = writeBatch(db);
   for (const p of allPlans) {
     // Only touch plans of the same type as the one being activated.
-    // Plans of other types keep their current isActive value.
+    // Plans of other types keep their current status/isActive value.
     const sameType =
       (targetIsRunning && isRunningPlan(p)) ||
       (targetIsWorkout && isWorkoutPlan(p));
     if (!sameType) continue;
-    batch.update(
-      doc(db, plansPath(uid), p.id),
-      stripUndefined({ isActive: p.id === planId })
-    );
+    const next = nextStatusForSibling(p, planId);
+    if (!next) continue; // completed sibling — leave unchanged
+    batch.update(doc(db, plansPath(uid), p.id), stripUndefined(next));
   }
   await batch.commit();
 }
