@@ -24,9 +24,10 @@ import {
 import { fetchUserSettings } from "@/services/userSettings";
 
 import {
-  computeTrainingLoad,
+  resolveDisplayLoad,
   MIN_RUN_MILES_FOR_AVG,
   resolveMaxHr,
+  resolveRestingHr,
 } from "@/utils/trainingLoad";
 import { formatPace, formatDuration, formatMiles } from "@/utils/pace";
 import { weekStart as getWeekStart } from "@/utils/dates";
@@ -282,9 +283,10 @@ interface YearStatsProps {
   /** Avg of weekly total run loads across elapsed weeks in the window. */
   avgWeeklyLoad: number | null;
   maxHr: number;
+  restingHr: number;
 }
 
-function YearStats({ runs, avgWeeklyLoad, maxHr }: YearStatsProps) {
+function YearStats({ runs, avgWeeklyLoad, maxHr, restingHr }: YearStatsProps) {
   const count = runs.length;
   const totalMiles = runs.reduce((s, r) => s + r.distanceMiles, 0);
   const avgMiPerRun = count > 0 ? totalMiles / count : 0;
@@ -310,12 +312,7 @@ function YearStats({ runs, avgWeeklyLoad, maxHr }: YearStatsProps) {
   const loadVals: number[] = [];
   for (const r of runs) {
     if (r.distanceMiles < MIN_RUN_MILES_FOR_AVG) continue;
-    const load = computeTrainingLoad(
-      r.durationSeconds,
-      r.avgHeartRate,
-      undefined,
-      maxHr
-    );
+    const load = resolveDisplayLoad(r, maxHr, restingHr);
     if (load != null) loadVals.push(load);
   }
   const avgLoad =
@@ -370,6 +367,7 @@ interface RunRowProps {
   onRowClick: () => void;
   isDuplicate?: boolean;
   maxHr: number;
+  restingHr: number;
 }
 
 function RunRow({
@@ -382,6 +380,7 @@ function RunRow({
   onRowClick,
   isDuplicate,
   maxHr,
+  restingHr,
 }: RunRowProps) {
   const localDate = getLocalDate(run);
   const dayAbbrev = DAY_ABBREVS[(localDate.getDay() + 6) % 7];
@@ -446,7 +445,7 @@ function RunRow({
         {/* Col 7: Training Load */}
         <div className="shrink-0">
           <TrainingLoadBadge
-            durationSeconds={run.durationSeconds}
+            score={resolveDisplayLoad(run, maxHr, restingHr)}
             avgHeartRate={run.avgHeartRate}
             activityType={run.activityType}
             maxHr={maxHr}
@@ -550,6 +549,7 @@ interface WeekGroupProps {
   onRunClick: (workoutId: string) => void;
   duplicateIds: Set<string>;
   maxHr: number;
+  restingHr: number;
 }
 
 function WeekGroup({
@@ -559,6 +559,7 @@ function WeekGroup({
   innerRef,
   shoes,
   openDropdown,
+  restingHr,
   setOpenDropdown,
   onAssign,
   duplicateIds,
@@ -579,9 +580,7 @@ function WeekGroup({
     hrVals.length > 0 ? hrVals.reduce((a, b) => a + b, 0) / hrVals.length : null;
 
   const loadScores = runs
-    .map((r) =>
-      computeTrainingLoad(r.durationSeconds, r.avgHeartRate, r.activityType, maxHr)
-    )
+    .map((r) => resolveDisplayLoad(r, maxHr, restingHr))
     .filter((s): s is number => s != null);
   const totalLoad =
     loadScores.length > 0 ? loadScores.reduce((a, b) => a + b, 0) : null;
@@ -620,6 +619,7 @@ function WeekGroup({
             onRowClick={() => onRunClick(run.workoutId)}
             isDuplicate={duplicateIds.has(run.workoutId)}
             maxHr={maxHr}
+            restingHr={restingHr}
           />
         );
       })}
@@ -744,6 +744,7 @@ export default function RunsPage() {
   }, [uid]);
 
   const maxHr = resolveMaxHr(userSettings);
+  const restingHr = resolveRestingHr(userSettings);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -909,17 +910,12 @@ export default function RunsPage() {
   const displayedRuns = useMemo(() => {
     return windowRuns.filter((r) => {
       if (!matchesDistanceFilter(r.distanceMiles, distanceFilter)) return false;
-      const load = computeTrainingLoad(
-        r.durationSeconds,
-        r.avgHeartRate,
-        r.activityType,
-        maxHr
-      );
+      const load = resolveDisplayLoad(r, maxHr, restingHr);
       if (!matchesLoadFilter(load, loadFilter)) return false;
       if (prOnly && !(r.prBadges && r.prBadges.length > 0)) return false;
       return true;
     });
-  }, [windowRuns, distanceFilter, loadFilter, prOnly, maxHr]);
+  }, [windowRuns, distanceFilter, loadFilter, prOnly, maxHr, restingHr]);
 
   const filtersActive =
     distanceFilter !== "all" || loadFilter !== "all" || prOnly;
@@ -933,12 +929,7 @@ export default function RunsPage() {
   // elapsed) — otherwise an aggressive filter would inflate the avg.
   const avgWeeklyLoad = useMemo<number | null>(() => {
     const totalLoad = displayedRuns.reduce((sum, r) => {
-      const load = computeTrainingLoad(
-        r.durationSeconds,
-        r.avgHeartRate,
-        r.activityType,
-        maxHr
-      );
+      const load = resolveDisplayLoad(r, maxHr, restingHr);
       return sum + (load ?? 0);
     }, 0);
     if (totalLoad <= 0) return null;
@@ -968,7 +959,7 @@ export default function RunsPage() {
     if (weeksSpanned <= 0) return null;
 
     return totalLoad / weeksSpanned;
-  }, [displayedRuns, selectedYear, selectedMonth, maxHr]);
+  }, [displayedRuns, selectedYear, selectedMonth, maxHr, restingHr]);
 
   // Detect duplicate pairs and derive badge IDs
   const duplicatePairs = useMemo(
@@ -1130,6 +1121,7 @@ export default function RunsPage() {
               runs={displayedRuns}
               avgWeeklyLoad={avgWeeklyLoad}
               maxHr={maxHr}
+              restingHr={restingHr}
             />
           )}
         </div>
@@ -1291,6 +1283,7 @@ export default function RunsPage() {
               onRunClick={(id) => router.push(`/runs/${id}`)}
               duplicateIds={duplicateIds}
               maxHr={maxHr}
+              restingHr={restingHr}
               innerRef={(el) => {
                 weekRefs.current[wk] = el;
               }}

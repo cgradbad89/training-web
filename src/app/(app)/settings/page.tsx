@@ -100,6 +100,7 @@ export default function SettingsPage() {
   const [displayName, setDisplayName] = useState("");
   const [defaultTargetPace, setDefaultTargetPace] = useState("");
   const [maxHeartRate, setMaxHeartRate] = useState("");
+  const [restingHeartRate, setRestingHeartRate] = useState("");
   const [thresholdPace, setThresholdPace] = useState("");
   const [suggestedMaxHeartRate, setSuggestedMaxHeartRate] = useState<
     number | null
@@ -130,6 +131,9 @@ export default function SettingsPage() {
         );
         setMaxHeartRate(
           settings?.maxHeartRate ? String(settings.maxHeartRate) : ""
+        );
+        setRestingHeartRate(
+          settings?.restingHeartRate ? String(settings.restingHeartRate) : ""
         );
         setThresholdPace(
           settings?.thresholdPaceSecPerMile
@@ -240,6 +244,18 @@ export default function SettingsPage() {
         setError("Max heart rate must be between 100 and 230 bpm.");
         return;
       }
+      const parsedRestingHr = restingHeartRate.trim()
+        ? Number(restingHeartRate.trim())
+        : undefined;
+      if (
+        parsedRestingHr !== undefined &&
+        (!Number.isFinite(parsedRestingHr) ||
+          parsedRestingHr < 30 ||
+          parsedRestingHr > 120)
+      ) {
+        setError("Resting heart rate must be between 30 and 120 bpm.");
+        return;
+      }
       if (defaultTargetPace.trim() && defaultTargetPaceSeconds == null) {
         setError("Default target pace must use m:ss format.");
         return;
@@ -254,6 +270,7 @@ export default function SettingsPage() {
         email: user?.email ?? undefined,
         defaultTargetPaceSecPerMile: defaultTargetPaceSeconds ?? 600,
         maxHeartRate: parsedMaxHr,
+        restingHeartRate: parsedRestingHr,
         thresholdPaceSecPerMile: thresholdPaceSeconds ?? undefined,
         suggestedMaxHeartRate: suggestedMaxHeartRate ?? undefined,
         suggestedThresholdPaceSecPerMile:
@@ -338,6 +355,28 @@ export default function SettingsPage() {
             </button>
           </div>
         ) : null}
+
+        <div className="mt-6">
+          <FieldLabel
+            htmlFor="resting-heart-rate"
+            label="Resting heart rate (bpm)"
+            tooltip="Your heart rate at complete rest, in beats per minute (e.g. measured first thing in the morning). Used with your max heart rate to compute heart-rate reserve for the Training Load score. Defaults to 60 bpm if left blank."
+          />
+          <input
+            id="resting-heart-rate"
+            type="number"
+            inputMode="numeric"
+            min={30}
+            max={120}
+            value={restingHeartRate}
+            onChange={(e) => setRestingHeartRate(e.target.value)}
+            className="input sm:max-w-40"
+            placeholder="60"
+          />
+          <p className="mt-2 text-xs text-textSecondary">
+            Leave blank to use the default of 60 bpm.
+          </p>
+        </div>
       </Card>
 
       <Card>

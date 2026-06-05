@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   computeTrainingLoadV2,
   computeStreamedTrainingLoad,
+  resolveDisplayLoad,
   DEFAULT_RESTING_HR,
   resolveRestingHr,
   HIIT_LOAD_FACTOR,
@@ -186,5 +187,72 @@ describe("computeStreamedTrainingLoad", () => {
     const res = computeStreamedTrainingLoad(pts, 600, 152, 60, 60, "Running");
     expect(res.method).toBe("streamed");
     expect(res.load).toBeNull();
+  });
+});
+
+describe("resolveDisplayLoad", () => {
+  const MX = 164;
+  const RST = 60;
+
+  it("returns the stored trainingLoadV2 when present (stored wins over recompute)", () => {
+    // Stored 999 deliberately differs from what a live recompute would produce.
+    const w = {
+      trainingLoadV2: 999,
+      avgHeartRate: 152,
+      durationSeconds: 1764,
+      activityType: "Running",
+    };
+    expect(resolveDisplayLoad(w, MX, RST)).toBe(999);
+    // Sanity: the live recompute is NOT 999.
+    expect(computeTrainingLoadV2(1764, 152, MX, RST, "Running")).not.toBe(999);
+  });
+
+  it("falls back to live computeTrainingLoadV2 when the field is absent/undefined/null", () => {
+    const live = computeTrainingLoadV2(1764, 152, MX, RST, "Running");
+    const absent = {
+      avgHeartRate: 152,
+      durationSeconds: 1764,
+      activityType: "Running",
+    };
+    const nullField = { ...absent, trainingLoadV2: null };
+    const undefField = { ...absent, trainingLoadV2: undefined };
+    expect(resolveDisplayLoad(absent, MX, RST)).toBe(live);
+    expect(resolveDisplayLoad(nullField, MX, RST)).toBe(live);
+    expect(resolveDisplayLoad(undefField, MX, RST)).toBe(live);
+  });
+
+  it("returns null (→ '—') when there is no stored value AND no avgHeartRate", () => {
+    const w = { trainingLoadV2: null, avgHeartRate: null, durationSeconds: 1764 };
+    expect(resolveDisplayLoad(w, MX, RST)).toBeNull();
+  });
+
+  it("weekly sum skips nulls and uses the resolved values (stored + fallback)", () => {
+    const stored = {
+      trainingLoadV2: 100,
+      avgHeartRate: 150,
+      durationSeconds: 1800,
+      activityType: "Running",
+    };
+    const fallback = {
+      avgHeartRate: 152,
+      durationSeconds: 1764,
+      activityType: "Running",
+    };
+    const missing = { avgHeartRate: null, durationSeconds: 1800 };
+    const week = [stored, fallback, missing];
+
+    const sum = week
+      .map((w) => resolveDisplayLoad(w, MX, RST))
+      .filter((v): v is number => v != null)
+      .reduce((a, b) => a + b, 0);
+
+    const expectedFallback = computeTrainingLoadV2(
+      1764,
+      152,
+      MX,
+      RST,
+      "Running"
+    ) as number;
+    expect(sum).toBe(100 + expectedFallback);
   });
 });

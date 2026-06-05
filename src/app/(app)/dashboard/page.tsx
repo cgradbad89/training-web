@@ -39,10 +39,11 @@ import {
 
 import { trainingLoadLevel } from "@/utils/metrics";
 import {
-  computeTrainingLoad,
+  resolveDisplayLoad,
   MIN_RUN_MILES_FOR_AVG,
   MIN_WORKOUT_SECONDS_FOR_AVG,
   resolveMaxHr,
+  resolveRestingHr,
 } from "@/utils/trainingLoad";
 import {
   buildDailyLoadMap,
@@ -193,7 +194,12 @@ function RunningStatsCard({
   weekEnd,
   plannedMiles,
   maxHr,
-}: SectionStatsProps & { plannedMiles: number; maxHr: number }) {
+  restingHr,
+}: SectionStatsProps & {
+  plannedMiles: number;
+  maxHr: number;
+  restingHr: number;
+}) {
   const runs = workouts.filter(
     (w) => w.isRunLike && isInWeek(w, weekStart, weekEnd)
   );
@@ -225,9 +231,7 @@ function RunningStatsCard({
   // individual runs are unaffected — only the totals/avgs are filtered).
   const loadScores = runs
     .filter((r) => r.distanceMiles >= MIN_RUN_MILES_FOR_AVG)
-    .map((r) =>
-      computeTrainingLoad(r.durationSeconds, r.avgHeartRate, r.activityType, maxHr)
-    )
+    .map((r) => resolveDisplayLoad(r, maxHr, restingHr))
     .filter((s): s is number => s !== null);
   const totalRunLoad =
     loadScores.length > 0 ? loadScores.reduce((s, v) => s + v, 0) : null;
@@ -296,10 +300,12 @@ function WorkoutsStatsCard({
   sessionsPlanned,
   sessionsCompleted,
   maxHr,
+  restingHr,
 }: SectionStatsProps & {
   sessionsPlanned: number;
   sessionsCompleted: number;
   maxHr: number;
+  restingHr: number;
 }) {
   const weekWorkouts = workouts.filter(
     (w) => !w.isRunLike && isInWeek(w, weekStart, weekEnd)
@@ -323,9 +329,7 @@ function WorkoutsStatsCard({
       : null;
 
   const loadScores = qualifying
-    .map((w) =>
-      computeTrainingLoad(w.durationSeconds, w.avgHeartRate, w.activityType, maxHr)
-    )
+    .map((w) => resolveDisplayLoad(w, maxHr, restingHr))
     .filter((s): s is number => s !== null);
   const totalWorkoutLoad =
     loadScores.length > 0 ? loadScores.reduce((s, v) => s + v, 0) : null;
@@ -399,9 +403,15 @@ interface ThisWeekRunsCardProps {
   workouts: HealthWorkout[];
   weekStart: Date;
   maxHr: number;
+  restingHr: number;
 }
 
-function ThisWeekRunsCard({ workouts, weekStart, maxHr }: ThisWeekRunsCardProps) {
+function ThisWeekRunsCard({
+  workouts,
+  weekStart,
+  maxHr,
+  restingHr,
+}: ThisWeekRunsCardProps) {
   const runs = useMemo(
     () =>
       workouts.filter(
@@ -449,7 +459,7 @@ function ThisWeekRunsCard({ workouts, weekStart, maxHr }: ThisWeekRunsCardProps)
                   </span>
                   <div>
                     <TrainingLoadBadge
-                      durationSeconds={run.durationSeconds}
+                      score={resolveDisplayLoad(run, maxHr, restingHr)}
                       avgHeartRate={run.avgHeartRate}
                       activityType={run.activityType}
                       maxHr={maxHr}
@@ -488,6 +498,7 @@ interface WorkoutSummaryCardProps {
   weekStart: Date;
   weekEnd: Date;
   maxHr: number;
+  restingHr: number;
   onSelect: (w: HealthWorkout) => void;
 }
 
@@ -495,6 +506,7 @@ function WorkoutSummaryCard({
   workouts,
   weekStart,
   weekEnd,
+  restingHr,
   maxHr,
   onSelect,
 }: WorkoutSummaryCardProps) {
@@ -537,7 +549,7 @@ function WorkoutSummaryCard({
                     )}
                     {w.avgHeartRate && w.durationSeconds > 0 && (
                       <TrainingLoadBadge
-                        durationSeconds={w.durationSeconds}
+                        score={resolveDisplayLoad(w, maxHr, restingHr)}
                         avgHeartRate={w.avgHeartRate}
                         activityType={w.activityType}
                         maxHr={maxHr}
@@ -1073,6 +1085,7 @@ interface LoadScoreTrainingLoadCardProps {
   weekStart: Date;
   weekEnd: Date;
   maxHr: number;
+  restingHr: number;
 }
 
 function LoadScoreTrainingLoadCard({
@@ -1080,6 +1093,7 @@ function LoadScoreTrainingLoadCard({
   weekStart,
   weekEnd,
   maxHr,
+  restingHr,
 }: LoadScoreTrainingLoadCardProps) {
   const now = new Date();
 
@@ -1090,23 +1104,18 @@ function LoadScoreTrainingLoadCard({
     let total = 0;
     for (const w of workouts) {
       if (!isInWeek(w, weekStart, weekEnd)) continue;
-      const load = computeTrainingLoad(
-        w.durationSeconds,
-        w.avgHeartRate,
-        w.activityType,
-        maxHr
-      );
+      const load = resolveDisplayLoad(w, maxHr, restingHr);
       if (load == null) continue;
       total += load;
     }
     return total;
-  }, [workouts, weekStart, weekEnd, maxHr]);
+  }, [workouts, weekStart, weekEnd, maxHr, restingHr]);
 
   // Chronic = rolling 28-day total / 4 = avg per week. Kept rolling (not
   // week-aligned) so it represents the user's established baseline capacity.
   const dailyMap = useMemo(
-    () => buildDailyLoadMap(workouts, maxHr),
-    [workouts, maxHr]
+    () => buildDailyLoadMap(workouts, maxHr, restingHr),
+    [workouts, maxHr, restingHr]
   );
   const chronicTotal = rollingLoad(dailyMap, now, 28);  // 28-day total
   const chronicWeekly = chronicTotal / 4;               // avg per week over 28d
@@ -1344,6 +1353,7 @@ export default function DashboardPage() {
   }, [uid]);
 
   const maxHr = resolveMaxHr(userSettings);
+  const restingHr = resolveRestingHr(userSettings);
 
   useEffect(() => {
     if (!uid) return;
@@ -1489,17 +1499,12 @@ export default function DashboardPage() {
       } else {
         if (w.durationSeconds < MIN_WORKOUT_SECONDS_FOR_AVG) continue;
       }
-      const load = computeTrainingLoad(
-        w.durationSeconds,
-        w.avgHeartRate,
-        w.activityType,
-        maxHr
-      );
+      const load = resolveDisplayLoad(w, maxHr, restingHr);
       if (load == null) continue;
       total += load;
     }
     return total;
-  }, [workouts, selectedWeekStart, selectedWeekEnd, maxHr]);
+  }, [workouts, selectedWeekStart, selectedWeekEnd, maxHr, restingHr]);
 
   // 28-day rolling baseline ending TODAY — same value the Load Score
   // Training Load card surfaces as "28-Day Avg/Wk". Anchored on today
@@ -1507,10 +1512,10 @@ export default function DashboardPage() {
   // weekly capacity, which doesn't shift when they navigate to a past
   // week.
   const avgWeeklyLoad = useMemo(() => {
-    const dailyMap = buildDailyLoadMap(workouts, maxHr);
+    const dailyMap = buildDailyLoadMap(workouts, maxHr, restingHr);
     const total28 = rollingLoad(dailyMap, new Date(), 28);
     return total28 / 4;
-  }, [workouts, maxHr]);
+  }, [workouts, maxHr, restingHr]);
 
   // Workout-plan session counts for the selected week — mirrors the
   // derivation inside WorkoutPlanProgressCard.
@@ -1601,6 +1606,7 @@ export default function DashboardPage() {
           weekStart={selectedWeekStart}
           weekEnd={selectedWeekEnd}
           maxHr={maxHr}
+          restingHr={restingHr}
         />
       </div>
 
@@ -1613,6 +1619,7 @@ export default function DashboardPage() {
         weekEnd={selectedWeekEnd}
         plannedMiles={plannedMiles}
         maxHr={maxHr}
+        restingHr={restingHr}
       />
 
       {/* Row 7: Running row — Running Plan tile (left) + This Week's Runs
@@ -1629,6 +1636,7 @@ export default function DashboardPage() {
           workouts={workouts}
           weekStart={selectedWeekStart}
           maxHr={maxHr}
+          restingHr={restingHr}
         />
       </div>
 
@@ -1641,6 +1649,7 @@ export default function DashboardPage() {
         sessionsPlanned={sessionsPlanned}
         sessionsCompleted={sessionsCompleted}
         maxHr={maxHr}
+        restingHr={restingHr}
       />
 
       {/* Row 9: Workout row — Workout Plan tile (left) + This Week's
@@ -1656,6 +1665,7 @@ export default function DashboardPage() {
           weekStart={selectedWeekStart}
           weekEnd={selectedWeekEnd}
           maxHr={maxHr}
+          restingHr={restingHr}
           onSelect={setSelectedWorkout}
         />
       </div>
@@ -1666,6 +1676,7 @@ export default function DashboardPage() {
           override={overrides[selectedWorkout.workoutId] ?? null}
           userId={uid}
           maxHr={maxHr}
+          restingHr={restingHr}
           onClose={() => setSelectedWorkout(null)}
           onExcludeChange={(workoutId, excluded) => {
             setOverrides((prev) => ({

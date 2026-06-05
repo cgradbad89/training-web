@@ -46,7 +46,11 @@ import {
 } from "@/utils/metrics";
 import { computeMileSplits, type MileSplit } from "@/utils/mileSplits";
 import { computeRunGap, type RunGap } from "@/utils/gradeAdjustedPace";
-import { resolveMaxHr } from "@/utils/trainingLoad";
+import {
+  resolveMaxHr,
+  resolveRestingHr,
+  resolveDisplayLoad,
+} from "@/utils/trainingLoad";
 import { type UserSettings } from "@/types/userSettings";
 import {
   collection,
@@ -178,6 +182,7 @@ export default function RunDetailPage() {
     assignments
   );
   const resolvedMaxHR = resolveMaxHr(userSettings);
+  const resolvedRestingHR = resolveRestingHr(userSettings);
 
   useEffect(() => {
     if (!uid || !workoutId) return;
@@ -668,7 +673,11 @@ export default function RunDetailPage() {
               Training Load
             </span>
             <TrainingLoadBadge
-              durationSeconds={displayWorkout.durationSeconds}
+              score={resolveDisplayLoad(
+                displayWorkout,
+                resolvedMaxHR,
+                resolvedRestingHR
+              )}
               avgHeartRate={displayWorkout.avgHeartRate}
               activityType={displayWorkout.activityType}
               maxHr={resolvedMaxHR}

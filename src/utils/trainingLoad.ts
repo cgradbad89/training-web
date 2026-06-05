@@ -289,6 +289,12 @@ export function activityLoadFactor(activityType?: string | null): number {
 }
 
 /**
+ * @deprecated LEGACY zone-multiplier model — RETIRED FROM DISPLAY in Prompt 3.
+ * Display/aggregation now use {@link resolveDisplayLoad} (stored V2 → live
+ * avg-HR V2). This function is retained unreferenced-by-display for trivial
+ * rollback and will be removed in a future cleanup. Do NOT wire it into new
+ * display paths.
+ *
  * Compute Training Load. Returns null when HR or duration is missing/invalid,
  * matching the existing "—" behaviour of the efficiency score it replaces.
  *
@@ -374,6 +380,42 @@ export function computeTrainingLoadV2(
 
   return Math.round(
     rawTrimp * TRAINING_LOAD_V2_SCALE * activityLoadFactor(activityType)
+  );
+}
+
+/**
+ * Single display/aggregation resolver for Training Load V2. Every load consumer
+ * goes through this so the fallback logic lives in ONE place.
+ *
+ *  - Stored `trainingLoadV2` (a finite number) WINS — it may be a streamed
+ *    refinement that a live recompute can't reproduce.
+ *  - Otherwise live-compute the avg-HR V2 baseline. NB: the live fallback is
+ *    ALWAYS avg-HR (never legacy, never streamed); streamed only ever comes
+ *    from the stored field. This is intentional.
+ *  - null when there's no stored value AND no usable avg HR → caller renders "—".
+ */
+export function resolveDisplayLoad(
+  workout: {
+    trainingLoadV2?: number | null;
+    avgHeartRate?: number | null;
+    durationSeconds: number;
+    activityType?: string;
+  },
+  maxHr: number,
+  restingHr: number
+): number | null {
+  if (
+    typeof workout.trainingLoadV2 === "number" &&
+    Number.isFinite(workout.trainingLoadV2)
+  ) {
+    return workout.trainingLoadV2;
+  }
+  return computeTrainingLoadV2(
+    workout.durationSeconds,
+    workout.avgHeartRate,
+    maxHr,
+    restingHr,
+    workout.activityType
   );
 }
 

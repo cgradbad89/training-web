@@ -64,12 +64,13 @@ import {
   type TypicalLoad,
 } from "@/utils/trainingLoadSeries";
 import {
-  computeTrainingLoad,
+  resolveDisplayLoad,
   classifyHrZone,
   HR_ZONES,
   MIN_RUN_MILES_FOR_AVG,
   MIN_WORKOUT_SECONDS_FOR_AVG,
   resolveMaxHr,
+  resolveRestingHr,
   type HRZoneNumber,
 } from "@/utils/trainingLoad";
 import { InfoTooltip } from "@/components/ui/InfoTooltip";
@@ -1260,6 +1261,7 @@ export default function PersonalInsightsPage() {
   const [vo2History, setVo2History] = useState<Vo2Entry[]>([]);
   const [vo2Loading, setVo2Loading] = useState(true);
   const maxHr = resolveMaxHr(userSettings);
+  const restingHr = resolveRestingHr(userSettings);
 
   useEffect(() => {
     if (!uid) return;
@@ -1755,12 +1757,7 @@ export default function PersonalInsightsPage() {
     for (const w of workouts) {
       if (!w.isRunLike) continue;
       if (w.startDate.getTime() < peakStartTime) continue;
-      const score = computeTrainingLoad(
-        w.durationSeconds,
-        w.avgHeartRate,
-        w.activityType,
-        maxHr
-      );
+      const score = resolveDisplayLoad(w, maxHr, restingHr);
       if (score == null) continue;
       if (score > peakRunLoad) {
         peakRunLoad = score;
@@ -1800,12 +1797,7 @@ export default function PersonalInsightsPage() {
       } else {
         if (w.durationSeconds < MIN_WORKOUT_SECONDS_FOR_AVG) continue;
       }
-      const score = computeTrainingLoad(
-        w.durationSeconds,
-        w.avgHeartRate,
-        w.activityType,
-        maxHr
-      );
+      const score = resolveDisplayLoad(w, maxHr, restingHr);
       if (score == null) continue;
       if (w.isRunLike) runSessionLoads.push(score);
       else workoutSessionLoads.push(score);
@@ -1833,12 +1825,7 @@ export default function PersonalInsightsPage() {
       } else {
         if (w.durationSeconds < MIN_WORKOUT_SECONDS_FOR_AVG) continue;
       }
-      const score = computeTrainingLoad(
-        w.durationSeconds,
-        w.avgHeartRate,
-        w.activityType,
-        maxHr
-      );
+      const score = resolveDisplayLoad(w, maxHr, restingHr);
       if (score == null) continue;
       if (w.isRunLike) thisWeekRuns.push(score);
       else thisWeekWorkouts.push(score);
@@ -1864,7 +1851,7 @@ export default function PersonalInsightsPage() {
       thisWeekRunAvg: avg(thisWeekRuns),
       thisWeekWorkoutAvg: avg(thisWeekWorkouts),
     };
-  }, [workouts, maxHr]);
+  }, [workouts, maxHr, restingHr]);
 
   const weeklyLoadData = useMemo(() => {
     // Last 16 weeks, Monday-anchored — matches Workout Frequency chart bucketing.

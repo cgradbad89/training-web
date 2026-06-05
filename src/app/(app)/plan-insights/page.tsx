@@ -31,9 +31,10 @@ import { type RunningPlan, isRunningPlan } from "@/types/plan";
 import { type Race, RACE_DISTANCE_MILES, RACE_DISTANCE_LABELS } from "@/types/race";
 import { formatPace, formatMiles } from "@/utils/pace";
 import {
-  computeTrainingLoad,
+  resolveDisplayLoad,
   MIN_RUN_MILES_FOR_AVG,
   resolveMaxHr,
+  resolveRestingHr,
 } from "@/utils/trainingLoad";
 import { weekStart as getWeekStart } from "@/utils/dates";
 import {
@@ -329,6 +330,7 @@ export default function PlanInsightsPage() {
   const [userSettings, setUserSettings] = useState<UserSettings | null>();
   const [loading, setLoading] = useState(true);
   const maxHr = resolveMaxHr(userSettings);
+  const restingHr = resolveRestingHr(userSettings);
 
   useEffect(() => {
     if (!uid) return;
@@ -537,12 +539,7 @@ export default function PlanInsightsPage() {
         for (const r of runs) {
           if (!r.isRunLike) continue;
           if (r.startDate < ws || r.startDate > we) continue;
-          const score = computeTrainingLoad(
-            r.durationSeconds,
-            r.avgHeartRate,
-            "running",
-            maxHr
-          );
+          const score = resolveDisplayLoad(r, maxHr, restingHr);
           if (score == null) continue;
           runLoad += score;
         }
@@ -863,9 +860,7 @@ export default function PlanInsightsPage() {
     // individual badges still appear elsewhere in the app.
     const vals = bucket
       .filter((r) => r.distanceMiles >= MIN_RUN_MILES_FOR_AVG)
-      .map((r) =>
-        computeTrainingLoad(r.durationSeconds, r.avgHeartRate, undefined, maxHr)
-      )
+      .map((r) => resolveDisplayLoad(r, maxHr, restingHr))
       .filter((v): v is number => v != null && isFinite(v));
     if (vals.length === 0) return "—";
     const avg = vals.reduce((a, b) => a + b, 0) / vals.length;

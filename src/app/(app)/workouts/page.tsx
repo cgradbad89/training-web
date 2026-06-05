@@ -34,13 +34,14 @@ import { WorkoutDetailModal } from "@/components/WorkoutDetailModal";
 import { MiniCalendar, toLocalIsoDateForCalendar } from "@/components/MiniCalendar";
 import { TrainingLoadBadge } from "@/components/ui/TrainingLoadBadge";
 import {
-  computeTrainingLoad,
+  resolveDisplayLoad,
   MIN_RUN_MILES_FOR_AVG,
   MIN_WORKOUT_SECONDS_FOR_AVG,
   getActivityContext,
   isHiitLikeActivity,
   isMindfulActivity,
   resolveMaxHr,
+  resolveRestingHr,
 } from "@/utils/trainingLoad";
 import { type UserSettings } from "@/types/userSettings";
 
@@ -204,6 +205,7 @@ function YearSummary({
   year,
   summaryTitle,
   maxHr,
+  restingHr,
 }: {
   workouts: HealthWorkout[];
   year: number;
@@ -211,6 +213,7 @@ function YearSummary({
    *  "<Year> Summary" label so the sidebar cards read consistently. */
   summaryTitle: string;
   maxHr: number;
+  restingHr: number;
 }) {
   const elapsed = weeksElapsed(year);
   const count = workouts.length;
@@ -238,9 +241,7 @@ function YearSummary({
         ? w.distanceMiles >= MIN_RUN_MILES_FOR_AVG
         : w.durationSeconds >= MIN_WORKOUT_SECONDS_FOR_AVG
     )
-    .map((w) =>
-      computeTrainingLoad(w.durationSeconds, w.avgHeartRate, w.activityType, maxHr)
-    )
+    .map((w) => resolveDisplayLoad(w, maxHr, restingHr))
     .filter((s): s is number => s !== null);
   const avgLoadPerSession =
     loadScores.length > 0
@@ -254,9 +255,7 @@ function YearSummary({
   // mean above. Denominator is calendar-weeks-elapsed (year-only — this
   // page has no month filter), matching the runs-page convention.
   const totalLoad = workouts
-    .map((w) =>
-      computeTrainingLoad(w.durationSeconds, w.avgHeartRate, w.activityType, maxHr)
-    )
+    .map((w) => resolveDisplayLoad(w, maxHr, restingHr))
     .filter((s): s is number => s !== null)
     .reduce((a, b) => a + b, 0);
   const avgWeeklyLoad =
@@ -393,10 +392,12 @@ function YearNavigator({
 function WorkoutRow({
   workout,
   maxHr,
+  restingHr,
   onClick,
 }: {
   workout: HealthWorkout;
   maxHr: number;
+  restingHr: number;
   onClick: () => void;
 }) {
   const localDate = getLocalDate(workout);
@@ -446,7 +447,7 @@ function WorkoutRow({
       <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
         {workout.avgHeartRate && workout.durationSeconds > 0 ? (
           <TrainingLoadBadge
-            durationSeconds={workout.durationSeconds}
+            score={resolveDisplayLoad(workout, maxHr, restingHr)}
             avgHeartRate={workout.avgHeartRate}
             activityType={workout.activityType}
             maxHr={maxHr}
@@ -465,12 +466,14 @@ function WorkoutWeekGroup({
   wKey,
   workouts,
   maxHr,
+  restingHr,
   onSelect,
   innerRef,
 }: {
   wKey: string;
   workouts: HealthWorkout[];
   maxHr: number;
+  restingHr: number;
   onSelect: (w: HealthWorkout) => void;
   /** Ref the parent uses to scrollIntoView when a calendar day is clicked. */
   innerRef?: (el: HTMLDivElement | null) => void;
@@ -490,9 +493,7 @@ function WorkoutWeekGroup({
     hrVals.length > 0 ? hrVals.reduce((a, b) => a + b, 0) / hrVals.length : null;
 
   const loadScores = workouts
-    .map((w) =>
-      computeTrainingLoad(w.durationSeconds, w.avgHeartRate, w.activityType, maxHr)
-    )
+    .map((w) => resolveDisplayLoad(w, maxHr, restingHr))
     .filter((s): s is number => s != null);
   const totalLoad =
     loadScores.length > 0 ? loadScores.reduce((a, b) => a + b, 0) : null;
@@ -519,6 +520,7 @@ function WorkoutWeekGroup({
           key={w.workoutId}
           workout={w}
           maxHr={maxHr}
+          restingHr={restingHr}
           onClick={() => onSelect(w)}
         />
       ))}
@@ -621,6 +623,7 @@ export default function WorkoutsPage() {
   const currentYear = new Date().getFullYear();
   const [selectedYear, setSelectedYear] = useState<number>(currentYear);
   const maxHr = resolveMaxHr(userSettings);
+  const restingHr = resolveRestingHr(userSettings);
 
   useEffect(() => {
     if (!uid) return;
@@ -787,6 +790,7 @@ export default function WorkoutsPage() {
           year={selectedYear}
           summaryTitle={`${selectedYear} Summary`}
           maxHr={maxHr}
+          restingHr={restingHr}
         />
 
         {/* Calendar — hidden on mobile, matches the runs page placement.
@@ -889,6 +893,7 @@ export default function WorkoutsPage() {
                 wKey={wk}
                 workouts={workouts}
                 maxHr={maxHr}
+                restingHr={restingHr}
                 onSelect={setSelectedWorkout}
                 innerRef={(el) => {
                   weekRefs.current[wk] = el;
@@ -905,6 +910,7 @@ export default function WorkoutsPage() {
           override={overrides[selectedWorkout.workoutId] ?? null}
           userId={uid}
           maxHr={maxHr}
+          restingHr={restingHr}
           onClose={() => setSelectedWorkout(null)}
           onExcludeChange={(workoutId, excluded) => {
             setOverrides((prev) => ({

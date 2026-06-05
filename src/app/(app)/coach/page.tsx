@@ -11,7 +11,7 @@ import { fetchRaces } from '@/services/races'
 import { fetchHealthMetrics } from '@/services/healthMetrics'
 import { fetchUserSettings } from '@/services/userSettings'
 import { buildCoachContext } from '@/utils/coachContext'
-import { resolveMaxHr } from '@/utils/trainingLoad'
+import { resolveMaxHr, resolveRestingHr } from '@/utils/trainingLoad'
 import { applyOverride } from '@/types/workoutOverride'
 import {
   BotMessageSquare, Send, Loader2, RefreshCw, ChevronRight
@@ -86,16 +86,29 @@ export default function CoachPage() {
         })
       const activeRace = upcomingRaces.find(r => r.isActive) ?? upcomingRaces[0] ?? null
 
-      const buildContext = (maxHr: number) =>
-        buildCoachContext(runs, activePlan, activeRace, overrides, healthMetrics, maxHr)
+      const buildContext = (maxHr: number, restingHr: number) =>
+        buildCoachContext(
+          runs,
+          activePlan,
+          activeRace,
+          overrides,
+          healthMetrics,
+          maxHr,
+          restingHr
+        )
 
       if (cancelled) return
-      setContext(buildContext(resolveMaxHr(undefined)))
+      setContext(
+        buildContext(resolveMaxHr(undefined), resolveRestingHr(undefined))
+      )
       setLoading(false)
 
       fetchUserSettings(userId)
         .then(settings => {
-          if (!cancelled) setContext(buildContext(resolveMaxHr(settings)))
+          if (!cancelled)
+            setContext(
+              buildContext(resolveMaxHr(settings), resolveRestingHr(settings))
+            )
         })
         .catch(err => console.error('[Coach] fetchUserSettings failed:', err))
     }).catch(err => {

@@ -11,7 +11,11 @@
  */
 
 import { type HealthWorkout } from "@/types/healthWorkout";
-import { computeTrainingLoad, DEFAULT_MAX_HR } from "@/utils/trainingLoad";
+import {
+  resolveDisplayLoad,
+  DEFAULT_MAX_HR,
+  DEFAULT_RESTING_HR,
+} from "@/utils/trainingLoad";
 import { trainingLoadLevel, type TrainingLoadLevel } from "@/utils/metrics";
 
 export interface DailyLoad {
@@ -36,25 +40,21 @@ function parseLocalIsoDate(iso: string): Date {
 
 /**
  * Bucket a list of workouts into a daily-load map keyed by local YYYY-MM-DD.
- * Per workout, the TRIMP-style score is computed via computeTrainingLoad();
- * null results (missing HR / duration) are skipped — NOT counted as 0.
+ * Per workout, the load is resolved via resolveDisplayLoad() (stored V2 → live
+ * avg-HR V2); null results (missing HR / duration) are skipped — NOT counted as 0.
  *
  * Runs (isRunLike) accumulate into runLoad; everything else into workoutLoad.
  * totalLoad is the sum of both.
  */
 export function buildDailyLoadMap(
   workouts: HealthWorkout[],
-  maxHr: number = DEFAULT_MAX_HR
+  maxHr: number = DEFAULT_MAX_HR,
+  restingHr: number = DEFAULT_RESTING_HR
 ): Map<string, DailyLoad> {
   const map = new Map<string, DailyLoad>();
 
   for (const w of workouts) {
-    const score = computeTrainingLoad(
-      w.durationSeconds,
-      w.avgHeartRate,
-      w.activityType,
-      maxHr
-    );
+    const score = resolveDisplayLoad(w, maxHr, restingHr);
     if (score == null) continue;
 
     const key = toLocalIsoDate(w.startDate);

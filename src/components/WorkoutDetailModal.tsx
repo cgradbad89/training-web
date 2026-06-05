@@ -18,12 +18,14 @@ import {
   restoreWorkout,
 } from "@/services/workoutOverrides";
 import { TrainingLoadBadge } from "@/components/ui/TrainingLoadBadge";
+import { resolveDisplayLoad } from "@/utils/trainingLoad";
 
 interface WorkoutDetailModalProps {
   workout: HealthWorkout;
   override: WorkoutOverride | null;
   userId: string;
   maxHr: number;
+  restingHr: number;
   onClose: () => void;
   onExcludeChange: (workoutId: string, excluded: boolean) => void;
 }
@@ -33,6 +35,7 @@ export function WorkoutDetailModal({
   override,
   userId,
   maxHr,
+  restingHr,
   onClose,
   onExcludeChange,
 }: WorkoutDetailModalProps) {
@@ -192,7 +195,7 @@ export function WorkoutDetailModal({
                 </span>
               </div>
               <TrainingLoadBadge
-                durationSeconds={workout.durationSeconds}
+                score={resolveDisplayLoad(workout, maxHr, restingHr)}
                 avgHeartRate={workout.avgHeartRate}
                 activityType={workout.activityType}
                 maxHr={maxHr}

@@ -5,7 +5,6 @@ import {
   ACTIVITY_CONTEXT_LABEL,
   DEFAULT_MAX_HR,
   WORKOUT_ZONES,
-  computeTrainingLoad,
   getActivityContext,
   getHRZoneForActivity,
   trainingLoadStatus,
@@ -16,10 +15,12 @@ import {
 } from "@/utils/trainingLoad";
 
 interface TrainingLoadBadgeProps {
-  durationSeconds: number;
+  /** PRECOMPUTED Training Load V2 (via resolveDisplayLoad). null → "—". The
+   *  badge no longer computes a score itself, so all sites share one resolver. */
+  score: number | null;
   avgHeartRate: number | null | undefined;
-  /** HealthKit activityType string. Drives the zone-set used for both the
-   *  score and the tooltip table. Omit/undefined → running default. */
+  /** HealthKit activityType string. Drives the HR-zone tooltip table only.
+   *  Omit/undefined → running default. */
   activityType?: string | null;
   /** Resolved profile max HR. Omitted → DEFAULT_MAX_HR fallback. */
   maxHr?: number;
@@ -45,7 +46,7 @@ const NEUTRAL_CLASSES = "bg-surface text-textSecondary border-border";
  * `overflow-hidden` clipping.
  */
 export function TrainingLoadBadge({
-  durationSeconds,
+  score,
   avgHeartRate,
   activityType,
   maxHr = DEFAULT_MAX_HR,
@@ -55,12 +56,6 @@ export function TrainingLoadBadge({
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
 
   const context: ActivityContext = getActivityContext(activityType);
-  const score = computeTrainingLoad(
-    durationSeconds,
-    avgHeartRate,
-    activityType,
-    maxHr
-  );
   const hasScore = score != null;
   const status = hasScore ? trainingLoadStatus(score) : null;
   const runZone =
