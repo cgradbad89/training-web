@@ -187,10 +187,7 @@ export function PlanEditor<TEntry extends PlanEditorEntryBase>({
   const weekEntries = entriesForWeek(selectedWeekIndex);
   const sorted = [...weekEntries].sort((a, b) => a.weekday - b.weekday);
   const dateRange = weekDateRange(plan.startDate, selectedWeekIndex);
-  // config.weekSummaryLabel is part of the shared API (and unit-tested) but is
-  // intentionally NOT surfaced in the week nav yet: the workout plan never
-  // showed a per-week summary, so rendering one now would change its UI. The
-  // running migration will decide where/whether to display it.
+  const summaryLabel = config.weekSummaryLabel(weekEntries);
 
   // Type-specific noun for labels/dialogs (no planType branching in JSX below).
   const noun =
@@ -375,6 +372,11 @@ export function PlanEditor<TEntry extends PlanEditorEntryBase>({
             Week {week?.weekNumber ?? selectedWeekIndex + 1}
           </div>
           <div className="text-xs text-textSecondary">{dateRange}</div>
+          {summaryLabel && (
+            <div className="text-[11px] text-textSecondary mt-0.5">
+              {summaryLabel}
+            </div>
+          )}
         </div>
 
         <div className="flex items-center gap-1 shrink-0 relative">

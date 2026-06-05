@@ -7,7 +7,7 @@
  * Nothing here touches Firestore or React — callers own persistence.
  */
 
-import type { PlannedWorkoutEntry } from "@/types/plan";
+import type { PlannedWorkoutEntry, PlannedRunEntry } from "@/types/plan";
 
 /** Minimal shape the generic helpers need: every plan entry knows its weekday. */
 export interface WeekdayEntry {
@@ -96,6 +96,35 @@ export function workoutWeekSummaryLabel(entries: PlannedWorkoutEntry[]): string 
   const n = entries.filter((e) => e.type !== "rest").length;
   if (n === 0) return "";
   return `${n} session${n === 1 ? "" : "s"}`;
+}
+
+// ─── Running-specific config helpers ──────────────────────────────────────────
+
+/**
+ * Factory for a blank running entry on a given weekday (1=Mon..7=Sun).
+ * Defaults: runType "outdoor", distanceMiles 0 (the editor's distance field
+ * renders empty for a 0 default and blocks save until a positive distance).
+ */
+export function makeNewRunEntry(
+  weekIndex: number,
+  weekday: number
+): PlannedRunEntry {
+  return {
+    id: crypto.randomUUID(),
+    weekIndex,
+    weekday,
+    dayOfWeek: weekday - 1,
+    runType: "outdoor",
+    distanceMiles: 0,
+  };
+}
+
+/** Per-week summary label for running plans: total planned miles (e.g. "20.5 mi"). */
+export function runningWeekSummaryLabel(entries: PlannedRunEntry[]): string {
+  const miles = entries
+    .filter((e) => e.runType !== "rest")
+    .reduce((s, e) => s + e.distanceMiles, 0);
+  return `${miles.toFixed(1)} mi`;
 }
 
 // ─── Dirty-state lifecycle ────────────────────────────────────────────────────

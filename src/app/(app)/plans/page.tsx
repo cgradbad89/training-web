@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CrossTrainingPlanDetail } from "@/components/CrossTrainingPlanDetail";
+import { RunningPlanDetail } from "@/components/RunningPlanDetail";
 import { useAuth } from "@/hooks/useAuth";
 import {
   fetchPlans,
@@ -571,6 +572,33 @@ export default function PlansPage() {
     }
   }
 
+  /**
+   * Persist updates to a Running plan from the in-place RunningPlanDetail.
+   * Same autosave-per-mutation path as the legacy /edit route's handleUpdateWeek.
+   */
+  async function handleRunningPlanUpdate(updated: RunningPlan) {
+    if (!user) return;
+    setPlans((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+    try {
+      await updatePlan(user.uid, updated);
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  /** Copy the selected running plan under a given name (RunningPlanDetail modal). */
+  async function handleCopyRunningPlanNamed(newName: string) {
+    if (!user || !selectedPlan || !isRunningPlan(selectedPlan)) return;
+    const plan = await createPlan<RunningPlan>(
+      user.uid,
+      deepCopyRunningPlan(selectedPlan, newName)
+    );
+    setPlans((prev) => [...prev, plan]);
+    setSelectedPlanId(plan.id);
+    setCopyPlanFlash(`✓ Copied as "${plan.name}"`);
+    setTimeout(() => setCopyPlanFlash(null), 3000);
+  }
+
   async function handleRename() {
     if (!user || !selectedPlan || !nameInput.trim()) return;
     setSaving(true);
@@ -847,273 +875,30 @@ export default function PlansPage() {
         )}
 
         {/* Running plan detail (existing rendering) */}
-        {selectedRunningPlan ? (() => {
-          // Local alias so the existing JSX (which referenced `selectedPlan`)
-          // continues to compile against the narrowed RunningPlan type.
-          const selectedPlan: RunningPlan = selectedRunningPlan;
-          return (
-          <>
-            {/* Plan header */}
-            <div className="px-6 py-4 border-b border-border bg-card flex items-start gap-4">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-3 flex-wrap">
-                  <h1 className="text-lg font-bold text-textPrimary truncate">
-                    {selectedPlan.name}
-                  </h1>
-                  {selectedPlan.isActive && (
-                    <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-success/10 text-success">
-                      Active
-                    </span>
-                  )}
-                </div>
-                <p className="text-sm text-textSecondary mt-0.5">
-                  Starts{" "}
-                  {new Date(
-                    selectedPlan.startDate + "T00:00:00"
-                  ).toLocaleDateString("en-US", {
-                    month: "long",
-                    day: "numeric",
-                    year: "numeric",
-                  })}
-                  {" · "}
-                  {selectedPlan.weeks.length} weeks
-                </p>
-              </div>
-
-              <div className="flex items-center gap-2 shrink-0">
-                {!selectedPlan.isActive && (
-                  <button
-                    onClick={() => handleSetActive(selectedPlan.id)}
-                    disabled={saving}
-                    className="text-sm px-3 py-1.5 rounded-lg bg-primary text-white font-medium hover:bg-primary/90 disabled:opacity-50"
-                  >
-                    Set Active
-                  </button>
-                )}
-                <button
-                  onClick={() => router.push(`/plans/${selectedPlan.id}/edit`)}
-                  disabled={saving}
-                  className="text-sm px-3 py-1.5 rounded-lg border border-border text-textPrimary font-medium hover:bg-surface disabled:opacity-50"
-                >
-                  Edit Plan
-                </button>
-                <button
-                  onClick={openCopyRunningPlanModal}
-                  disabled={saving}
-                  title="Copy plan"
-                  className="flex items-center gap-1 text-sm px-2.5 py-1.5 rounded-lg border border-border text-textSecondary hover:text-textPrimary hover:bg-surface disabled:opacity-50"
-                >
-                  <Copy className="w-3.5 h-3.5" />
-                  Copy plan
-                </button>
-                <button
-                  onClick={() => {
-                    setNameInput(selectedPlan.name);
-                    setShowRenameModal(true);
-                  }}
-                  disabled={saving}
-                  title="Rename plan"
-                  className="p-1.5 rounded-lg hover:bg-surface text-textSecondary hover:text-textPrimary disabled:opacity-50"
-                >
-                  <Pencil className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => setConfirmDelete(true)}
-                  disabled={saving}
-                  title="Delete plan"
-                  className="p-1.5 rounded-lg hover:bg-red-50 text-textSecondary hover:text-danger disabled:opacity-50"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-
-            {/* Week tab strip */}
-            <div
-              ref={weekTabsRef}
-              className="flex overflow-x-auto border-b border-border bg-card snap-x px-2"
-              style={{ scrollbarWidth: "none" }}
-            >
-              {selectedPlan.weeks.map((week, idx) => {
-                const stats = weekStats(selectedPlan, week);
-                const isSelected = idx === selectedWeekIndex;
-                return (
-                  <button
-                    key={idx}
-                    onClick={() => {
-                      setSelectedWeekIndex(idx);
-                    }}
-                    className={`shrink-0 snap-start px-4 py-3 flex flex-col items-center border-b-2 transition-colors ${
-                      isSelected
-                        ? "border-primary text-primary"
-                        : "border-transparent text-textSecondary hover:text-textPrimary"
-                    }`}
-                  >
-                    <span className="text-xs font-semibold whitespace-nowrap">
-                      Wk {week.weekNumber}
-                    </span>
-                    <span className="text-xs mt-0.5 whitespace-nowrap">
-                      {stats.totalMiles.toFixed(1)} mi
-                    </span>
-                    {stats.total > 0 && (
-                      <span
-                        className={`text-xs mt-0.5 ${
-                          stats.completed === stats.total
-                            ? "text-success"
-                            : "text-textSecondary"
-                        }`}
-                      >
-                        {stats.completed}/{stats.total}
-                      </span>
-                    )}
-                  </button>
+        {selectedRunningPlan ? (
+          <RunningPlanDetail
+            key={selectedRunningPlan.id}
+            plan={selectedRunningPlan}
+            activities={activities}
+            onUpdate={handleRunningPlanUpdate}
+            onDelete={async () => {
+              if (!user) return;
+              setSaving(true);
+              try {
+                await deletePlan(user.uid, selectedRunningPlan.id);
+                const remaining = plans.filter(
+                  (p) => p.id !== selectedRunningPlan.id
                 );
-              })}
-            </div>
-
-            {/* Week content */}
-            <div className="flex-1 overflow-y-auto">
-              {currentWeek && (
-                <div className="p-4">
-                  <div className="flex items-center justify-between mb-3">
-                    <div>
-                      <h3 className="font-semibold text-textPrimary">
-                        Week {currentWeek.weekNumber}
-                      </h3>
-                      <p className="text-xs text-textSecondary mt-0.5">
-                        {weekDateRange(selectedPlan, selectedWeekIndex)}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* 7-day table */}
-                  <div className="rounded-xl border border-border overflow-hidden">
-                    {[1, 2, 3, 4, 5, 6, 7].map((weekday) => {
-                      const entry = weekEntries.find(
-                        (e) => e.weekday === weekday && e.runType !== "rest"
-                      );
-                      const match = entry ? matchMap.get(entry.id) : undefined;
-                      const date = dayDate(selectedPlan, selectedWeekIndex, weekday);
-                      const status = entry
-                        ? statusForRunEntry(selectedPlan, entry, matchMap)
-                        : null;
-
-                      // Status icon for this entry
-                      let statusIcon: React.ReactNode = null;
-                      if (entry && status) {
-                        if (status === "met") {
-                          statusIcon = <CheckCircle className="w-4 h-4 text-success shrink-0" />;
-                        } else if (status === "partial") {
-                          statusIcon = <Check className="w-4 h-4 text-warning shrink-0" />;
-                        } else if (status === "missed") {
-                          statusIcon = <AlertCircle className="w-4 h-4 text-danger shrink-0" />;
-                        } else {
-                          statusIcon = <Circle className="w-4 h-4 text-border shrink-0" />;
-                        }
-                      }
-
-                      const dateLabel = date.toLocaleDateString("en-US", {
-                        month: "short",
-                        day: "numeric",
-                      });
-
-                      return (
-                        <div
-                          key={weekday}
-                          className={weekday < 7 ? "border-b border-border" : ""}
-                        >
-                          {/* Day row — read-only display */}
-                          <div className="flex items-center gap-3 py-3 px-3 hover:bg-surface/50 min-h-[52px]">
-                            {/* Left: day abbrev + date */}
-                            <div className="w-14 shrink-0">
-                              <div className="text-xs font-bold text-textSecondary">
-                                {DAY_ABBREVS[weekday - 1]}
-                              </div>
-                              <div className="text-xs text-textSecondary">
-                                {dateLabel}
-                              </div>
-                            </div>
-
-                            {!entry ? (
-                              // Rest state
-                              <>
-                                <div className="w-4 shrink-0" />
-                                <span className="text-sm text-textSecondary italic flex-1">
-                                  Rest
-                                </span>
-                              </>
-                            ) : (
-                              // Entry display state
-                              <>
-                                <div className="w-4 shrink-0">{statusIcon}</div>
-                                <div className="flex-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 min-w-0">
-                                  {entry.runType && entry.runType !== "rest" && (
-                                    <RunTypeBadge type={entry.runType} />
-                                  )}
-                                  {entry.description && (
-                                    <span className="text-sm text-textSecondary">
-                                      {entry.description}
-                                    </span>
-                                  )}
-                                  <span className="text-sm font-semibold text-textPrimary tabular-nums">
-                                    {entry.distanceMiles.toFixed(1)} mi
-                                  </span>
-                                  {entry.paceTarget && (
-                                    <span className="text-sm text-textSecondary">
-                                      @ {entry.paceTarget}/mi
-                                    </span>
-                                  )}
-                                  {entry.targetHeartRate && (
-                                    <span className="text-xs text-textSecondary">
-                                      HR: {entry.targetHeartRate} bpm
-                                    </span>
-                                  )}
-                                  {entry.notes && (
-                                    <span className="text-xs text-textSecondary italic">
-                                      {entry.notes}
-                                    </span>
-                                  )}
-                                  {match && (
-                                    <span
-                                      className={`text-xs ${
-                                        match.quality === "full"
-                                          ? "text-success"
-                                          : "text-warning"
-                                      }`}
-                                    >
-                                      {match.quality === "full" ? "✓" : "~"}{" "}
-                                      {match.activity.distanceMiles.toFixed(1)} mi ·{" "}
-                                      {match.activity.avgPaceSecPerMile
-                                        ? `${Math.floor(match.activity.avgPaceSecPerMile / 60)}:${String(Math.round(match.activity.avgPaceSecPerMile % 60)).padStart(2, "0")}/mi`
-                                        : "—"}
-                                      {match.activity.avgHeartRate != null && (
-                                        <span className="text-xs text-textSecondary ml-1">
-                                          · {Math.round(match.activity.avgHeartRate)} bpm
-                                        </span>
-                                      )}
-                                    </span>
-                                  )}
-                                </div>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  {weekEntries.filter((e) => e.runType !== "rest").length > 0 && (
-                    <WeekSummaryBar
-                      week={currentWeek}
-                      matchMap={matchMap}
-                    />
-                  )}
-                </div>
-              )}
-            </div>
-          </>
-          );
-        })() : !selectedPlan ? (
+                setPlans(remaining);
+                setSelectedPlanId(remaining[0]?.id ?? null);
+              } finally {
+                setSaving(false);
+              }
+            }}
+            onSetActive={() => handleSetActive(selectedRunningPlan.id)}
+            onCopyPlan={handleCopyRunningPlanNamed}
+          />
+        ) : !selectedPlan ? (
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center">
               <p className="text-textSecondary mb-4">

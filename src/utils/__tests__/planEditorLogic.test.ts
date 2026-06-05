@@ -5,10 +5,13 @@ import {
   buildCopyWeekEntries,
   buildCopyDayEntries,
   makeNewWorkoutEntry,
+  makeNewRunEntry,
   workoutWeekSummaryLabel,
+  runningWeekSummaryLabel,
   runMutationWithDirty,
 } from "@/utils/planEditorLogic";
-import type { PlannedWorkoutEntry } from "@/types/plan";
+import type { PlannedWorkoutEntry, PlannedRunEntry } from "@/types/plan";
+import { deepCopyRunEntry } from "@/utils/planCopy";
 
 // Minimal entry shape for the generic copy helpers + a deterministic copy fn
 // (no crypto randomness) so assertions are stable.
@@ -166,6 +169,114 @@ describe("workoutWeekSummaryLabel", () => {
     expect(
       workoutWeekSummaryLabel([makeNewWorkoutEntry(0, 1), rest])
     ).toBe("1 session");
+  });
+});
+
+// ─── Running config helpers ───────────────────────────────────────────────────
+
+describe("makeNewRunEntry", () => {
+  it("produces a blank outdoor run on the given day with a 0 distance default", () => {
+    const e: PlannedRunEntry = makeNewRunEntry(3, 6);
+    expect(e.runType).toBe("outdoor");
+    expect(e.distanceMiles).toBe(0);
+    expect(e.weekIndex).toBe(3);
+    expect(e.weekday).toBe(6);
+    expect(e.dayOfWeek).toBe(5);
+    expect(typeof e.id).toBe("string");
+    expect(e.id.length).toBeGreaterThan(0);
+  });
+
+  it("generates a fresh id on each call", () => {
+    expect(makeNewRunEntry(0, 1).id).not.toBe(makeNewRunEntry(0, 1).id);
+  });
+});
+
+describe("runningWeekSummaryLabel", () => {
+  function run(weekday: number, miles: number, runType: PlannedRunEntry["runType"] = "outdoor"): PlannedRunEntry {
+    return { id: `r${weekday}`, weekIndex: 0, weekday, dayOfWeek: weekday - 1, distanceMiles: miles, runType };
+  }
+
+  it("sums planned miles across the week, one decimal", () => {
+    expect(runningWeekSummaryLabel([run(1, 5), run(3, 8.5), run(6, 7)])).toBe("20.5 mi");
+  });
+
+  it("reports 0.0 mi for an empty week", () => {
+    expect(runningWeekSummaryLabel([])).toBe("0.0 mi");
+  });
+
+  it("reports 0.0 mi for a rest-only week (rest entries excluded)", () => {
+    expect(runningWeekSummaryLabel([run(2, 0, "rest"), run(4, 0, "rest")])).toBe("0.0 mi");
+  });
+
+  it("formats a single run with one decimal", () => {
+    expect(runningWeekSummaryLabel([run(1, 5)])).toBe("5.0 mi");
+  });
+});
+
+// ─── Generic copy helpers operate on running entries ──────────────────────────
+
+describe("buildCopyWeekEntries / buildCopyDayEntries with PlannedRunEntry", () => {
+  function runEntry(
+    id: string,
+    weekday: number,
+    runType: PlannedRunEntry["runType"] = "outdoor"
+  ): PlannedRunEntry {
+    return {
+      id,
+      weekIndex: 0,
+      weekday,
+      dayOfWeek: weekday - 1,
+      distanceMiles: 8,
+      paceTarget: "9:30",
+      runType,
+    };
+  }
+
+  it("copy-week preserves runType/distance/pace and reassigns the target week", () => {
+    const copied = buildCopyWeekEntries([runEntry("a", 2, "longRun")], 4, deepCopyRunEntry);
+    expect(copied).toHaveLength(1);
+    expect(copied[0].runType).toBe("longRun");
+    expect(copied[0].distanceMiles).toBe(8);
+    expect(copied[0].paceTarget).toBe("9:30");
+    expect(copied[0].weekIndex).toBe(4);
+    expect(copied[0].weekday).toBe(2);
+    expect(copied[0].id).not.toBe("a"); // fresh id
+  });
+
+  it("copy-day replaces the target weekday's runs and keeps other days", () => {
+    const targetWeek = [runEntry("x", 2), runEntry("y", 5)];
+    const source = [runEntry("s", 1, "treadmill")];
+    const result = buildCopyDayEntries(
+      targetWeek,
+      source,
+      3,
+      2,
+      deepCopyRunEntry,
+      (e) => e.runType === "rest"
+    );
+    // y (weekday 5) kept; x (weekday 2) replaced by a copy of s on weekday 2.
+    expect(result.map((e) => e.weekday).sort()).toEqual([2, 5]);
+    const copied = result.find((e) => e.weekday === 2)!;
+    expect(copied.runType).toBe("treadmill");
+    expect(copied.weekIndex).toBe(3);
+    expect(copied.id).not.toBe("s");
+  });
+
+  it("copy-day keeps a rest entry on the target weekday", () => {
+    const targetWeek = [runEntry("rest", 2, "rest"), runEntry("x", 2)];
+    const source = [runEntry("s", 1)];
+    const result = buildCopyDayEntries(
+      targetWeek,
+      source,
+      0,
+      2,
+      deepCopyRunEntry,
+      (e) => e.runType === "rest"
+    );
+    // rest entry preserved, non-rest x dropped, copy of s added.
+    expect(result.some((e) => e.id === "rest")).toBe(true);
+    expect(result.some((e) => e.id === "x")).toBe(false);
+    expect(result.filter((e) => e.weekday === 2 && e.runType !== "rest")).toHaveLength(1);
   });
 });
 
