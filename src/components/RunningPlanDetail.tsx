@@ -35,6 +35,7 @@ import { type HealthWorkout } from "@/types/healthWorkout";
 import { matchPlanToActual, statusForRunEntry } from "@/utils/planMatching";
 import { formatPace, parsePaceString } from "@/utils/pace";
 import { deepCopyRunEntry } from "@/utils/planCopy";
+import { formatCompletedAt } from "@/utils/planFormat";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { PlanEditor, type PlanEditorConfig } from "@/components/PlanEditor";
 import {
@@ -229,6 +230,8 @@ interface RunningPlanDetailProps {
   onUpdate: (updated: RunningPlan) => void | Promise<void>;
   onDelete: () => void;
   onSetActive: () => void;
+  onComplete: () => void;
+  onReopen: () => void;
   onCopyPlan: (newName: string) => void | Promise<void>;
   /** 0-based week to land on initially (e.g. calendar deep-link). Optional. */
   initialWeekIndex?: number;
@@ -240,11 +243,14 @@ export function RunningPlanDetail({
   onUpdate,
   onDelete,
   onSetActive,
+  onComplete,
+  onReopen,
   onCopyPlan,
   initialWeekIndex,
 }: RunningPlanDetailProps) {
   const [isEditMode, setIsEditMode] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmComplete, setConfirmComplete] = useState(false);
 
   // Copy-plan modal
   const [copyPlanOpen, setCopyPlanOpen] = useState(false);
@@ -506,6 +512,11 @@ export function RunningPlanDetail({
                 Active
               </span>
             )}
+            {plan.status === "completed" && (
+              <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-surface text-textSecondary border border-border">
+                Completed
+              </span>
+            )}
           </div>
           <p className="text-sm text-textSecondary mt-0.5">
             Starts{" "}
@@ -516,6 +527,12 @@ export function RunningPlanDetail({
             })}
             {" · "}
             {plan.weeks.length} weeks
+            {plan.status === "completed" && formatCompletedAt(plan.completedAt) && (
+              <>
+                {" · "}
+                Completed {formatCompletedAt(plan.completedAt)}
+              </>
+            )}
           </p>
         </div>
 
@@ -526,6 +543,23 @@ export function RunningPlanDetail({
               className="text-sm px-3 py-1.5 rounded-lg bg-primary text-white font-medium hover:bg-primary/90"
             >
               Set Active
+            </button>
+          )}
+          {/* Complete (confirm) for any non-completed plan; Reopen (instant)
+              once completed. Order mirrors CrossTrainingPlanDetail exactly. */}
+          {plan.status !== "completed" ? (
+            <button
+              onClick={() => setConfirmComplete(true)}
+              className="text-sm px-3 py-1.5 rounded-lg border border-border text-textSecondary hover:text-textPrimary hover:bg-surface"
+            >
+              Complete
+            </button>
+          ) : (
+            <button
+              onClick={onReopen}
+              className="text-sm px-3 py-1.5 rounded-lg border border-border text-textSecondary hover:text-textPrimary hover:bg-surface"
+            >
+              Reopen
             </button>
           )}
           {/* Edit / Done toggle — toggles in-place edit. In edit mode the plan
@@ -582,6 +616,20 @@ export function RunningPlanDetail({
         confirmVariant="primary"
         onConfirm={confirmNav}
         onCancel={cancelNav}
+      />
+
+      {/* Mark plan completed — clears active; reversible via Reopen */}
+      <ConfirmDialog
+        isOpen={confirmComplete}
+        title="Mark plan as completed?"
+        message="This moves the plan to Completed and clears its active status. You can Reopen it later."
+        confirmLabel="Mark Completed"
+        confirmVariant="primary"
+        onConfirm={() => {
+          setConfirmComplete(false);
+          onComplete();
+        }}
+        onCancel={() => setConfirmComplete(false)}
       />
 
       {/* Delete plan */}

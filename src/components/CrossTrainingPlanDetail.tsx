@@ -48,6 +48,7 @@ import {
 } from "@/types/plan";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { deepCopyWorkoutEntry } from "@/utils/planCopy";
+import { formatCompletedAt } from "@/utils/planFormat";
 import { PlanEditor, type PlanEditorConfig } from "@/components/PlanEditor";
 import {
   makeNewWorkoutEntry,
@@ -69,19 +70,6 @@ const CATEGORY_COLORS: Record<WorkoutCategory, { active: string; hover: string }
   yoga:         { active: "bg-teal-500 text-white border-teal-500",     hover: "hover:bg-teal-50 hover:border-teal-400" },
   hiit:         { active: "bg-red-500 text-white border-red-500",       hover: "hover:bg-red-50 hover:border-red-400" },
 };
-
-// ─── Date helpers ────────────────────────────────────────────────────────────
-
-function formatCompletedAt(iso?: string): string | null {
-  if (!iso) return null;
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return null;
-  return (
-    d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) +
-    " at " +
-    d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })
-  );
-}
 
 // ─── Auto-expanding textarea ─────────────────────────────────────────────────
 
@@ -700,6 +688,8 @@ interface CrossTrainingPlanDetailProps {
   onUpdate: (plan: WorkoutPlan) => void | Promise<void>;
   onDelete: () => void;
   onSetActive: () => void;
+  onComplete: () => void;
+  onReopen: () => void;
   onCopyPlan: (newName: string) => Promise<void>;
   saving: boolean;
 }
@@ -709,11 +699,14 @@ export function CrossTrainingPlanDetail({
   onUpdate,
   onDelete,
   onSetActive,
+  onComplete,
+  onReopen,
   onCopyPlan,
   saving,
 }: CrossTrainingPlanDetailProps) {
   const [isEditMode, setIsEditMode] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmComplete, setConfirmComplete] = useState(false);
 
   // Copy-plan state
   const [copyPlanOpen, setCopyPlanOpen] = useState(false);
@@ -867,6 +860,11 @@ export function CrossTrainingPlanDetail({
                 Active
               </span>
             )}
+            {plan.status === "completed" && (
+              <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-surface text-textSecondary border border-border">
+                Completed
+              </span>
+            )}
           </div>
           <p className="text-sm text-textSecondary mt-0.5">
             Starts{" "}
@@ -877,6 +875,12 @@ export function CrossTrainingPlanDetail({
             })}
             {" · "}
             {plan.weeks.length} weeks
+            {plan.status === "completed" && formatCompletedAt(plan.completedAt) && (
+              <>
+                {" · "}
+                Completed {formatCompletedAt(plan.completedAt)}
+              </>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
@@ -887,6 +891,25 @@ export function CrossTrainingPlanDetail({
               className="text-sm px-3 py-1.5 rounded-lg bg-primary text-white font-medium hover:bg-primary/90 disabled:opacity-50"
             >
               Set Active
+            </button>
+          )}
+          {/* Complete (confirm) for any non-completed plan; Reopen (instant)
+              once completed. Order mirrors RunningPlanDetail exactly. */}
+          {plan.status !== "completed" ? (
+            <button
+              onClick={() => setConfirmComplete(true)}
+              disabled={saving}
+              className="text-sm px-3 py-1.5 rounded-lg border border-border text-textSecondary hover:text-textPrimary hover:bg-surface disabled:opacity-50"
+            >
+              Complete
+            </button>
+          ) : (
+            <button
+              onClick={onReopen}
+              disabled={saving}
+              className="text-sm px-3 py-1.5 rounded-lg border border-border text-textSecondary hover:text-textPrimary hover:bg-surface disabled:opacity-50"
+            >
+              Reopen
             </button>
           )}
           {/* Edit / Done toggle — pure mode toggle; PlanEditor clears any open
@@ -943,6 +966,21 @@ export function CrossTrainingPlanDetail({
         confirmVariant="primary"
         onConfirm={confirmNav}
         onCancel={cancelNav}
+      />
+
+      {/* Mark plan completed — clears active; reversible via Reopen */}
+      <ConfirmDialog
+        isOpen={confirmComplete}
+        title="Mark plan as completed?"
+        message="This moves the plan to Completed and clears its active status. You can Reopen it later."
+        confirmLabel="Mark Completed"
+        confirmVariant="primary"
+        onConfirm={() => {
+          setConfirmComplete(false);
+          onComplete();
+        }}
+        onCancel={() => setConfirmComplete(false)}
+        loading={saving}
       />
 
       {/* Delete plan */}

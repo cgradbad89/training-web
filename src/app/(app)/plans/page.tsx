@@ -11,6 +11,7 @@ import {
   updatePlan,
   deletePlan,
   setActivePlan,
+  setPlanCompletion,
   nextStatusForSibling,
 } from "@/services/plans";
 import { deepCopyRunningPlan, deepCopyWorkoutPlan } from "@/utils/planCopy";
@@ -32,6 +33,7 @@ import {
   isRunningPlan,
   isWorkoutPlan,
   isLegacyPilatesPlan,
+  groupPlansByStatus,
 } from "@/types/plan";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import {
@@ -186,8 +188,77 @@ function SidebarPlanItem({
           title="Active"
         />
       )}
+      {plan.status === "completed" && (
+        <Check className="w-3.5 h-3.5 shrink-0 text-textSecondary" aria-label="Completed" />
+      )}
       <ChevronRight className="w-4 h-4 shrink-0 text-textSecondary" />
     </button>
+  );
+}
+
+// ─── Sidebar plan-type group (with status sub-grouping) ──────────────────────
+
+const STATUS_SUBGROUPS: { key: "active" | "draft" | "completed"; label: string }[] = [
+  { key: "active", label: "Active" },
+  { key: "draft", label: "Draft" },
+  { key: "completed", label: "Completed" },
+];
+
+/**
+ * One plan-type section (Running / Workout) in the left bar. Within the section
+ * plans are sub-grouped by status in fixed order (Active → Draft → Completed);
+ * empty status buckets render no sub-header. Order within a bucket is the input
+ * order (groupPlansByStatus preserves it).
+ */
+function PlanGroup({
+  title,
+  plans,
+  emptyLabel,
+  topBorder,
+  selectedPlanId,
+  onSelect,
+}: {
+  title: string;
+  plans: Plan[];
+  emptyLabel: string;
+  topBorder?: boolean;
+  selectedPlanId: string | null;
+  onSelect: (plan: Plan) => void;
+}) {
+  const groups = groupPlansByStatus(plans);
+  return (
+    <>
+      <div
+        className={`px-4 pt-4 pb-2 ${topBorder ? "border-t border-border mt-2" : "pt-1"}`}
+      >
+        <h3 className="text-[10px] font-bold uppercase tracking-widest text-textSecondary">
+          {title}
+        </h3>
+      </div>
+      {plans.length === 0 ? (
+        <p className="px-4 pb-2 text-xs text-textSecondary italic">{emptyLabel}</p>
+      ) : (
+        STATUS_SUBGROUPS.map(({ key, label }) => {
+          const bucket = groups[key];
+          if (bucket.length === 0) return null;
+          return (
+            <div key={key}>
+              <p className="px-4 pt-1.5 pb-1 text-[9px] font-semibold uppercase tracking-wider text-textSecondary/70">
+                {label}
+              </p>
+              {bucket.map((plan) => (
+                <SidebarPlanItem
+                  key={plan.id}
+                  plan={plan}
+                  isSelected={selectedPlanId === plan.id}
+                  onSelect={() => onSelect(plan)}
+                />
+              ))}
+            </div>
+          );
+        })
+      )}
+    </>
   );
 }
 
@@ -423,6 +494,35 @@ export default function PlansPage() {
           return { ...p, ...next };
         })
       );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Completion is self-only: it clears this plan's own active flag and never
+  // touches sibling plans (no auto-pick of a new active plan). setPlanCompletion
+  // dual-writes status + completedAt + isActive together.
+  async function handleCompletePlan(planId: string) {
+    if (!user || saving) return;
+    const plan = plans.find((p) => p.id === planId);
+    if (!plan) return;
+    setSaving(true);
+    try {
+      const merged = await setPlanCompletion(user.uid, plan, "complete");
+      setPlans((prev) => prev.map((p) => (p.id === planId ? merged : p)));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleReopenPlan(planId: string) {
+    if (!user || saving) return;
+    const plan = plans.find((p) => p.id === planId);
+    if (!plan) return;
+    setSaving(true);
+    try {
+      const merged = await setPlanCompletion(user.uid, plan, "reopen");
+      setPlans((prev) => prev.map((p) => (p.id === planId ? merged : p)));
     } finally {
       setSaving(false);
     }
@@ -698,53 +798,29 @@ export default function PlansPage() {
         </div>
 
         <div className="flex-1 overflow-y-auto py-2">
-          {/* Running Plans group */}
-          <div className="px-4 pt-1 pb-2">
-            <h3 className="text-[10px] font-bold uppercase tracking-widest text-textSecondary">
-              Running Plans
-            </h3>
-          </div>
-          {runningPlans.length === 0 && (
-            <p className="px-4 pb-2 text-xs text-textSecondary italic">
-              No running plans
-            </p>
-          )}
-          {runningPlans.map((plan) => (
-            <SidebarPlanItem
-              key={plan.id}
-              plan={plan}
-              isSelected={selectedPlanId === plan.id}
-              onSelect={() => {
-                setSelectedPlanId(plan.id);
-                setSelectedWeekIndex(currentWeekIndex(plan));
-                setMobileView("detail");
-              }}
-            />
-          ))}
-
-          {/* Workout Plans group */}
-          <div className="px-4 pt-4 pb-2 border-t border-border mt-2">
-            <h3 className="text-[10px] font-bold uppercase tracking-widest text-textSecondary">
-              Workout Plans
-            </h3>
-          </div>
-          {workoutPlans.length === 0 && (
-            <p className="px-4 pb-2 text-xs text-textSecondary italic">
-              No workout plans
-            </p>
-          )}
-          {workoutPlans.map((plan) => (
-            <SidebarPlanItem
-              key={plan.id}
-              plan={plan}
-              isSelected={selectedPlanId === plan.id}
-              onSelect={() => {
-                setSelectedPlanId(plan.id);
-                setSelectedWeekIndex(currentWeekIndex(plan));
-                setMobileView("detail");
-              }}
-            />
-          ))}
+          <PlanGroup
+            title="Running Plans"
+            plans={runningPlans}
+            emptyLabel="No running plans"
+            selectedPlanId={selectedPlanId}
+            onSelect={(plan) => {
+              setSelectedPlanId(plan.id);
+              setSelectedWeekIndex(currentWeekIndex(plan));
+              setMobileView("detail");
+            }}
+          />
+          <PlanGroup
+            title="Workout Plans"
+            plans={workoutPlans}
+            emptyLabel="No workout plans"
+            topBorder
+            selectedPlanId={selectedPlanId}
+            onSelect={(plan) => {
+              setSelectedPlanId(plan.id);
+              setSelectedWeekIndex(currentWeekIndex(plan));
+              setMobileView("detail");
+            }}
+          />
         </div>
       </div>
 
@@ -781,6 +857,8 @@ export default function PlansPage() {
               }
             }}
             onSetActive={() => handleSetActive(selectedPlan.id)}
+            onComplete={() => handleCompletePlan(selectedPlan.id)}
+            onReopen={() => handleReopenPlan(selectedPlan.id)}
             onCopyPlan={handleCopyWorkoutPlan}
             saving={saving}
           />
@@ -862,6 +940,8 @@ export default function PlansPage() {
               }
             }}
             onSetActive={() => handleSetActive(selectedRunningPlan.id)}
+            onComplete={() => handleCompletePlan(selectedRunningPlan.id)}
+            onReopen={() => handleReopenPlan(selectedRunningPlan.id)}
             onCopyPlan={handleCopyRunningPlanNamed}
           />
         ) : !selectedPlan ? (

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   derivePlanStatus,
   isActiveFromStatus,
+  groupPlansByStatus,
   type PlanStatus,
 } from "@/types/plan";
 
@@ -61,5 +62,47 @@ describe("isActiveFromStatus", () => {
   it("round-trips with derivePlanStatus for the active case", () => {
     const status: PlanStatus = derivePlanStatus({ isActive: true });
     expect(isActiveFromStatus(status)).toBe(true);
+  });
+});
+
+describe("groupPlansByStatus", () => {
+  const p = (id: string, status: PlanStatus) => ({ id, status });
+
+  it("partitions into the three buckets", () => {
+    const groups = groupPlansByStatus([
+      p("a", "active"),
+      p("d", "draft"),
+      p("c", "completed"),
+    ]);
+    expect(groups.active.map((x) => x.id)).toEqual(["a"]);
+    expect(groups.draft.map((x) => x.id)).toEqual(["d"]);
+    expect(groups.completed.map((x) => x.id)).toEqual(["c"]);
+  });
+
+  it("returns empty buckets for an empty input", () => {
+    expect(groupPlansByStatus([])).toEqual({
+      active: [],
+      draft: [],
+      completed: [],
+    });
+  });
+
+  it("preserves input order within each bucket", () => {
+    const groups = groupPlansByStatus([
+      p("d1", "draft"),
+      p("d2", "draft"),
+      p("c1", "completed"),
+      p("d3", "draft"),
+    ]);
+    expect(groups.draft.map((x) => x.id)).toEqual(["d1", "d2", "d3"]);
+    expect(groups.completed.map((x) => x.id)).toEqual(["c1"]);
+    expect(groups.active).toEqual([]);
+  });
+
+  it("handles a mix where some buckets are empty", () => {
+    const groups = groupPlansByStatus([p("c1", "completed"), p("c2", "completed")]);
+    expect(groups.active).toEqual([]);
+    expect(groups.draft).toEqual([]);
+    expect(groups.completed.map((x) => x.id)).toEqual(["c1", "c2"]);
   });
 });

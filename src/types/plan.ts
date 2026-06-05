@@ -279,6 +279,25 @@ export function isLegacyPilatesPlan(plan: Plan): plan is LegacyPilatesPlan {
   return plan.planType === "pilates";
 }
 
+/**
+ * Partition plans by lifecycle status into active / draft / completed buckets,
+ * preserving each plan's original order within its bucket. Used by the left-bar
+ * status sub-grouping. Pure — no sorting beyond input order.
+ */
+export function groupPlansByStatus<T extends { status: PlanStatus }>(
+  plans: T[]
+): { active: T[]; draft: T[]; completed: T[] } {
+  const active: T[] = [];
+  const draft: T[] = [];
+  const completed: T[] = [];
+  for (const p of plans) {
+    if (p.status === "active") active.push(p);
+    else if (p.status === "completed") completed.push(p);
+    else draft.push(p);
+  }
+  return { active, draft, completed };
+}
+
 /** True when the session should be treated as duration-only (ex-Pilates). */
 export function isDurationOnlyEntry(entry: PlannedWorkoutEntry): boolean {
   const exerciseCount = (entry.exercises ?? []).filter(

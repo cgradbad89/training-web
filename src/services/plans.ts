@@ -91,6 +91,42 @@ export async function deletePlan(uid: string, planId: string): Promise<void> {
 }
 
 /**
+ * Pure: the fields to merge for a completion-state change.
+ *   - "complete" → { status:"completed", isActive:false, completedAt: nowIso }
+ *   - "reopen"   → { status:"draft",     isActive:false, completedAt: undefined }
+ * Both clear the active flag (completing clears active; reopening returns the
+ * plan to draft, never straight back to active). completedAt:undefined is
+ * dropped by stripUndefined on write, which removes the field on reopen.
+ * `nowIso` is a parameter so the transition is deterministic in tests.
+ */
+export function planCompletionPatch(
+  action: "complete" | "reopen",
+  nowIso: string = new Date().toISOString()
+): { status: PlanStatus; isActive: boolean; completedAt: string | undefined } {
+  if (action === "complete") {
+    return { status: "completed", isActive: false, completedAt: nowIso };
+  }
+  return { status: "draft", isActive: false, completedAt: undefined };
+}
+
+/**
+ * Persist a completion-state change for a SINGLE plan. Self-only — unlike
+ * setActivePlan it never touches sibling plans (completing merely clears its
+ * own active flag; it does not promote another plan to active). status and
+ * isActive are always written together (dual-write invariant). Returns the
+ * merged plan for optimistic local update.
+ */
+export async function setPlanCompletion(
+  uid: string,
+  plan: Plan,
+  action: "complete" | "reopen"
+): Promise<Plan> {
+  const merged = { ...plan, ...planCompletionPatch(action) } as Plan;
+  await updatePlan(uid, merged);
+  return merged;
+}
+
+/**
  * Pure decision for what a same-type plan's status+isActive should become when
  * `targetId` is being activated.
  *   - The target itself          → { status: "active",  isActive: true }
