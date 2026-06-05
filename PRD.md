@@ -98,7 +98,7 @@ Daily health snapshots (one doc per calendar date). Fields: `date`, `weight_lbs`
 Special singleton document (not a date-keyed record). Fields: `hourlyAvgBpm` (Record<"0"–"23", number>), `sampleCount`, `updatedAt`, `periodDays`.
 
 ### `users/{uid}/settings/prefs`
-UserSettings singleton. Fields: `uid`, `displayName`, `email`, `weightThresholdGreen` (default 173 lbs), `weightThresholdYellow` (default 180 lbs), `defaultTargetPaceSecPerMile` (default 600 = 10:00/mi), `maxHeartRate` (optional user-set bpm), `thresholdPaceSecPerMile` (optional user-set threshold pace), `suggestedMaxHeartRate` (optional last computed bpm suggestion), `suggestedThresholdPaceSecPerMile` (optional prediction-based threshold suggestion), `suggestionsUpdatedAt` (Firestore Timestamp), `createdAt`, `updatedAt`.
+UserSettings singleton. Fields: `uid`, `displayName`, `email`, `weightThresholdGreen` (default 173 lbs), `weightThresholdYellow` (default 180 lbs), `defaultTargetPaceSecPerMile` (default 600 = 10:00/mi), `maxHeartRate` (optional user-set bpm), `restingHeartRate` (optional user-set bpm, for the HR-reserve / Banister V2 load model; resolved via `resolveRestingHr(settings)` with `DEFAULT_RESTING_HR=60` fallback), `thresholdPaceSecPerMile` (optional user-set threshold pace), `suggestedMaxHeartRate` (optional last computed bpm suggestion), `suggestedThresholdPaceSecPerMile` (optional prediction-based threshold suggestion), `suggestionsUpdatedAt` (Firestore Timestamp), `createdAt`, `updatedAt`.
 
 ### `users/{uid}/settings/healthGoals`
 HealthGoals singleton. Optional per-metric goal objects: `weight` (WeightGoal with tolerance band), `bmi` (BMIGoal with min/max range), `restingHR`, `steps`, `sleep`, `brushing`, `exerciseMins`, `moveCalories`, `standHours`, `awakeMins`, `avgBrushMins` (all MetricGoal with `warningPct`/`dangerPct`). Field `updatedAt` is a Firestore serverTimestamp.
@@ -151,14 +151,16 @@ Dismissed duplicate workout pairs. Prevents re-surfacing the same duplicate warn
 
 3. **Cadence** (`src/utils/metrics.ts`): Thresholds — short: good ≥170 spm, ok ≥160; medium: good ≥168, ok ≥158; long: good ≥165, ok ≥155.
 
-4. **Training Load (TRIMP)** (`src/utils/trainingLoad.ts`):
+4. **Training Load (TRIMP) — LEGACY zone-multiplier model, pending V2 cutover (Prompt 3)** (`src/utils/trainingLoad.ts`):
    - Formula: `TRIMP = durationMinutes × zoneMultiplier(avgHR) × factor`
    - `DEFAULT_MAX_HR = 185 bpm` fallback. Consumers resolve `users/{uid}/settings/prefs.maxHeartRate` via `resolveMaxHr(settings)` and pass the resolved value into `computeTrainingLoad()`, `buildDailyLoadMap()`, zone-boundary helpers, badges, dashboard/insights summaries, and AI Coach context.
    - Zone multipliers (running zones): Z1 Recovery <60% ×1.0 | Z2 Aerobic 60–70% ×1.5 | Z3 Tempo 70–80% ×2.5 | Z4 Threshold 80–90% ×4.0 | Z5 Max ≥90% ×6.5
    - Strength activities use shifted zone bands (Z5 starts at 80%, not 90%)
-   - Post-TRIMP scaling factors: running/cardio = 1.0 | HIIT/OTF = 0.75 | strength (lifting/cooldown) = 0.25 | mindful (yoga/pilates/barre) = 0.20
+   - Post-TRIMP scaling factors: running/cardio = 1.0 | HIIT/OTF = 0.75 | strength (lifting/cooldown) = 0.25 | mindful (yoga/pilates/barre) = 0.20. Extracted into the shared `activityLoadFactor(activityType)` helper so the legacy and V2 models stay in sync.
    - `STRENGTH_LOAD_FACTOR` was bumped from 0.20 → 0.25 (validated against Strava Relative Effort)
    - `computeTrainingLoad()` returns null when HR or duration is missing/invalid
+
+4a. **Training Load V2 — Banister TRIMP on HR reserve** (`src/utils/trainingLoad.ts`, `computeTrainingLoadV2`): the universal avg-HR baseline that will score ALL runs after the Prompt-3 cutover (a streamed per-second override arrives in a later phase). Additive — the legacy item 4 model is untouched. Math: `HRR = clamp((avgHR − restingHr) / (maxHr − restingHr), 0, 1)`; `weight = 0.64·e^(1.92·HRR)` (Banister male coefficients, a tunable pair); `rawTrimp = durationMinutes · HRR · weight`; `load = round(rawTrimp · TRAINING_LOAD_V2_SCALE · activityLoadFactor)`. Anchors/tunables: `maxHr` via `resolveMaxHr` (fallback `DEFAULT_MAX_HR=185`), `restingHr` via `resolveRestingHr` (fallback `DEFAULT_RESTING_HR=60`), `TRAINING_LOAD_V2_SCALE=1.14` (anchored so validated reference runs ≈ Strava Relative Effort). Returns null (never 0) when avgHR is missing/invalid, duration ≤ 0, or `maxHr ≤ restingHr` (divide-by-zero guard). Validated reference runs (maxHr 164, restingHr 60): easy 137 bpm/1854 s → 69, hard 156 bpm/1764 s → ~116, long 152 bpm/4370 s → ~256.
 
 5. **Training load ratio** (`src/utils/metrics.ts`): `ratio = acute7d / chronic30d`. Thresholds: <0.8 = "deload" | 0.8–1.1 = "stable" | 1.1–1.4 = "building" | >1.4 = "aggressive".
 

@@ -37,6 +37,16 @@ export function resolveMaxHr(
   return settings?.maxHeartRate ?? DEFAULT_MAX_HR;
 }
 
+/** Default resting HR (bpm) when the user hasn't set one — used by the V2
+ *  HR-reserve (Banister) load model. Tunable. */
+export const DEFAULT_RESTING_HR = 60;
+
+export function resolveRestingHr(
+  settings: UserSettings | null | undefined
+): number {
+  return settings?.restingHeartRate ?? DEFAULT_RESTING_HR;
+}
+
 // Minimum thresholds for including an activity in a Training Load *average*.
 // Individual badges still render for all activities regardless of these values —
 // these only filter out short/aborted activities (warmups, restarts) so they
@@ -251,6 +261,34 @@ export function classifyHrZone(
 }
 
 /**
+ * Post-TRIMP activity scaling factor — single source of truth shared by BOTH
+ * the legacy zone-multiplier model (`computeTrainingLoad`) and the V2 Banister
+ * model (`computeTrainingLoadV2`) so the two stay in sync. TRIMP over-credits
+ * duration at low HR for non-aerobic activities; this corrects it.
+ *   Running / other aerobic (incl. unknown) → 1.0
+ *   HIIT / OTF                               → HIIT_LOAD_FACTOR (0.75)
+ *   Strength (lifting, cooldown)             → STRENGTH_LOAD_FACTOR (0.25)
+ *   Mindful (Pilates, yoga, barre, …)        → MINDFUL_LOAD_FACTOR (0.20)
+ *
+ * Precedence matches the historical inline logic exactly: mindful first (the
+ * strictest subset of the strength allowlist), then strength context, then
+ * HIIT/OTF (which shares running HR bands), else running 1.0.
+ */
+export function activityLoadFactor(activityType?: string | null): number {
+  if (activityType && isMindfulActivity(activityType)) {
+    return MINDFUL_LOAD_FACTOR;
+  }
+  const context = activityType ? getActivityContext(activityType) : "running";
+  if (context === "strength") {
+    return STRENGTH_LOAD_FACTOR;
+  }
+  if (activityType && isHiitLikeActivity(activityType)) {
+    return HIIT_LOAD_FACTOR;
+  }
+  return 1.0;
+}
+
+/**
  * Compute Training Load. Returns null when HR or duration is missing/invalid,
  * matching the existing "—" behaviour of the efficiency score it replaces.
  *
@@ -272,20 +310,71 @@ export function computeTrainingLoad(
   const zone = getHRZoneForActivity(avgHeartRate, context, maxHr);
   const trimp = durationMinutes * zone.multiplier;
 
-  // Post-TRIMP scaling: TRIMP over-credits duration at low HR for non-aerobic
-  // activities. Mindful (Pilates/yoga/etc.) is checked first as the strictest
-  // subset of the strength allowlist; remaining strength types (traditional
-  // lifting, cooldown) fall through to STRENGTH_LOAD_FACTOR. HIIT/OTF is
-  // detected separately because it shares running HR zone bands.
-  let factor = 1.0;
-  if (activityType && isMindfulActivity(activityType)) {
-    factor = MINDFUL_LOAD_FACTOR;
-  } else if (context === "strength") {
-    factor = STRENGTH_LOAD_FACTOR;
-  } else if (activityType && isHiitLikeActivity(activityType)) {
-    factor = HIIT_LOAD_FACTOR;
+  return Math.round(trimp * activityLoadFactor(activityType));
+}
+
+// ─── Training Load V2 — Banister TRIMP on HR reserve ─────────────────────────
+//
+// A physiologically-sound TRIMP load using Heart-Rate Reserve (Karvonen) and
+// the Banister exponential weighting, so intensity scales with %HRR rather than
+// coarse zone bands. This is the UNIVERSAL baseline that will score ALL runs
+// from their run-level average HR (a streamed per-second override arrives in a
+// later phase). ADDITIVE — it does not change the legacy model above.
+//
+// Math (sourced; constants are TUNABLE):
+//   HRR     = clamp((avgHR − restingHr) / (maxHr − restingHr), 0, 1)
+//   weight  = 0.64 · e^(1.92 · HRR)          (Banister male coefficients)
+//   rawTrimp= durationMinutes · HRR · weight
+//   load    = round(rawTrimp · TRAINING_LOAD_V2_SCALE · activityFactor)
+//
+// TRAINING_LOAD_V2_SCALE is anchored so validated reference runs land near
+// Strava Relative Effort. activityFactor reuses activityLoadFactor() so V2 and
+// the legacy model share one scaling source.
+
+/** Global anchor so V2 reference runs ≈ Strava Relative Effort. TUNABLE. */
+export const TRAINING_LOAD_V2_SCALE = 1.14;
+
+/** Banister exponential HR-reserve weighting (male coefficients). The
+ *  (0.64, 1.92) pair is a documented, TUNABLE constant pair. */
+function bannisterWeight(hrr: number): number {
+  return 0.64 * Math.exp(1.92 * hrr);
+}
+
+/**
+ * Training Load V2 — Banister TRIMP from run-level average HR.
+ *
+ * Returns null (NEVER 0) when the inputs can't yield a meaningful score, so
+ * callers render "—":
+ *   - avgHeartRate missing / non-finite / ≤ 0
+ *   - durationSeconds ≤ 0 / non-finite
+ *   - (maxHr − restingHr) ≤ 0   (guards divide-by-zero / negative reserve)
+ *
+ * Pure in-memory — no Firestore writes.
+ */
+export function computeTrainingLoadV2(
+  durationSeconds: number,
+  avgHeartRate: number | null | undefined,
+  maxHr: number,
+  restingHr: number,
+  activityType?: string
+): number | null {
+  if (!avgHeartRate || avgHeartRate <= 0 || !isFinite(avgHeartRate)) return null;
+  if (!durationSeconds || durationSeconds <= 0 || !isFinite(durationSeconds)) {
+    return null;
   }
-  return Math.round(trimp * factor);
+  const reserve = maxHr - restingHr;
+  if (!isFinite(reserve) || reserve <= 0) return null;
+
+  // HR reserve (Karvonen), clamped to [0, 1] so an avgHR above maxHr (or below
+  // restingHr) can't overflow / go negative.
+  const hrr = Math.max(0, Math.min(1, (avgHeartRate - restingHr) / reserve));
+
+  const durationMinutes = durationSeconds / 60;
+  const rawTrimp = durationMinutes * hrr * bannisterWeight(hrr);
+
+  return Math.round(
+    rawTrimp * TRAINING_LOAD_V2_SCALE * activityLoadFactor(activityType)
+  );
 }
 
 export type TrainingLoadStatus = "low" | "moderate" | "hard" | "very-hard";

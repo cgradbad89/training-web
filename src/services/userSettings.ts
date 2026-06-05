@@ -40,6 +40,7 @@ function docToUserSettings(data: Record<string, unknown>): UserSettings {
     defaultTargetPaceSecPerMile:
       parseOptionalNumber(data.defaultTargetPaceSecPerMile) ?? 600,
     maxHeartRate: parseOptionalNumber(data.maxHeartRate),
+    restingHeartRate: parseOptionalNumber(data.restingHeartRate),
     thresholdPaceSecPerMile: parseOptionalNumber(
       data.thresholdPaceSecPerMile
     ),
