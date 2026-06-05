@@ -463,6 +463,9 @@ function ThisWeekRunsCard({
                       avgHeartRate={run.avgHeartRate}
                       activityType={run.activityType}
                       maxHr={maxHr}
+                      restingHr={restingHr}
+                      durationSeconds={run.durationSeconds}
+                      trainingLoadMethod={run.trainingLoadMethod}
                     />
                   </div>
                 </Link>
@@ -553,6 +556,9 @@ function WorkoutSummaryCard({
                         avgHeartRate={w.avgHeartRate}
                         activityType={w.activityType}
                         maxHr={maxHr}
+                        restingHr={restingHr}
+                        durationSeconds={w.durationSeconds}
+                        trainingLoadMethod={w.trainingLoadMethod}
                       />
                     )}
                   </div>

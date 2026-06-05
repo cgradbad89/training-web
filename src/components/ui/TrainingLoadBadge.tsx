@@ -9,10 +9,12 @@ import {
   getHRZoneForActivity,
   trainingLoadStatus,
   zoneBoundsBpmForActivity,
+  buildLoadExplainer,
   TRAINING_LOAD_STATUS_LABEL,
   type ActivityContext,
   type TrainingLoadStatus,
 } from "@/utils/trainingLoad";
+import { formatDuration } from "@/utils/pace";
 
 interface TrainingLoadBadgeProps {
   /** PRECOMPUTED Training Load V2 (via resolveDisplayLoad). null → "—". The
@@ -26,6 +28,12 @@ interface TrainingLoadBadgeProps {
   maxHr?: number;
   /** "compact" = list/dashboard sizing, "large" = run / workout detail. */
   size?: "compact" | "large";
+  // ── Optional per-run explainer inputs (Backfill+tooltip step) ──
+  // When provided (and sufficient), the tooltip appends a "how this was
+  // calculated" section. Absent → that section is omitted (backward compatible).
+  durationSeconds?: number;
+  restingHr?: number;
+  trainingLoadMethod?: "streamed" | "avg-hr-fallback" | null;
 }
 
 const STATUS_CLASSES: Record<TrainingLoadStatus, string> = {
@@ -51,6 +59,9 @@ export function TrainingLoadBadge({
   activityType,
   maxHr = DEFAULT_MAX_HR,
   size = "compact",
+  durationSeconds,
+  restingHr,
+  trainingLoadMethod,
 }: TrainingLoadBadgeProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
@@ -58,6 +69,17 @@ export function TrainingLoadBadge({
   const context: ActivityContext = getActivityContext(activityType);
   const hasScore = score != null;
   const status = hasScore ? trainingLoadStatus(score) : null;
+
+  // Per-run explainer ("how this was calculated"). Suppressed unless the
+  // optional inputs are sufficient (see buildLoadExplainer).
+  const explainer = buildLoadExplainer({
+    trainingLoadMethod,
+    score,
+    avgHeartRate,
+    durationSeconds,
+    maxHr,
+    restingHr,
+  });
   const runZone =
     hasScore && avgHeartRate && avgHeartRate > 0
       ? getHRZoneForActivity(avgHeartRate, context, maxHr)
@@ -151,6 +173,66 @@ export function TrainingLoadBadge({
           <p className="text-[10px] text-textSecondary italic">
             Higher score = harder effort. Max HR {maxHr} bpm.
           </p>
+
+          {explainer.show && (
+            <div className="mt-2 pt-2 border-t border-border">
+              <p className="text-[11px] font-medium text-textPrimary mb-1">
+                How this was calculated
+                {explainer.isLiveEstimate ? " (live estimate)" : ""}
+              </p>
+              <p className="text-[10px] text-textSecondary mb-1.5">
+                {explainer.methodLabel}
+              </p>
+              <div className="space-y-0.5 text-[10px] text-textSecondary mb-1.5">
+                {explainer.isStreamed ? (
+                  <div className="flex justify-between gap-2">
+                    <span>Heart rate</span>
+                    <span className="tabular-nums text-textPrimary">
+                      per-second
+                    </span>
+                  </div>
+                ) : explainer.avgHeartRate != null ? (
+                  <div className="flex justify-between gap-2">
+                    <span>Avg HR</span>
+                    <span className="tabular-nums text-textPrimary">
+                      {Math.round(explainer.avgHeartRate)} bpm
+                    </span>
+                  </div>
+                ) : null}
+                {explainer.hrrPct != null &&
+                  explainer.maxHr != null &&
+                  explainer.restingHr != null && (
+                    <div className="flex justify-between gap-2">
+                      <span>HR reserve used</span>
+                      <span className="tabular-nums text-textPrimary">
+                        {explainer.hrrPct}% ({explainer.restingHr}–
+                        {explainer.maxHr} bpm)
+                      </span>
+                    </div>
+                  )}
+                {explainer.durationSeconds != null && (
+                  <div className="flex justify-between gap-2">
+                    <span>Duration</span>
+                    <span className="tabular-nums text-textPrimary">
+                      {formatDuration(explainer.durationSeconds)}
+                    </span>
+                  </div>
+                )}
+                {explainer.score != null && (
+                  <div className="flex justify-between gap-2">
+                    <span>Load score</span>
+                    <span className="tabular-nums text-textPrimary">
+                      {explainer.score}
+                    </span>
+                  </div>
+                )}
+              </div>
+              <p className="text-[10px] text-textSecondary italic">
+                Training load weights time by how hard your heart is working —
+                harder efforts count exponentially more (Banister TRIMP).
+              </p>
+            </div>
+          )}
         </div>
       )}
     </div>

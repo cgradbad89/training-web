@@ -451,6 +451,9 @@ function WorkoutRow({
             avgHeartRate={workout.avgHeartRate}
             activityType={workout.activityType}
             maxHr={maxHr}
+            restingHr={restingHr}
+            durationSeconds={workout.durationSeconds}
+            trainingLoadMethod={workout.trainingLoadMethod}
           />
         ) : (
           <span className="text-xs text-textSecondary w-12 inline-block text-right">—</span>

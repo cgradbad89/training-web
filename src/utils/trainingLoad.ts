@@ -419,6 +419,95 @@ export function resolveDisplayLoad(
   );
 }
 
+// ─── Load-score tooltip explainer (pure, testable) ──────────────────────────
+
+export interface LoadExplainerInputs {
+  /** Stored method, if any. Absent → treated as a live avg-HR estimate. */
+  trainingLoadMethod?: "streamed" | "avg-hr-fallback" | null;
+  score: number | null;
+  avgHeartRate?: number | null;
+  durationSeconds?: number | null;
+  maxHr?: number | null;
+  restingHr?: number | null;
+}
+
+export interface LoadExplainer {
+  /** When false, the tooltip omits the explainer section (insufficient inputs). */
+  show: boolean;
+  isStreamed: boolean;
+  /** True when there was no stored method (score came from a live recompute). */
+  isLiveEstimate: boolean;
+  /** One-sentence description of how the score was derived. */
+  methodLabel: string;
+  /** HR reserve used, 0–100 (rounded), or null when HR anchors are unusable. */
+  hrrPct: number | null;
+  avgHeartRate: number | null;
+  maxHr: number | null;
+  restingHr: number | null;
+  durationSeconds: number | null;
+  score: number | null;
+}
+
+/**
+ * Build the per-run load explainer shown in the Training Load tooltip. Pure so
+ * it's unit-testable without rendering. `show` is false (section suppressed)
+ * unless there's a finite score AND a positive duration — and `hrrPct` is null
+ * unless the HR anchors are valid (avgHR>0, maxHr>restingHr), so the UI never
+ * renders a "%" with a blank number or a NaN.
+ */
+export function buildLoadExplainer(inputs: LoadExplainerInputs): LoadExplainer {
+  const method = inputs.trainingLoadMethod ?? null;
+  const isStreamed = method === "streamed";
+  const isLiveEstimate = method == null;
+
+  const score =
+    typeof inputs.score === "number" && Number.isFinite(inputs.score)
+      ? inputs.score
+      : null;
+  const durationSeconds =
+    typeof inputs.durationSeconds === "number" && inputs.durationSeconds > 0
+      ? inputs.durationSeconds
+      : null;
+  const avgHeartRate =
+    typeof inputs.avgHeartRate === "number" && inputs.avgHeartRate > 0
+      ? inputs.avgHeartRate
+      : null;
+  const maxHr =
+    typeof inputs.maxHr === "number" && inputs.maxHr > 0 ? inputs.maxHr : null;
+  const restingHr =
+    typeof inputs.restingHr === "number" && inputs.restingHr >= 0
+      ? inputs.restingHr
+      : null;
+
+  let hrrPct: number | null = null;
+  if (avgHeartRate != null && maxHr != null && restingHr != null && maxHr > restingHr) {
+    const hrr = Math.max(
+      0,
+      Math.min(1, (avgHeartRate - restingHr) / (maxHr - restingHr))
+    );
+    hrrPct = Math.round(hrr * 100);
+  }
+
+  const methodLabel = isStreamed
+    ? "Calculated from your second-by-second heart rate."
+    : "Calculated from your average heart rate for this run.";
+
+  const show = score != null && durationSeconds != null;
+
+  return {
+    show,
+    isStreamed,
+    isLiveEstimate,
+    methodLabel,
+    hrrPct,
+    avgHeartRate,
+    maxHr,
+    restingHr,
+    durationSeconds,
+    score,
+  };
+}
+
 // ─── Training Load V2 — streamed per-second Banister integral ────────────────
 //
 // A precision OVERRIDE of the avg-HR baseline for runs with dense per-point HR.

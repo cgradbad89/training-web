@@ -4,6 +4,7 @@ import {
   computeTrainingLoadV2,
   computeStreamedTrainingLoad,
   resolveDisplayLoad,
+  buildLoadExplainer,
   DEFAULT_RESTING_HR,
   resolveRestingHr,
   HIIT_LOAD_FACTOR,
@@ -254,5 +255,68 @@ describe("resolveDisplayLoad", () => {
       "Running"
     ) as number;
     expect(sum).toBe(100 + expectedFallback);
+  });
+});
+
+describe("buildLoadExplainer", () => {
+  const base = {
+    score: 100,
+    avgHeartRate: 152,
+    durationSeconds: 1764,
+    maxHr: 164,
+    restingHr: 60,
+  };
+
+  it("streamed → second-by-second method label, isStreamed true", () => {
+    const e = buildLoadExplainer({ ...base, trainingLoadMethod: "streamed" });
+    expect(e.show).toBe(true);
+    expect(e.isStreamed).toBe(true);
+    expect(e.isLiveEstimate).toBe(false);
+    expect(e.methodLabel).toMatch(/second-by-second/i);
+  });
+
+  it("avg-hr-fallback → average-HR method label, not streamed/live", () => {
+    const e = buildLoadExplainer({
+      ...base,
+      trainingLoadMethod: "avg-hr-fallback",
+    });
+    expect(e.isStreamed).toBe(false);
+    expect(e.isLiveEstimate).toBe(false);
+    expect(e.methodLabel).toMatch(/average heart rate/i);
+  });
+
+  it("no stored method → live estimate, average-HR label", () => {
+    const e = buildLoadExplainer({ ...base });
+    expect(e.isLiveEstimate).toBe(true);
+    expect(e.methodLabel).toMatch(/average heart rate/i);
+  });
+
+  it("hrrPct = round((avgHR−rest)/(max−rest)×100)", () => {
+    const e = buildLoadExplainer({ ...base }); // (152−60)/104 = 0.8846 → 88
+    expect(e.hrrPct).toBe(88);
+  });
+
+  it("clamps HRR to 0–100% for out-of-range HR", () => {
+    expect(buildLoadExplainer({ ...base, avgHeartRate: 200 }).hrrPct).toBe(100);
+    expect(buildLoadExplainer({ ...base, avgHeartRate: 40 }).hrrPct).toBe(0);
+  });
+
+  it("suppresses the section when score is missing (no NaN)", () => {
+    const e = buildLoadExplainer({ ...base, score: null });
+    expect(e.show).toBe(false);
+  });
+
+  it("suppresses the section when duration is missing", () => {
+    const e = buildLoadExplainer({ ...base, durationSeconds: null });
+    expect(e.show).toBe(false);
+  });
+
+  it("hrrPct is null (not NaN) when HR anchors are unusable", () => {
+    const noHr = buildLoadExplainer({ ...base, avgHeartRate: null });
+    expect(noHr.hrrPct).toBeNull();
+    const badReserve = buildLoadExplainer({ ...base, maxHr: 60, restingHr: 60 });
+    expect(badReserve.hrrPct).toBeNull();
+    // Section can still show (score + duration present) without a NaN %.
+    expect(badReserve.show).toBe(true);
   });
 });

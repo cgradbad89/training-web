@@ -449,6 +449,9 @@ function RunRow({
             avgHeartRate={run.avgHeartRate}
             activityType={run.activityType}
             maxHr={maxHr}
+            restingHr={restingHr}
+            durationSeconds={run.durationSeconds}
+            trainingLoadMethod={run.trainingLoadMethod}
           />
         </div>
 

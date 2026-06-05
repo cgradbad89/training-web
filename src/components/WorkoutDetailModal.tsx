@@ -199,6 +199,9 @@ export function WorkoutDetailModal({
                 avgHeartRate={workout.avgHeartRate}
                 activityType={workout.activityType}
                 maxHr={maxHr}
+                restingHr={restingHr}
+                durationSeconds={workout.durationSeconds}
+                trainingLoadMethod={workout.trainingLoadMethod}
                 size="large"
               />
             </div>

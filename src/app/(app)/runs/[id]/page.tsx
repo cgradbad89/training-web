@@ -681,6 +681,9 @@ export default function RunDetailPage() {
               avgHeartRate={displayWorkout.avgHeartRate}
               activityType={displayWorkout.activityType}
               maxHr={resolvedMaxHR}
+              restingHr={resolvedRestingHR}
+              durationSeconds={displayWorkout.durationSeconds}
+              trainingLoadMethod={displayWorkout.trainingLoadMethod}
               size="large"
             />
           </div>
