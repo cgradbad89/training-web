@@ -2,11 +2,29 @@ import { describe, expect, it } from "vitest";
 
 import {
   computeTrainingLoadV2,
+  computeStreamedTrainingLoad,
   DEFAULT_RESTING_HR,
   resolveRestingHr,
   HIIT_LOAD_FACTOR,
+  TRAINING_LOAD_DT_CLAMP_SEC,
+  STREAMED_HR_COVERAGE_MIN,
 } from "@/utils/trainingLoad";
 import { type UserSettings } from "@/types/userSettings";
+
+const STREAM_BASE_MS = Date.parse("2024-01-01T00:00:00Z");
+
+/** Build a point stream: `count` points `dtSec` apart, hr chosen per `hrAt(i)`. */
+function buildStream(
+  count: number,
+  hrAt: (i: number) => number | null,
+  dtSec = 1,
+  startMs = STREAM_BASE_MS
+): { timestamp: string; hr: number | null }[] {
+  return Array.from({ length: count }, (_, i) => ({
+    timestamp: new Date(startMs + i * dtSec * 1000).toISOString(),
+    hr: hrAt(i),
+  }));
+}
 
 // Validated reference profile: maxHr 164, restingHr 60 → reserve 104.
 const MAX_HR = 164;
@@ -98,5 +116,75 @@ describe("computeTrainingLoadV2 — guards & behavior", () => {
     expect(lo).not.toBeNull();
     expect((mid as number)).toBeGreaterThan(lo as number);
     expect((hi as number)).toBeGreaterThan(mid as number);
+  });
+});
+
+describe("computeStreamedTrainingLoad", () => {
+  it("clean ~1Hz stream reconciles with the avg-HR result (within ~5%)", () => {
+    // 600 points, 1s apart, constant 152 bpm.
+    const pts = buildStream(600, () => 152);
+    const res = computeStreamedTrainingLoad(pts, 600, 152, MAX_HR, RESTING_HR, "Running");
+    expect(res.method).toBe("streamed");
+    const avg = computeTrainingLoadV2(600, 152, MAX_HR, RESTING_HR, "Running") as number;
+    expect(res.load).not.toBeNull();
+    expect(Math.abs((res.load as number) - avg) / avg).toBeLessThanOrEqual(0.05);
+  });
+
+  it("pause-gap clamp: a 1000s gap contributes ≤ clamp, not 1000s of load", () => {
+    const noGap = buildStream(600, () => 152);
+    // Same points but shift everything after index 300 forward by 1000s → one
+    // ~1001s gap that must clamp to TRAINING_LOAD_DT_CLAMP_SEC.
+    const withGap = noGap.map((p, i) =>
+      i >= 300
+        ? {
+            ...p,
+            timestamp: new Date(
+              Date.parse(p.timestamp) + 1000 * 1000
+            ).toISOString(),
+          }
+        : p
+    );
+    const gLoad = computeStreamedTrainingLoad(withGap, 600, 152, MAX_HR, RESTING_HR, "Running").load as number;
+    const nLoad = computeStreamedTrainingLoad(noGap, 600, 152, MAX_HR, RESTING_HR, "Running").load as number;
+    // Clamp keeps the gap's contribution tiny (≤ clamp seconds), so the two
+    // loads stay within a couple units — NOT inflated by ~1000s of integration.
+    expect(Math.abs(gLoad - nLoad)).toBeLessThanOrEqual(2);
+    expect(TRAINING_LOAD_DT_CLAMP_SEC).toBe(10);
+  });
+
+  it("sparse HR (<50% coverage) → avg-hr-fallback equal to computeTrainingLoadV2", () => {
+    // hr only on every 3rd point → coverage ~0.333.
+    const pts = buildStream(600, (i) => (i % 3 === 0 ? 152 : null));
+    const res = computeStreamedTrainingLoad(pts, 600, 152, MAX_HR, RESTING_HR, "Running");
+    expect(res.method).toBe("avg-hr-fallback");
+    expect(res.hrCoverage).toBeLessThan(STREAMED_HR_COVERAGE_MIN);
+    expect(res.load).toBe(
+      computeTrainingLoadV2(600, 152, MAX_HR, RESTING_HR, "Running")
+    );
+  });
+
+  it("carry-forward: intermittent null hr uses last valid hr → finite, non-null load", () => {
+    // Even indices 152, odd null → coverage 0.5, nulls carry 152 forward.
+    const pts = buildStream(600, (i) => (i % 2 === 0 ? 152 : null));
+    const res = computeStreamedTrainingLoad(pts, 600, 152, MAX_HR, RESTING_HR, "Running");
+    expect(res.method).toBe("streamed");
+    expect(res.load).not.toBeNull();
+    expect(Number.isFinite(res.load as number)).toBe(true);
+    expect(res.load as number).toBeGreaterThan(0);
+  });
+
+  it("hrCoverage = 0.5 exactly engages streaming (boundary)", () => {
+    // First 300 carry hr, last 300 null → coverage exactly 300/600 = 0.5.
+    const pts = buildStream(600, (i) => (i < 300 ? 152 : null));
+    const res = computeStreamedTrainingLoad(pts, 600, 152, MAX_HR, RESTING_HR, "Running");
+    expect(res.hrCoverage).toBe(0.5);
+    expect(res.method).toBe("streamed");
+  });
+
+  it("maxHr <= restingHr → load null even with a full stream", () => {
+    const pts = buildStream(600, () => 152);
+    const res = computeStreamedTrainingLoad(pts, 600, 152, 60, 60, "Running");
+    expect(res.method).toBe("streamed");
+    expect(res.load).toBeNull();
   });
 });

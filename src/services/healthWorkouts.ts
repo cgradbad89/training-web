@@ -46,11 +46,18 @@ import {
 import { db } from "@/lib/firebase";
 import { toDate } from "@/utils/dates";
 import { type HealthWorkout } from "@/types/healthWorkout";
+import { type UserSettings } from "@/types/userSettings";
 import {
   computeBestEfforts,
   EMPTY_BEST_EFFORTS,
   type BestEffortsMap,
 } from "@/utils/bestEfforts";
+import {
+  computeTrainingLoadV2,
+  computeStreamedTrainingLoad,
+  resolveMaxHr,
+  resolveRestingHr,
+} from "@/utils/trainingLoad";
 import { fetchRoutePoints, type RoutePoint } from "@/services/routes";
 
 function stripUndefined<T extends object>(obj: T): T {
@@ -119,6 +126,18 @@ function docToHealthWorkout(
         )
       : undefined,
     bestEfforts: parseBestEfforts(data.bestEfforts),
+    trainingLoadV2:
+      typeof data.trainingLoadV2 === "number" &&
+      Number.isFinite(data.trainingLoadV2)
+        ? (data.trainingLoadV2 as number)
+        : data.trainingLoadV2 === null
+          ? null
+          : undefined,
+    trainingLoadMethod:
+      data.trainingLoadMethod === "streamed" ||
+      data.trainingLoadMethod === "avg-hr-fallback"
+        ? data.trainingLoadMethod
+        : undefined,
   };
 }
 
@@ -206,6 +225,111 @@ export async function computeAndStoreBestEfforts(
 
   await setDoc(ref, stripUndefined({ bestEfforts }), { merge: true });
   return bestEfforts;
+}
+
+/**
+ * Compute Training Load V2 for a single workout and persist it.
+ *
+ * Mirrors computeAndStoreBestEfforts: resolves the profile HR anchors, prefers
+ * the per-second streamed integral when the run hasRoute (dense HR), otherwise
+ * the avg-HR baseline, and merges the result back via owner setDoc(merge:true) —
+ * the same write pattern computeAndStoreBestEfforts uses in production (so no
+ * new Firestore rule is required). NEVER writes 0 for a null load: a null is
+ * written explicitly so the UI renders "—".
+ */
+export async function computeAndStoreTrainingLoad(
+  uid: string,
+  workoutId: string,
+  settings: UserSettings | null | undefined
+): Promise<{ load: number | null; method: string } | null> {
+  const ref = doc(db, "users", uid, "healthWorkouts", workoutId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return null;
+
+  const data = snap.data() as Record<string, unknown>;
+  const maxHr = resolveMaxHr(settings);
+  const restingHr = resolveRestingHr(settings);
+  const durationSeconds = (data.durationSeconds as number) ?? 0;
+  const avgHeartRate = (data.avgHeartRate as number | null) ?? null;
+  const activityType = (data.activityType as string) ?? undefined;
+  const hasRoute = (data.hasRoute as boolean) ?? false;
+
+  let load: number | null;
+  let method: "streamed" | "avg-hr-fallback";
+
+  if (hasRoute) {
+    const points = await fetchRoutePoints(uid, workoutId);
+    const result = computeStreamedTrainingLoad(
+      points.map((p) => ({ timestamp: p.timestamp, hr: p.hr })),
+      durationSeconds,
+      avgHeartRate,
+      maxHr,
+      restingHr,
+      activityType
+    );
+    load = result.load;
+    method = result.method;
+  } else {
+    load = computeTrainingLoadV2(
+      durationSeconds,
+      avgHeartRate,
+      maxHr,
+      restingHr,
+      activityType
+    );
+    method = "avg-hr-fallback";
+  }
+
+  // stripUndefined drops `undefined` keys but PRESERVES explicit null, so a
+  // null load is stored (→ "—") rather than written as 0.
+  await setDoc(
+    ref,
+    stripUndefined({ trainingLoadV2: load, trainingLoadMethod: method }),
+    { merge: true }
+  );
+
+  return { load, method };
+}
+
+/**
+ * Backfill Training Load V2 across all of a user's runs. Mirrors
+ * backfillBestEfforts: iterates run-like workouts, computes + stores each, and
+ * tallies the outcome. Idempotent — safe to re-run (overwrites the field).
+ */
+export async function backfillTrainingLoad(
+  uid: string,
+  settings: UserSettings | null | undefined
+): Promise<{
+  processed: number;
+  streamed: number;
+  fallback: number;
+  skipped: number;
+}> {
+  const stats = { processed: 0, streamed: 0, fallback: 0, skipped: 0 };
+
+  const q = query(
+    collection(db, "users", uid, "healthWorkouts"),
+    where("isRunLike", "==", true),
+    orderBy("startDate", "desc")
+  );
+  const snap = await getDocs(q);
+
+  for (const workoutDoc of snap.docs) {
+    const result = await computeAndStoreTrainingLoad(
+      uid,
+      workoutDoc.id,
+      settings
+    );
+    if (!result) {
+      stats.skipped++;
+      continue;
+    }
+    stats.processed++;
+    if (result.method === "streamed") stats.streamed++;
+    else stats.fallback++;
+  }
+
+  return stats;
 }
 
 export async function backfillBestEfforts(uid: string): Promise<{

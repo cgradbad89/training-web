@@ -377,6 +377,116 @@ export function computeTrainingLoadV2(
   );
 }
 
+// ─── Training Load V2 — streamed per-second Banister integral ────────────────
+//
+// A precision OVERRIDE of the avg-HR baseline for runs with dense per-point HR.
+// Instead of one whole-run HRR, it integrates the Banister weighting over every
+// consecutive timestamp pair, so time spent at high HR is credited where it
+// actually occurred. Falls back to the avg-HR model when HR coverage is sparse.
+
+/** Per-step Δt cap (seconds): pause gaps (lights, watch auto-pause) are clamped
+ *  to this so a long gap can't inflate load — the clamped time still counts, the
+ *  step is NOT dropped. TUNABLE. */
+export const TRAINING_LOAD_DT_CLAMP_SEC = 10;
+
+/** Minimum fraction of points carrying a valid HR for streaming to engage;
+ *  below this we fall back to the avg-HR model. TUNABLE. */
+export const STREAMED_HR_COVERAGE_MIN = 0.5;
+
+export interface StreamedLoadResult {
+  load: number | null;
+  method: "streamed" | "avg-hr-fallback";
+  /** fraction of points carrying a finite hr, 0..1 */
+  hrCoverage: number;
+}
+
+/**
+ * Streamed Banister TRIMP from per-point HR samples. Reuses the SAME
+ * `bannisterWeight`, `TRAINING_LOAD_V2_SCALE`, and `activityLoadFactor` as the
+ * avg-HR model — single source of truth, no duplicated constants.
+ *
+ * Behavior:
+ *  - hrCoverage = (points with finite hr) / (total points).
+ *  - If hrCoverage < STREAMED_HR_COVERAGE_MIN OR points.length < 2 → fall back to
+ *    `computeTrainingLoadV2` (method "avg-hr-fallback").
+ *  - Otherwise integrate over timestamp-sorted consecutive pairs:
+ *      dt = (t[i+1] − t[i]) sec; dt ≤ 0 → skip; dt > clamp → dt = clamp.
+ *      hr = hr at point i, carrying forward the last valid hr; skip until one exists.
+ *      rawStep = (dt/60) × hrr × bannisterWeight(hrr), hrr clamped to [0,1].
+ *    load = round(Σ rawStep × TRAINING_LOAD_V2_SCALE × activityFactor).
+ *  - Null guards (method stays "streamed"): maxHr ≤ restingHr → null;
+ *    durationSeconds ≤ 0 / non-finite → null.
+ *
+ * Pure — no Firestore, no fetching.
+ */
+export function computeStreamedTrainingLoad(
+  points: { timestamp: string; hr: number | null }[],
+  durationSeconds: number,
+  avgHeartRate: number | null | undefined,
+  maxHr: number,
+  restingHr: number,
+  activityType?: string
+): StreamedLoadResult {
+  const total = points.length;
+  const validHrCount = points.reduce(
+    (acc, p) => acc + (p.hr != null && isFinite(p.hr) ? 1 : 0),
+    0
+  );
+  const hrCoverage = total > 0 ? validHrCount / total : 0;
+
+  // Sparse / degenerate → avg-HR baseline.
+  if (hrCoverage < STREAMED_HR_COVERAGE_MIN || total < 2) {
+    return {
+      load: computeTrainingLoadV2(
+        durationSeconds,
+        avgHeartRate,
+        maxHr,
+        restingHr,
+        activityType
+      ),
+      method: "avg-hr-fallback",
+      hrCoverage,
+    };
+  }
+
+  // Same null guards as the avg-HR V2 model.
+  const reserve = maxHr - restingHr;
+  if (!isFinite(reserve) || reserve <= 0) {
+    return { load: null, method: "streamed", hrCoverage };
+  }
+  if (!durationSeconds || durationSeconds <= 0 || !isFinite(durationSeconds)) {
+    return { load: null, method: "streamed", hrCoverage };
+  }
+
+  // Sort by timestamp ascending; drop points whose timestamp won't parse.
+  const seq = points
+    .map((p) => ({ tMs: Date.parse(p.timestamp), hr: p.hr }))
+    .filter((p) => Number.isFinite(p.tMs))
+    .sort((a, b) => a.tMs - b.tMs);
+
+  let rawSum = 0;
+  let lastValidHr: number | null = null;
+  for (let i = 0; i < seq.length - 1; i++) {
+    // Carry-forward hr at point i: update when this point has a valid sample.
+    if (seq[i].hr != null && isFinite(seq[i].hr as number)) {
+      lastValidHr = seq[i].hr as number;
+    }
+    if (lastValidHr == null) continue; // no valid hr yet → skip the step
+
+    let dt = (seq[i + 1].tMs - seq[i].tMs) / 1000;
+    if (dt <= 0) continue;
+    if (dt > TRAINING_LOAD_DT_CLAMP_SEC) dt = TRAINING_LOAD_DT_CLAMP_SEC;
+
+    const hrr = Math.max(0, Math.min(1, (lastValidHr - restingHr) / reserve));
+    rawSum += (dt / 60) * hrr * bannisterWeight(hrr);
+  }
+
+  const load = Math.round(
+    rawSum * TRAINING_LOAD_V2_SCALE * activityLoadFactor(activityType)
+  );
+  return { load, method: "streamed", hrCoverage };
+}
+
 export type TrainingLoadStatus = "low" | "moderate" | "hard" | "very-hard";
 
 /** Map a score to a colour bucket for the badge background. */

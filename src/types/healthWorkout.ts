@@ -37,6 +37,12 @@ export interface HealthWorkout {
   prBadges?: string[];
   /** Standard-distance best efforts, keyed by distance → timeSeconds | null. */
   bestEfforts?: BestEffortsMap;
+  /** Training Load V2 (Banister HR-reserve) score; null when HR/duration can't
+   *  yield a score (UI renders "—"). Written by computeAndStoreTrainingLoad. */
+  trainingLoadV2?: number | null;
+  /** Which V2 model produced trainingLoadV2: per-second "streamed" integral or
+   *  the avg-HR baseline ("avg-hr-fallback"). */
+  trainingLoadMethod?: "streamed" | "avg-hr-fallback";
 }
 
 export function isRunWorkout(w: HealthWorkout): boolean {
