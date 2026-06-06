@@ -13,6 +13,7 @@ import {
   MinusCircle,
   XCircle,
   Circle,
+  ChevronDown,
 } from "lucide-react";
 
 import { WeekNavigator } from "@/components/layout/WeekNavigator";
@@ -67,9 +68,11 @@ import { fetchAllOverrides } from "@/services/workoutOverrides";
 import { WorkoutDetailModal } from "@/components/WorkoutDetailModal";
 import {
   computeWeekScore,
+  buildWeekScoreBreakdown,
   isWeekEmpty,
   type WeekScoreInput,
   type WeekScoreResult,
+  type WeekScoreComponent,
 } from "@/utils/weekScore";
 import {
   type RunningPlan,
@@ -1169,16 +1172,33 @@ function LoadScoreTrainingLoadCard({
 
 // ─── Week Score Card ─────────────────────────────────────────────────────────
 
+/** Format a breakdown component's actual/target pair for the explainer. */
+function fmtWeekScoreValue(c: WeekScoreComponent): string {
+  if (c.target <= 0) {
+    if (c.unit === "mi") return `${c.actual.toFixed(1)} mi · no plan`;
+    if (c.unit === "sessions") return "no plan";
+    return "no baseline";
+  }
+  if (c.unit === "mi") return `${c.actual.toFixed(1)} / ${c.target.toFixed(1)} mi`;
+  if (c.unit === "sessions") return `${c.actual} / ${c.target} sessions`;
+  return `${Math.round(c.actual)} / ${Math.round(c.target)} load`;
+}
+
 /** Single ring + three sub-score bars summarising the current week's
  *  adherence and load. Pure presentation — all numbers come from
  *  computeWeekScore() at the page level. */
 function WeekScoreCard({ input }: { input: WeekScoreInput }) {
+  // Disclosure state — declared before any early return (React #310).
+  const [showBreakdown, setShowBreakdown] = useState(false);
+
   const empty = isWeekEmpty(input);
 
   // Compute the score unconditionally so we still render *something* on an
   // empty week; the rendered branch decides whether to show the gauge or
   // the placeholder.
   const result: WeekScoreResult = computeWeekScore(input);
+  // Per-component breakdown for the explainer (sums to result.total).
+  const breakdown = buildWeekScoreBreakdown(input);
 
   if (empty) {
     return (
@@ -1229,6 +1249,45 @@ function WeekScoreCard({ input }: { input: WeekScoreInput }) {
           </div>
         </div>
       </div>
+
+      {/* Explainer — additive, collapsed by default (card is unchanged until
+          opened). Each component reconciles to the displayed total. */}
+      <button
+        type="button"
+        onClick={() => setShowBreakdown((v) => !v)}
+        aria-expanded={showBreakdown}
+        className="mt-3 flex items-center gap-1 text-xs text-textSecondary hover:text-textPrimary transition-colors"
+      >
+        <ChevronDown
+          className={`w-3.5 h-3.5 transition-transform ${showBreakdown ? "rotate-180" : ""}`}
+        />
+        How is this calculated?
+      </button>
+
+      {showBreakdown && (
+        <div className="mt-2 border-t border-border pt-3 flex flex-col gap-2">
+          {breakdown.components.map((c) => (
+            <div key={c.key} className="flex flex-col gap-0.5">
+              <div className="flex items-baseline justify-between gap-2 text-xs">
+                <span className="text-textPrimary font-medium">{c.label}</span>
+                <span className="tabular-nums text-textSecondary">
+                  {fmtWeekScoreValue(c)} ·{" "}
+                  <span className="text-textPrimary font-semibold">
+                    {c.earnedPoints}/{c.maxPoints} pts
+                  </span>
+                </span>
+              </div>
+              <span className="text-[11px] text-textSecondary">{c.note}</span>
+            </div>
+          ))}
+          <div className="flex items-baseline justify-between gap-2 text-xs border-t border-border pt-2">
+            <span className="text-textPrimary font-semibold">Total</span>
+            <span className="tabular-nums text-textPrimary font-semibold">
+              {breakdown.total}/100 pts
+            </span>
+          </div>
+        </div>
+      )}
     </Card>
   );
 }
