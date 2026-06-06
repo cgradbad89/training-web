@@ -71,4 +71,29 @@ describe("navItems", () => {
   it("primary order matches PRIMARY_MOBILE_HREFS", () => {
     expect(PRIMARY_MOBILE_ITEMS.map((i) => i.href)).toEqual(PRIMARY_MOBILE_HREFS);
   });
+
+  it("primary-4 are exactly This Week, Runs, Workouts, Personal Insights (in order)", () => {
+    expect(PRIMARY_MOBILE_HREFS).toEqual([
+      "/dashboard",
+      "/runs",
+      "/workouts",
+      "/personal-insights",
+    ]);
+    expect(PRIMARY_MOBILE_ITEMS.map((i) => i.label)).toEqual([
+      "This Week",
+      "Runs",
+      "Workouts",
+      "Personal Insights",
+    ]);
+  });
+
+  it("items dropped from primary now appear in More; promoted items leave More", () => {
+    const moreHrefs = SECONDARY_MOBILE_ITEMS.map((i) => i.href);
+    // Dropped from the previous primary set → must be in More now.
+    expect(moreHrefs).toContain("/plans");
+    expect(moreHrefs).toContain("/health");
+    // Promoted into primary → must NOT be in More.
+    expect(moreHrefs).not.toContain("/workouts");
+    expect(moreHrefs).not.toContain("/personal-insights");
+  });
 });

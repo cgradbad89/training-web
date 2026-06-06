@@ -45,10 +45,10 @@ export const NAV_ITEMS: NavItem[] = [
 // ordered list of hrefs. Labels + icons are always pulled from NAV_ITEMS above,
 // so changing a label/icon there updates both the sidebar and the tab bar.
 export const PRIMARY_MOBILE_HREFS: string[] = [
-  "/dashboard",      // This Week
-  "/runs",           // Runs
-  "/plan-insights",  // Plan Insights
-  "/coach",          // AI Coach
+  "/dashboard",          // This Week
+  "/runs",               // Runs
+  "/workouts",           // Workouts
+  "/personal-insights",  // Personal Insights
 ];
 
 const PRIMARY_SET = new Set(PRIMARY_MOBILE_HREFS);
