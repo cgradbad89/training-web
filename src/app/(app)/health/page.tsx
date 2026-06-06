@@ -1529,7 +1529,7 @@ export default function HealthPage() {
   }
 
   return (
-    <div className="p-6 mx-auto">
+    <div className="p-6 max-w-5xl mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between mb-6 gap-4">
         <div>

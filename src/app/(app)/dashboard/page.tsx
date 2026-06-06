@@ -1567,7 +1567,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="flex flex-col gap-5 p-6 lg:p-6 p-4">
+    <div className="flex flex-col gap-5 p-6 lg:p-6 p-4 max-w-5xl mx-auto">
       {/* Page title */}
       <h1 className="text-2xl font-bold text-textPrimary">This Week</h1>
 

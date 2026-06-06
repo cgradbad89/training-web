@@ -1054,7 +1054,7 @@ export default function RunsPage() {
       : `${selectedYear} Summary`;
 
   return (
-    <div className="flex flex-col lg:flex-row gap-6 p-4 lg:p-6 min-h-full">
+    <div className="flex flex-col lg:flex-row gap-6 p-4 lg:p-6 min-h-full max-w-5xl mx-auto">
       {/* ── Left Sidebar ────────────────────────────────────── */}
       <aside className="w-full lg:w-64 shrink-0 flex flex-col gap-5">
         {/* Year + Month selector */}
