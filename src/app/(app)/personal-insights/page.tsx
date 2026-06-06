@@ -28,7 +28,8 @@ import { useRouter } from "next/navigation";
 
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { PaceByDistanceSection } from "./PaceByDistanceSection";
-import { BestEffortsSection } from "./BestEffortsSection";
+// Best Efforts hidden per product decision (restore with the render block below).
+// import { BestEffortsSection } from "./BestEffortsSection";
 import { type PaceRangeRun } from "@/lib/paceRangeTrend";
 import { MetricBadge } from "@/components/ui/MetricBadge";
 import { WorkoutTrendsSection } from "@/components/WorkoutTrendsSection";
@@ -1997,10 +1998,13 @@ export default function PersonalInsightsPage() {
         </button>
       </Card>
 
-      {/* ── Best Efforts ─────────────────────────────────── */}
+      {/* Best Efforts hidden per product decision (overlaps the PR table below).
+          Calc + data retained (./BestEffortsSection); restore by uncommenting. */}
+      {/*
       <SectionHeader icon={Trophy} title="Best Efforts" />
 
       <BestEffortsSection runs={runs} />
+      */}
 
       {/* ── Personal Records by Year ─────────────────────── */}
       <SectionHeader icon={Trophy} title="Personal Records by Year" />
