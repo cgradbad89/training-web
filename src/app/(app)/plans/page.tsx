@@ -14,8 +14,12 @@ import {
   setPlanCompletion,
   nextStatusForSibling,
 } from "@/services/plans";
-import { deepCopyRunningPlan, deepCopyWorkoutPlan } from "@/utils/planCopy";
-import { endDateForWeeks, weeksForSpan } from "@/utils/planDateEdit";
+import { deepCopyRunningPlan } from "@/utils/planCopy";
+import {
+  endDateForWeeks,
+  weeksForSpan,
+  copyPlanWithNewStart,
+} from "@/utils/planDateEdit";
 import { fetchHealthWorkouts } from "@/services/healthWorkouts";
 import {
   DEFAULT_HALF_MARATHON_PLAN,
@@ -595,11 +599,14 @@ export default function PlansPage() {
     }
   }
 
-  async function handleCopyWorkoutPlan(newName: string) {
+  async function handleCopyWorkoutPlan(newName: string, startIso: string) {
     if (!user || !selectedPlan || !isWorkoutPlan(selectedPlan)) return;
     const plan = await createPlan<WorkoutPlan>(
       user.uid,
-      deepCopyWorkoutPlan(selectedPlan, newName)
+      copyPlanWithNewStart(selectedPlan, newName, startIso) as Omit<
+        WorkoutPlan,
+        "id" | "createdAt" | "updatedAt"
+      >
     );
     setPlans((prev) => [...prev, plan]);
     setSelectedPlanId(plan.id);
@@ -636,11 +643,14 @@ export default function PlansPage() {
   }
 
   /** Copy the selected running plan under a given name (RunningPlanDetail modal). */
-  async function handleCopyRunningPlanNamed(newName: string) {
+  async function handleCopyRunningPlanNamed(newName: string, startIso: string) {
     if (!user || !selectedPlan || !isRunningPlan(selectedPlan)) return;
     const plan = await createPlan<RunningPlan>(
       user.uid,
-      deepCopyRunningPlan(selectedPlan, newName)
+      copyPlanWithNewStart(selectedPlan, newName, startIso) as Omit<
+        RunningPlan,
+        "id" | "createdAt" | "updatedAt"
+      >
     );
     setPlans((prev) => [...prev, plan]);
     setSelectedPlanId(plan.id);

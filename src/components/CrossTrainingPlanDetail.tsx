@@ -49,6 +49,7 @@ import {
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { PlanDateEditor } from "@/components/PlanDateEditor";
 import { deepCopyWorkoutEntry } from "@/utils/planCopy";
+import { snapToMonday, upcomingMonday } from "@/utils/planDateEdit";
 import { formatCompletedAt } from "@/utils/planFormat";
 import { PlanCompletionSummary } from "@/components/PlanCompletionSummary";
 import { PlanEditor, type PlanEditorConfig } from "@/components/PlanEditor";
@@ -692,7 +693,7 @@ interface CrossTrainingPlanDetailProps {
   onSetActive: () => void;
   onComplete: () => void;
   onReopen: () => void;
-  onCopyPlan: (newName: string) => Promise<void>;
+  onCopyPlan: (newName: string, startIso: string) => Promise<void>;
   saving: boolean;
 }
 
@@ -713,6 +714,9 @@ export function CrossTrainingPlanDetail({
   // Copy-plan state
   const [copyPlanOpen, setCopyPlanOpen] = useState(false);
   const [copyPlanName, setCopyPlanName] = useState("");
+  const [copyPlanStart, setCopyPlanStart] = useState(() =>
+    upcomingMonday(new Date())
+  );
   const [copyPlanSaving, setCopyPlanSaving] = useState(false);
 
   // Real dirty-state: true ONLY while a mutation's autosave write is in flight,
@@ -835,7 +839,7 @@ export function CrossTrainingPlanDetail({
     if (!name || copyPlanSaving) return;
     setCopyPlanSaving(true);
     try {
-      await onCopyPlan(name);
+      await onCopyPlan(name, copyPlanStart);
       setCopyPlanOpen(false);
       setCopyPlanName("");
     } finally {
@@ -947,6 +951,7 @@ export function CrossTrainingPlanDetail({
           <button
             onClick={() => {
               setCopyPlanName(`${plan.name} (copy)`);
+              setCopyPlanStart(upcomingMonday(new Date()));
               setCopyPlanOpen(true);
             }}
             disabled={saving}
@@ -1051,6 +1056,20 @@ export function CrossTrainingPlanDetail({
               className="w-full text-sm border border-border rounded-lg px-3 py-2 bg-card text-textPrimary mb-4"
               autoFocus
             />
+            <label className="block text-xs font-semibold text-textSecondary mb-1.5">
+              Start date
+            </label>
+            <input
+              type="date"
+              value={copyPlanStart}
+              onChange={(e) =>
+                e.target.value && setCopyPlanStart(snapToMonday(e.target.value))
+              }
+              className="w-full text-sm border border-border rounded-lg px-3 py-2 bg-card text-textPrimary mb-1.5"
+            />
+            <p className="text-xs text-textSecondary mb-4">
+              Weeks start Monday — the start date snaps to its Monday.
+            </p>
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setCopyPlanOpen(false)}

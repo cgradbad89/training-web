@@ -36,6 +36,7 @@ import { matchPlanToActual, statusForRunEntry } from "@/utils/planMatching";
 import { formatPace, parsePaceString } from "@/utils/pace";
 import { deepCopyRunEntry } from "@/utils/planCopy";
 import { formatCompletedAt } from "@/utils/planFormat";
+import { snapToMonday, upcomingMonday } from "@/utils/planDateEdit";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { PlanDateEditor } from "@/components/PlanDateEditor";
 import { PlanCompletionSummary } from "@/components/PlanCompletionSummary";
@@ -234,7 +235,7 @@ interface RunningPlanDetailProps {
   onSetActive: () => void;
   onComplete: () => void;
   onReopen: () => void;
-  onCopyPlan: (newName: string) => void | Promise<void>;
+  onCopyPlan: (newName: string, startIso: string) => void | Promise<void>;
   /** 0-based week to land on initially (e.g. calendar deep-link). Optional. */
   initialWeekIndex?: number;
 }
@@ -257,6 +258,9 @@ export function RunningPlanDetail({
   // Copy-plan modal
   const [copyPlanOpen, setCopyPlanOpen] = useState(false);
   const [copyPlanName, setCopyPlanName] = useState("");
+  const [copyPlanStart, setCopyPlanStart] = useState(() =>
+    upcomingMonday(new Date())
+  );
   const [copyPlanSaving, setCopyPlanSaving] = useState(false);
 
   // Inline plan-name editing (in edit mode) — replaces the standalone rename
@@ -313,7 +317,7 @@ export function RunningPlanDetail({
     if (!name || copyPlanSaving) return;
     setCopyPlanSaving(true);
     try {
-      await onCopyPlan(name);
+      await onCopyPlan(name, copyPlanStart);
       setCopyPlanOpen(false);
       setCopyPlanName("");
     } finally {
@@ -598,6 +602,7 @@ export function RunningPlanDetail({
           <button
             onClick={() => {
               setCopyPlanName(`${plan.name} (copy)`);
+              setCopyPlanStart(upcomingMonday(new Date()));
               setCopyPlanOpen(true);
             }}
             title="Copy plan"
@@ -697,6 +702,20 @@ export function RunningPlanDetail({
               className="w-full text-sm border border-border rounded-lg px-3 py-2 bg-card text-textPrimary mb-4"
               autoFocus
             />
+            <label className="block text-xs font-semibold text-textSecondary mb-1.5">
+              Start date
+            </label>
+            <input
+              type="date"
+              value={copyPlanStart}
+              onChange={(e) =>
+                e.target.value && setCopyPlanStart(snapToMonday(e.target.value))
+              }
+              className="w-full text-sm border border-border rounded-lg px-3 py-2 bg-card text-textPrimary mb-1.5"
+            />
+            <p className="text-xs text-textSecondary mb-4">
+              Weeks start Monday — the start date snaps to its Monday.
+            </p>
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setCopyPlanOpen(false)}

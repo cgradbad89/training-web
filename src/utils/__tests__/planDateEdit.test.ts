@@ -4,6 +4,7 @@ import {
   derivePlanEndDate,
   endDateForWeeks,
   endsAfterRace,
+  upcomingMonday,
   weeksForSpan,
   slideStartDate,
   resizeToEndDate,
@@ -212,6 +213,30 @@ describe("endsAfterRace", () => {
     const plan = makeRunningPlan(); // ends 2026-02-08
     expect(endsAfterRace(plan, "2026-02-08")).toBe(false);
     expect(endsAfterRace(plan, "2026-03-01")).toBe(false);
+  });
+});
+
+// ─── upcomingMonday ────────────────────────────────────────────────────────────
+
+describe("upcomingMonday", () => {
+  it("returns today when today is a Monday", () => {
+    // 2026-01-19 is a Monday (local).
+    expect(upcomingMonday(new Date(2026, 0, 19))).toBe("2026-01-19");
+  });
+
+  it("returns the upcoming Monday mid-week", () => {
+    // Thu 2026-01-22 → Mon 2026-01-26
+    expect(upcomingMonday(new Date(2026, 0, 22))).toBe("2026-01-26");
+  });
+
+  it("returns the next day when today is Sunday", () => {
+    // Sun 2026-01-25 → Mon 2026-01-26
+    expect(upcomingMonday(new Date(2026, 0, 25))).toBe("2026-01-26");
+  });
+
+  it("uses local-date components (no UTC drift)", () => {
+    // Construct via local Y/M/D; result is a local Monday string.
+    expect(upcomingMonday(new Date(2026, 2, 1))).toBe("2026-03-02"); // Sun → Mon
   });
 });
 

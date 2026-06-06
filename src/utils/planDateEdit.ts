@@ -106,6 +106,20 @@ export function derivePlanEndDate(plan: Plan): string {
 }
 
 /**
+ * The Monday on or after `today`, as ISO "YYYY-MM-DD". When `today` is already a
+ * Monday it returns that same day (the upcoming Monday is today). Used as the
+ * default start date for copy-with-new-start. Pure given `today` (the caller
+ * passes `new Date()`); local-date math only, so no UTC off-by-one drift.
+ */
+export function upcomingMonday(today: Date): string {
+  const dow = today.getDay(); // 0=Sun, 1=Mon, … 6=Sat
+  const offset = (8 - dow) % 7; // days until Monday; 0 when today is Monday
+  const d = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  d.setDate(d.getDate() + offset);
+  return toISODate(d);
+}
+
+/**
  * True when the plan's derived end date falls strictly after the given race
  * date (both ISO "YYYY-MM-DD", so a lexical compare is a date compare). False
  * when no race date is supplied. Pure — drives a non-blocking informational note.
