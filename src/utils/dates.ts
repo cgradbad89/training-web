@@ -38,6 +38,14 @@ export function formatShortDate(date: Date): string {
   });
 }
 
+/** Format as full month name + year, e.g. "March 2027". */
+export function formatMonthYear(date: Date): string {
+  return date.toLocaleDateString("en-US", {
+    month: "long",
+    year: "numeric",
+  });
+}
+
 /** Format as "Jan 1 – Jan 7" for a week range */
 export function formatWeekRange(start: Date): string {
   const end = weekEnd(start);

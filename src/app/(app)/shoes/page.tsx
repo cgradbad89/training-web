@@ -19,7 +19,7 @@ import {
   saveManualAssignments,
 } from "@/services/shoes";
 import { formatPace } from "@/utils/pace";
-import { formatShortDate } from "@/utils/dates";
+import { formatShortDate, formatMonthYear } from "@/utils/dates";
 import { projectShoeReplacement } from "@/utils/shoeProjection";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import {
@@ -247,7 +247,7 @@ function ShoeCard({ shoe, activities, assignments, onEdit, onManageRuns }: ShoeC
               ? `Past ${shoe.retirementMileageTarget} mi limit · replace`
               : projection.state === "inactive"
                 ? `~${Math.round(projection.milesRemaining)} mi left · no recent miles`
-                : `~${Math.round(projection.milesRemaining)} mi left · ~${formatShortDate(
+                : `~${Math.round(projection.milesRemaining)} mi left · ~${formatMonthYear(
                     projection.projectedDate!,
                   )} at current pace`}
           </p>
