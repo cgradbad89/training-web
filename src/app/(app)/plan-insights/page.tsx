@@ -26,8 +26,6 @@ import {
 } from "@/utils/trainingLoad";
 import { weekStart as getWeekStart } from "@/utils/dates";
 import {
-  buildQualifyingEfforts,
-  fitRiegel,
   predictSeconds,
   formatRaceTime,
   formatRacePace,
@@ -40,6 +38,8 @@ import {
   type WeekAdherenceData,
 } from "@/components/charts/PlanAdherenceChart";
 import { PlanRunLoadChart } from "@/components/charts/PlanRunLoadChart";
+import { PredictionTrendChart } from "@/components/charts/PredictionTrendChart";
+import { predictRaceTime, buildPredictionTrend } from "@/utils/racePrediction";
 import { type UserSettings } from "@/types/userSettings";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -293,34 +293,54 @@ export default function PlanInsightsPage() {
   }, [workouts, raceDateCutoff]);
 
   // Riegel fit for race prediction
-  const raceFit = useMemo(() => {
-    const raceInputs = races.map((r) => {
-      const distance = r.raceDistance === "custom"
-        ? (r.customDistanceMiles ?? 0)
-        : (RACE_DISTANCE_MILES[r.raceDistance] ?? 0);
-      return { raceDate: r.raceDate, distanceMiles: distance };
-    }).filter((r) => r.distanceMiles > 0);
+  // Race inputs for ±1-day RACE-tier matching — shared by the live prediction
+  // and the weekly prediction trend so both anchor on the same races.
+  const raceInputs = useMemo(
+    () =>
+      races
+        .map((r) => {
+          const distance =
+            r.raceDistance === "custom"
+              ? r.customDistanceMiles ?? 0
+              : RACE_DISTANCE_MILES[r.raceDistance] ?? 0;
+          return { raceDate: r.raceDate, distanceMiles: distance };
+        })
+        .filter((r) => r.distanceMiles > 0),
+    [races]
+  );
 
-    const efforts = buildQualifyingEfforts(
-      runs.map((r) => ({
-        workoutId: r.workoutId,
-        distanceMiles: r.distanceMiles,
-        durationSeconds: r.durationSeconds,
-        startDate: r.startDate,
-        activityType: r.activityType,
-        sourceName: r.sourceName,
-      })),
-      56,
-      { races: raceInputs }
-    );
+  // Riegel fit for the LIVE race prediction (asOf = now). Routed through the
+  // shared pure predictRaceTime so the card and the weekly trend can never
+  // diverge; asOf defaults to now, reproducing the prior inline fit exactly.
+  // (predictRaceTime applies the same race-anchored long-run model: races
+  // dominate while fresh, 5-week half-life decay, k-clamp [1.04, 1.10] for HM+.)
+  const raceFit = useMemo(() => {
     if (!raceDistanceMiles) return null;
-    // Race-anchored long-run model: races dominate while fresh, decaying over
-    // a 5-week half-life. k clamp [1.04, 1.10] eases over-extrapolation to HM.
-    if (raceDistanceMiles >= 13.109) {
-      return fitRiegel(efforts, raceDistanceMiles, 3.0, { min: 1.04, max: 1.10 });
-    }
-    return fitRiegel(efforts, raceDistanceMiles, 0, { min: 0.9, max: 1.3 });
-  }, [runs, raceDistanceMiles, races]);
+    return predictRaceTime(runs, { raceDistanceMiles, races: raceInputs }).fit;
+  }, [runs, raceDistanceMiles, raceInputs]);
+
+  // Goal finish (seconds) from the race's target pace — the trend's reference
+  // line; null when no target is set.
+  const goalSeconds = useMemo(
+    () =>
+      activeRace?.targetPaceSecondsPerMile &&
+      activeRace.targetPaceSecondsPerMile > 0 &&
+      raceDistanceMiles
+        ? activeRace.targetPaceSecondsPerMile * raceDistanceMiles
+        : null,
+    [activeRace, raceDistanceMiles]
+  );
+
+  // Weekly prediction trend — predicted finish recomputed as of each plan
+  // week's end (in-memory, no storage). Empty without a plan + race distance.
+  const predictionTrend = useMemo(() => {
+    if (!activePlan || !raceDistanceMiles) return [];
+    return buildPredictionTrend(activePlan, runs, {
+      raceDistanceMiles,
+      races: raceInputs,
+      goalSeconds,
+    });
+  }, [activePlan, runs, raceDistanceMiles, raceInputs, goalSeconds]);
 
   // Plan adherence — weekly planned vs actual (±1 day matching). Single source
   // is buildPlanAdherence; the page passes throughDate = getWeekStart(now) to
@@ -888,6 +908,13 @@ export default function PlanInsightsPage() {
                 </div>
               </div>
             </Card>
+          )}
+
+          {/* Weekly predicted-finish trend vs. goal (recomputed each plan week).
+              Only present with a linked plan + race distance; the chart itself
+              shows a "not enough data yet" state until ≥2 weeks can predict. */}
+          {predictionTrend.length > 0 && (
+            <PredictionTrendChart data={predictionTrend} />
           )}
         </>
       )}

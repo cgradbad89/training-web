@@ -31,6 +31,14 @@ export interface BuildEffortsOptions {
   daysBack?: number
   /** How far back race-matched efforts remain eligible. Default 120. */
   raceDaysBack?: number
+  /**
+   * Reference "now" for the lookback windows AND the per-effort `ageDays`
+   * (which drives recency decay). Defaults to the wall-clock now. Pass a past
+   * date to recompute a prediction "as of" that date — runs AFTER it are
+   * excluded and all decay/memory math is measured relative to it. The MODEL
+   * (weights, clamps, decay formula) is unchanged; only the reference moves.
+   */
+  asOf?: Date | number
 }
 
 export function predictSeconds(fit: RiegelFit, miles: number): number {
@@ -344,7 +352,12 @@ export function buildQualifyingEfforts(
   const raceDaysBack = options.raceDaysBack ?? 120
   const races = normalizeRaces(options.races)
 
-  const now = Date.now()
+  const now =
+    options.asOf == null
+      ? Date.now()
+      : options.asOf instanceof Date
+        ? options.asOf.getTime()
+        : options.asOf
   const ordinaryCutoff = now - daysBack * 86400 * 1000
   const raceCutoff = now - raceDaysBack * 86400 * 1000
 
@@ -376,6 +389,11 @@ export function buildQualifyingEfforts(
       continue
     }
     if (!isFinite(startMs)) continue
+
+    // Exclude runs after the reference date — for asOf=now this is a no-op
+    // (real runs are in the past); for a past asOf it bounds the data to
+    // "what was known by then".
+    if (startMs > now) continue
 
     const totalSeconds = w.durationSeconds
     if (totalSeconds <= 0) continue
