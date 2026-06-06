@@ -695,6 +695,8 @@ interface CrossTrainingPlanDetailProps {
   onReopen: () => void;
   onCopyPlan: (newName: string, startIso: string) => Promise<void>;
   saving: boolean;
+  /** Linked race date (ISO) for the in-place editor's race-alignment note. */
+  linkedRaceDate?: string;
 }
 
 export function CrossTrainingPlanDetail({
@@ -706,6 +708,7 @@ export function CrossTrainingPlanDetail({
   onReopen,
   onCopyPlan,
   saving,
+  linkedRaceDate,
 }: CrossTrainingPlanDetailProps) {
   const [isEditMode, setIsEditMode] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -718,6 +721,10 @@ export function CrossTrainingPlanDetail({
     upcomingMonday(new Date())
   );
   const [copyPlanSaving, setCopyPlanSaving] = useState(false);
+
+  // Inline plan-name editing (in edit mode) — parity with RunningPlanDetail.
+  // Persists on blur via onUpdate; Enter commits, Escape reverts.
+  const [nameDraft, setNameDraft] = useState(plan.name);
 
   // Real dirty-state: true ONLY while a mutation's autosave write is in flight,
   // never merely because edit mode is open. Entering edit mode (or opening then
@@ -753,6 +760,17 @@ export function CrossTrainingPlanDetail({
     } finally {
       setHasUnsavedChanges(false);
     }
+  }
+
+  // Inline rename — mirrors RunningPlanDetail: no-op when blank or unchanged,
+  // otherwise persist via the same onUpdate path (self-only single-doc write).
+  function handleNameBlur() {
+    const name = nameDraft.trim();
+    if (!name || name === plan.name) {
+      setNameDraft(plan.name);
+      return;
+    }
+    void persist({ ...plan, name });
   }
 
   // Replace a week's entries — called by PlanEditor for save / delete / drag /
@@ -870,9 +888,28 @@ export function CrossTrainingPlanDetail({
       <div className="px-6 py-4 border-b border-border bg-card flex items-start gap-4">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-3 flex-wrap">
-            <h1 className="text-lg font-bold text-textPrimary truncate">
-              {plan.name}
-            </h1>
+            {isEditMode ? (
+              <input
+                value={nameDraft}
+                onChange={(e) => setNameDraft(e.target.value)}
+                onBlur={handleNameBlur}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") e.currentTarget.blur();
+                  if (e.key === "Escape") {
+                    setNameDraft(plan.name);
+                    e.currentTarget.blur();
+                  }
+                }}
+                placeholder="Plan name"
+                aria-label="Plan name"
+                className="text-lg font-bold text-textPrimary bg-transparent border-b border-primary outline-none min-w-0 max-w-xs"
+                autoFocus
+              />
+            ) : (
+              <h1 className="text-lg font-bold text-textPrimary truncate">
+                {plan.name}
+              </h1>
+            )}
             <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">
               Workout Plan
             </span>
@@ -907,6 +944,7 @@ export function CrossTrainingPlanDetail({
             <PlanDateEditor
               plan={plan}
               onApply={(updated) => persist(updated as WorkoutPlan)}
+              linkedRaceDate={linkedRaceDate}
             />
           )}
         </div>

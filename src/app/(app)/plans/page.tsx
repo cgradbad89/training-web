@@ -21,6 +21,8 @@ import {
   copyPlanWithNewStart,
 } from "@/utils/planDateEdit";
 import { fetchHealthWorkouts } from "@/services/healthWorkouts";
+import { fetchRaces } from "@/services/races";
+import { type Race } from "@/types/race";
 import {
   DEFAULT_HALF_MARATHON_PLAN,
   seedSeptHMPlan,
@@ -304,6 +306,7 @@ export default function PlansPage() {
   const router = useRouter();
   const [plans, setPlans] = useState<Plan[]>([]);
   const [activities, setActivities] = useState<HealthWorkout[]>([]);
+  const [races, setRaces] = useState<Race[]>([]);
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [selectedWeekIndex, setSelectedWeekIndex] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -340,6 +343,20 @@ export default function PlansPage() {
   const selectedPlan = plans.find((p) => p.id === selectedPlanId) ?? null;
   const selectedRunningPlan =
     selectedPlan && isRunningPlan(selectedPlan) ? selectedPlan : null;
+
+  // Resolve the selected plan's linked race date (ISO) for the in-place date
+  // editor's race-alignment note. Running links via linkedRaceId, workout via
+  // raceId; both reference the single halfMarathonRaces collection. undefined
+  // when there's no link or the race lacks a date → the note simply won't show.
+  const selectedRaceId =
+    selectedPlan && isRunningPlan(selectedPlan)
+      ? selectedPlan.linkedRaceId
+      : selectedPlan && isWorkoutPlan(selectedPlan)
+        ? selectedPlan.raceId
+        : undefined;
+  const selectedRaceDate = selectedRaceId
+    ? races.find((r) => r.id === selectedRaceId)?.raceDate
+    : undefined;
   const matchMap = selectedRunningPlan
     ? matchPlanToActual(selectedRunningPlan, activities)
     : new Map<string, PlanMatch | null>();
@@ -364,9 +381,10 @@ export default function PlansPage() {
     if (!user) return;
     setLoading(true);
     try {
-      const [loadedPlans, loadedActivities] = await Promise.all([
+      const [loadedPlans, loadedActivities, loadedRaces] = await Promise.all([
         fetchPlans(user.uid),
         fetchHealthWorkouts(user.uid),
+        fetchRaces(user.uid),
       ]);
 
       let finalPlans: Plan[] = loadedPlans;
@@ -431,6 +449,7 @@ export default function PlansPage() {
 
       setPlans(finalPlans);
       setActivities(loadedActivities);
+      setRaces(loadedRaces);
 
       const active = finalPlans.find((p) => p.status === "active") ?? finalPlans[0];
       if (active) {
@@ -858,6 +877,7 @@ export default function PlansPage() {
             onReopen={() => handleReopenPlan(selectedPlan.id)}
             onCopyPlan={handleCopyWorkoutPlan}
             saving={saving}
+            linkedRaceDate={selectedRaceDate}
           />
         )}
 
@@ -940,6 +960,7 @@ export default function PlansPage() {
             onComplete={() => handleCompletePlan(selectedRunningPlan.id)}
             onReopen={() => handleReopenPlan(selectedRunningPlan.id)}
             onCopyPlan={handleCopyRunningPlanNamed}
+            linkedRaceDate={selectedRaceDate}
           />
         ) : !selectedPlan ? (
           <div className="flex-1 flex items-center justify-center">

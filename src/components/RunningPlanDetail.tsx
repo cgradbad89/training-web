@@ -238,6 +238,8 @@ interface RunningPlanDetailProps {
   onCopyPlan: (newName: string, startIso: string) => void | Promise<void>;
   /** 0-based week to land on initially (e.g. calendar deep-link). Optional. */
   initialWeekIndex?: number;
+  /** Linked race date (ISO) for the in-place editor's race-alignment note. */
+  linkedRaceDate?: string;
 }
 
 export function RunningPlanDetail({
@@ -250,6 +252,7 @@ export function RunningPlanDetail({
   onReopen,
   onCopyPlan,
   initialWeekIndex,
+  linkedRaceDate,
 }: RunningPlanDetailProps) {
   const [isEditMode, setIsEditMode] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -560,6 +563,7 @@ export function RunningPlanDetail({
             <PlanDateEditor
               plan={plan}
               onApply={(updated) => persist(updated as RunningPlan)}
+              linkedRaceDate={linkedRaceDate}
             />
           )}
         </div>

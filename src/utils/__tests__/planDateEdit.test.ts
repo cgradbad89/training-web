@@ -4,6 +4,7 @@ import {
   derivePlanEndDate,
   endDateForWeeks,
   endsAfterRace,
+  raceAlignment,
   upcomingMonday,
   weeksForSpan,
   slideStartDate,
@@ -213,6 +214,41 @@ describe("endsAfterRace", () => {
     const plan = makeRunningPlan(); // ends 2026-02-08
     expect(endsAfterRace(plan, "2026-02-08")).toBe(false);
     expect(endsAfterRace(plan, "2026-03-01")).toBe(false);
+  });
+});
+
+// ─── raceAlignment ─────────────────────────────────────────────────────────────
+
+describe("raceAlignment", () => {
+  // makeRunningPlan ends 2026-02-08 (3 weeks from Mon 2026-01-19).
+  it("aligned when no race date is supplied", () => {
+    expect(raceAlignment(makeRunningPlan())).toBe("aligned");
+    expect(raceAlignment(makeRunningPlan(), undefined)).toBe("aligned");
+  });
+
+  it("after when the plan ends strictly after the race", () => {
+    expect(raceAlignment(makeRunningPlan(), "2026-02-07")).toBe("after");
+    expect(raceAlignment(makeRunningPlan(), "2026-01-31")).toBe("after");
+  });
+
+  it("aligned when ending on the race day", () => {
+    expect(raceAlignment(makeRunningPlan(), "2026-02-08")).toBe("aligned");
+  });
+
+  it("aligned when ending within the tolerance window before the race", () => {
+    // gap of exactly 7 days (race 2026-02-15) → still aligned.
+    expect(raceAlignment(makeRunningPlan(), "2026-02-15")).toBe("aligned");
+  });
+
+  it("before when ending well before the race (gap > 1 week)", () => {
+    // gap of 8 days (race 2026-02-16) → before.
+    expect(raceAlignment(makeRunningPlan(), "2026-02-16")).toBe("before");
+    expect(raceAlignment(makeRunningPlan(), "2026-03-15")).toBe("before");
+  });
+
+  it("respects a custom tolerance", () => {
+    // race 2026-02-16 = 8-day gap; tolerance 14 → aligned.
+    expect(raceAlignment(makeRunningPlan(), "2026-02-16", 14)).toBe("aligned");
   });
 });
 

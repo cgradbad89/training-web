@@ -28,7 +28,7 @@ import {
   slideStartDate,
   resizeToEndDate,
   droppedWeeksWithEntries,
-  endsAfterRace,
+  raceAlignment,
 } from "@/utils/planDateEdit";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 
@@ -63,6 +63,12 @@ export function PlanDateEditor({
     dropped: { weekNumber: number; entryCount: number }[];
   } | null>(null);
 
+  // The race-alignment note is tied to the EDIT ACTION: it only appears once a
+  // start/end edit has been applied this session (so merely opening the editor
+  // on a pre-existing mismatch shows nothing). Set true whenever an edit
+  // actually persists.
+  const [touched, setTouched] = useState(false);
+
   const derivedEnd = derivePlanEndDate(plan);
 
   // Resync mirrors to the persisted plan (hooks always run — before any return).
@@ -78,6 +84,7 @@ export function PlanDateEditor({
     const snapped = snapToMonday(value);
     setStartInput(snapped);
     // Slide keeps weeks.length, so it can never drop entries — apply directly.
+    setTouched(true);
     void onApply(slideStartDate(plan, snapped));
   }
 
@@ -88,16 +95,19 @@ export function PlanDateEditor({
     if (newWeeks < plan.weeks.length) {
       const dropped = droppedWeeksWithEntries(plan, newWeeks);
       if (dropped.length > 0) {
+        // Defer touched until the user confirms the destructive shorten.
         setPendingShorten({ endIso: value, dropped });
         return;
       }
     }
     // Lengthen, equal, or shorten with no entries lost — apply directly.
+    setTouched(true);
     void onApply(resizeToEndDate(plan, value));
   }
 
   function confirmShorten() {
     if (!pendingShorten) return;
+    setTouched(true);
     void onApply(resizeToEndDate(plan, pendingShorten.endIso));
     setPendingShorten(null);
   }
@@ -112,7 +122,29 @@ export function PlanDateEditor({
 
   const previewWeeks = weeksForSpan(startInput, endInput);
   const droppedWeekCount = pendingShorten?.dropped.length ?? 0;
-  const showRaceNote = endsAfterRace(plan, linkedRaceDate);
+
+  // Race-alignment note: only after an edit (touched), and only when the
+  // resulting plan no longer aligns with the linked race. Both directions.
+  const alignment = raceAlignment(plan, linkedRaceDate);
+  const raceDateLabel = linkedRaceDate
+    ? new Date(linkedRaceDate + "T00:00:00").toLocaleDateString("en-US", {
+        month: "long",
+        day: "numeric",
+        year: "numeric",
+      })
+    : "";
+  const weeksBeforeRace =
+    linkedRaceDate && alignment === "before"
+      ? weeksForSpan(derivePlanEndDate(plan), linkedRaceDate)
+      : 0;
+  const raceNote =
+    touched && alignment === "after"
+      ? `Heads up: this plan now ends after your race on ${raceDateLabel}.`
+      : touched && alignment === "before"
+        ? `Heads up: this plan now ends ${weeksBeforeRace} week${
+            weeksBeforeRace === 1 ? "" : "s"
+          } before your race on ${raceDateLabel}.`
+        : null;
 
   return (
     <div className="mt-2 flex flex-col gap-2">
@@ -151,18 +183,7 @@ export function PlanDateEditor({
         date adds or removes trailing weeks.
       </p>
 
-      {showRaceNote && (
-        <p className="text-xs text-warning">
-          Heads up: this plan now ends after your race
-          {linkedRaceDate
-            ? ` on ${new Date(linkedRaceDate + "T00:00:00").toLocaleDateString(
-                "en-US",
-                { month: "long", day: "numeric", year: "numeric" }
-              )}`
-            : ""}
-          .
-        </p>
-      )}
+      {raceNote && <p className="text-xs text-warning">{raceNote}</p>}
 
       <ConfirmDialog
         isOpen={pendingShorten != null}

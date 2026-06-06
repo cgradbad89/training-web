@@ -129,6 +129,33 @@ export function endsAfterRace(plan: Plan, raceDateIso?: string): boolean {
   return derivePlanEndDate(plan) > raceDateIso;
 }
 
+/** Days within which a plan ending before its race still counts as aligned. */
+export const RACE_ALIGN_TOLERANCE_DAYS = 7;
+
+export type RaceAlignment = "after" | "before" | "aligned";
+
+/**
+ * How the plan's derived end date sits relative to its linked race date:
+ *   - "after"   → plan ends strictly after the race (overruns the goal)
+ *   - "before"  → plan ends MORE than `toleranceDays` before the race (a clear
+ *                 under-training gap)
+ *   - "aligned" → ends within the tolerance window up to/at the race day, OR no
+ *                 race date supplied (→ no note)
+ * Pure — drives the non-blocking, both-directions race-alignment note.
+ */
+export function raceAlignment(
+  plan: Plan,
+  raceDateIso?: string,
+  toleranceDays: number = RACE_ALIGN_TOLERANCE_DAYS
+): RaceAlignment {
+  if (!raceDateIso) return "aligned";
+  const end = derivePlanEndDate(plan);
+  if (end > raceDateIso) return "after";
+  // end <= race: positive gap (race − end) in whole days.
+  const gap = calendarDaysBetween(raceDateIso, end);
+  return gap > toleranceDays ? "before" : "aligned";
+}
+
 /**
  * Number of weeks spanned by start..end, matching the create-modal formula:
  * ceil(daySpan / 7), clamped to a minimum of 1.
