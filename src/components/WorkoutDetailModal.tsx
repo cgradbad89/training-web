@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   X,
   Clock,
@@ -19,6 +19,8 @@ import {
 } from "@/services/workoutOverrides";
 import { TrainingLoadBadge } from "@/components/ui/TrainingLoadBadge";
 import { resolveDisplayLoad } from "@/utils/trainingLoad";
+import { fetchHRStream, type HRStreamSample } from "@/services/hrStream";
+import WorkoutHRChart from "@/components/WorkoutHRChart";
 
 interface WorkoutDetailModalProps {
   workout: HealthWorkout;
@@ -42,6 +44,36 @@ export function WorkoutDetailModal({
   const [saving, setSaving] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const isExcluded = override?.isExcluded === true;
+
+  // Per-sample HR stream for non-route workouts (hrStream subcollection).
+  // Only fetched when the workout actually has a stream — avoids a wasted
+  // Firestore read on the ~290 streamless workouts. The chart self-hides when
+  // fewer than 2 points are available, so no extra empty-state is needed here.
+  const [hrSamples, setHrSamples] = useState<HRStreamSample[]>([]);
+  const [, setHrLoading] = useState(false);
+
+  useEffect(() => {
+    if (workout.hasHRStream !== true) {
+      setHrSamples([]);
+      return;
+    }
+    let alive = true;
+    setHrLoading(true);
+    fetchHRStream(userId, workout.workoutId)
+      .then((samples) => {
+        if (alive) setHrSamples(samples);
+      })
+      .catch((e) => {
+        console.error("Failed to load HR stream", e);
+        if (alive) setHrSamples([]);
+      })
+      .finally(() => {
+        if (alive) setHrLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [userId, workout.workoutId, workout.hasHRStream]);
 
   async function handleExclude() {
     setSaving(true);
@@ -222,6 +254,14 @@ export function WorkoutDetailModal({
               </p>
             </div>
           </div>
+
+          {/* Full-workout HR line (non-route workouts with an hrStream).
+              Self-hides when fewer than 2 samples are available. */}
+          {hrSamples.length > 0 && (
+            <div className="px-5 pb-4">
+              <WorkoutHRChart samples={hrSamples} />
+            </div>
+          )}
 
           {/* Exclude / Restore section */}
           <div className="px-5">
