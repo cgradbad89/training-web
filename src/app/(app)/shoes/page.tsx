@@ -20,6 +20,7 @@ import {
 } from "@/services/shoes";
 import { formatPace } from "@/utils/pace";
 import { formatShortDate } from "@/utils/dates";
+import { projectShoeReplacement } from "@/utils/shoeProjection";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import {
   type RunningShoe,
@@ -176,6 +177,16 @@ function ShoeCard({ shoe, activities, assignments, onEdit, onManageRuns }: ShoeC
   const totalDist = assigned.reduce((s, r) => s + r.distanceMiles, 0);
   const avgPaceSec = totalDist > 0 ? totalTime / totalDist : 0;
 
+  // Replacement projection from the recent (4-week) rate on THIS shoe.
+  // null when no limit is set → the line is simply omitted.
+  const projection = projectShoeReplacement(
+    { currentMiles: miles, limit: shoe.retirementMileageTarget },
+    assigned.map((r) => ({
+      dateISO: r.startDate.toISOString(),
+      miles: r.distanceMiles,
+    })),
+  );
+
   const purchaseDateDisplay = shoe.purchaseDate
     ? new Date(shoe.purchaseDate).toLocaleDateString("en-US", {
         month: "short",
@@ -219,8 +230,29 @@ function ShoeCard({ shoe, activities, assignments, onEdit, onManageRuns }: ShoeC
         </div>
       </div>
 
-      {/* Mileage bar */}
-      <MileageBar miles={miles} target={shoe.retirementMileageTarget} />
+      {/* Mileage bar + replacement projection */}
+      <div>
+        <MileageBar miles={miles} target={shoe.retirementMileageTarget} />
+        {projection && (
+          <p
+            className={`text-xs mt-1.5 ${
+              projection.state === "over"
+                ? "text-danger"
+                : projection.state === "approaching"
+                  ? "text-warning"
+                  : "text-textSecondary"
+            }`}
+          >
+            {projection.state === "over"
+              ? `Past ${shoe.retirementMileageTarget} mi limit · replace`
+              : projection.state === "inactive"
+                ? `~${Math.round(projection.milesRemaining)} mi left · no recent miles`
+                : `~${Math.round(projection.milesRemaining)} mi left · ~${formatShortDate(
+                    projection.projectedDate!,
+                  )} at current pace`}
+          </p>
+        )}
+      </div>
 
       {/* Stats row */}
       <div className="grid grid-cols-3 gap-3 pt-1 border-t border-border">
