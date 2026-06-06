@@ -75,13 +75,27 @@ export const HR_ZONES: HRZone[] = [
 // activities. Applied as the final step in computeTrainingLoad, after the
 // duration × zone-multiplier product is computed.
 //   Running / other aerobic                  → factor 1.0 (no scaling applied)
-//   HIIT / OTF                               → factor 0.75
+//   HIIT / OTF                               → factor = session avg HRR (intensity-
+//                                              proportional; 0.75 fallback when HRR
+//                                              is unavailable — see below)
 //   Strength (traditional lifting, cooldown) → factor 0.25
 //   Mindful (Pilates, yoga, barre, etc.)     → factor 0.20
 //
 // Strength lifted to 0.25 — validated against Strava RE. Mindful /
 // low-cardiovascular activities stay at 0.20.
+//
+// HIIT/OTF was a flat 0.75, but an investigation against Strava RE showed a flat
+// factor cannot fit: easy HIIT wanted ~0.62, hard ~0.89, tracking the session's
+// average HR reserve almost 1:1. So the HIIT factor is now intensity-proportional
+// — f_hiit = clamp(avg HRR, 0, 1) — which collapsed mean error vs Strava RE from
+// ~15% to ~4% across 6 reference sessions (PARAMETER-FREE fit; SMALL SAMPLE — both
+// the relationship and the 0.75 fallback are TUNABLE). HIIT/OTF ONLY: running,
+// strength, and mindful factors are unchanged, and the shared bannisterWeight/HRR
+// curve is untouched (runs validate at factor 1.0 on that curve).
 export const HIIT_LOAD_FACTOR = 0.75;
+/** Fallback HIIT/OTF factor, used ONLY when avg HRR is unavailable (missing avgHR
+ *  or non-positive HR reserve). The live HIIT factor is the session's avg HRR. */
+export const DEFAULT_HIIT_FACTOR = HIIT_LOAD_FACTOR; // 0.75
 export const STRENGTH_LOAD_FACTOR = 0.25;   // bumped from 0.20
 export const MINDFUL_LOAD_FACTOR = 0.20;    // Pilates, yoga, barre, meditation, tai chi, qigong
 
@@ -266,15 +280,26 @@ export function classifyHrZone(
  * model (`computeTrainingLoadV2`) so the two stay in sync. TRIMP over-credits
  * duration at low HR for non-aerobic activities; this corrects it.
  *   Running / other aerobic (incl. unknown) → 1.0
- *   HIIT / OTF                               → HIIT_LOAD_FACTOR (0.75)
+ *   HIIT / OTF                               → clamp(hrr, 0, 1), i.e. the session's
+ *                                              AVERAGE HR reserve; DEFAULT_HIIT_FACTOR
+ *                                              (0.75) when hrr is not provided/usable
  *   Strength (lifting, cooldown)             → STRENGTH_LOAD_FACTOR (0.25)
  *   Mindful (Pilates, yoga, barre, …)        → MINDFUL_LOAD_FACTOR (0.20)
+ *
+ * `hrr` is the session's average HR reserve (Karvonen, 0–1). It is consumed ONLY
+ * by the HIIT/OTF branch (intensity-proportional factor — see the constants block);
+ * running/strength/mindful ignore it and return their existing constants. Passing
+ * no hrr (or a non-finite one) leaves HIIT on the 0.75 fallback, so every other
+ * call site and the legacy zone model are byte-for-byte unaffected.
  *
  * Precedence matches the historical inline logic exactly: mindful first (the
  * strictest subset of the strength allowlist), then strength context, then
  * HIIT/OTF (which shares running HR bands), else running 1.0.
  */
-export function activityLoadFactor(activityType?: string | null): number {
+export function activityLoadFactor(
+  activityType?: string | null,
+  hrr?: number
+): number {
   if (activityType && isMindfulActivity(activityType)) {
     return MINDFUL_LOAD_FACTOR;
   }
@@ -283,7 +308,11 @@ export function activityLoadFactor(activityType?: string | null): number {
     return STRENGTH_LOAD_FACTOR;
   }
   if (activityType && isHiitLikeActivity(activityType)) {
-    return HIIT_LOAD_FACTOR;
+    // Intensity-proportional: f_hiit = avg HRR (clamped). Fall back to the flat
+    // DEFAULT_HIIT_FACTOR only when HRR is unavailable (no avgHR / bad reserve).
+    return typeof hrr === "number" && Number.isFinite(hrr)
+      ? Math.max(0, Math.min(1, hrr))
+      : DEFAULT_HIIT_FACTOR;
   }
   return 1.0;
 }
@@ -378,8 +407,10 @@ export function computeTrainingLoadV2(
   const durationMinutes = durationSeconds / 60;
   const rawTrimp = durationMinutes * hrr * bannisterWeight(hrr);
 
+  // HIIT/OTF factor is the session's avg HRR (this same `hrr`); other activity
+  // types ignore it. The Banister base (rawTrimp) is unchanged.
   return Math.round(
-    rawTrimp * TRAINING_LOAD_V2_SCALE * activityLoadFactor(activityType)
+    rawTrimp * TRAINING_LOAD_V2_SCALE * activityLoadFactor(activityType, hrr)
   );
 }
 
@@ -618,8 +649,19 @@ export function computeStreamedTrainingLoad(
     rawSum += (dt / 60) * hrr * bannisterWeight(hrr);
   }
 
+  // HIIT/OTF factor uses the session's AVERAGE HRR (a single per-session scalar
+  // from avgHeartRate), NOT a per-sample factor — the per-sample integral
+  // (rawSum) is the base load; only the multiplicative factor changes. When
+  // avgHeartRate is unusable, pass undefined so HIIT falls back to 0.75 and
+  // non-HIIT types are unaffected.
+  const avgHrrForFactor =
+    avgHeartRate != null && isFinite(avgHeartRate) && avgHeartRate > 0
+      ? Math.max(0, Math.min(1, (avgHeartRate - restingHr) / reserve))
+      : undefined;
   const load = Math.round(
-    rawSum * TRAINING_LOAD_V2_SCALE * activityLoadFactor(activityType)
+    rawSum *
+      TRAINING_LOAD_V2_SCALE *
+      activityLoadFactor(activityType, avgHrrForFactor)
   );
   return { load, method: "streamed", hrCoverage };
 }

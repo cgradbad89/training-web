@@ -5,9 +5,13 @@ import {
   computeStreamedTrainingLoad,
   resolveDisplayLoad,
   buildLoadExplainer,
+  activityLoadFactor,
   DEFAULT_RESTING_HR,
   resolveRestingHr,
   HIIT_LOAD_FACTOR,
+  DEFAULT_HIIT_FACTOR,
+  STRENGTH_LOAD_FACTOR,
+  MINDFUL_LOAD_FACTOR,
   TRAINING_LOAD_DT_CLAMP_SEC,
   STREAMED_HR_COVERAGE_MIN,
 } from "@/utils/trainingLoad";
@@ -92,7 +96,10 @@ describe("computeTrainingLoadV2 — guards & behavior", () => {
     expect(computeTrainingLoadV2(1800, 140, 55, 60)).toBeNull();
   });
 
-  it("HIIT load = round(running load × 0.75)", () => {
+  it("HIIT load = round(running load × avg HRR) — intensity-proportional factor", () => {
+    // avgHR 156 → HRR = (156−60)/104 = 0.9231. HIIT factor is now that HRR
+    // (not the old flat 0.75), so HIIT ≈ running × 0.9231, still < running.
+    const hrr = (156 - RESTING_HR) / (MAX_HR - RESTING_HR);
     const running = computeTrainingLoadV2(1764, 156, MAX_HR, RESTING_HR, "Running");
     const hiit = computeTrainingLoadV2(
       1764,
@@ -103,12 +110,16 @@ describe("computeTrainingLoadV2 — guards & behavior", () => {
     );
     expect(running).not.toBeNull();
     expect(hiit).not.toBeNull();
-    // Factor is applied inside the round, so round(raw×0.75) can differ from
-    // round(roundedRunning×0.75) by 1 — assert within ±1 and strictly lower.
+    // Factor is applied inside the round, so round(raw×HRR) can differ from
+    // round(roundedRunning×HRR) by 1 — assert within ±1 and strictly lower.
     expect(
-      Math.abs((hiit as number) - (running as number) * HIIT_LOAD_FACTOR)
+      Math.abs((hiit as number) - (running as number) * hrr)
     ).toBeLessThanOrEqual(1);
     expect(hiit as number).toBeLessThan(running as number);
+    // And NOT the old flat-0.75 value (proves the factor changed).
+    expect(hiit as number).not.toBe(
+      Math.round((running as number) * HIIT_LOAD_FACTOR)
+    );
   });
 
   it("monotonic: higher avgHR (same duration) → strictly higher load", () => {
@@ -118,6 +129,139 @@ describe("computeTrainingLoadV2 — guards & behavior", () => {
     expect(lo).not.toBeNull();
     expect((mid as number)).toBeGreaterThan(lo as number);
     expect((hi as number)).toBeGreaterThan(mid as number);
+  });
+});
+
+describe("activityLoadFactor — HIIT intensity-proportional (HIIT-only)", () => {
+  it("HIIT factor equals the clamped avg HRR passed in", () => {
+    // HRR ≈ 0.59 (easy HIIT) and ≈ 0.88 (hard HIIT) → factor tracks it 1:1.
+    expect(activityLoadFactor("HIIT", 0.59)).toBeCloseTo(0.59, 10);
+    expect(activityLoadFactor("HIIT", 0.88)).toBeCloseTo(0.88, 10);
+    expect(activityLoadFactor("orangetheory", 0.73)).toBeCloseTo(0.73, 10);
+  });
+
+  it("HIIT factor clamps HRR to [0, 1]", () => {
+    expect(activityLoadFactor("HIIT", 1.5)).toBe(1.0);
+    expect(activityLoadFactor("HIIT", -0.2)).toBe(0);
+  });
+
+  it("HIIT falls back to DEFAULT_HIIT_FACTOR (0.75) when HRR is absent/non-finite", () => {
+    expect(DEFAULT_HIIT_FACTOR).toBe(0.75);
+    expect(DEFAULT_HIIT_FACTOR).toBe(HIIT_LOAD_FACTOR);
+    expect(activityLoadFactor("HIIT")).toBe(DEFAULT_HIIT_FACTOR);
+    expect(activityLoadFactor("HIIT", NaN)).toBe(DEFAULT_HIIT_FACTOR);
+    expect(activityLoadFactor("HIIT", undefined)).toBe(DEFAULT_HIIT_FACTOR);
+  });
+
+  it("running / strength / mindful factors are UNCHANGED and ignore HRR", () => {
+    // Pass an HRR to prove non-HIIT types do not consume it.
+    for (const hrr of [undefined, 0.2, 0.59, 0.95, 1.5]) {
+      expect(activityLoadFactor("Running", hrr)).toBe(1.0);
+      expect(activityLoadFactor("rowing", hrr)).toBe(1.0);
+      expect(activityLoadFactor(undefined, hrr)).toBe(1.0);
+      expect(activityLoadFactor("traditional_strength_training", hrr)).toBe(
+        STRENGTH_LOAD_FACTOR
+      );
+      expect(activityLoadFactor("Pilates", hrr)).toBe(MINDFUL_LOAD_FACTOR);
+    }
+  });
+});
+
+describe("HIIT f=avg-HRR — reference sessions vs Strava RE (±8 / ~4% MAPE)", () => {
+  // Factor-1.0 base load (L1) from the hrStream investigation per session, the
+  // session avg HR, and external Strava RE (ground truth). The new HIIT factor
+  // is f = clamp(avg HRR). load_new = round(L1 × activityLoadFactor("HIIT", HRR)).
+  // 6-session sample — small ground truth, flagged tunable.
+  const REF = [
+    { date: "5/28", L1: 84, avgHR: 121, RE: 49 },
+    { date: "6/4", L1: 92, avgHR: 128, RE: 61 },
+    { date: "5/20", L1: 157, avgHR: 138, RE: 114 },
+    { date: "6/5", L1: 125, avgHR: 141, RE: 106 },
+    { date: "5/25", L1: 168, avgHR: 144, RE: 149 },
+    { date: "5/22", L1: 210, avgHR: 151, RE: 188 },
+  ];
+  const hrrOf = (avgHR: number) =>
+    Math.max(0, Math.min(1, (avgHR - RESTING_HR) / (MAX_HR - RESTING_HR)));
+  const loadAt = (L1: number, avgHR: number) =>
+    Math.round(L1 * activityLoadFactor("HIIT", hrrOf(avgHR)));
+
+  it("the easy session 5/28 lands near its RE 49 (was 63 at flat 0.75)", () => {
+    const s = REF[0];
+    expect(loadAt(s.L1, s.avgHR)).toBe(49); // 84 × 0.5865 ≈ 49
+    expect(Math.abs(loadAt(s.L1, s.avgHR) - s.RE)).toBeLessThanOrEqual(8);
+    // It must be well below the old flat-0.75 value of 63.
+    expect(loadAt(s.L1, s.avgHR)).toBeLessThan(Math.round(s.L1 * 0.75));
+  });
+
+  it("the hard session 5/22 lands near its RE 188 (was 158 at flat 0.75)", () => {
+    const s = REF[5];
+    expect(Math.abs(loadAt(s.L1, s.avgHR) - s.RE)).toBeLessThanOrEqual(8); // ≈184
+    // It must be well above the old flat-0.75 value of 158.
+    expect(loadAt(s.L1, s.avgHR)).toBeGreaterThan(Math.round(s.L1 * 0.75));
+  });
+
+  it("mean |ratio−1| across the 6 sessions is ≤ 6% (parameter-free ~4% fit)", () => {
+    const mape =
+      REF.reduce((a, s) => a + Math.abs(loadAt(s.L1, s.avgHR) / s.RE - 1), 0) /
+      REF.length;
+    expect(mape).toBeLessThanOrEqual(0.06);
+    // And it must beat the old flat 0.75 factor's error.
+    const mape075 =
+      REF.reduce(
+        (a, s) => a + Math.abs(Math.round(s.L1 * 0.75) / s.RE - 1),
+        0
+      ) / REF.length;
+    expect(mape).toBeLessThan(mape075);
+  });
+});
+
+describe("HIIT factor — streamed path & fallback behavior", () => {
+  it("streamed HIIT factor uses AVG HRR (per-session scalar), not per-sample", () => {
+    // Spiky stream (alternating 180/100) with a declared avgHR of 140 →
+    // factor must use HRR(140)=0.769, independent of the per-sample spikes.
+    const pts = buildStream(600, (i) => (i % 2 === 0 ? 180 : 100));
+    const hiit = computeStreamedTrainingLoad(pts, 600, 140, MAX_HR, RESTING_HR, "HIIT");
+    const run = computeStreamedTrainingLoad(pts, 600, 140, MAX_HR, RESTING_HR, "Running");
+    expect(hiit.method).toBe("streamed");
+    expect(hiit.load).not.toBeNull();
+    const hrr = (140 - RESTING_HR) / (MAX_HR - RESTING_HR);
+    // HIIT base (same integral as the run) × avg HRR.
+    expect(Math.abs((hiit.load as number) - (run.load as number) * hrr)).toBeLessThanOrEqual(1);
+  });
+
+  it("streamed HIIT with NO avgHR falls back to DEFAULT_HIIT_FACTOR 0.75 (no NaN/null)", () => {
+    const pts = buildStream(600, () => 152);
+    const hiit = computeStreamedTrainingLoad(pts, 600, null, MAX_HR, RESTING_HR, "HIIT");
+    const run = computeStreamedTrainingLoad(pts, 600, null, MAX_HR, RESTING_HR, "Running");
+    expect(hiit.method).toBe("streamed");
+    expect(hiit.load).not.toBeNull();
+    expect(Number.isFinite(hiit.load as number)).toBe(true);
+    // Factor falls back to 0.75 (run uses 1.0).
+    expect(
+      Math.abs((hiit.load as number) - (run.load as number) * DEFAULT_HIIT_FACTOR)
+    ).toBeLessThanOrEqual(1);
+  });
+
+  it("avg-HR HIIT with missing avgHR → null (existing null rule, no NaN from the factor)", () => {
+    expect(
+      computeTrainingLoadV2(1800, null, MAX_HR, RESTING_HR, "HIIT")
+    ).toBeNull();
+  });
+});
+
+describe("runs are completely unaffected by the HIIT factor change", () => {
+  it("Running loads still match the validated reference values (factor 1.0, ±3)", () => {
+    // Same fixtures/tolerance as the reference-runs suite — unchanged after the
+    // HIIT edit (running ignores the new hrr arg → factor stays 1.0).
+    const refs: Array<[number, number, number]> = [
+      [1854, 137, 69],
+      [1764, 156, 116],
+      [4370, 152, 256],
+    ];
+    for (const [dur, hr, expected] of refs) {
+      const load = computeTrainingLoadV2(dur, hr, MAX_HR, RESTING_HR, "Running");
+      expect(Math.abs((load as number) - expected)).toBeLessThanOrEqual(3);
+    }
   });
 });
 
