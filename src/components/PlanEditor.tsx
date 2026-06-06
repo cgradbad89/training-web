@@ -25,6 +25,7 @@ import type { Plan } from "@/types/plan";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import {
   pageWeekIndex,
+  clampWeekIndex,
   buildCopyWeekEntries,
   buildCopyDayEntries,
   resolveInitialWeekIndex,
@@ -198,6 +199,12 @@ export function PlanEditor<TEntry extends PlanEditorEntryBase>({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEditMode]);
+
+  // If the plan shrinks (end-date shorten drops trailing weeks), clamp the
+  // selected week so the pager never points past the last week.
+  useEffect(() => {
+    setSelectedWeekIndex((i) => clampWeekIndex(i, plan.weeks.length));
+  }, [plan.weeks.length]);
 
   const weekCount = plan.weeks.length;
   const week = plan.weeks[selectedWeekIndex];

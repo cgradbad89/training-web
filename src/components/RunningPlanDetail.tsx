@@ -37,6 +37,7 @@ import { formatPace, parsePaceString } from "@/utils/pace";
 import { deepCopyRunEntry } from "@/utils/planCopy";
 import { formatCompletedAt } from "@/utils/planFormat";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { PlanDateEditor } from "@/components/PlanDateEditor";
 import { PlanCompletionSummary } from "@/components/PlanCompletionSummary";
 import { PlanEditor, type PlanEditorConfig } from "@/components/PlanEditor";
 import {
@@ -551,6 +552,12 @@ export function RunningPlanDetail({
               </>
             )}
           </p>
+          {isEditMode && (
+            <PlanDateEditor
+              plan={plan}
+              onApply={(updated) => persist(updated as RunningPlan)}
+            />
+          )}
         </div>
 
         <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">

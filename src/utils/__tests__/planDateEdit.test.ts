@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   snapToMonday,
   derivePlanEndDate,
+  endDateForWeeks,
+  endsAfterRace,
   weeksForSpan,
   slideStartDate,
   resizeToEndDate,
@@ -179,6 +181,37 @@ describe("derivePlanEndDate / weeksForSpan", () => {
   it("clamps a non-positive span to a minimum of 1 week", () => {
     expect(weeksForSpan("2026-01-19", "2026-01-19")).toBe(1);
     expect(weeksForSpan("2026-01-19", "2026-01-12")).toBe(1);
+  });
+
+  it("endDateForWeeks matches the former inline helper", () => {
+    // start + weeks*7 - 1 days
+    expect(endDateForWeeks("2026-01-19", 13)).toBe("2026-04-19");
+    expect(endDateForWeeks("2026-01-19", 1)).toBe("2026-01-25");
+    // derivePlanEndDate is endDateForWeeks(startDate, weeks.length)
+    const plan = makeRunningPlan();
+    expect(derivePlanEndDate(plan)).toBe(
+      endDateForWeeks(plan.startDate, plan.weeks.length)
+    );
+  });
+});
+
+// ─── endsAfterRace ─────────────────────────────────────────────────────────────
+
+describe("endsAfterRace", () => {
+  it("false when no race date is supplied", () => {
+    expect(endsAfterRace(makeRunningPlan())).toBe(false);
+    expect(endsAfterRace(makeRunningPlan(), undefined)).toBe(false);
+  });
+
+  it("true when the derived end date is strictly after the race date", () => {
+    const plan = makeRunningPlan(); // ends 2026-02-08
+    expect(endsAfterRace(plan, "2026-02-07")).toBe(true);
+  });
+
+  it("false when the plan ends on or before the race date", () => {
+    const plan = makeRunningPlan(); // ends 2026-02-08
+    expect(endsAfterRace(plan, "2026-02-08")).toBe(false);
+    expect(endsAfterRace(plan, "2026-03-01")).toBe(false);
   });
 });
 

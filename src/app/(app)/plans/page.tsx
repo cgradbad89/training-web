@@ -15,6 +15,7 @@ import {
   nextStatusForSibling,
 } from "@/services/plans";
 import { deepCopyRunningPlan, deepCopyWorkoutPlan } from "@/utils/planCopy";
+import { endDateForWeeks, weeksForSpan } from "@/utils/planDateEdit";
 import { fetchHealthWorkouts } from "@/services/healthWorkouts";
 import {
   DEFAULT_HALF_MARATHON_PLAN,
@@ -105,15 +106,8 @@ function nextMonday(): string {
   return `${y}-${m}-${d}`;
 }
 
-/** Return ISO date string for start + n weeks - 1 day (the Sunday of that week) */
-function endDateForWeeks(startIso: string, weeks: number): string {
-  const d = new Date(startIso + "T00:00:00");
-  d.setDate(d.getDate() + weeks * 7 - 1);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
+// endDateForWeeks + weeksForSpan are now sourced from src/utils/planDateEdit so
+// the span math has a single tested source (see PRD §5 item 22).
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -531,14 +525,7 @@ export default function PlansPage() {
   async function handleCreate() {
     if (!user || !nameInput.trim() || !startDateInput || !endDateInput) return;
     if (!pendingPlanType) return;
-    const numWeeks = Math.max(
-      1,
-      Math.ceil(
-        (new Date(endDateInput + "T00:00:00").getTime() -
-          new Date(startDateInput + "T00:00:00").getTime()) /
-          (7 * 86400000)
-      )
-    );
+    const numWeeks = weeksForSpan(startDateInput, endDateInput);
     setSaving(true);
     try {
       let plan: Plan;
@@ -1014,11 +1001,12 @@ export default function PlansPage() {
         const endD = endDateInput
           ? new Date(endDateInput + "T00:00:00")
           : null;
+        // Preserve the original display behavior: only show a count when the
+        // end is strictly after the start (else null → hidden). The positive
+        // branch matches weeksForSpan exactly for any end > start span.
         const numWeeks =
           startD && endD && endD > startD
-            ? Math.ceil(
-                (endD.getTime() - startD.getTime()) / (7 * 86400000)
-              )
+            ? weeksForSpan(startDateInput, endDateInput)
             : null;
         const fmtDate = (d: Date) =>
           d.toLocaleDateString("en-US", { month: "short", day: "numeric" });

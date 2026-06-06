@@ -47,6 +47,7 @@ import {
   WORKOUT_CATEGORY_LABELS,
 } from "@/types/plan";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { PlanDateEditor } from "@/components/PlanDateEditor";
 import { deepCopyWorkoutEntry } from "@/utils/planCopy";
 import { formatCompletedAt } from "@/utils/planFormat";
 import { PlanCompletionSummary } from "@/components/PlanCompletionSummary";
@@ -898,6 +899,12 @@ export function CrossTrainingPlanDetail({
               </>
             )}
           </p>
+          {isEditMode && (
+            <PlanDateEditor
+              plan={plan}
+              onApply={(updated) => persist(updated as WorkoutPlan)}
+            />
+          )}
         </div>
         <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
           {plan.status !== "active" && (

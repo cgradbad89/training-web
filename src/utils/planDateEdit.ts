@@ -89,11 +89,30 @@ export function snapToMonday(iso: string): string {
 }
 
 /**
- * Derived end date (ISO) = startDate + (weeks.length*7 − 1) days — the Sunday of
- * the final week. Canonical version of the former inline endDateForWeeks helper.
+ * End date (ISO) for a plan that starts on `startIso` and runs `weeks` weeks =
+ * startIso + (weeks*7 − 1) days — the Sunday of the final week. Canonical
+ * version of the former inline `endDateForWeeks` helper in plans/page.tsx.
+ */
+export function endDateForWeeks(startIso: string, weeks: number): string {
+  return addDays(startIso, weeks * 7 - 1);
+}
+
+/**
+ * Derived end date (ISO) for an existing plan = startDate + (weeks.length*7 − 1)
+ * days — the Sunday of the final week.
  */
 export function derivePlanEndDate(plan: Plan): string {
-  return addDays(plan.startDate, plan.weeks.length * 7 - 1);
+  return endDateForWeeks(plan.startDate, plan.weeks.length);
+}
+
+/**
+ * True when the plan's derived end date falls strictly after the given race
+ * date (both ISO "YYYY-MM-DD", so a lexical compare is a date compare). False
+ * when no race date is supplied. Pure — drives a non-blocking informational note.
+ */
+export function endsAfterRace(plan: Plan, raceDateIso?: string): boolean {
+  if (!raceDateIso) return false;
+  return derivePlanEndDate(plan) > raceDateIso;
 }
 
 /**
