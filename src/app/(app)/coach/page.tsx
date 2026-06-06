@@ -211,7 +211,7 @@ export default function CoachPage() {
   }
 
   return (
-    <div className="p-6 max-w-3xl mx-auto">
+    <div className="p-6 mx-auto">
 
       {/* Header */}
       <div className="flex items-center gap-3 mb-6">

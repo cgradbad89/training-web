@@ -1906,7 +1906,7 @@ export default function PersonalInsightsPage() {
   ];
 
   return (
-    <div className="flex flex-col gap-6 p-6 lg:p-6 max-w-5xl">
+    <div className="flex flex-col gap-6 p-6 lg:p-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-textPrimary">Personal Insights</h1>
         <button
