@@ -959,24 +959,26 @@ export function CrossTrainingPlanDetail({
             </button>
           )}
           {/* Complete (confirm) for any non-completed plan; Reopen (instant)
-              once completed. Order mirrors RunningPlanDetail exactly. */}
-          {plan.status !== "completed" ? (
-            <button
-              onClick={() => setConfirmComplete(true)}
-              disabled={saving}
-              className="text-sm px-3 py-1.5 rounded-lg border border-border text-textSecondary hover:text-textPrimary hover:bg-surface disabled:opacity-50"
-            >
-              Complete
-            </button>
-          ) : (
-            <button
-              onClick={onReopen}
-              disabled={saving}
-              className="text-sm px-3 py-1.5 rounded-lg border border-border text-textSecondary hover:text-textPrimary hover:bg-surface disabled:opacity-50"
-            >
-              Reopen
-            </button>
-          )}
+              once completed. Order mirrors RunningPlanDetail exactly.
+              Hidden in edit mode — the Done toggle stands in its place. */}
+          {!isEditMode &&
+            (plan.status !== "completed" ? (
+              <button
+                onClick={() => setConfirmComplete(true)}
+                disabled={saving}
+                className="text-sm px-3 py-1.5 rounded-lg border border-border text-textSecondary hover:text-textPrimary hover:bg-surface disabled:opacity-50"
+              >
+                Complete
+              </button>
+            ) : (
+              <button
+                onClick={onReopen}
+                disabled={saving}
+                className="text-sm px-3 py-1.5 rounded-lg border border-border text-textSecondary hover:text-textPrimary hover:bg-surface disabled:opacity-50"
+              >
+                Reopen
+              </button>
+            ))}
           {/* Edit / Done toggle — pure mode toggle; PlanEditor clears any open
               row editor + dirty flag on exit. */}
           <button

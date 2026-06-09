@@ -578,22 +578,24 @@ export function RunningPlanDetail({
             </button>
           )}
           {/* Complete (confirm) for any non-completed plan; Reopen (instant)
-              once completed. Order mirrors CrossTrainingPlanDetail exactly. */}
-          {plan.status !== "completed" ? (
-            <button
-              onClick={() => setConfirmComplete(true)}
-              className="text-sm px-3 py-1.5 rounded-lg border border-border text-textSecondary hover:text-textPrimary hover:bg-surface"
-            >
-              Complete
-            </button>
-          ) : (
-            <button
-              onClick={onReopen}
-              className="text-sm px-3 py-1.5 rounded-lg border border-border text-textSecondary hover:text-textPrimary hover:bg-surface"
-            >
-              Reopen
-            </button>
-          )}
+              once completed. Order mirrors CrossTrainingPlanDetail exactly.
+              Hidden in edit mode — the Done toggle stands in its place. */}
+          {!isEditMode &&
+            (plan.status !== "completed" ? (
+              <button
+                onClick={() => setConfirmComplete(true)}
+                className="text-sm px-3 py-1.5 rounded-lg border border-border text-textSecondary hover:text-textPrimary hover:bg-surface"
+              >
+                Complete
+              </button>
+            ) : (
+              <button
+                onClick={onReopen}
+                className="text-sm px-3 py-1.5 rounded-lg border border-border text-textSecondary hover:text-textPrimary hover:bg-surface"
+              >
+                Reopen
+              </button>
+            ))}
           {/* Edit / Done toggle — toggles in-place edit. In edit mode the plan
               name above becomes inline-editable (no separate rename control). */}
           <button
