@@ -47,6 +47,10 @@ import {
 import { computeMileSplits, type MileSplit } from "@/utils/mileSplits";
 import { computeRunGap, type RunGap } from "@/utils/gradeAdjustedPace";
 import {
+  deriveEffectiveHasRoute,
+  isRoutePresent,
+} from "@/utils/routeAvailability";
+import {
   resolveMaxHr,
   resolveRestingHr,
   resolveDisplayLoad,
@@ -202,15 +206,23 @@ export default function RunDetailPage() {
         setOverride(o);
         setUserSettings(settings);
 
-        if (w?.hasRoute) {
-          fetchRoutePoints(uid, workoutId)
-            .then((points) => {
-              setRoutePoints(points);
+        // Always attempt the route read, regardless of the parent `hasRoute`
+        // flag. The iOS headless sync can write a populated `route`
+        // subcollection but leave `hasRoute: false` if a short background wake
+        // is suspended before the trailing flag write. Trusting the flag alone
+        // would suppress map/splits/HR for runs whose data actually exists, so
+        // route availability is derived from the DATA: a read of >= 2 points
+        // means "routed" for all downstream rendering. A genuinely route-less
+        // workout (Pilates/strength) reads 0 points and is unchanged.
+        fetchRoutePoints(uid, workoutId)
+          .then((points) => {
+            setRoutePoints(points);
 
+            if (isRoutePresent(points.length)) {
               // Natural new-run hook: the detail page already reads route
               // points for maps/splits/GAP, so computing missing best efforts
               // here avoids adding heavy route reads to the runs list hot path.
-              if (w.bestEfforts === undefined && points.length >= 2) {
+              if (w && w.bestEfforts === undefined) {
                 computeAndStoreBestEfforts(uid, workoutId, points)
                   .then((bestEfforts) => {
                     setWorkout((current) =>
@@ -219,31 +231,32 @@ export default function RunDetailPage() {
                   })
                   .catch(console.error);
               }
-            })
-            .catch(console.error)
-            .finally(() => setRouteLoading(false));
 
-          // Fetch per-mile HR from iOS-synced subcollection
-          getDocs(
-            query(
-              collection(db, `users/${uid}/healthWorkouts/${workoutId}/mileSplits`),
-              orderBy("mile", "asc")
-            )
-          )
-            .then((snap) => {
-              const hrMap: Record<number, number> = {};
-              snap.docs.forEach((doc) => {
-                const data = doc.data();
-                if (data.avgBpm && data.sampleCount >= 2) {
-                  hrMap[data.mile as number] = data.avgBpm as number;
-                }
-              });
-              setPerMileHR(hrMap);
-            })
-            .catch(console.error);
-        } else {
-          setRouteLoading(false);
-        }
+              // Fetch per-mile HR from the iOS-synced mileSplits subcollection.
+              // Gated on the SAME data signal (>= 2 route points) so it runs for
+              // a falsely-flagged run and is skipped for genuinely route-less
+              // workouts.
+              getDocs(
+                query(
+                  collection(db, `users/${uid}/healthWorkouts/${workoutId}/mileSplits`),
+                  orderBy("mile", "asc")
+                )
+              )
+                .then((snap) => {
+                  const hrMap: Record<number, number> = {};
+                  snap.docs.forEach((doc) => {
+                    const data = doc.data();
+                    if (data.avgBpm && data.sampleCount >= 2) {
+                      hrMap[data.mile as number] = data.avgBpm as number;
+                    }
+                  });
+                  setPerMileHR(hrMap);
+                })
+                .catch(console.error);
+            }
+          })
+          .catch(console.error)
+          .finally(() => setRouteLoading(false));
       })
       .catch(console.error)
       .finally(() => setLoading(false));
@@ -273,6 +286,14 @@ export default function RunDetailPage() {
 
   // Apply override for display
   const displayWorkout = applyOverride(workout, override);
+  // Derive route availability from the DATA, not just the parent flag. The iOS
+  // headless sync can leave `hasRoute: false` on a doc that nonetheless has a
+  // populated `route` subcollection; once we've read >= 2 points, render the
+  // run as routed regardless of the flag. (< 2 points → unchanged no-route UI.)
+  const effectiveHasRoute = deriveEffectiveHasRoute(
+    displayWorkout.hasRoute,
+    routePoints.length
+  );
   const isExcluded = override?.isExcluded === true;
   const hasOverrides =
     override != null &&
@@ -759,18 +780,16 @@ export default function RunDetailPage() {
 
       {/* ── Route Map ───────────────────────────────────────── */}
       <div className="bg-card rounded-2xl border border-border overflow-hidden">
-        {displayWorkout.hasRoute ? (
-          routeLoading ? (
-            <div className="h-64 sm:h-96 bg-surface animate-pulse" />
-          ) : routePoints.length > 0 ? (
-            <RunMap points={routePoints} />
-          ) : (
-            <div className="h-64 sm:h-96 flex items-center justify-center">
-              <p className="text-sm text-textSecondary">
-                Route data not yet synced
-              </p>
-            </div>
-          )
+        {routeLoading ? (
+          <div className="h-64 sm:h-96 bg-surface animate-pulse" />
+        ) : effectiveHasRoute && routePoints.length > 0 ? (
+          <RunMap points={routePoints} />
+        ) : effectiveHasRoute ? (
+          <div className="h-64 sm:h-96 flex items-center justify-center">
+            <p className="text-sm text-textSecondary">
+              Route data not yet synced
+            </p>
+          </div>
         ) : (
           <div className="h-40 flex items-center justify-center">
             <p className="text-sm text-textSecondary">
@@ -784,23 +803,23 @@ export default function RunDetailPage() {
       <MileSplitsTable
         splits={mileSplits}
         routeLoading={routeLoading}
-        hasRoute={displayWorkout.hasRoute}
+        hasRoute={effectiveHasRoute}
         gapPerMile={runGap.perMileGapSecPerMile}
       />
 
       {/* ── Pace & HR Charts ───────────────────────────────── */}
       <MileSplitCharts
         splits={mileSplits}
-        hasRoute={displayWorkout.hasRoute}
+        hasRoute={effectiveHasRoute}
       />
 
       {/* ── Overlaid Analysis Chart (elevation + pace + GAP + HR) ─ */}
-      {displayWorkout.hasRoute && routePoints.length > 1 && (
+      {effectiveHasRoute && routePoints.length > 1 && (
         <RunOverlayChart points={routePoints} perPointGap={runGap.perPointGap} />
       )}
 
       {/* ── Heart Rate Zone Breakdown ──────────────────────── */}
-      {displayWorkout.hasRoute && routePoints.length > 1 && (
+      {effectiveHasRoute && routePoints.length > 1 && (
         <ZoneBreakdown
           points={routePoints}
           maxHR={resolvedMaxHR}
