@@ -49,6 +49,7 @@ import { computeRunGap, type RunGap } from "@/utils/gradeAdjustedPace";
 import {
   deriveEffectiveHasRoute,
   isRoutePresent,
+  isRouteSyncing,
 } from "@/utils/routeAvailability";
 import {
   resolveMaxHr,
@@ -294,6 +295,10 @@ export default function RunDetailPage() {
     displayWorkout.hasRoute,
     routePoints.length
   );
+  // Display-only hint: iOS marks an in-progress route with `routeComplete:
+  // false`. We still render every point we have — this never gates rendering.
+  // Absent (legacy) or true → no hint.
+  const routeSyncing = isRouteSyncing(displayWorkout.routeComplete);
   const isExcluded = override?.isExcluded === true;
   const hasOverrides =
     override != null &&
@@ -783,7 +788,16 @@ export default function RunDetailPage() {
         {routeLoading ? (
           <div className="h-64 sm:h-96 bg-surface animate-pulse" />
         ) : effectiveHasRoute && routePoints.length > 0 ? (
-          <RunMap points={routePoints} />
+          <>
+            <RunMap points={routePoints} />
+            {routeSyncing && (
+              <div className="px-4 py-2 border-t border-border">
+                <p className="text-xs text-textSecondary">
+                  Route still syncing — showing the portion received so far.
+                </p>
+              </div>
+            )}
+          </>
         ) : effectiveHasRoute ? (
           <div className="h-64 sm:h-96 flex items-center justify-center">
             <p className="text-sm text-textSecondary">

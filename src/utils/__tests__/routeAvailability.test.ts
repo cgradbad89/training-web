@@ -3,6 +3,7 @@ import {
   MIN_ROUTE_POINTS,
   isRoutePresent,
   deriveEffectiveHasRoute,
+  isRouteSyncing,
 } from "../routeAvailability";
 
 describe("isRoutePresent", () => {
@@ -40,5 +41,22 @@ describe("deriveEffectiveHasRoute — existing behavior preserved", () => {
 
   it("genuinely route-less workout (flag false, no points) stays no-route", () => {
     expect(deriveEffectiveHasRoute(false, 0)).toBe(false);
+  });
+});
+
+describe("isRouteSyncing — routeComplete display hint (never gates rendering)", () => {
+  it("only routeComplete === false flags syncing; true/absent do not", () => {
+    expect(isRouteSyncing(false)).toBe(true);
+    expect(isRouteSyncing(true)).toBe(false);
+    expect(isRouteSyncing(undefined)).toBe(false); // legacy doc → treated complete
+  });
+
+  it("a partial route (routeComplete=false) with >=2 points still renders as routed", () => {
+    // Availability is derived from the data and is independent of routeComplete:
+    // the hint may show, but the run is routed and the points render.
+    const points = 120;
+    expect(deriveEffectiveHasRoute(false, points)).toBe(true);
+    expect(isRoutePresent(points)).toBe(true);
+    expect(isRouteSyncing(false)).toBe(true); // hint shows, render still on
   });
 });

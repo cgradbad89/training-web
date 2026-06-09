@@ -19,6 +19,11 @@ export interface HealthWorkout {
   sourceName: string;
   isRunLike: boolean;
   hasRoute: boolean;
+  /** iOS route-completion marker: true = full route written, false = partial
+   *  (still completing on a later wake), absent = legacy doc (treat as
+   *  complete). Display-hint only — a partial route still renders its points;
+   *  route availability is NEVER gated on this. */
+  routeComplete?: boolean;
   /** True when iOS wrote a per-sample HR stream subcollection (hrStream) for
    *  this workout. Drives the streamed-load path for non-route workouts.
    *  Absent/false ⇒ no stream (fall back to avg HR). */

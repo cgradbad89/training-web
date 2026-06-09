@@ -37,3 +37,16 @@ export function deriveEffectiveHasRoute(
 ): boolean {
   return hasRouteFlag || isRoutePresent(routePointCount);
 }
+
+/**
+ * Whether to show a subtle "route still syncing" hint. The iOS sync writes a
+ * `routeComplete` marker on the parent doc: `true` = full route written,
+ * `false` = partial (still completing on a later wake), ABSENT = legacy doc
+ * (treated as complete). This is ONLY a display hint — a partial route still
+ * renders every point it has; route availability is never gated on it. Returns
+ * true exclusively when the marker is explicitly `false`; `true` or absent
+ * (undefined) → not syncing.
+ */
+export function isRouteSyncing(routeComplete: boolean | undefined): boolean {
+  return routeComplete === false;
+}

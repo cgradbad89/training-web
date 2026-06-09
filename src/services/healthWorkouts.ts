@@ -109,6 +109,12 @@ function docToHealthWorkout(
     sourceName: (data.sourceName as string) ?? "Apple Watch",
     isRunLike: (data.isRunLike as boolean) ?? false,
     hasRoute: (data.hasRoute as boolean) ?? false,
+    // Display-hint marker only (see HealthWorkout.routeComplete). Preserve the
+    // tri-state: true / false / undefined (legacy absent → treated as complete).
+    routeComplete:
+      typeof data.routeComplete === "boolean"
+        ? (data.routeComplete as boolean)
+        : undefined,
     hasHRStream: (data.hasHRStream as boolean) ?? false,
     syncedAt: toDate(data.syncedAt),
     sourceBundle: data.sourceBundle as string | undefined,
