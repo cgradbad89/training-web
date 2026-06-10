@@ -505,7 +505,7 @@ export function RunningPlanDetail({
   );
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col flex-1 min-h-0">
       {/* Header */}
       <div className="px-6 py-4 border-b border-border bg-card flex items-start gap-4">
         <div className="flex-1 min-w-0">
