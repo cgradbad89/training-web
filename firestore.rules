@@ -1,0 +1,1324 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function optNullableString(field) {
+      return !(field in request.resource.data)
+        || request.resource.data[field] == null
+        || request.resource.data[field] is string;
+    }
+
+    function optNullableNumber(field) {
+      return !(field in request.resource.data)
+        || request.resource.data[field] == null
+        || request.resource.data[field] is number;
+    }
+
+    function optNullableBool(field) {
+      return !(field in request.resource.data)
+        || request.resource.data[field] == null
+        || request.resource.data[field] is bool;
+    }
+
+    function optNullableTimestamp(field) {
+      return !(field in request.resource.data)
+        || request.resource.data[field] == null
+        || request.resource.data[field] is timestamp;
+    }
+
+    function optNullableList(field) {
+      return !(field in request.resource.data)
+        || request.resource.data[field] == null
+        || request.resource.data[field] is list;
+    }
+
+    function optNullableTimestampOrString(field) {
+      return !(field in request.resource.data)
+        || request.resource.data[field] == null
+        || request.resource.data[field] is timestamp
+        || request.resource.data[field] is string;
+    }
+
+    function optString(field) {
+      return !(field in request.resource.data) || request.resource.data[field] is string;
+    }
+
+    function optTimestamp(field) {
+      return !(field in request.resource.data) || request.resource.data[field] is timestamp;
+    }
+
+    function validRating() {
+      return !('rating' in request.resource.data)
+        || (
+          request.resource.data.rating is number
+          && request.resource.data.rating >= 1.0
+          && request.resource.data.rating <= 5.0
+          && ((request.resource.data.rating * 2) % 1 == 0)
+        );
+    }
+
+    function budgetIsSignedIn() {
+      return request.auth != null
+        && request.auth.uid is string
+        && request.auth.token.email is string;
+    }
+
+    function budgetRequestUserKey() {
+      return request.auth.token.email.lower();
+    }
+
+    function budgetOwnsData(data) {
+      return budgetIsSignedIn()
+        && data.ownerUid == request.auth.uid
+        && data.userKey == budgetRequestUserKey();
+    }
+
+    function budgetPreservesOwner() {
+      return request.resource.data.ownerUid == resource.data.ownerUid
+        && request.resource.data.userKey == resource.data.userKey;
+    }
+
+    function budgetIsNumber(value) {
+      return value is int || value is float;
+    }
+
+    function budgetIsNullableNumber(value) {
+      return value == null || budgetIsNumber(value);
+    }
+
+    function budgetIsNullableString(value) {
+      return value == null || value is string;
+    }
+
+    function budgetIsNullableContributionType(value) {
+      return value == null || value == 'fixed' || value == 'percentage';
+    }
+
+    function budgetIsCustomCategoryDoc(data) {
+      return data.keys().hasOnly([
+          "name","color","isActive","ownerUid","userKey","createdAt","updatedAt"
+        ])
+        && data.keys().hasAll([
+          "name","isActive","ownerUid","userKey","createdAt","updatedAt"
+        ])
+        && budgetOwnsData(data)
+        && data.name is string && data.name.size() > 0
+        && budgetIsNullableString(data.color)
+        && data.isActive is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function budgetIsMerchantCategoryRuleDoc(data) {
+      return data.keys().hasOnly([
+          "merchantName","displayMerchantName","customCategoryId",
+          "customCategoryName","customCategoryColor",
+          "ownerUid","userKey","createdAt","updatedAt"
+        ])
+        && data.keys().hasAll([
+          "merchantName","displayMerchantName","customCategoryId",
+          "customCategoryName","ownerUid","userKey","createdAt","updatedAt"
+        ])
+        && budgetOwnsData(data)
+        && data.merchantName is string && data.merchantName.size() > 0
+        && data.customCategoryId is string
+        && data.customCategoryName is string
+        && budgetIsNullableString(data.customCategoryColor)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function budgetIsHousingBreakdown(value) {
+      return value == null || (
+        value is map
+        && value.keys().hasOnly([
+          "principal","interest","taxes","insurance","pmi","hoa","extraPrincipal",
+        ])
+        && budgetIsNullableNumber(value.principal)
+        && budgetIsNullableNumber(value.interest)
+        && budgetIsNullableNumber(value.taxes)
+        && budgetIsNullableNumber(value.insurance)
+        && budgetIsNullableNumber(value.pmi)
+        && budgetIsNullableNumber(value.hoa)
+        && budgetIsNullableNumber(value.extraPrincipal)
+      );
+    }
+
+    function budgetIsManualTransactionType(value) {
+      return value == "income"
+        || value == "savings_contribution"
+        || value == "transfer"
+        || value == "adjustment"
+        || value == "mortgage_payment"
+        || value == "expense"
+        || value == "reimbursement";
+    }
+
+    function budgetIsHousingDoc(data) {
+      return data.keys().hasOnly([
+          "estimatedCurrentValue","annualAppreciationRate","originalLoanAmount",
+          "loanOriginationDate",
+          "currentMortgageBalanceAnchor","currentMortgageBalanceAnchorDate",
+          "currentMortgageInterestRate","currentMortgageRemainingTermMonths",
+          "currentMortgagePayoffDateOverride","currentMortgagePaymentDefaults",
+          "currentMortgageMySharePercent","notes","isActive","ownerUid","userKey",
+          "createdAt","updatedAt",
+        ])
+        && data.keys().hasAll(["ownerUid","userKey","isActive","createdAt","updatedAt"])
+        && budgetOwnsData(data)
+        && budgetIsNullableNumber(data.estimatedCurrentValue)
+        && budgetIsNullableNumber(data.annualAppreciationRate)
+        && budgetIsNullableNumber(data.originalLoanAmount)
+        && budgetIsNullableString(data.loanOriginationDate)
+        && budgetIsNullableNumber(data.currentMortgageBalanceAnchor)
+        && budgetIsNullableString(data.currentMortgageBalanceAnchorDate)
+        && budgetIsNullableNumber(data.currentMortgageInterestRate)
+        && budgetIsNullableNumber(data.currentMortgageRemainingTermMonths)
+        && budgetIsNullableString(data.currentMortgagePayoffDateOverride)
+        && budgetIsHousingBreakdown(data.currentMortgagePaymentDefaults)
+        && budgetIsNullableNumber(data.currentMortgageMySharePercent)
+        && budgetIsNullableString(data.notes)
+        && data.isActive is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function budgetIsHousingScenarioDoc(data) {
+      return data.keys().hasOnly([
+          "name","targetPurchaseYear","targetPurchasePrice","mortgageRate",
+          "mortgageTermMonths","taxes","insurance","hoa","downPayment",
+          "manualScenarioFunds","linkedSaleProceeds","useCurrentSaleProceeds",
+          "notes","isActive","ownerUid","userKey","createdAt","updatedAt",
+        ])
+        && data.keys().hasAll(["name","useCurrentSaleProceeds","isActive","ownerUid","userKey","createdAt","updatedAt"])
+        && budgetOwnsData(data)
+        && data.name is string && data.name.size() > 0
+        && budgetIsNullableNumber(data.targetPurchaseYear)
+        && budgetIsNullableNumber(data.targetPurchasePrice)
+        && budgetIsNullableNumber(data.mortgageRate)
+        && budgetIsNullableNumber(data.mortgageTermMonths)
+        && budgetIsNullableNumber(data.taxes)
+        && budgetIsNullableNumber(data.insurance)
+        && budgetIsNullableNumber(data.hoa)
+        && budgetIsNullableNumber(data.downPayment)
+        && budgetIsNullableNumber(data.manualScenarioFunds)
+        && budgetIsNullableNumber(data.linkedSaleProceeds)
+        && data.useCurrentSaleProceeds is bool
+        && budgetIsNullableString(data.notes)
+        && data.isActive is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function budgetIsManualTransactionDoc(data) {
+      return data.keys().hasOnly([
+          "type","date","name","amount","ownershipPercent","myPortionPercent","fromAccountId","toAccountId",
+          "categoryKey","categoryLabel","mortgageBreakdown","mortgageTotalPayment",
+          "mortgageMySharePercent","notes","recurringTemplateId","recurringMonth",
+          "recurringTemplateName","isRecurringGenerated","isActive","ownerUid",
+          "userKey","createdAt","updatedAt",
+        ])
+        && data.keys().hasAll([
+          "type","date","name","amount","isRecurringGenerated","isActive",
+          "ownerUid","userKey","createdAt","updatedAt",
+        ])
+        && budgetOwnsData(data)
+        && budgetIsManualTransactionType(data.type)
+        && data.date is string && data.date.size() > 0
+        && data.name is string && data.name.size() > 0
+        && budgetIsNumber(data.amount)
+        && budgetIsNullableNumber(data.ownershipPercent)
+        && budgetIsNullableNumber(data.myPortionPercent)
+        && budgetIsNullableString(data.fromAccountId)
+        && budgetIsNullableString(data.toAccountId)
+        && budgetIsNullableString(data.categoryKey)
+        && budgetIsNullableString(data.categoryLabel)
+        && budgetIsHousingBreakdown(data.mortgageBreakdown)
+        && budgetIsNullableNumber(data.mortgageTotalPayment)
+        && budgetIsNullableNumber(data.mortgageMySharePercent)
+        && budgetIsNullableString(data.notes)
+        && budgetIsNullableString(data.recurringTemplateId)
+        && budgetIsNullableString(data.recurringMonth)
+        && budgetIsNullableString(data.recurringTemplateName)
+        && data.isRecurringGenerated is bool
+        && data.isActive is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function budgetIsManualTransactionTemplateDoc(data) {
+      return data.keys().hasOnly([
+          "name","type","amount","myPortionPercent","fromAccountId","toAccountId","categoryKey",
+          "categoryLabel","mortgageBreakdown","mortgageTotalPayment",
+          "mortgageMySharePercent","startDate","endDate","cadence","recurrence",
+          "frequency","intervalWeeks","monthsOfYear","dayOfMonth","notes",
+          "isActive","ownerUid","userKey","createdAt","updatedAt",
+        ])
+        && data.keys().hasAll([
+          "name","type","amount","isActive","ownerUid","userKey","createdAt","updatedAt",
+        ])
+        && budgetOwnsData(data)
+        && data.name is string && data.name.size() > 0
+        && budgetIsManualTransactionType(data.type)
+        && budgetIsNumber(data.amount)
+        && budgetIsNullableNumber(data.myPortionPercent)
+        && budgetIsNullableString(data.fromAccountId)
+        && budgetIsNullableString(data.toAccountId)
+        && budgetIsNullableString(data.categoryKey)
+        && budgetIsNullableString(data.categoryLabel)
+        && budgetIsHousingBreakdown(data.mortgageBreakdown)
+        && budgetIsNullableNumber(data.mortgageTotalPayment)
+        && budgetIsNullableNumber(data.mortgageMySharePercent)
+        && (data.startDate == null || data.startDate is string || data.startDate is timestamp)
+        && (data.endDate == null || data.endDate is string || data.endDate is timestamp)
+        && (data.cadence == null || data.cadence is string)
+        && (!('recurrence' in data) || data.recurrence == null || data.recurrence is string)
+        && (!('frequency' in data) || data.frequency == null || data.frequency is string)
+        && budgetIsNullableNumber(data.intervalWeeks)
+        && (data.monthsOfYear == null || data.monthsOfYear is list)
+        && budgetIsNullableNumber(data.dayOfMonth)
+        && budgetIsNullableString(data.notes)
+        && data.isActive is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // ============================================================
+    // RETIREMENT PLANNING VALIDATION FUNCTIONS
+    // ============================================================
+
+    function budgetIsFersRetirementType(value) {
+      return value == null
+        || value == "MRA_10"
+        || value == "MRA_30"
+        || value == "AGE_60_20"
+        || value == "AGE_62_5";
+    }
+
+    function budgetIsNullableFersDepartureType(value) {
+      return value == null
+        || value == "FERS_IMMEDIATE"
+        || value == "FERS_DEFERRED";
+    }
+    function budgetIsNullablePensionStartAgeOption(value) {
+      return value == null
+        || value == "MRA"
+        || value == "AGE_60"
+        || value == "AGE_62"
+        || value == "CUSTOM";
+    }
+
+    function budgetIsWithdrawalStrategy(value) {
+      return value == "FOUR_PERCENT"
+        || value == "CUSTOM_PERCENT"
+        || value == "FIXED_AMOUNT";
+    }
+
+    function budgetIsNullableWithdrawalStrategy(value) {
+      return value == null || budgetIsWithdrawalStrategy(value);
+    }
+
+    function budgetIsRetirementAccountType(value) {
+      return value == "TSP"
+        || value == "401K"
+        || value == "TRADITIONAL_IRA"
+        || value == "ROTH_IRA"
+        || value == "BROKERAGE"
+        || value == "OTHER";
+    }
+
+    function budgetIsRetirementAssetType(value) {
+      return value == "REAL_ESTATE"
+        || value == "SAVINGS"
+        || value == "INHERITANCE"
+        || value == "PENSION_OTHER"
+        || value == "OTHER";
+    }
+
+    function budgetIsRetirementExpenseCategory(value) {
+      return value == "HOUSING"
+        || value == "HEALTHCARE"
+        || value == "LIFESTYLE"
+        || value == "TRAVEL"
+        || value == "OTHER";
+    }
+
+    function budgetIsRetirementExpenseType(value) {
+      return value == "FIXED"
+        || value == "PERCENT_OF_SALARY"
+        || value == "MORTGAGE";
+    }
+
+    function budgetIsAccountOwner(value) {
+      return value == "primary"
+        || value == "spouse";
+    }
+
+    function budgetIsExpenseOwner(value) {
+      return value == "primary"
+        || value == "spouse"
+        || value == "shared";
+    }
+
+    function budgetIsNullableBool(value) {
+      return value == null || value is bool;
+    }
+
+    function budgetIsRetirementPlanDoc(data) {
+      return data.keys().hasOnly([
+          "name","isActive","birthDate","targetRetirementAge","isFederalEmployee",
+          "employmentStartDate","currentAnnualSalary","expectedAnnualRaise",
+          "fersRetirementType","highThreeAverage","yearsOfService",
+          "useCalculatedHighThree","useCalculatedYearsOfService",
+          "estimatedSocialSecurityMonthly","socialSecurityStartAge",
+          "withdrawalStrategy","customWithdrawalPercent","fixedWithdrawalAmount",
+          "lifeExpectancy","useProjectedIncome",
+          "hasSpouse","spouseName","spouseBirthDate",
+          "spouseTargetRetirementAge","spouseLifeExpectancy",
+          "spouseIsFederalEmployee","spouseEmploymentStartDate",
+          "spouseCurrentAnnualSalary","spouseExpectedAnnualRaise",
+          "spouseFersRetirementType","spouseHighThreeAverage","spouseYearsOfService",
+          "spouseUseCalculatedHighThree","spouseUseCalculatedYearsOfService",
+          "spouseEstimatedSocialSecurityMonthly","spouseSocialSecurityStartAge",
+          "spouseUseSpousalBenefit",
+          "spouseTspBalance","spouseTspContribution","spouseTspGrowthRate",
+          "spouseTspEmployerMatch",
+          "spouseTspContributionType","spouseTspContributionPercentage",
+          "spouseTspEmployerMatchType","spouseTspEmployerMatchPercentage","spouseTspEmployerMatchLimit",
+          "spouseIraBalance","spouseIraContribution","spouseIraGrowthRate",
+          "spouseOtherSavingsBalance","spouseOtherSavingsContribution","spouseOtherSavingsGrowthRate",
+          "spouseWithdrawalStrategy","spouseWithdrawalRate","spouseFixedWithdrawal",
+          "departureType","departureAge","yearsOfServiceAtDeparture",
+          "pensionStartAgeOption","pensionStartAge",
+          "fehbMonthlyPremium","spouseStillWorking","reinvestSurplus","socialSecurityBenefitAt62",
+          "ownerUid","userKey","createdAt","updatedAt",
+        ])
+        && data.keys().hasAll([
+          "name","isActive","birthDate","targetRetirementAge","isFederalEmployee",
+          "currentAnnualSalary","expectedAnnualRaise","estimatedSocialSecurityMonthly",
+          "socialSecurityStartAge","withdrawalStrategy","useProjectedIncome",
+          "useCalculatedHighThree","useCalculatedYearsOfService",
+          "ownerUid","userKey","createdAt","updatedAt",
+        ])
+        && budgetOwnsData(data)
+        && data.name is string && data.name.size() > 0
+        && data.isActive is bool
+        && data.birthDate is string
+        && budgetIsNumber(data.targetRetirementAge)
+        && data.isFederalEmployee is bool
+        && budgetIsNullableString(data.employmentStartDate)
+        && budgetIsNumber(data.currentAnnualSalary)
+        && budgetIsNumber(data.expectedAnnualRaise)
+        && budgetIsFersRetirementType(data.fersRetirementType)
+        && budgetIsNullableNumber(data.highThreeAverage)
+        && budgetIsNullableNumber(data.yearsOfService)
+        && data.useCalculatedHighThree is bool
+        && data.useCalculatedYearsOfService is bool
+        && budgetIsNumber(data.estimatedSocialSecurityMonthly)
+        && budgetIsNumber(data.socialSecurityStartAge)
+        && budgetIsWithdrawalStrategy(data.withdrawalStrategy)
+        && budgetIsNullableNumber(data.customWithdrawalPercent)
+        && budgetIsNullableNumber(data.fixedWithdrawalAmount)
+        && budgetIsNullableNumber(data.lifeExpectancy)
+        && data.useProjectedIncome is bool
+        // Spouse fields (all nullable — absent for legacy docs)
+        && budgetIsNullableBool(data.hasSpouse)
+        && budgetIsNullableString(data.spouseName)
+        && budgetIsNullableString(data.spouseBirthDate)
+        && budgetIsNullableNumber(data.spouseTargetRetirementAge)
+        && budgetIsNullableNumber(data.spouseLifeExpectancy)
+        && budgetIsNullableBool(data.spouseIsFederalEmployee)
+        && budgetIsNullableString(data.spouseEmploymentStartDate)
+        && budgetIsNullableNumber(data.spouseCurrentAnnualSalary)
+        && budgetIsNullableNumber(data.spouseExpectedAnnualRaise)
+        && budgetIsFersRetirementType(data.spouseFersRetirementType)
+        && budgetIsNullableNumber(data.spouseHighThreeAverage)
+        && budgetIsNullableNumber(data.spouseYearsOfService)
+        && budgetIsNullableBool(data.spouseUseCalculatedHighThree)
+        && budgetIsNullableBool(data.spouseUseCalculatedYearsOfService)
+        && budgetIsNullableNumber(data.spouseEstimatedSocialSecurityMonthly)
+        && budgetIsNullableNumber(data.spouseSocialSecurityStartAge)
+        && budgetIsNullableBool(data.spouseUseSpousalBenefit)
+        // Spouse investment fields (all nullable)
+        && budgetIsNullableNumber(data.spouseTspBalance)
+        && budgetIsNullableNumber(data.spouseTspContribution)
+        && budgetIsNullableNumber(data.spouseTspGrowthRate)
+        && budgetIsNullableNumber(data.spouseTspEmployerMatch)
+        && budgetIsNullableContributionType(data.spouseTspContributionType)
+        && budgetIsNullableNumber(data.spouseTspContributionPercentage)
+        && budgetIsNullableContributionType(data.spouseTspEmployerMatchType)
+        && budgetIsNullableNumber(data.spouseTspEmployerMatchPercentage)
+        && budgetIsNullableNumber(data.spouseTspEmployerMatchLimit)
+        && budgetIsNullableNumber(data.spouseIraBalance)
+        && budgetIsNullableNumber(data.spouseIraContribution)
+        && budgetIsNullableNumber(data.spouseIraGrowthRate)
+        && budgetIsNullableNumber(data.spouseOtherSavingsBalance)
+        && budgetIsNullableNumber(data.spouseOtherSavingsContribution)
+        && budgetIsNullableNumber(data.spouseOtherSavingsGrowthRate)
+        && budgetIsNullableWithdrawalStrategy(data.spouseWithdrawalStrategy)
+        && budgetIsNullableNumber(data.spouseWithdrawalRate)
+        && budgetIsNullableNumber(data.spouseFixedWithdrawal)
+        // Pre-FERS departure fields (all nullable — absent for legacy docs)
+        && budgetIsNullableFersDepartureType(data.departureType)
+        && budgetIsNullableNumber(data.departureAge)
+        && budgetIsNullableNumber(data.yearsOfServiceAtDeparture)
+        && budgetIsNullablePensionStartAgeOption(data.pensionStartAgeOption)
+        && budgetIsNullableNumber(data.pensionStartAge)
+        && budgetIsNullableNumber(data.fehbMonthlyPremium)
+        && budgetIsNullableBool(data.spouseStillWorking)
+        && budgetIsNullableBool(data.reinvestSurplus)
+        && budgetIsNullableNumber(data.socialSecurityBenefitAt62)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function budgetIsRetirementAccountDoc(data) {
+      return data.keys().hasOnly([
+          "planId","name","type","owner","currentBalance","monthlyContribution",
+          "employerMatch","expectedAnnualReturn",
+          "contributionType","contributionPercentage",
+          "employerMatchType","employerMatchPercentage","employerMatchLimit",
+          "taxTreatment","contributionBasis",
+          "ownerUid","userKey","createdAt","updatedAt",
+        ])
+        && data.keys().hasAll([
+          "planId","name","type","owner","currentBalance","monthlyContribution",
+          "expectedAnnualReturn","ownerUid","userKey","createdAt","updatedAt",
+        ])
+        && budgetOwnsData(data)
+        && data.planId is string
+        && data.name is string && data.name.size() > 0
+        && budgetIsRetirementAccountType(data.type)
+        && budgetIsAccountOwner(data.owner)
+        && budgetIsNumber(data.currentBalance)
+        && budgetIsNumber(data.monthlyContribution)
+        && budgetIsNullableNumber(data.employerMatch)
+        && budgetIsNumber(data.expectedAnnualReturn)
+        && budgetIsNullableContributionType(data.contributionType)
+        && budgetIsNullableNumber(data.contributionPercentage)
+        && budgetIsNullableContributionType(data.employerMatchType)
+        && budgetIsNullableNumber(data.employerMatchPercentage)
+        && budgetIsNullableNumber(data.employerMatchLimit)
+        && budgetIsNullableTaxTreatment(data)
+        && budgetIsNullableContributionBasis(data)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // Contribution basis is optional (Prompt 36a). Missing field, null, or a
+    // non-negative number is valid. Safe existence pattern so legacy docs
+    // without the field continue to validate.
+    function budgetIsNullableContributionBasis(data) {
+      return !("contributionBasis" in data)
+        || data.contributionBasis == null
+        || (budgetIsNumber(data.contributionBasis) && data.contributionBasis >= 0);
+    }
+
+    // Tax treatment is optional (Prompt 35a). Missing field, null, or one
+    // of the enum strings is valid; anything else is rejected. Safe
+    // existence pattern: rules with !( ... in data ) so legacy docs that
+    // never wrote the field continue to validate.
+    function budgetIsNullableTaxTreatment(data) {
+      return !("taxTreatment" in data)
+        || data.taxTreatment == null
+        || data.taxTreatment == "traditional"
+        || data.taxTreatment == "roth"
+        || data.taxTreatment == "taxable";
+    }
+
+    function budgetIsRetirementAssetDoc(data) {
+      return data.keys().hasOnly([
+          "planId","name","type","currentValue","expectedValueAtRetirement",
+          "appreciationRate","monthlyIncome","availableAtRetirement",
+          "availabilityAge","useGrowthRate","owner",
+          "disposition","incomeMethod","monthlyIncomeAmount","incomeWithdrawalRate","liquidationAge",
+          "ownerUid","userKey","createdAt","updatedAt",
+        ])
+        && data.keys().hasAll([
+          "planId","name","type","currentValue","availableAtRetirement",
+          "ownerUid","userKey","createdAt","updatedAt",
+        ])
+        && budgetOwnsData(data)
+        && data.planId is string
+        && data.name is string && data.name.size() > 0
+        && budgetIsRetirementAssetType(data.type)
+        && budgetIsNumber(data.currentValue)
+        && budgetIsNullableNumber(data.expectedValueAtRetirement)
+        && budgetIsNullableNumber(data.appreciationRate)
+        && budgetIsNullableNumber(data.monthlyIncome)
+        && data.availableAtRetirement is bool
+        && budgetIsNullableNumber(data.availabilityAge)
+        && (data.useGrowthRate == null || data.useGrowthRate is bool)
+        && (data.disposition == null || data.disposition == 'portfolio'
+            || data.disposition == 'income' || data.disposition == 'reserve')
+        && (data.incomeMethod == null || data.incomeMethod == 'fixed'
+            || data.incomeMethod == 'percent')
+        && budgetIsNullableNumber(data.monthlyIncomeAmount)
+        && budgetIsNullableNumber(data.incomeWithdrawalRate)
+        && budgetIsNullableNumber(data.liquidationAge)
+        && (data.owner == null || data.owner == 'primary'
+            || data.owner == 'spouse' || data.owner == 'shared')
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function budgetIsRetirementExpenseDoc(data) {
+      return data.keys().hasOnly([
+          "planId","name","category","owner","expenseType","monthlyAmount",
+          "percentOfSalary","mortgageMonthlyPayment","mortgageEndDate",
+          "startAge","isLifelong","endAge","notes",
+          "ownerUid","userKey","createdAt","updatedAt",
+        ])
+        && data.keys().hasAll([
+          "planId","name","category","owner","expenseType","isLifelong",
+          "ownerUid","userKey","createdAt","updatedAt",
+        ])
+        && budgetOwnsData(data)
+        && data.planId is string
+        && data.name is string && data.name.size() > 0
+        && budgetIsRetirementExpenseCategory(data.category)
+        && budgetIsExpenseOwner(data.owner)
+        && budgetIsRetirementExpenseType(data.expenseType)
+        && budgetIsNullableNumber(data.monthlyAmount)
+        && budgetIsNullableNumber(data.percentOfSalary)
+        && budgetIsNullableNumber(data.mortgageMonthlyPayment)
+        && budgetIsNullableString(data.mortgageEndDate)
+        && budgetIsNullableNumber(data.startAge)
+        && data.isLifelong is bool
+        && budgetIsNullableNumber(data.endAge)
+        && budgetIsNullableString(data.notes)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function budgetIsRetirementOneTimeCostCategory(value) {
+      return value == "VEHICLE"
+        || value == "HOME_IMPROVEMENT"
+        || value == "MEDICAL"
+        || value == "GIFT"
+        || value == "TRAVEL"
+        || value == "OTHER";
+    }
+
+    function budgetIsRetirementOneTimeCostTiming(value) {
+      return value == "AT_RETIREMENT"
+        || value == "AT_AGE"
+        || value == "AT_YEAR";
+    }
+
+    function budgetIsRetirementOneTimeCostDoc(data) {
+      return data.keys().hasOnly([
+          "planId","name","category","amount","timing",
+          "atAge","atYear","isRecurring","recurringIntervalYears",
+          "recurringEndAge","notes","owner",
+          "ownerUid","userKey","createdAt","updatedAt",
+        ])
+        && data.keys().hasAll([
+          "planId","name","category","amount","timing","isRecurring",
+          "ownerUid","userKey","createdAt","updatedAt",
+        ])
+        && budgetOwnsData(data)
+        && data.planId is string
+        && data.name is string && data.name.size() > 0
+        && budgetIsRetirementOneTimeCostCategory(data.category)
+        && budgetIsNumber(data.amount)
+        && budgetIsRetirementOneTimeCostTiming(data.timing)
+        && budgetIsNullableNumber(data.atAge)
+        && budgetIsNullableNumber(data.atYear)
+        && data.isRecurring is bool
+        && budgetIsNullableNumber(data.recurringIntervalYears)
+        && budgetIsNullableNumber(data.recurringEndAge)
+        && budgetIsNullableString(data.notes)
+        && (data.owner == null || data.owner == 'primary'
+            || data.owner == 'spouse' || data.owner == 'shared')
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // Early departure scenario validation (Prompt 36a)
+    function budgetIsPensionOption(value) {
+      return value == "UNREDUCED_62"
+        || value == "UNREDUCED_MRA_30"
+        || value == "REDUCED_MRA_10"
+        || value == "POSTPONED_CUSTOM"
+        || value == "VERA_IMMEDIATE"
+        || value == "DEFERRED_62";
+    }
+
+    function budgetIsEarlyDeparturePersonConfig(value) {
+      return value == null || (
+        value is map
+        && value.keys().hasOnly([
+          "enabled","departureAge","yearsOfServiceAtDeparture","high3Salary",
+          "pensionOption","pensionStartAge",
+          "fehbBridgeCoveredByPartner","fehbMonthlyBridgeCost",
+        ])
+        && value.keys().hasAll([
+          "enabled","departureAge","pensionOption",
+          "fehbBridgeCoveredByPartner","fehbMonthlyBridgeCost",
+        ])
+        && value.enabled is bool
+        && budgetIsNumber(value.departureAge)
+        && budgetIsNullableNumber(value.yearsOfServiceAtDeparture)
+        && budgetIsNullableNumber(value.high3Salary)
+        && budgetIsPensionOption(value.pensionOption)
+        && budgetIsNullableNumber(value.pensionStartAge)
+        && value.fehbBridgeCoveredByPartner is bool
+        && budgetIsNumber(value.fehbMonthlyBridgeCost)
+      );
+    }
+
+    function budgetIsEarlyDepartureScenarioDoc(data) {
+      return data.keys().hasOnly([
+          "name","primary","spouse",
+          "ownerUid","userKey","createdAt","updatedAt",
+        ])
+        && data.keys().hasAll([
+          "name","primary",
+          "ownerUid","userKey","createdAt","updatedAt",
+        ])
+        && budgetOwnsData(data)
+        && data.name is string && data.name.size() > 0
+        && data.primary is map
+        && budgetIsEarlyDeparturePersonConfig(data.primary)
+        && (!('spouse' in data) || data.spouse == null
+            || budgetIsEarlyDeparturePersonConfig(data.spouse))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // ============================================================
+    // END RETIREMENT PLANNING VALIDATION FUNCTIONS
+    // ============================================================
+
+    // ============================================================
+    // PAYCHECK PLANNING VALIDATION FUNCTIONS
+    // ============================================================
+
+    function budgetIsPayFrequency(value) {
+      return value == "weekly"
+        || value == "biweekly"
+        || value == "semimonthly"
+        || value == "monthly";
+    }
+
+    function budgetIsPaycheckDoc(data) {
+      return data.keys().hasOnly([
+          "name","payFrequency",
+          "basePay","localityPay","otherEarnings",
+          "federalTax","stateTax","stateTaxState","oasdi","medicare",
+          "tspEmployee","tspRoth","fersEmployee",
+          "fehb","dental","fegli",
+          "flexibleSpending","otherDeductions",
+          "isActive","ownerUid","userKey","createdAt","updatedAt",
+        ])
+        && data.keys().hasAll([
+          "name","payFrequency",
+          "basePay","localityPay","otherEarnings",
+          "federalTax","stateTax","stateTaxState","oasdi","medicare",
+          "tspEmployee","tspRoth","fersEmployee",
+          "fehb","dental","fegli",
+          "flexibleSpending","otherDeductions",
+          "isActive","ownerUid","userKey","createdAt","updatedAt",
+        ])
+        && budgetOwnsData(data)
+        && data.name is string && data.name.size() > 0
+        && budgetIsPayFrequency(data.payFrequency)
+        && budgetIsNumber(data.basePay)
+        && budgetIsNumber(data.localityPay)
+        && budgetIsNumber(data.otherEarnings)
+        && budgetIsNumber(data.federalTax)
+        && budgetIsNumber(data.stateTax)
+        && data.stateTaxState is string
+        && budgetIsNumber(data.oasdi)
+        && budgetIsNumber(data.medicare)
+        && budgetIsNumber(data.tspEmployee)
+        && budgetIsNumber(data.tspRoth)
+        && budgetIsNumber(data.fersEmployee)
+        && budgetIsNumber(data.fehb)
+        && budgetIsNumber(data.dental)
+        && budgetIsNumber(data.fegli)
+        && budgetIsNumber(data.flexibleSpending)
+        && budgetIsNumber(data.otherDeductions)
+        && data.isActive is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function budgetIsAllocationSourceType(value) {
+      return value == "credit_card"
+        || value == "savings_goal"
+        || value == "mortgage"
+        || value == "utilities"
+        || value == "manual";
+    }
+
+    function budgetIsPaycheckAllocationDoc(data) {
+      return data.keys().hasOnly([
+          "paycheckId","payDate","startingAmount","items",
+          "totalAllocated","totalRemaining",
+          "ownerUid","userKey","createdAt","updatedAt",
+        ])
+        && data.keys().hasAll([
+          "paycheckId","payDate","startingAmount","items",
+          "totalAllocated","totalRemaining",
+          "ownerUid","userKey","createdAt","updatedAt",
+        ])
+        && budgetOwnsData(data)
+        && data.paycheckId is string
+        && data.payDate is string
+        && budgetIsNumber(data.startingAmount)
+        && data.items is list
+        && budgetIsNumber(data.totalAllocated)
+        && budgetIsNumber(data.totalRemaining)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // ============================================================
+    // END PAYCHECK PLANNING VALIDATION FUNCTIONS
+    // ============================================================
+
+    match /users/{uid}/plans/{planId} { allow read, write: if isOwner(uid); }
+    match /users/{uid}/shoes/{shoeId} { allow read, write: if isOwner(uid); }
+    match /users/{uid}/races/{raceId} { allow read, write: if isOwner(uid); }
+    match /users/{uid}/shoeAssignments/{docId} { allow read, write: if isOwner(uid); }
+    match /users/{uid}/settings/{docId} { allow read, write: if isOwner(uid); }
+    match /users/{uid}/healthWorkouts/{docId} { allow read, write: if isOwner(uid); }
+    match /users/{uid}/healthWorkouts/{docId}/mileSplits/{splitId} { allow read, write: if isOwner(uid); }
+    match /users/{uid}/halfMarathonRaces/{raceId} { allow read, write: if isOwner(uid); }
+    match /users/{uid}/healthWorkouts/{docId}/hrStream/{chunkId} { allow read, write: if isOwner(uid); }
+    match /users/{uid}/healthWorkouts/{docId}/route/{pointId} { allow read, write: if isOwner(uid); }
+    match /users/{uid}/healthWorkouts/{docId}/mileSplits/{splitId} { allow read, write: if isOwner(uid); }
+		match /users/{uid}/goals/{goalId} { allow read, write: if isOwner(uid); }
+    match /users/{uid}/workoutOverrides/{docId} { allow read, write: if isOwner(uid); }
+    match /users/{uid}/createdRoutes/{routeId} { allow read, write: if isOwner(uid); }
+    match /users/{userId}/healthMetrics/{dateId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    match /users/{uid}/healthGoals/{docId} { allow read, write: if isOwner(uid); }
+    match /users/{uid}/dismissedDuplicates/{docId} { allow read, write: if isOwner(uid); }
+    match /users/{uid}/shoeAutoAssignmentRules/{ruleId} { allow read, write: if isOwner(uid); }
+
+    match /budgetTransactionExclusionRules/{ruleId} {
+      allow read: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
+      allow create: if isSignedIn()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.userKey is string
+        && request.resource.data.ruleType in ['transactionId','exactName','category','institution']
+        && request.resource.data.action in ['exclude','include']
+        && request.resource.data.matchValue is string
+        && request.resource.data.displayValue is string
+        && request.resource.data.createdFromTransactionId is string
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.updatedAt is timestamp;
+      allow update: if isSignedIn()
+        && resource.data.ownerUid == request.auth.uid
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.ruleType == resource.data.ruleType
+        && request.resource.data.action == resource.data.action
+        && request.resource.data.matchValue == resource.data.matchValue
+        && request.resource.data.createdFromTransactionId == resource.data.createdFromTransactionId
+        && request.resource.data.createdAt == resource.data.createdAt;
+      allow delete: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
+    }
+
+    match /budgetAccounts/{accountId} {
+      allow read: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
+      allow create: if isSignedIn()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.userKey is string
+        && request.resource.data.source in ['manual','derived']
+        && request.resource.data.displayName is string
+        && request.resource.data.accountType in ['cash','credit','investment','loan','other']
+        && request.resource.data.ownershipFraction is number
+        && request.resource.data.isActive is bool
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.updatedAt is timestamp
+        && optNullableString('accountSubType') && optNullableString('institutionName')
+        && optNullableString('accountName') && optNullableString('accountMask')
+        && optNullableNumber('manualCurrentBalance') && optNullableTimestamp('manualBalanceUpdatedAt')
+        && optNullableString('notes') && optNullableNumber('sortOrder')
+        && optNullableBool('isHidden') && optNullableString('lastSeenTransactionDate')
+        && optNullableString('firstSeenTransactionDate') && optNullableString('lastSeenTransactionId')
+        && optNullableNumber('candidateTransactionCount') && optNullableString('matchKey')
+        && optNullableString('mergeTargetAccountId') && optNullableString('mergedIntoAccountId')
+        && optNullableList('linkedDerivedKeys') && optNullableNumber('startingBalanceAnchor')
+        && optNullableTimestampOrString('startingBalanceDate')
+        && optNullableNumber('yearStartBalance')
+        && (!('isTSPAccount' in request.resource.data)
+            || request.resource.data.isTSPAccount is bool);
+      allow update: if isSignedIn()
+        && resource.data.ownerUid == request.auth.uid
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.userKey == resource.data.userKey
+        && request.resource.data.source == resource.data.source
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.displayName is string
+        && request.resource.data.accountType in ['cash','credit','investment','loan','other']
+        && request.resource.data.ownershipFraction is number
+        && request.resource.data.isActive is bool
+        && request.resource.data.updatedAt is timestamp
+        && optNullableString('accountSubType') && optNullableString('institutionName')
+        && optNullableString('accountName') && optNullableString('accountMask')
+        && optNullableNumber('manualCurrentBalance') && optNullableTimestamp('manualBalanceUpdatedAt')
+        && optNullableString('notes') && optNullableNumber('sortOrder')
+        && optNullableBool('isHidden') && optNullableString('lastSeenTransactionDate')
+        && optNullableString('firstSeenTransactionDate') && optNullableString('lastSeenTransactionId')
+        && optNullableNumber('candidateTransactionCount') && optNullableString('matchKey')
+        && optNullableString('mergeTargetAccountId') && optNullableString('mergedIntoAccountId')
+        && optNullableList('linkedDerivedKeys') && optNullableNumber('startingBalanceAnchor')
+        && optNullableTimestampOrString('startingBalanceDate')
+        && optNullableNumber('yearStartBalance')
+        && (!('isTSPAccount' in request.resource.data)
+            || request.resource.data.isTSPAccount is bool);
+      allow delete: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
+    }
+
+    match /budgetMonthlyPlans/{monthId} {
+      allow read: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
+      allow create: if isSignedIn()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.userKey is string
+        && request.resource.data.month is string
+        && request.resource.data.isActive is bool
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.updatedAt is timestamp
+        && optNullableNumber('expectedIncome') && optNullableList('accountCaps')
+        && optNullableList('categoryBudgets') && optNullableList('savingsGoals')
+        && optNullableString('notes');
+      allow update: if isSignedIn()
+        && resource.data.ownerUid == request.auth.uid
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.userKey == resource.data.userKey
+        && request.resource.data.month == resource.data.month
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.isActive is bool
+        && request.resource.data.updatedAt is timestamp
+        && optNullableNumber('expectedIncome') && optNullableList('accountCaps')
+        && optNullableList('categoryBudgets') && optNullableList('savingsGoals')
+        && optNullableString('notes');
+      allow delete: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
+    }
+
+    match /budgetGoals/{goalId} {
+      allow read: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
+      allow create: if isSignedIn()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.userKey is string
+        && request.resource.data.title is string
+        && request.resource.data.goalType in ['account_spending_cap','savings_target','payoff_goal','category_budget','net_worth_target','balance_target']
+        && request.resource.data.scopeType in ['account','category','global']
+        && request.resource.data.targetAmount is number
+        && request.resource.data.cadence in ['monthly','custom']
+        && request.resource.data.comparison in ['max','min']
+        && request.resource.data.isActive is bool
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.updatedAt is timestamp
+        && optNullableString('scopeId') && optNullableNumber('currentAmountOverride')
+        && optNullableTimestampOrString('targetDate') && optNullableString('notes')
+        && optNullableNumber('startingAccountAmount') && optNullableNumber('alreadySavedForGoal')
+        && optNullableNumber('targetAccountTotal') && optNullableTimestampOrString('startingDate');
+      allow update: if isSignedIn()
+        && resource.data.ownerUid == request.auth.uid
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.userKey == resource.data.userKey
+        && request.resource.data.goalType in ['account_spending_cap','savings_target','payoff_goal','category_budget','net_worth_target','balance_target']
+        && request.resource.data.scopeType in ['account','category','global']
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.title is string
+        && request.resource.data.targetAmount is number
+        && request.resource.data.cadence in ['monthly','custom']
+        && request.resource.data.comparison in ['max','min']
+        && request.resource.data.isActive is bool
+        && request.resource.data.updatedAt is timestamp
+        && optNullableString('scopeId') && optNullableNumber('currentAmountOverride')
+        && optNullableTimestampOrString('targetDate') && optNullableString('notes')
+        && optNullableNumber('startingAccountAmount') && optNullableNumber('alreadySavedForGoal')
+        && optNullableNumber('targetAccountTotal') && optNullableTimestampOrString('startingDate');
+      allow delete: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
+    }
+
+    match /budgetManualTransactions/{transactionId} {
+      allow read: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
+      allow create: if budgetIsManualTransactionDoc(request.resource.data)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+      allow update: if budgetOwnsData(resource.data)
+        && budgetPreservesOwner()
+        && budgetIsManualTransactionDoc(request.resource.data)
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
+    }
+
+    match /budgetAnnualPlans/{planId} {
+      allow read: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
+      allow create: if isSignedIn()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.userKey is string
+        && request.resource.data.year is number
+        && request.resource.data.isActive is bool
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.updatedAt is timestamp
+        && optNullableList('incomeRows') && optNullableList('savingsRows')
+        && optNullableList('expenseRows') && optNullableList('accountRows')
+        && optNullableList('charityRows')
+        && optNullableString('notes');
+      allow update: if isSignedIn()
+        && resource.data.ownerUid == request.auth.uid
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.userKey == resource.data.userKey
+        && request.resource.data.year == resource.data.year
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.isActive is bool
+        && request.resource.data.updatedAt is timestamp
+        && optNullableList('incomeRows') && optNullableList('savingsRows')
+        && optNullableList('expenseRows') && optNullableList('accountRows')
+        && optNullableList('charityRows')
+        && optNullableString('notes');
+      allow delete: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
+    }
+
+    match /budgetManualTransactionTemplates/{templateId} {
+      allow read: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
+      allow create: if budgetIsManualTransactionTemplateDoc(request.resource.data)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+      allow update: if budgetOwnsData(resource.data)
+        && budgetPreservesOwner()
+        && budgetIsManualTransactionTemplateDoc(request.resource.data)
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
+    }
+
+    match /budgetTransactionCategoryOverrides/{overrideId} {
+      allow read: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
+      allow create: if isSignedIn()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.userKey is string
+        && request.resource.data.scopeType in ['transaction','exactName']
+        && request.resource.data.matchValue is string
+        && request.resource.data.displayValue is string
+        && request.resource.data.categoryKey is string
+        && request.resource.data.categoryLabel is string
+        && request.resource.data.createdFromTransactionId is string
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.updatedAt is timestamp;
+      allow update: if isSignedIn()
+        && resource.data.ownerUid == request.auth.uid
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.userKey == resource.data.userKey
+        && request.resource.data.scopeType == resource.data.scopeType
+        && request.resource.data.matchValue == resource.data.matchValue
+        && request.resource.data.createdFromTransactionId == resource.data.createdFromTransactionId
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.displayValue is string
+        && request.resource.data.categoryKey is string
+        && request.resource.data.categoryLabel is string
+        && request.resource.data.updatedAt is timestamp;
+      allow delete: if isSignedIn() && resource.data.ownerUid == request.auth.uid;
+    }
+
+    match /budgetHousing/{housingId} {
+      allow get: if budgetIsSignedIn()
+        && housingId == "housing__" + budgetRequestUserKey();
+      allow create: if housingId == "housing__" + budgetRequestUserKey()
+        && budgetIsHousingDoc(request.resource.data)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+      allow update: if housingId == "housing__" + budgetRequestUserKey()
+        && budgetOwnsData(resource.data)
+        && budgetPreservesOwner()
+        && budgetIsHousingDoc(request.resource.data)
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time;
+    }
+
+    match /budgetHousingScenarios/{scenarioId} {
+      allow read: if budgetOwnsData(resource.data);
+      allow create: if budgetIsHousingScenarioDoc(request.resource.data)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+      allow update: if budgetOwnsData(resource.data)
+        && budgetPreservesOwner()
+        && budgetIsHousingScenarioDoc(request.resource.data)
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time;
+    }
+
+    // ============================================================
+    // RETIREMENT PLANNING COLLECTIONS
+    // ============================================================
+
+    match /budgetRetirementPlans/{planId} {
+      allow read: if budgetOwnsData(resource.data);
+      allow create: if budgetIsRetirementPlanDoc(request.resource.data)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+      allow update: if budgetOwnsData(resource.data)
+        && budgetPreservesOwner()
+        && budgetIsRetirementPlanDoc(request.resource.data)
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if budgetOwnsData(resource.data);
+    }
+
+    match /budgetRetirementAccounts/{accountId} {
+      allow read: if budgetOwnsData(resource.data);
+      allow create: if budgetIsRetirementAccountDoc(request.resource.data)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+      allow update: if budgetOwnsData(resource.data)
+        && budgetPreservesOwner()
+        && budgetIsRetirementAccountDoc(request.resource.data)
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if budgetOwnsData(resource.data);
+    }
+
+    match /budgetRetirementAssets/{assetId} {
+      allow read: if budgetOwnsData(resource.data);
+      allow create: if budgetIsRetirementAssetDoc(request.resource.data)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+      allow update: if budgetOwnsData(resource.data)
+        && budgetPreservesOwner()
+        && budgetIsRetirementAssetDoc(request.resource.data)
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if budgetOwnsData(resource.data);
+    }
+
+    match /budgetRetirementExpenses/{expenseId} {
+      allow read: if budgetOwnsData(resource.data);
+      allow create: if budgetIsRetirementExpenseDoc(request.resource.data)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+      allow update: if budgetOwnsData(resource.data)
+        && budgetPreservesOwner()
+        && budgetIsRetirementExpenseDoc(request.resource.data)
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if budgetOwnsData(resource.data);
+    }
+
+    match /budgetRetirementOneTimeCosts/{costId} {
+      allow read: if budgetOwnsData(resource.data);
+      allow create: if budgetIsRetirementOneTimeCostDoc(request.resource.data)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+      allow update: if budgetOwnsData(resource.data)
+        && budgetPreservesOwner()
+        && budgetIsRetirementOneTimeCostDoc(request.resource.data)
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if budgetOwnsData(resource.data);
+    }
+
+    // Early departure scenarios (Prompt 36a). One doc per user-scenario.
+    match /budgetEarlyDepartureScenarios/{scenarioId} {
+      allow read: if budgetOwnsData(resource.data);
+      allow create: if budgetIsEarlyDepartureScenarioDoc(request.resource.data)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+      allow update: if budgetOwnsData(resource.data)
+        && budgetPreservesOwner()
+        && budgetIsEarlyDepartureScenarioDoc(request.resource.data)
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if budgetOwnsData(resource.data);
+    }
+
+    // ============================================================
+    // END RETIREMENT PLANNING COLLECTIONS
+    // ============================================================
+
+    // ============================================================
+    // PAYCHECK PLANNING COLLECTIONS
+    // ============================================================
+
+    match /budgetPaychecks/{paycheckId} {
+      allow read: if budgetOwnsData(resource.data);
+      allow create: if budgetIsPaycheckDoc(request.resource.data);
+      allow update: if budgetOwnsData(resource.data)
+        && budgetPreservesOwner()
+        && budgetIsPaycheckDoc(request.resource.data)
+        && request.resource.data.createdAt == resource.data.createdAt;
+      allow delete: if budgetOwnsData(resource.data);
+    }
+
+    match /budgetPaycheckAllocations/{allocationId} {
+      allow read: if budgetOwnsData(resource.data);
+      allow create: if budgetIsPaycheckAllocationDoc(request.resource.data);
+      allow update: if budgetOwnsData(resource.data)
+        && budgetPreservesOwner()
+        && budgetIsPaycheckAllocationDoc(request.resource.data)
+        && request.resource.data.createdAt == resource.data.createdAt;
+      allow delete: if budgetOwnsData(resource.data);
+    }
+
+    // ============================================================
+    // END PAYCHECK PLANNING COLLECTIONS
+    // ============================================================
+
+    match /users/{uid}/pantry/root/weekPlans/{weekID} {
+      allow read: if isOwner(uid);
+      allow create: if isOwner(uid)
+        && request.resource.data.weekID is string
+        && request.resource.data.weekStartISO is string
+        && request.resource.data.plannedRecipeIDs is list
+        && request.resource.data.cookedRecipeIDs is list
+        && request.resource.data.updatedAt is timestamp;
+      allow update: if isOwner(uid) && resource.data.weekID == request.resource.data.weekID;
+      allow delete: if isOwner(uid);
+    }
+
+    match /users/{uid}/pantry/root/groceryItems/{itemID} {
+      allow read: if isOwner(uid);
+      allow create: if isOwner(uid)
+        && request.resource.data.id is string
+        && request.resource.data.name is string;
+      allow update: if isOwner(uid) && request.resource.data.id == resource.data.id;
+      allow delete: if isOwner(uid);
+    }
+
+    match /users/{uid}/recipes/root/favorites/{recipeID} {
+      allow read, write: if isOwner(uid);
+    }
+
+    match /users/{uid}/recipes/root/meta/{recipeID}/events/{eventID} {
+      allow read: if isOwner(uid);
+      allow create: if isOwner(uid)
+        && request.resource.data.cookedAt is timestamp
+        && optString('weekID') && optString('source') && optString('note')
+        && optTimestamp('createdAt') && optTimestamp('updatedAt');
+      allow update: if isOwner(uid)
+        && request.resource.data.cookedAt is timestamp
+        && request.resource.data.cookedAt == resource.data.cookedAt
+        && optString('weekID') && optString('source') && optString('note')
+        && optTimestamp('createdAt') && optTimestamp('updatedAt');
+      allow delete: if isOwner(uid);
+    }
+
+    match /users/{uid}/recipes/root/meta/{recipeID} {
+      allow read: if isOwner(uid);
+      allow create, update: if isOwner(uid)
+        && (!('recipeID' in request.resource.data) || request.resource.data.recipeID is string)
+        && optString('note') && validRating() && optTimestamp('updatedAt');
+      allow delete: if isOwner(uid);
+    }
+
+    match /sharedWeekPlans/{weekID}/users/{uid} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    match /users/{uid}/pantry/root/savedGroceryItems/{itemId} {
+      allow read, write: if isOwner(uid);
+    }
+
+    match /users/{uid}/recipeQueue/{docId} { allow read, write: if isOwner(uid); }
+
+    match /recipes/{recipeId} {
+      allow read: if true;
+      allow write: if isSignedIn();
+    }
+
+		// ============================================================
+    // CUSTOM CATEGORIES
+    // ============================================================
+
+    match /budgetCustomCategories/{categoryId} {
+      allow read: if budgetOwnsData(resource.data);
+      allow create: if budgetIsCustomCategoryDoc(request.resource.data)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+      allow update: if budgetOwnsData(resource.data)
+        && budgetPreservesOwner()
+        && budgetIsCustomCategoryDoc(request.resource.data)
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if budgetOwnsData(resource.data);
+    }
+
+    match /budgetMerchantCategoryRules/{ruleId} {
+      allow read: if budgetOwnsData(resource.data);
+      allow create: if budgetIsMerchantCategoryRuleDoc(request.resource.data)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+      allow update: if budgetOwnsData(resource.data)
+        && budgetPreservesOwner()
+        && budgetIsMerchantCategoryRuleDoc(request.resource.data)
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if budgetOwnsData(resource.data);
+    }
+
+    // ============================================================
+    // END CUSTOM CATEGORIES
+    // ============================================================
+
+    // ============================================================
+    // STOCK HOLDINGS
+    // ============================================================
+
+    match /budgetHoldings/{holdingId} {
+      allow read: if budgetOwnsData(resource.data);
+      allow create: if isSignedIn()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.userKey is string
+        && request.resource.data.accountId is string
+        && request.resource.data.ticker is string
+        && request.resource.data.shares is number
+        && (request.resource.data.buyPrice == null
+            || request.resource.data.buyPrice is number)
+        && request.resource.data.isTSP is bool
+        && request.resource.data.type is string
+        && (!('notes' in request.resource.data)
+            || request.resource.data.notes == null
+            || request.resource.data.notes is string)
+        && (!('cashAmount' in request.resource.data)
+            || request.resource.data.cashAmount == null
+            || request.resource.data.cashAmount is number)
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.updatedAt is timestamp;
+      allow update: if budgetOwnsData(resource.data)
+        && budgetPreservesOwner()
+        && request.resource.data.accountId == resource.data.accountId
+        && request.resource.data.ticker == resource.data.ticker
+        && request.resource.data.shares is number
+        && (request.resource.data.buyPrice == null
+            || request.resource.data.buyPrice is number)
+        && request.resource.data.isTSP is bool
+        && request.resource.data.type is string
+        && (!('notes' in request.resource.data)
+            || request.resource.data.notes == null
+            || request.resource.data.notes is string)
+        && (!('cashAmount' in request.resource.data)
+            || request.resource.data.cashAmount == null
+            || request.resource.data.cashAmount is number)
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt is timestamp;
+      allow delete: if budgetOwnsData(resource.data);
+    }
+
+    // ============================================================
+    // END STOCK HOLDINGS
+    // ============================================================
+
+    match /{document=**} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+  }
+}
