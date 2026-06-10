@@ -147,26 +147,28 @@ export function PlanDateEditor({
         : null;
 
   return (
-    <div className="mt-2 flex flex-col gap-2">
-      <div className="flex flex-wrap items-end gap-3">
-        <label className="flex flex-col gap-1">
+    <div className="mt-2 flex flex-col gap-1.5 lg:gap-2">
+      {/* Dates sit two-across on mobile (grid), reverting to the original
+          inline flow at lg so desktop is unchanged. */}
+      <div className="grid grid-cols-2 gap-2 lg:flex lg:flex-wrap lg:items-end lg:gap-3">
+        <label className="flex flex-col gap-1 min-w-0">
           <span className="text-xs font-medium text-textSecondary">Start date</span>
           <input
             type="date"
             value={startInput}
             onChange={(e) => handleStartChange(e.target.value)}
-            className={inputClass}
+            className={`${inputClass} w-full min-w-0 lg:w-auto`}
             aria-label="Plan start date"
           />
         </label>
-        <label className="flex flex-col gap-1">
+        <label className="flex flex-col gap-1 min-w-0">
           <span className="text-xs font-medium text-textSecondary">End date</span>
           <input
             type="date"
             value={endInput}
             min={startInput}
             onChange={(e) => handleEndChange(e.target.value)}
-            className={inputClass}
+            className={`${inputClass} w-full min-w-0 lg:w-auto`}
             aria-label="Plan end date"
           />
         </label>
@@ -178,10 +180,22 @@ export function PlanDateEditor({
         </div>
       </div>
 
-      <p className="text-xs text-textSecondary">
+      {/* Help text — full inline on desktop; on mobile it's collapsed behind a
+          native <details> affordance (no JS state) so it doesn't dominate the
+          short viewport. Wording is identical in both. */}
+      <p className="hidden lg:block text-xs text-textSecondary">
         Weeks start Monday — the start date snaps to its Monday. Changing the end
         date adds or removes trailing weeks.
       </p>
+      <details className="lg:hidden">
+        <summary className="text-xs text-textSecondary cursor-pointer">
+          Date rules
+        </summary>
+        <p className="text-xs text-textSecondary mt-1">
+          Weeks start Monday — the start date snaps to its Monday. Changing the
+          end date adds or removes trailing weeks.
+        </p>
+      </details>
 
       {raceNote && <p className="text-xs text-warning">{raceNote}</p>}
 
