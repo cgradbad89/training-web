@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   Dumbbell,
   Zap,
@@ -33,6 +34,23 @@ import {
   type HealthMetric,
   type HealthGoals,
 } from "@/services/healthMetrics";
+import { fetchHealthGoals as fetchRingGoalVersions } from "@/services/healthGoals";
+import {
+  ActivityRings,
+  RING_COLORS,
+  RING_LABELS,
+  RING_UNITS,
+  fmtRingNumber,
+  type RingDatum,
+} from "@/components/ActivityRings";
+import {
+  RING_METRICS,
+  dailyRingProgress,
+  eachDate,
+  periodRingProgress,
+  resolveGoalForDate,
+} from "@/lib/ringMath";
+import type { HealthGoalDoc, RingMetric } from "@/types/healthGoal";
 import {
   evaluateMetricGoal,
   type GoalStatus,
@@ -873,6 +891,122 @@ function WorkoutPlanProgressCard({
   );
 }
 
+// ─── Health Activity Rings ────────────────────────────────────────────────────
+
+interface HealthRingsCardProps {
+  weekMetrics: HealthMetric[];
+  ringGoals: HealthGoalDoc[];
+  weekStart: Date;
+  weekEnd: Date;
+  /** Ring tap → /health Trends tab scrolled to the metric. */
+  onMetricClick: (metric: RingMetric) => void;
+}
+
+/**
+ * Today + This Week activity rings for the selected week.
+ * - "Today" renders only when viewing the current week.
+ * - "This Week" scores week-start→today for the current week (to-date,
+ *   sum-vs-sum), the full week for past weeks, and renders empty tracks
+ *   (no progress) for future weeks.
+ * Reuses the weekMetrics range fetch that already powers the KPI row.
+ */
+function HealthRingsCard({
+  weekMetrics,
+  ringGoals,
+  weekStart,
+  weekEnd,
+  onMetricClick,
+}: HealthRingsCardProps) {
+  const todayIso = toIsoDate(new Date());
+  const weekStartIso = toIsoDate(weekStart);
+  const weekEndIso = toIsoDate(weekEnd);
+  const isCurrentWeek = todayIso >= weekStartIso && todayIso <= weekEndIso;
+  const isFutureWeek = weekStartIso > todayIso;
+
+  const todayDoc = isCurrentWeek
+    ? (weekMetrics.find((m) => m.date === todayIso) ?? null)
+    : null;
+
+  const todayRings: RingDatum[] = RING_METRICS.map((metric) => {
+    const goal = resolveGoalForDate(ringGoals, metric, todayIso);
+    const value = todayDoc?.[metric] as number | undefined;
+    return {
+      metric,
+      label: RING_LABELS[metric],
+      progress: dailyRingProgress(value, goal),
+      color: RING_COLORS[metric],
+      valueLabel: `${fmtRingNumber(metric, value != null && value > 0 ? value : 0)} / ${fmtRingNumber(metric, goal)}${RING_UNITS[metric]}`,
+    };
+  });
+
+  const periodEnd = isCurrentWeek ? todayIso : weekEndIso;
+  const weekRings: RingDatum[] = RING_METRICS.map((metric) => {
+    if (isFutureWeek) {
+      return {
+        metric,
+        label: RING_LABELS[metric],
+        progress: 0,
+        color: RING_COLORS[metric],
+        valueLabel: "—",
+      };
+    }
+    const days = weekMetrics.map((m) => ({
+      date: m.date,
+      value: (m[metric] as number | undefined) ?? null,
+    }));
+    const progress = periodRingProgress(
+      days,
+      ringGoals,
+      metric,
+      weekStartIso,
+      periodEnd
+    );
+    const actual = days.reduce(
+      (s, d) =>
+        s +
+        (d.value != null && d.value > 0 && d.date <= periodEnd ? d.value : 0),
+      0
+    );
+    const goalTotal = eachDate(weekStartIso, periodEnd).reduce(
+      (s, date) => s + resolveGoalForDate(ringGoals, metric, date),
+      0
+    );
+    return {
+      metric,
+      label: RING_LABELS[metric],
+      progress,
+      color: RING_COLORS[metric],
+      valueLabel: `${fmtRingNumber(metric, actual)} / ${fmtRingNumber(metric, goalTotal)}${RING_UNITS[metric]}`,
+    };
+  });
+
+  return (
+    <Card className="h-full">
+      <CardTitle>Activity Rings</CardTitle>
+      <div className="flex items-start justify-center gap-8">
+        {isCurrentWeek && (
+          <div className="flex flex-col items-center gap-1.5">
+            <ActivityRings
+              rings={todayRings}
+              size={110}
+              onRingClick={onMetricClick}
+            />
+            <span className="text-xs text-textSecondary">Today</span>
+          </div>
+        )}
+        <div className="flex flex-col items-center gap-1.5">
+          <ActivityRings
+            rings={weekRings}
+            size={110}
+            onRingClick={onMetricClick}
+          />
+          <span className="text-xs text-textSecondary">This Week</span>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 // ─── Health KPIs Row ──────────────────────────────────────────────────────────
 
 interface HealthKpisRowProps {
@@ -975,9 +1109,9 @@ function HealthKpisRow({ metrics, goals, totalWeekCalories }: HealthKpisRowProps
   ];
 
   return (
-    <Card>
+    <Card className="h-full">
       <CardTitle>Health</CardTitle>
-      <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
         {tiles.map((t) => (
           <div key={t.label} className="flex flex-col gap-0.5">
             <div
@@ -1397,6 +1531,8 @@ export default function DashboardPage() {
   );
   const [weekMetrics, setWeekMetrics] = useState<HealthMetric[]>([]);
   const [healthGoals, setHealthGoals] = useState<HealthGoals | null>(null);
+  const [ringGoals, setRingGoals] = useState<HealthGoalDoc[]>([]);
+  const router = useRouter();
   const [userSettings, setUserSettings] = useState<UserSettings | null>();
   const [loading, setLoading] = useState(true);
 
@@ -1445,6 +1581,24 @@ export default function DashboardPage() {
       .then(setHealthGoals)
       .catch((err) => console.error("[fetchHealthGoals]", err));
   }, [uid]);
+
+  // One-time fetch for the effective-dated ring goal versions
+  // (users/{uid}/healthGoals) powering the activity rings.
+  useEffect(() => {
+    if (!uid) return;
+    fetchRingGoalVersions(uid)
+      .then(setRingGoals)
+      .catch((err) => console.error("[fetchRingGoalVersions]", err));
+  }, [uid]);
+
+  // Ring tap → Health page Trends tab, scrolled to that metric's section
+  // (same ?tab=trends&metric= deep link the Health page rings use).
+  const goToHealthTrend = useCallback(
+    (metric: RingMetric) => {
+      router.push(`/health?tab=trends&metric=${metric}`);
+    },
+    [router]
+  );
 
   // One-time fetch for plans (user-managed data, not iOS-synced).
   // Race data was previously fetched here for the now-removed RaceGoalCard.
@@ -1656,12 +1810,24 @@ export default function DashboardPage() {
         />
       </section>
 
-      {/* Row 4: Health KPIs */}
-      <HealthKpisRow
-        metrics={weekMetrics}
-        goals={healthGoals}
-        totalWeekCalories={totalWeekCalories}
-      />
+      {/* Row 4: Health — activity rings (above on mobile, beside on desktop)
+          + KPI tiles. Both reuse the same weekMetrics range fetch. */}
+      <div className="flex flex-col lg:flex-row gap-4 items-stretch">
+        <HealthRingsCard
+          weekMetrics={weekMetrics}
+          ringGoals={ringGoals}
+          weekStart={selectedWeekStart}
+          weekEnd={selectedWeekEnd}
+          onMetricClick={goToHealthTrend}
+        />
+        <div className="flex-1 min-w-0">
+          <HealthKpisRow
+            metrics={weekMetrics}
+            goals={healthGoals}
+            totalWeekCalories={totalWeekCalories}
+          />
+        </div>
+      </div>
 
       {/* Row 5: Training Load row — Mileage + Load Score side-by-side */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
