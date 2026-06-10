@@ -2,6 +2,40 @@
 
 import type { RingMetric } from "@/types/healthGoal";
 
+/**
+ * Ring colors — mirror the Health page's getColor() mapping (same CSS vars),
+ * shared here so every ring surface (hero, calendar, dashboard) matches.
+ */
+export const RING_COLORS: Record<RingMetric, string> = {
+  steps: "var(--color-chart-success)",
+  exercise_mins: "var(--color-chart-orange)",
+  move_calories: "var(--color-chart-warning)",
+  stand_hours: "var(--color-chart-cyan)",
+  sleep_total_hours: "var(--color-recovery)",
+};
+
+export const RING_LABELS: Record<RingMetric, string> = {
+  steps: "Steps",
+  exercise_mins: "Exercise",
+  move_calories: "Move",
+  stand_hours: "Stand",
+  sleep_total_hours: "Sleep",
+};
+
+export const RING_UNITS: Record<RingMetric, string> = {
+  steps: "",
+  exercise_mins: " min",
+  move_calories: " kcal",
+  stand_hours: " hr",
+  sleep_total_hours: " h",
+};
+
+/** "8,432" for count-like metrics; "7.5" for sleep hours. */
+export function fmtRingNumber(metric: RingMetric, v: number): string {
+  if (metric === "sleep_total_hours") return v.toFixed(1);
+  return Math.round(v).toLocaleString();
+}
+
 export interface RingDatum {
   metric: RingMetric;
   label: string;

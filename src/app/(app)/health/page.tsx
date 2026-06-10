@@ -5,6 +5,7 @@ import { useAuth } from "@/hooks/useAuth";
 import {
   onHealthMetricsSnapshot,
   onAllHealthMetricsSnapshot,
+  fetchHealthMetricsRange,
   fetchHourlyHeartRate,
   fetchHealthGoals,
   type HealthGoals,
@@ -43,8 +44,16 @@ import {
 } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { HealthGoalsModal } from "@/components/HealthGoalsModal";
-import { ActivityRings, type RingDatum } from "@/components/ActivityRings";
+import {
+  ActivityRings,
+  RING_COLORS,
+  RING_LABELS,
+  RING_UNITS,
+  fmtRingNumber,
+  type RingDatum,
+} from "@/components/ActivityRings";
 import { RingGoalEditorModal } from "@/components/health/RingGoalEditorModal";
+import { RingCalendar } from "@/components/health/RingCalendar";
 import { fetchHealthGoals as fetchRingGoalVersions } from "@/services/healthGoals";
 import {
   RING_METRICS,
@@ -682,36 +691,6 @@ const RING_TIMEFRAME_OPTIONS: { value: RingTimeframe; label: string }[] = [
   { value: "ytd", label: "YTD" },
 ];
 
-/** Ring metric → getColor() key. */
-const RING_COLOR_KEY: Record<RingMetric, string> = {
-  steps: "steps",
-  exercise_mins: "exercise",
-  move_calories: "calories",
-  stand_hours: "stand",
-  sleep_total_hours: "sleep",
-};
-
-const RING_LABELS: Record<RingMetric, string> = {
-  steps: "Steps",
-  exercise_mins: "Exercise",
-  move_calories: "Move",
-  stand_hours: "Stand",
-  sleep_total_hours: "Sleep",
-};
-
-const RING_UNITS: Record<RingMetric, string> = {
-  steps: "",
-  exercise_mins: " min",
-  move_calories: " kcal",
-  stand_hours: " hr",
-  sleep_total_hours: " h",
-};
-
-function fmtRingNumber(metric: RingMetric, v: number): string {
-  if (metric === "sleep_total_hours") return v.toFixed(1);
-  return Math.round(v).toLocaleString();
-}
-
 /** All KPI fields that have a chart section on the Trends tab. */
 const TREND_FIELDS: readonly string[] = [
   ...BODY_KPIS,
@@ -1311,6 +1290,74 @@ export default function HealthPage() {
   const sectionAnyActive = (fields: readonly string[]) =>
     fields.some((f) => selectedKpis.has(f));
 
+  // ── Calendar tab: month-cached healthMetrics fetches ────────────────────
+  // The RingCalendar reports its visible range; we fetch whole months that
+  // haven't been fetched yet (one getDocs per month, matching the existing
+  // range-fetch pattern) and cache them so flipping views/months back never
+  // refetches. metrics90's live docs are overlaid so recent days stay fresh.
+  const [calendarMetrics, setCalendarMetrics] = useState<
+    Map<string, HealthMetric>
+  >(new Map());
+  const fetchedCalMonthsRef = useRef<Set<string>>(new Set());
+
+  const handleCalendarRange = useCallback(
+    (start: string, end: string) => {
+      if (!userId) return;
+      // Month keys ("YYYY-MM") spanned by [start..end].
+      const months: string[] = [];
+      let y = Number(start.slice(0, 4));
+      let m = Number(start.slice(5, 7));
+      const endKey = end.slice(0, 7);
+      let key = start.slice(0, 7);
+      while (key <= endKey) {
+        months.push(key);
+        m += 1;
+        if (m > 12) {
+          m = 1;
+          y += 1;
+        }
+        key = `${y}-${String(m).padStart(2, "0")}`;
+      }
+      const missing = months.filter(
+        (k) => !fetchedCalMonthsRef.current.has(k)
+      );
+      if (missing.length === 0) return;
+      for (const k of missing) fetchedCalMonthsRef.current.add(k);
+      Promise.all(
+        missing.map((k) => {
+          const [yy, mm] = k.split("-").map(Number);
+          const monthEnd = new Date(yy, mm, 0).getDate();
+          return fetchHealthMetricsRange(
+            userId,
+            `${k}-01`,
+            `${k}-${String(monthEnd).padStart(2, "0")}`
+          );
+        })
+      )
+        .then((results) => {
+          setCalendarMetrics((prev) => {
+            const next = new Map(prev);
+            for (const docs of results)
+              for (const d of docs) next.set(d.date, d);
+            return next;
+          });
+        })
+        .catch((err) => {
+          console.error("[health calendar] range fetch error:", err);
+          // Un-mark so the next view change can retry.
+          for (const k of missing) fetchedCalMonthsRef.current.delete(k);
+        });
+    },
+    [userId]
+  );
+
+  // Cached months + live last-90-days docs (live wins for overlapping dates).
+  const calendarMetricsLive = useMemo(() => {
+    const merged = new Map(calendarMetrics);
+    for (const m of metrics90) merged.set(m.date, m);
+    return merged;
+  }, [calendarMetrics, metrics90]);
+
   // Ring / KPI-card click → Trends tab, with the metric's chart selected
   // and scrolled into view once it has rendered.
   const goToTrend = useCallback((field: string) => {
@@ -1545,7 +1592,7 @@ export default function HealthPage() {
         metric,
         label: RING_LABELS[metric],
         progress,
-        color: getColor(RING_COLOR_KEY[metric]),
+        color: RING_COLORS[metric],
         valueLabel: `${fmtRingNumber(metric, actual)} / ${fmtRingNumber(metric, goalTotal)}${RING_UNITS[metric]}`,
       };
     });
@@ -2123,13 +2170,14 @@ export default function HealthPage() {
         </>
       )}
 
-      {/* ── Calendar tab (placeholder — RingCalendar lands in Phase 3) ── */}
+      {/* ── Calendar tab ───────────────────────────────────────────── */}
       {activeTab === "calendar" && (
-        <div className="bg-card rounded-2xl border border-border p-10 text-center mb-8">
-          <p className="text-sm text-textSecondary">
-            Ring calendar coming soon.
-          </p>
-        </div>
+        <RingCalendar
+          metricsByDate={calendarMetricsLive}
+          goals={ringGoals}
+          onVisibleRangeChange={handleCalendarRange}
+          onMetricClick={goToTrend}
+        />
       )}
 
       {activeTab === "trends" && (
