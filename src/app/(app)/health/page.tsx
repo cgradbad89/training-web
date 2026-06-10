@@ -39,8 +39,22 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Settings,
 } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 import { HealthGoalsModal } from "@/components/HealthGoalsModal";
+import { ActivityRings, type RingDatum } from "@/components/ActivityRings";
+import { RingGoalEditorModal } from "@/components/health/RingGoalEditorModal";
+import { fetchHealthGoals as fetchRingGoalVersions } from "@/services/healthGoals";
+import {
+  RING_METRICS,
+  dailyRingProgress,
+  eachDate,
+  periodRingProgress,
+  resolveGoalForDate,
+  type HealthGoalDoc,
+  type RingMetric,
+} from "@/lib/ringMath";
 import {
   evaluateMetricGoal,
   evaluateWeightGoal,
@@ -649,6 +663,126 @@ function TimeRangeSelector({
   );
 }
 
+// ── Health page tabs + ring timeframe ───────────────────────────────────────
+
+type HealthTab = "today" | "calendar" | "trends";
+
+const HEALTH_TABS: { value: HealthTab; label: string }[] = [
+  { value: "today", label: "Today" },
+  { value: "calendar", label: "Calendar" },
+  { value: "trends", label: "Trends" },
+];
+
+type RingTimeframe = "today" | "7d" | "30d" | "ytd";
+
+const RING_TIMEFRAME_OPTIONS: { value: RingTimeframe; label: string }[] = [
+  { value: "today", label: "Today" },
+  { value: "7d", label: "7D" },
+  { value: "30d", label: "30D" },
+  { value: "ytd", label: "YTD" },
+];
+
+/** Ring metric → getColor() key. */
+const RING_COLOR_KEY: Record<RingMetric, string> = {
+  steps: "steps",
+  exercise_mins: "exercise",
+  move_calories: "calories",
+  stand_hours: "stand",
+  sleep_total_hours: "sleep",
+};
+
+const RING_LABELS: Record<RingMetric, string> = {
+  steps: "Steps",
+  exercise_mins: "Exercise",
+  move_calories: "Move",
+  stand_hours: "Stand",
+  sleep_total_hours: "Sleep",
+};
+
+const RING_UNITS: Record<RingMetric, string> = {
+  steps: "",
+  exercise_mins: " min",
+  move_calories: " kcal",
+  stand_hours: " hr",
+  sleep_total_hours: " h",
+};
+
+function fmtRingNumber(metric: RingMetric, v: number): string {
+  if (metric === "sleep_total_hours") return v.toFixed(1);
+  return Math.round(v).toLocaleString();
+}
+
+/** All KPI fields that have a chart section on the Trends tab. */
+const TREND_FIELDS: readonly string[] = [
+  ...BODY_KPIS,
+  ...ACTIVITY_KPIS,
+  ...RECOVERY_KPIS,
+];
+
+/** Segmented pill-group for the Today / Calendar / Trends tabs. */
+function HealthTabsBar({
+  value,
+  onChange,
+}: {
+  value: HealthTab;
+  onChange: (t: HealthTab) => void;
+}) {
+  return (
+    <div className="inline-flex items-center gap-1 bg-surface rounded-xl p-1">
+      {HEALTH_TABS.map((t) => {
+        const active = t.value === value;
+        return (
+          <button
+            key={t.value}
+            type="button"
+            onClick={() => onChange(t.value)}
+            aria-pressed={active}
+            className={`text-sm px-4 h-8 rounded-lg font-semibold transition-colors ${
+              active
+                ? "bg-primary text-white"
+                : "text-textSecondary hover:text-textPrimary"
+            }`}
+          >
+            {t.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Segmented pill-group for the ring timeframe (Today / 7D / 30D / YTD). */
+function RingTimeframeSelector({
+  value,
+  onChange,
+}: {
+  value: RingTimeframe;
+  onChange: (v: RingTimeframe) => void;
+}) {
+  return (
+    <div className="inline-flex items-center gap-1 bg-surface rounded-lg p-0.5">
+      {RING_TIMEFRAME_OPTIONS.map((o) => {
+        const active = o.value === value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            onClick={() => onChange(o.value)}
+            aria-pressed={active}
+            className={`text-xs px-3 h-7 rounded-lg font-semibold transition-colors ${
+              active
+                ? "bg-primary text-white"
+                : "text-textSecondary hover:text-textPrimary"
+            }`}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 /** "YYYY-MM-DD" for today (local). */
 function localTodayIsoDate(): string {
   const d = new Date();
@@ -1084,6 +1218,37 @@ export default function HealthPage() {
   const [goals, setGoals] = useState<HealthGoals | null>(null);
   const [goalsModalOpen, setGoalsModalOpen] = useState(false);
 
+  // ── Tabs + activity rings state ─────────────────────────────────────────
+  const [activeTab, setActiveTab] = useState<HealthTab>("today");
+  const [ringTimeframe, setRingTimeframe] = useState<RingTimeframe>("today");
+  const [ringGoals, setRingGoals] = useState<HealthGoalDoc[]>([]);
+  const [ringGoalEditorOpen, setRingGoalEditorOpen] = useState(false);
+  // Metric whose Trends section should be scrolled into view after a ring /
+  // KPI-card click (or ?metric= deep link) lands on the Trends tab.
+  const [pendingTrendMetric, setPendingTrendMetric] = useState<string | null>(
+    null
+  );
+
+  // Deep link support: /health?tab=trends&metric=steps (used by dashboard
+  // ring clicks). Mirrors the coach page's useSearchParams pattern.
+  const searchParams = useSearchParams();
+  useEffect(() => {
+    const tab = searchParams.get("tab");
+    if (tab === "today" || tab === "calendar" || tab === "trends") {
+      setActiveTab(tab);
+    }
+    const metric = searchParams.get("metric");
+    if (metric && TREND_FIELDS.includes(metric)) {
+      setActiveTab("trends");
+      setSelectedKpis((prev) => {
+        const next = new Set(prev);
+        next.add(metric);
+        return next;
+      });
+      setPendingTrendMetric(metric);
+    }
+  }, [searchParams]);
+
   // Date navigator — the day whose stats / 7-day / 30-day averages are shown
   // in the KPI tiles. Initialised null on first render to avoid SSR/client
   // hydration mismatch on timezone boundaries, then set to local today after
@@ -1099,6 +1264,15 @@ export default function HealthPage() {
     fetchHealthGoals(userId)
       .then(setGoals)
       .catch((err) => console.error("Health goals fetch error:", err));
+  }, [userId]);
+
+  // One-time fetch for the effective-dated ring goal versions
+  // (users/{uid}/healthGoals — separate from the settings doc above).
+  useEffect(() => {
+    if (!userId) return;
+    fetchRingGoalVersions(userId)
+      .then(setRingGoals)
+      .catch((err) => console.error("Ring goals fetch error:", err));
   }, [userId]);
 
   // ── KPI graph selection (persisted in localStorage) ────────────────────
@@ -1118,15 +1292,6 @@ export default function HealthPage() {
     }
   }, [selectedKpis]);
 
-  const toggleKpi = useCallback((field: string) => {
-    setSelectedKpis((prev) => {
-      const next = new Set(prev);
-      if (next.has(field)) next.delete(field);
-      else next.add(field);
-      return next;
-    });
-  }, []);
-
   const selectAllInSection = useCallback((fields: readonly string[]) => {
     setSelectedKpis((prev) => {
       const next = new Set(prev);
@@ -1145,6 +1310,33 @@ export default function HealthPage() {
 
   const sectionAnyActive = (fields: readonly string[]) =>
     fields.some((f) => selectedKpis.has(f));
+
+  // Ring / KPI-card click → Trends tab, with the metric's chart selected
+  // and scrolled into view once it has rendered.
+  const goToTrend = useCallback((field: string) => {
+    setSelectedKpis((prev) => {
+      const next = new Set(prev);
+      next.add(field);
+      return next;
+    });
+    setActiveTab("trends");
+    setPendingTrendMetric(field);
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== "trends" || !pendingTrendMetric) return;
+    const id = `trend-${pendingTrendMetric}`;
+    // Defer one tick so the Trends tab (and the newly selected chart) has
+    // rendered before we measure/scroll.
+    const t = setTimeout(() => {
+      document.getElementById(id)?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+      setPendingTrendMetric(null);
+    }, 100);
+    return () => clearTimeout(t);
+  }, [activeTab, pendingTrendMetric]);
 
   // ── Time range filter (global + per-chart overrides) ──────────────────
   // Global range persisted in localStorage. Per-chart overrides live in a
@@ -1280,6 +1472,85 @@ export default function HealthPage() {
     last30.map((m) => m.weight_lbs).filter(isValidWeight)
   );
 
+  // ── Ring timeframe ranges + period values (Today tab) ───────────────────
+  // All ranges are to-date, ending at the anchor date (= today unless the
+  // user stepped back with the day navigator). YTD = Jan 1 → anchor.
+  const ringRange = useMemo(() => {
+    if (ringTimeframe === "7d")
+      return { start: shiftISODate(anchorDate, -6), end: anchorDate };
+    if (ringTimeframe === "30d")
+      return { start: shiftISODate(anchorDate, -29), end: anchorDate };
+    if (ringTimeframe === "ytd")
+      return { start: `${anchorDate.slice(0, 4)}-01-01`, end: anchorDate };
+    return { start: anchorDate, end: anchorDate };
+  }, [ringTimeframe, anchorDate]);
+
+  // Docs inside the ring range. The 90-day listener covers Today/7D/30D;
+  // YTD reads from the all-time listener that already powers trend charts.
+  const tfDocs = useMemo(() => {
+    const src = ringTimeframe === "ytd" ? allMetrics : metrics90;
+    return src.filter(
+      (m) => m.date >= ringRange.start && m.date <= ringRange.end
+    );
+  }, [ringTimeframe, ringRange, metrics90, allMetrics]);
+
+  // Period daily average over the ring range (existing avg logic,
+  // parameterized by range instead of fixed 7/30-day windows).
+  const tfAvg = (key: keyof HealthMetric) =>
+    avg(tfDocs.map((m) => m[key] as number).filter(Boolean));
+  const tfAvgWeight = avg(tfDocs.map((m) => m.weight_lbs).filter(isValidWeight));
+
+  const isTodayTimeframe = ringTimeframe === "today";
+  const tfSubtitle = isTodayTimeframe
+    ? undefined
+    : ringTimeframe === "7d"
+      ? "7-day daily avg"
+      : ringTimeframe === "30d"
+        ? "30-day daily avg"
+        : "YTD daily avg";
+
+  // Activity ring data for the hero rings (outer → inner = RING_METRICS).
+  const ringData: RingDatum[] = useMemo(() => {
+    return RING_METRICS.map((metric) => {
+      let progress: number;
+      let actual: number;
+      let goalTotal: number;
+      if (ringTimeframe === "today") {
+        const value = today?.[metric];
+        goalTotal = resolveGoalForDate(ringGoals, metric, anchorDate);
+        actual = typeof value === "number" && value > 0 ? value : 0;
+        progress = dailyRingProgress(value, goalTotal);
+      } else {
+        const days = tfDocs.map((m) => ({
+          date: m.date,
+          value: (m[metric] as number | undefined) ?? null,
+        }));
+        progress = periodRingProgress(
+          days,
+          ringGoals,
+          metric,
+          ringRange.start,
+          ringRange.end
+        );
+        actual = days.reduce(
+          (s, d) => s + (d.value != null && d.value > 0 ? d.value : 0),
+          0
+        );
+        goalTotal = eachDate(ringRange.start, ringRange.end).reduce(
+          (s, date) => s + resolveGoalForDate(ringGoals, metric, date),
+          0
+        );
+      }
+      return {
+        metric,
+        label: RING_LABELS[metric],
+        progress,
+        color: getColor(RING_COLOR_KEY[metric]),
+        valueLabel: `${fmtRingNumber(metric, actual)} / ${fmtRingNumber(metric, goalTotal)}${RING_UNITS[metric]}`,
+      };
+    });
+  }, [ringTimeframe, ringGoals, today, anchorDate, tfDocs, ringRange]);
+
   // Chart data — last 90 days ascending
   const chartData = useMemo(() => [...metrics90].reverse(), [metrics90]);
 
@@ -1384,9 +1655,49 @@ export default function HealthPage() {
     return enabled ? compute(enabled) : "neutral";
   }
 
+  // ── Displayed value per metric (follows the ring timeframe) ────────────
+  // Today → the anchor day's value (with the weight/BMI/HR "as of" fallback);
+  // 7D/30D/YTD → the period daily average over the ring range. Statuses are
+  // evaluated against whichever value is displayed.
+  const dispWeight = isTodayTimeframe
+    ? (todayWeight ?? weightFallback?.value)
+    : (tfAvgWeight ?? undefined);
+  const dispBmi = isTodayTimeframe
+    ? (isPositiveNumber(today?.bmi) ? today?.bmi : bmiFallback?.value)
+    : (tfAvg("bmi") ?? undefined);
+  const dispRestingHr = isTodayTimeframe
+    ? (isPositiveNumber(today?.resting_hr)
+        ? today?.resting_hr
+        : restingHrFallback?.value)
+    : (tfAvg("resting_hr") ?? undefined);
+  const dispSteps = isTodayTimeframe
+    ? today?.steps
+    : (tfAvg("steps") ?? undefined);
+  const dispExercise = isTodayTimeframe
+    ? today?.exercise_mins
+    : (tfAvg("exercise_mins") ?? undefined);
+  const dispMoveCal = isTodayTimeframe
+    ? today?.move_calories
+    : (tfAvg("move_calories") ?? undefined);
+  const dispStand = isTodayTimeframe
+    ? today?.stand_hours
+    : (tfAvg("stand_hours") ?? undefined);
+  const dispSleep = isTodayTimeframe
+    ? today?.sleep_total_hours
+    : (tfAvg("sleep_total_hours") ?? undefined);
+  const dispAwake = isTodayTimeframe
+    ? today?.sleep_awake_mins
+    : (tfAvg("sleep_awake_mins") ?? undefined);
+  const dispBrushCount = isTodayTimeframe
+    ? today?.brush_count
+    : (tfAvg("brush_count") ?? undefined);
+  const dispAvgBrush = isTodayTimeframe
+    ? today?.brush_avg_duration_mins
+    : (tfAvg("brush_avg_duration_mins") ?? undefined);
+
   const weightStatus: GoalStatus = statusOrNeutral(goals?.weight, (g) =>
-    todayWeight !== undefined
-      ? evaluateWeightGoal(todayWeight, g.goal, g.tolerance, g.warningPct, g.dangerPct)
+    dispWeight !== undefined
+      ? evaluateWeightGoal(dispWeight, g.goal, g.tolerance, g.warningPct, g.dangerPct)
       : "neutral"
   );
   const weightGoalText = goals?.weight
@@ -1394,8 +1705,8 @@ export default function HealthPage() {
     : undefined;
 
   const bmiStatus: GoalStatus = statusOrNeutral(goals?.bmi, (g) =>
-    today?.bmi !== undefined
-      ? evaluateBMIGoal(today.bmi, g.min, g.max, g.warningPct, g.dangerPct)
+    dispBmi !== undefined
+      ? evaluateBMIGoal(dispBmi, g.min, g.max, g.warningPct, g.dangerPct)
       : "neutral"
   );
   const bmiGoalText = goals?.bmi
@@ -1403,8 +1714,8 @@ export default function HealthPage() {
     : undefined;
 
   const hrStatus: GoalStatus = statusOrNeutral(goals?.restingHR, (g) =>
-    today?.resting_hr !== undefined
-      ? evaluateMetricGoal(today.resting_hr, g.goal, "lower", g.warningPct, g.dangerPct)
+    dispRestingHr !== undefined
+      ? evaluateMetricGoal(dispRestingHr, g.goal, "lower", g.warningPct, g.dangerPct)
       : "neutral"
   );
   const hrGoalText = goals?.restingHR
@@ -1412,8 +1723,8 @@ export default function HealthPage() {
     : undefined;
 
   const stepsStatus: GoalStatus = statusOrNeutral(goals?.steps, (g) =>
-    today?.steps !== undefined
-      ? evaluateMetricGoal(today.steps, g.goal, "higher", g.warningPct, g.dangerPct)
+    dispSteps !== undefined
+      ? evaluateMetricGoal(dispSteps, g.goal, "higher", g.warningPct, g.dangerPct)
       : "neutral"
   );
   const stepsGoalText = goals?.steps
@@ -1421,8 +1732,8 @@ export default function HealthPage() {
     : undefined;
 
   const sleepStatus: GoalStatus = statusOrNeutral(goals?.sleep, (g) =>
-    today?.sleep_total_hours !== undefined
-      ? evaluateMetricGoal(today.sleep_total_hours, g.goal, "higher", g.warningPct, g.dangerPct)
+    dispSleep !== undefined
+      ? evaluateMetricGoal(dispSleep, g.goal, "higher", g.warningPct, g.dangerPct)
       : "neutral"
   );
   const sleepGoalText = goals?.sleep
@@ -1430,8 +1741,8 @@ export default function HealthPage() {
     : undefined;
 
   const brushingStatus: GoalStatus = statusOrNeutral(goals?.brushing, (g) =>
-    today?.brush_count !== undefined
-      ? evaluateMetricGoal(today.brush_count, g.goal, "higher", g.warningPct, g.dangerPct)
+    dispBrushCount !== undefined
+      ? evaluateMetricGoal(dispBrushCount, g.goal, "higher", g.warningPct, g.dangerPct)
       : "neutral"
   );
   const brushingGoalText = goals?.brushing
@@ -1440,8 +1751,8 @@ export default function HealthPage() {
 
   // ── Five remaining metrics (extended schema) ──────────────────────────
   const exerciseStatus: GoalStatus = statusOrNeutral(goals?.exerciseMins, (g) =>
-    today?.exercise_mins !== undefined
-      ? evaluateMetricGoal(today.exercise_mins, g.goal, "higher", g.warningPct, g.dangerPct)
+    dispExercise !== undefined
+      ? evaluateMetricGoal(dispExercise, g.goal, "higher", g.warningPct, g.dangerPct)
       : "neutral"
   );
   const exerciseGoalText = goals?.exerciseMins
@@ -1449,8 +1760,8 @@ export default function HealthPage() {
     : undefined;
 
   const moveCalStatus: GoalStatus = statusOrNeutral(goals?.moveCalories, (g) =>
-    today?.move_calories !== undefined
-      ? evaluateMetricGoal(today.move_calories, g.goal, "higher", g.warningPct, g.dangerPct)
+    dispMoveCal !== undefined
+      ? evaluateMetricGoal(dispMoveCal, g.goal, "higher", g.warningPct, g.dangerPct)
       : "neutral"
   );
   const moveCalGoalText = goals?.moveCalories
@@ -1458,8 +1769,8 @@ export default function HealthPage() {
     : undefined;
 
   const standStatus: GoalStatus = statusOrNeutral(goals?.standHours, (g) =>
-    today?.stand_hours !== undefined
-      ? evaluateMetricGoal(today.stand_hours, g.goal, "higher", g.warningPct, g.dangerPct)
+    dispStand !== undefined
+      ? evaluateMetricGoal(dispStand, g.goal, "higher", g.warningPct, g.dangerPct)
       : "neutral"
   );
   const standGoalText = goals?.standHours
@@ -1468,8 +1779,8 @@ export default function HealthPage() {
 
   // Awake mins — lower is better
   const awakeStatus: GoalStatus = statusOrNeutral(goals?.awakeMins, (g) =>
-    today?.sleep_awake_mins !== undefined
-      ? evaluateMetricGoal(today.sleep_awake_mins, g.goal, "lower", g.warningPct, g.dangerPct)
+    dispAwake !== undefined
+      ? evaluateMetricGoal(dispAwake, g.goal, "lower", g.warningPct, g.dangerPct)
       : "neutral"
   );
   const awakeGoalText = goals?.awakeMins
@@ -1477,8 +1788,8 @@ export default function HealthPage() {
     : undefined;
 
   const avgBrushStatus: GoalStatus = statusOrNeutral(goals?.avgBrushMins, (g) =>
-    today?.brush_avg_duration_mins !== undefined
-      ? evaluateMetricGoal(today.brush_avg_duration_mins, g.goal, "higher", g.warningPct, g.dangerPct)
+    dispAvgBrush !== undefined
+      ? evaluateMetricGoal(dispAvgBrush, g.goal, "higher", g.warningPct, g.dangerPct)
       : "neutral"
   );
   const avgBrushGoalText = goals?.avgBrushMins
@@ -1542,7 +1853,7 @@ export default function HealthPage() {
           )}
         </div>
         <div className="flex items-center gap-3">
-          {selectedDate && (() => {
+          {activeTab === "today" && selectedDate && (() => {
             const todayStr = todayISO();
             const minDate = shiftISODate(todayStr, -30);
             const atToday = selectedDate === todayStr;
@@ -1584,17 +1895,245 @@ export default function HealthPage() {
               </div>
             );
           })()}
-          <TimeRangeSelector value={globalRange} onChange={setGlobalRange} />
-          <button
-            type="button"
-            onClick={() => setGoalsModalOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-border text-sm text-textPrimary hover:bg-surface transition-colors"
-          >
-            <Target className="w-4 h-4 text-textSecondary" />
-            Set Goals
-          </button>
+          {activeTab === "trends" && (
+            <>
+              <TimeRangeSelector value={globalRange} onChange={setGlobalRange} />
+              <button
+                type="button"
+                onClick={() => setGoalsModalOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-border text-sm text-textPrimary hover:bg-surface transition-colors"
+              >
+                <Target className="w-4 h-4 text-textSecondary" />
+                Set Goals
+              </button>
+            </>
+          )}
         </div>
       </div>
+
+      {/* Tabs: Today | Calendar | Trends */}
+      <div className="mb-6 overflow-x-auto">
+        <HealthTabsBar value={activeTab} onChange={setActiveTab} />
+      </div>
+
+      {/* ── Today tab ─────────────────────────────────────────────── */}
+      {activeTab === "today" && (
+        <>
+          {/* Hero rings + timeframe selector + ring-goal editor */}
+          <div className="bg-card rounded-2xl border border-border p-5 mb-8">
+            <div className="flex items-center justify-between gap-2 flex-wrap mb-5">
+              <RingTimeframeSelector
+                value={ringTimeframe}
+                onChange={setRingTimeframe}
+              />
+              <button
+                type="button"
+                onClick={() => setRingGoalEditorOpen(true)}
+                aria-label="Edit ring goals"
+                title="Edit ring goals"
+                className="p-2 rounded-xl border border-border text-textSecondary hover:text-textPrimary hover:bg-surface transition-colors"
+              >
+                <Settings className="w-4 h-4" />
+              </button>
+            </div>
+            <ActivityRings
+              rings={ringData}
+              size={220}
+              showLegend
+              onRingClick={goToTrend}
+            />
+          </div>
+
+          {/* KPI tiles — values follow the timeframe selector; tap → Trends */}
+          <Section title="Body">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              <KpiCard
+                icon={Scale}
+                label="Weight"
+                color={getColor("weight")}
+                today={dispWeight}
+                avg7={a7Weight}
+                avg30={a30Weight}
+                formatter={(v) => (v ? `${v.toFixed(1)} lb` : "—")}
+                status={weightStatus}
+                goalText={weightGoalText}
+                subtitle={
+                  isTodayTimeframe
+                    ? weightFallback
+                      ? `as of ${formatDate(weightFallback.fromDate)}`
+                      : undefined
+                    : tfSubtitle
+                }
+                onToggle={() => goToTrend("weight_lbs")}
+              />
+              <KpiCard
+                icon={TrendingUp}
+                label="BMI"
+                color={getColor("bmi")}
+                today={dispBmi}
+                avg7={a7("bmi")}
+                avg30={a30("bmi")}
+                formatter={(v) => (v ? v.toFixed(1) : "—")}
+                status={bmiStatus}
+                goalText={bmiGoalText}
+                subtitle={
+                  isTodayTimeframe
+                    ? bmiFallback
+                      ? `as of ${formatDate(bmiFallback.fromDate)}`
+                      : undefined
+                    : tfSubtitle
+                }
+                onToggle={() => goToTrend("bmi")}
+              />
+              <KpiCard
+                icon={Heart}
+                label="Resting HR"
+                color={getColor("hr")}
+                today={dispRestingHr}
+                avg7={a7("resting_hr")}
+                avg30={a30("resting_hr")}
+                formatter={(v) => (v ? `${Math.round(v)} bpm` : "—")}
+                status={hrStatus}
+                goalText={hrGoalText}
+                subtitle={
+                  isTodayTimeframe
+                    ? restingHrFallback
+                      ? `as of ${formatDate(restingHrFallback.fromDate)}`
+                      : undefined
+                    : tfSubtitle
+                }
+                onToggle={() => goToTrend("resting_hr")}
+              />
+            </div>
+          </Section>
+
+          <Section title="Activity">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <KpiCard
+                icon={Footprints}
+                label="Steps"
+                color={getColor("steps")}
+                today={dispSteps}
+                avg7={a7("steps")}
+                avg30={a30("steps")}
+                formatter={(v) => (v ? Math.round(v).toLocaleString() : "—")}
+                status={stepsStatus}
+                goalText={stepsGoalText}
+                subtitle={tfSubtitle}
+                onToggle={() => goToTrend("steps")}
+              />
+              <KpiCard
+                icon={Clock}
+                label="Exercise Mins"
+                color={getColor("exercise")}
+                today={dispExercise}
+                avg7={a7("exercise_mins")}
+                avg30={a30("exercise_mins")}
+                formatter={(v) => (v !== undefined ? `${Math.round(v)} min` : "—")}
+                status={exerciseStatus}
+                goalText={exerciseGoalText}
+                subtitle={tfSubtitle}
+                onToggle={() => goToTrend("exercise_mins")}
+              />
+              <KpiCard
+                icon={Zap}
+                label="Move Calories"
+                color={getColor("calories")}
+                today={dispMoveCal}
+                avg7={a7("move_calories")}
+                avg30={a30("move_calories")}
+                formatter={(v) => (v !== undefined ? `${Math.round(v)} kcal` : "—")}
+                status={moveCalStatus}
+                goalText={moveCalGoalText}
+                subtitle={tfSubtitle}
+                onToggle={() => goToTrend("move_calories")}
+              />
+              <KpiCard
+                icon={PersonStanding}
+                label="Stand Hours"
+                color={getColor("stand")}
+                today={dispStand}
+                avg7={a7("stand_hours")}
+                avg30={a30("stand_hours")}
+                formatter={(v) => (v !== undefined ? `${Math.round(v)}h` : "—")}
+                status={standStatus}
+                goalText={standGoalText}
+                subtitle={tfSubtitle}
+                onToggle={() => goToTrend("stand_hours")}
+              />
+            </div>
+          </Section>
+
+          <Section title="Recovery">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <KpiCard
+                icon={Moon}
+                label="Total Sleep"
+                color={getColor("sleep")}
+                today={dispSleep}
+                avg7={a7("sleep_total_hours")}
+                avg30={a30("sleep_total_hours")}
+                formatter={(v) => formatHours(v)}
+                status={sleepStatus}
+                goalText={sleepGoalText}
+                subtitle={tfSubtitle}
+                onToggle={() => goToTrend("sleep_total_hours")}
+              />
+              <KpiCard
+                icon={Moon}
+                label="Awake Time"
+                color="#6b7280"
+                today={dispAwake}
+                avg7={a7("sleep_awake_mins")}
+                avg30={a30("sleep_awake_mins")}
+                formatter={(v) => (v !== undefined ? `${Math.round(v)} min` : "—")}
+                status={awakeStatus}
+                goalText={awakeGoalText}
+                subtitle={tfSubtitle}
+                onToggle={() => goToTrend("sleep_awake_mins")}
+              />
+              <KpiCard
+                icon={SmilePlus}
+                label="Brushing Sessions"
+                color={getColor("brush")}
+                today={dispBrushCount}
+                avg7={a7("brush_count")}
+                avg30={a30("brush_count")}
+                formatter={(v) => (v !== undefined ? `${v.toFixed(1)}x` : "—")}
+                status={brushingStatus}
+                goalText={brushingGoalText}
+                subtitle={tfSubtitle}
+                onToggle={() => goToTrend("brush_count")}
+              />
+              <KpiCard
+                icon={Clock}
+                label="Avg Brush Time"
+                color={getColor("brush")}
+                today={dispAvgBrush}
+                avg7={a7("brush_avg_duration_mins")}
+                avg30={a30("brush_avg_duration_mins")}
+                formatter={(v) => (v !== undefined ? `${v.toFixed(1)} min` : "—")}
+                status={avgBrushStatus}
+                goalText={avgBrushGoalText}
+                subtitle={tfSubtitle}
+                onToggle={() => goToTrend("brush_avg_duration_mins")}
+              />
+            </div>
+          </Section>
+        </>
+      )}
+
+      {/* ── Calendar tab (placeholder — RingCalendar lands in Phase 3) ── */}
+      {activeTab === "calendar" && (
+        <div className="bg-card rounded-2xl border border-border p-10 text-center mb-8">
+          <p className="text-sm text-textSecondary">
+            Ring calendar coming soon.
+          </p>
+        </div>
+      )}
+
+      {activeTab === "trends" && (
+      <>
 
       {/* ── Body ─────────────────────────────────────────────────── */}
       <Section
@@ -1606,72 +2145,15 @@ export default function HealthPage() {
           />
         }
       >
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
-          <KpiCard
-            icon={Scale}
-            label="Weight"
-            color={getColor("weight")}
-            today={todayWeight ?? weightFallback?.value}
-            avg7={a7Weight}
-            avg30={a30Weight}
-            formatter={(v) => (v ? `${v.toFixed(1)} lb` : "—")}
-            status={weightStatus}
-            goalText={weightGoalText}
-            subtitle={
-              weightFallback
-                ? `as of ${formatDate(weightFallback.fromDate)}`
-                : undefined
-            }
-            selected={selectedKpis.has("weight_lbs")}
-            onToggle={() => toggleKpi("weight_lbs")}
-          />
-          <KpiCard
-            icon={TrendingUp}
-            label="BMI"
-            color={getColor("bmi")}
-            today={
-              isPositiveNumber(today?.bmi) ? today?.bmi : bmiFallback?.value
-            }
-            avg7={a7("bmi")}
-            avg30={a30("bmi")}
-            formatter={(v) => (v ? v.toFixed(1) : "—")}
-            status={bmiStatus}
-            goalText={bmiGoalText}
-            subtitle={
-              bmiFallback
-                ? `as of ${formatDate(bmiFallback.fromDate)}`
-                : undefined
-            }
-            selected={selectedKpis.has("bmi")}
-            onToggle={() => toggleKpi("bmi")}
-          />
-          <KpiCard
-            icon={Heart}
-            label="Resting HR"
-            color={getColor("hr")}
-            today={
-              isPositiveNumber(today?.resting_hr)
-                ? today?.resting_hr
-                : restingHrFallback?.value
-            }
-            avg7={a7("resting_hr")}
-            avg30={a30("resting_hr")}
-            formatter={(v) => (v ? `${Math.round(v)} bpm` : "—")}
-            status={hrStatus}
-            goalText={hrGoalText}
-            subtitle={
-              restingHrFallback
-                ? `as of ${formatDate(restingHrFallback.fromDate)}`
-                : undefined
-            }
-            selected={selectedKpis.has("resting_hr")}
-            onToggle={() => toggleKpi("resting_hr")}
-          />
-        </div>
-
+        {!sectionAnyActive(BODY_KPIS) && (
+          <p className="text-xs text-textSecondary">
+            No charts selected — use “All”, or tap a KPI card on the Today tab.
+          </p>
+        )}
         {sectionAnyActive(BODY_KPIS) && (
           <div className="flex flex-col gap-4 transition-all duration-200">
             {selectedKpis.has("weight_lbs") && (
+              <div id="trend-weight_lbs" className="scroll-mt-24">
               <ChartCard
                 title="Weight"
                 actions={
@@ -1693,8 +2175,10 @@ export default function HealthPage() {
                   refLabel={goals?.weight ? `Goal ${goals.weight.goal} lbs` : undefined}
                 />
               </ChartCard>
+              </div>
             )}
             {selectedKpis.has("bmi") && (
+              <div id="trend-bmi" className="scroll-mt-24">
               <ChartCard
                 title="BMI"
                 actions={
@@ -1713,9 +2197,13 @@ export default function HealthPage() {
                   yDomain={bmiSlice.domain}
                 />
               </ChartCard>
+              </div>
             )}
             {selectedKpis.has("resting_hr") && (
-              <>
+              <div
+                id="trend-resting_hr"
+                className="scroll-mt-24 flex flex-col gap-4"
+              >
                 <ChartCard
                   title="Resting HR"
                   actions={
@@ -1799,7 +2287,7 @@ export default function HealthPage() {
                     </ResponsiveContainer>
                   )}
                 </div>
-              </>
+              </div>
             )}
           </div>
         )}
@@ -1815,64 +2303,15 @@ export default function HealthPage() {
           />
         }
       >
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-          <KpiCard
-            icon={Footprints}
-            label="Steps"
-            color={getColor("steps")}
-            today={today?.steps}
-            avg7={a7("steps")}
-            avg30={a30("steps")}
-            formatter={(v) => (v ? Math.round(v).toLocaleString() : "—")}
-            status={stepsStatus}
-            goalText={stepsGoalText}
-            selected={selectedKpis.has("steps")}
-            onToggle={() => toggleKpi("steps")}
-          />
-          <KpiCard
-            icon={Clock}
-            label="Exercise Mins"
-            color={getColor("exercise")}
-            today={today?.exercise_mins}
-            avg7={a7("exercise_mins")}
-            avg30={a30("exercise_mins")}
-            formatter={(v) => (v !== undefined ? `${Math.round(v)} min` : "—")}
-            status={exerciseStatus}
-            goalText={exerciseGoalText}
-            selected={selectedKpis.has("exercise_mins")}
-            onToggle={() => toggleKpi("exercise_mins")}
-          />
-          <KpiCard
-            icon={Zap}
-            label="Move Calories"
-            color={getColor("calories")}
-            today={today?.move_calories}
-            avg7={a7("move_calories")}
-            avg30={a30("move_calories")}
-            formatter={(v) => (v !== undefined ? `${Math.round(v)} kcal` : "—")}
-            status={moveCalStatus}
-            goalText={moveCalGoalText}
-            selected={selectedKpis.has("move_calories")}
-            onToggle={() => toggleKpi("move_calories")}
-          />
-          <KpiCard
-            icon={PersonStanding}
-            label="Stand Hours"
-            color={getColor("stand")}
-            today={today?.stand_hours}
-            avg7={a7("stand_hours")}
-            avg30={a30("stand_hours")}
-            formatter={(v) => (v !== undefined ? `${Math.round(v)}h` : "—")}
-            status={standStatus}
-            goalText={standGoalText}
-            selected={selectedKpis.has("stand_hours")}
-            onToggle={() => toggleKpi("stand_hours")}
-          />
-        </div>
-
+        {!sectionAnyActive(ACTIVITY_KPIS) && (
+          <p className="text-xs text-textSecondary">
+            No charts selected — use “All”, or tap a KPI card on the Today tab.
+          </p>
+        )}
         {sectionAnyActive(ACTIVITY_KPIS) && (
           <div className="flex flex-col gap-4 transition-all duration-200">
             {selectedKpis.has("steps") && (
+              <div id="trend-steps" className="scroll-mt-24">
               <ChartCard
                 title="Daily Steps"
                 actions={
@@ -1898,8 +2337,10 @@ export default function HealthPage() {
                   yDomain={stepsSlice.domain}
                 />
               </ChartCard>
+              </div>
             )}
             {selectedKpis.has("exercise_mins") && (
+              <div id="trend-exercise_mins" className="scroll-mt-24">
               <ChartCard
                 title="Exercise Mins"
                 actions={
@@ -1925,8 +2366,10 @@ export default function HealthPage() {
                   yDomain={exerciseSlice.domain}
                 />
               </ChartCard>
+              </div>
             )}
             {selectedKpis.has("move_calories") && (
+              <div id="trend-move_calories" className="scroll-mt-24">
               <ChartCard
                 title="Move Calories"
                 actions={
@@ -1952,8 +2395,10 @@ export default function HealthPage() {
                   yDomain={moveCalSlice.domain}
                 />
               </ChartCard>
+              </div>
             )}
             {selectedKpis.has("stand_hours") && (
+              <div id="trend-stand_hours" className="scroll-mt-24">
               <ChartCard
                 title="Stand Hours"
                 actions={
@@ -1979,6 +2424,7 @@ export default function HealthPage() {
                   yDomain={standSlice.domain}
                 />
               </ChartCard>
+              </div>
             )}
           </div>
         )}
@@ -1994,69 +2440,18 @@ export default function HealthPage() {
           />
         }
       >
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-          <KpiCard
-            icon={Moon}
-            label="Total Sleep"
-            color={getColor("sleep")}
-            today={today?.sleep_total_hours}
-            avg7={a7("sleep_total_hours")}
-            avg30={a30("sleep_total_hours")}
-            formatter={(v) => formatHours(v)}
-            status={sleepStatus}
-            goalText={sleepGoalText}
-            selected={selectedKpis.has("sleep_total_hours")}
-            onToggle={() => toggleKpi("sleep_total_hours")}
-          />
-          <KpiCard
-            icon={Moon}
-            label="Awake Time"
-            color="#6b7280"
-            today={today?.sleep_awake_mins}
-            avg7={a7("sleep_awake_mins")}
-            avg30={a30("sleep_awake_mins")}
-            formatter={(v) => (v !== undefined ? `${Math.round(v)} min` : "—")}
-            status={awakeStatus}
-            goalText={awakeGoalText}
-            selected={selectedKpis.has("sleep_awake_mins")}
-            onToggle={() => toggleKpi("sleep_awake_mins")}
-          />
-          <KpiCard
-            icon={SmilePlus}
-            label="Brushing Sessions"
-            color={getColor("brush")}
-            today={today?.brush_count}
-            avg7={a7("brush_count")}
-            avg30={a30("brush_count")}
-            // Use !== undefined so a real 0 value (no brushing yet today)
-            // renders "0.0x" alongside its danger-colored tile rather than
-            // showing "—" — which previously created a confusing colored-but-
-            // dashless display when today's brush_count was 0.
-            formatter={(v) => (v !== undefined ? `${v.toFixed(1)}x` : "—")}
-            status={brushingStatus}
-            goalText={brushingGoalText}
-            selected={selectedKpis.has("brush_count")}
-            onToggle={() => toggleKpi("brush_count")}
-          />
-          <KpiCard
-            icon={Clock}
-            label="Avg Brush Time"
-            color={getColor("brush")}
-            today={today?.brush_avg_duration_mins}
-            avg7={a7("brush_avg_duration_mins")}
-            avg30={a30("brush_avg_duration_mins")}
-            formatter={(v) => (v !== undefined ? `${v.toFixed(1)} min` : "—")}
-            status={avgBrushStatus}
-            goalText={avgBrushGoalText}
-            selected={selectedKpis.has("brush_avg_duration_mins")}
-            onToggle={() => toggleKpi("brush_avg_duration_mins")}
-          />
-        </div>
-
+        {!sectionAnyActive(RECOVERY_KPIS) && (
+          <p className="text-xs text-textSecondary">
+            No charts selected — use “All”, or tap a KPI card on the Today tab.
+          </p>
+        )}
         {sectionAnyActive(RECOVERY_KPIS) && (
           <div className="flex flex-col gap-4 transition-all duration-200">
             {selectedKpis.has("sleep_total_hours") && (
-              <>
+              <div
+                id="trend-sleep_total_hours"
+                className="scroll-mt-24 flex flex-col gap-4"
+              >
                 <SleepAnalytics
                   metrics={sleepAnalyticsMetrics}
                   sleepGoal={goals?.sleep}
@@ -2084,9 +2479,10 @@ export default function HealthPage() {
                     yDomain={sleepSlice.domain}
                   />
                 </ChartCard>
-              </>
+              </div>
             )}
             {selectedKpis.has("sleep_awake_mins") && (
+              <div id="trend-sleep_awake_mins" className="scroll-mt-24">
               <ChartCard
                 title="Awake Time"
                 actions={
@@ -2111,8 +2507,10 @@ export default function HealthPage() {
                   yDomain={awakeSlice.domain}
                 />
               </ChartCard>
+              </div>
             )}
             {selectedKpis.has("brush_count") && (
+              <div id="trend-brush_count" className="scroll-mt-24">
               <ChartCard
                 title="Daily Brushing Sessions"
                 actions={
@@ -2134,8 +2532,10 @@ export default function HealthPage() {
                   yDomain={brushSlice.domain}
                 />
               </ChartCard>
+              </div>
             )}
             {selectedKpis.has("brush_avg_duration_mins") && (
+              <div id="trend-brush_avg_duration_mins" className="scroll-mt-24">
               <ChartCard
                 title="Avg Brush Duration"
                 actions={
@@ -2160,10 +2560,13 @@ export default function HealthPage() {
                   yDomain={avgBrushSlice.domain}
                 />
               </ChartCard>
+              </div>
             )}
           </div>
         )}
       </Section>
+      </>
+      )}
 
       {/* Health Goals modal — set/edit/clear all goals */}
       {userId && (
@@ -2174,6 +2577,17 @@ export default function HealthPage() {
           onClose={() => setGoalsModalOpen(false)}
           onSaved={(g) => setGoals(g)}
           onCleared={() => setGoals(null)}
+        />
+      )}
+
+      {/* Ring goals editor — appends a new effective-dated version */}
+      {userId && (
+        <RingGoalEditorModal
+          isOpen={ringGoalEditorOpen}
+          uid={userId}
+          goals={ringGoals}
+          onClose={() => setRingGoalEditorOpen(false)}
+          onSaved={(doc) => setRingGoals((prev) => [...prev, doc])}
         />
       )}
 
