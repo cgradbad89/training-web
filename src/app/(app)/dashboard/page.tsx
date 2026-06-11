@@ -83,6 +83,8 @@ import {
   computeWeekScore,
   buildWeekScoreBreakdown,
   isWeekEmpty,
+  daysElapsedInWeek,
+  isScheduledThroughToday,
   type WeekScoreInput,
   type WeekScoreResult,
   type WeekScoreComponent,
@@ -1307,6 +1309,10 @@ function WeekScoreCard({ input }: { input: WeekScoreInput }) {
             <p className="text-xs text-textSecondary mt-0.5">
               {result.descriptionLine}
             </p>
+            {/* Pro-rating basis — e.g. "vs plan through Wed". */}
+            <p className="text-[11px] text-textSecondary mt-0.5">
+              {result.basisLine}
+            </p>
           </div>
 
           <div className="h-px bg-border" />
@@ -1625,6 +1631,37 @@ export default function DashboardPage() {
   }, [activePlan, selectedWeekStart]);
 
   // ── Week Score inputs ────────────────────────────────────────────────────
+  // The Week Score is PRO-RATED against the plan scheduled THROUGH TODAY (not
+  // the full week), so an on-track mid-week reads as on-track. daysElapsed =
+  // Monday→today inclusive (0 future / 7 past), and the run/workout
+  // denominators only count entries with weekday <= daysElapsed. The KPI cards
+  // above keep showing full-week planned values (plannedMiles / sessions*).
+
+  // daysElapsed for the SELECTED week: anchored on the live "today", so it is
+  // 7 for any fully-elapsed past week and 0 for a future week.
+  const daysElapsed = useMemo(
+    () => daysElapsedInWeek(selectedWeekStart, new Date()),
+    [selectedWeekStart]
+  );
+
+  // Planned miles SCHEDULED THROUGH TODAY (pro-rated run denominator). Mirrors
+  // the full-week `plannedMiles` memo but filters entries to weekday <=
+  // daysElapsed (weekday 1=Mon..7=Sun; legacy dayOfWeek = weekday-1).
+  const plannedMilesThroughToday = useMemo(() => {
+    if (!activePlan) return 0;
+    const planStart = new Date(activePlan.startDate);
+    const weekIndex = Math.floor(
+      (selectedWeekStart.getTime() - planStart.getTime()) /
+        (7 * 24 * 60 * 60 * 1000)
+    );
+    if (weekIndex < 0 || weekIndex >= activePlan.weeks.length) return 0;
+    return activePlan.weeks[weekIndex].entries.reduce((s, e) => {
+      const weekday = e.weekday ?? e.dayOfWeek + 1;
+      return isScheduledThroughToday(weekday, daysElapsed)
+        ? s + e.distanceMiles
+        : s;
+    }, 0);
+  }, [activePlan, selectedWeekStart, daysElapsed]);
   // All six numbers fed into computeWeekScore() live here so the score
   // updates in lockstep with the week-navigator selection. Each value
   // mirrors the formula the corresponding tile below uses, so the score
@@ -1693,13 +1730,51 @@ export default function DashboardPage() {
     };
   }, [activeWorkoutPlan, selectedWeekStart]);
 
+  // Workout sessions SCHEDULED THROUGH TODAY (pro-rated workout denominator),
+  // plus the completed count among them. Same week-index derivation as the
+  // full-week memo above, filtered to weekday <= daysElapsed.
+  const {
+    sessionsCompletedThroughToday,
+    sessionsPlannedThroughToday,
+  } = useMemo(() => {
+    if (!activeWorkoutPlan) {
+      return {
+        sessionsCompletedThroughToday: 0,
+        sessionsPlannedThroughToday: 0,
+      };
+    }
+    const planStart = new Date(activeWorkoutPlan.startDate + "T00:00:00");
+    const weekIndex = Math.floor(
+      (selectedWeekStart.getTime() - planStart.getTime()) /
+        (7 * 24 * 60 * 60 * 1000)
+    );
+    if (weekIndex < 0 || weekIndex >= activeWorkoutPlan.weeks.length) {
+      return {
+        sessionsCompletedThroughToday: 0,
+        sessionsPlannedThroughToday: 0,
+      };
+    }
+    const scheduled = activeWorkoutPlan.weeks[weekIndex].entries
+      .filter((e): e is PlannedWorkoutEntry => e.type === "workout")
+      .filter((e) =>
+        isScheduledThroughToday(e.weekday ?? e.dayOfWeek + 1, daysElapsed)
+      );
+    return {
+      sessionsCompletedThroughToday: scheduled.filter(
+        (e) => e.completed === true
+      ).length,
+      sessionsPlannedThroughToday: scheduled.length,
+    };
+  }, [activeWorkoutPlan, selectedWeekStart, daysElapsed]);
+
   const weekScoreInput: WeekScoreInput = {
     actualMiles,
-    plannedMiles,
+    plannedMiles: plannedMilesThroughToday,
     thisWeekTotalLoad,
     avgWeeklyLoad,
-    sessionsCompleted,
-    sessionsPlanned,
+    sessionsCompleted: sessionsCompletedThroughToday,
+    sessionsPlanned: sessionsPlannedThroughToday,
+    daysElapsed,
   };
 
   // ─── KPI data ────────────────────────────────────────────────────────────────

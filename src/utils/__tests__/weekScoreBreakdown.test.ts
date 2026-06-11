@@ -8,6 +8,8 @@ import {
   WORKOUT_MAX_POINTS,
 } from "@/utils/weekScore";
 
+// daysElapsed: 7 ⇒ full week elapsed, so these full-week fixtures keep their
+// pre-pro-rating expectations (pro-rated == full-week on the last day).
 const MID: WeekScoreInput = {
   actualMiles: 24,
   plannedMiles: 40,
@@ -15,6 +17,7 @@ const MID: WeekScoreInput = {
   avgWeeklyLoad: 350,
   sessionsCompleted: 2,
   sessionsPlanned: 4,
+  daysElapsed: 7,
 };
 
 const MAXED: WeekScoreInput = {
@@ -24,6 +27,7 @@ const MAXED: WeekScoreInput = {
   avgWeeklyLoad: 350,
   sessionsCompleted: 4,
   sessionsPlanned: 4,
+  daysElapsed: 7,
 };
 
 const NOTHING_DONE: WeekScoreInput = {
@@ -33,6 +37,7 @@ const NOTHING_DONE: WeekScoreInput = {
   avgWeeklyLoad: 350,
   sessionsCompleted: 0,
   sessionsPlanned: 4,
+  daysElapsed: 7,
 };
 
 const NO_PLANS: WeekScoreInput = {
@@ -42,6 +47,7 @@ const NO_PLANS: WeekScoreInput = {
   avgWeeklyLoad: 0, // no baseline → full credit
   sessionsCompleted: 0,
   sessionsPlanned: 0, // no workout plan → full credit
+  daysElapsed: 7,
 };
 
 describe("buildWeekScoreBreakdown", () => {
