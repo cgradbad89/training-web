@@ -30,9 +30,7 @@ import { fetchPlans } from "@/services/plans";
 import { fetchUserSettings } from "@/services/userSettings";
 import {
   fetchHealthMetricsRange,
-  fetchHealthGoals,
   type HealthMetric,
-  type HealthGoals,
 } from "@/services/healthMetrics";
 import { fetchHealthGoals as fetchRingGoalVersions } from "@/services/healthGoals";
 import {
@@ -52,10 +50,6 @@ import {
   resolveGoalForDate,
 } from "@/lib/ringMath";
 import type { HealthGoalDoc, RingMetric } from "@/types/healthGoal";
-import {
-  evaluateMetricGoal,
-  type GoalStatus,
-} from "@/utils/goalEvaluation";
 
 import { trainingLoadLevel } from "@/utils/metrics";
 import {
@@ -892,248 +886,182 @@ function WorkoutPlanProgressCard({
   );
 }
 
-// ─── Health Activity Rings ────────────────────────────────────────────────────
+// ─── Health Hero Tile ─────────────────────────────────────────────────────────
 
-interface HealthRingsCardProps {
+type HeroMode = "today" | "week";
+
+interface HealthHeroTileProps {
+  /** Today's healthMetrics doc — fetched independently of the selected week so
+   *  "Today" is always the live day, regardless of week navigation. */
+  todayMetric: HealthMetric | null;
+  /** healthMetrics docs for the selected week's date range. */
   weekMetrics: HealthMetric[];
   ringGoals: HealthGoalDoc[];
   weekStart: Date;
   weekEnd: Date;
-  /** Ring tap → /health Trends tab scrolled to the metric. */
+  /** Ring / legend-row tap → /health Trends tab scrolled to the metric. */
   onMetricClick: (metric: RingMetric) => void;
 }
 
+/** Small segmented Today / Week control for the hero tile. */
+function TodayWeekToggle({
+  mode,
+  onChange,
+}: {
+  mode: HeroMode;
+  onChange: (m: HeroMode) => void;
+}) {
+  const options: { value: HeroMode; label: string }[] = [
+    { value: "today", label: "Today" },
+    { value: "week", label: "Week" },
+  ];
+  return (
+    <div className="inline-flex items-center gap-1 bg-surface rounded-lg p-0.5">
+      {options.map((o) => {
+        const active = o.value === mode;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            onClick={() => onChange(o.value)}
+            aria-pressed={active}
+            className={`text-xs px-3 h-7 rounded-lg font-semibold transition-colors ${
+              active
+                ? "bg-primary text-white"
+                : "text-textSecondary hover:text-textPrimary"
+            }`}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 /**
- * Today + This Week activity rings for the selected week.
- * - "Today" renders only when viewing the current week.
- * - "This Week" scores week-start→today for the current week (to-date,
- *   sum-vs-sum), the full week for past weeks, and renders empty tracks
- *   (no progress) for future weeks.
- * Reuses the weekMetrics range fetch that already powers the KPI row.
+ * Hero activity-rings tile — mirrors the Health page Today hero (full-size
+ * ActivityRings + the 5-metric value/goal/% legend) with a Today/Week toggle
+ * (default Week).
+ *
+ * - Today → dailyRingProgress against the live day's value + resolved goal;
+ *           no on-pace tick.
+ * - Week  → periodRingProgress over the SELECTED week (current week =
+ *           week-start→today; past weeks = full week; future weeks = empty);
+ *           value = summed actual, goal = summed resolved daily goals, with an
+ *           on-pace tick for the CURRENT week only.
+ *
+ * All value/goal/%/color math comes from the shared ringMath helpers, and the
+ * rings + legend render through the shared ActivityRings (showLegend) — the
+ * same path the Health page hero uses, so the two surfaces can't diverge.
  */
-function HealthRingsCard({
+function HealthHeroTile({
+  todayMetric,
   weekMetrics,
   ringGoals,
   weekStart,
   weekEnd,
   onMetricClick,
-}: HealthRingsCardProps) {
+}: HealthHeroTileProps) {
+  const [mode, setMode] = useState<HeroMode>("week");
+
   const todayIso = toIsoDate(new Date());
   const weekStartIso = toIsoDate(weekStart);
   const weekEndIso = toIsoDate(weekEnd);
   const isCurrentWeek = todayIso >= weekStartIso && todayIso <= weekEndIso;
   const isFutureWeek = weekStartIso > todayIso;
 
-  const todayDoc = isCurrentWeek
-    ? (weekMetrics.find((m) => m.date === todayIso) ?? null)
-    : null;
+  const todayRings: RingDatum[] = useMemo(
+    () =>
+      RING_METRICS.map((metric) => {
+        const goal = resolveGoalForDate(ringGoals, metric, todayIso);
+        const value = todayMetric?.[metric] as number | undefined;
+        const actual = value != null && value > 0 ? value : 0;
+        return {
+          metric,
+          label: RING_LABELS[metric],
+          progress: dailyRingProgress(value, goal),
+          color: RING_COLORS[metric],
+          valueLabel: `${fmtRingNumber(metric, actual)} / ${fmtRingNumber(metric, goal)}${RING_UNITS[metric]}`,
+        };
+      }),
+    [ringGoals, todayMetric, todayIso]
+  );
 
-  const todayRings: RingDatum[] = RING_METRICS.map((metric) => {
-    const goal = resolveGoalForDate(ringGoals, metric, todayIso);
-    const value = todayDoc?.[metric] as number | undefined;
-    return {
-      metric,
-      label: RING_LABELS[metric],
-      progress: dailyRingProgress(value, goal),
-      color: RING_COLORS[metric],
-      valueLabel: `${fmtRingNumber(metric, value != null && value > 0 ? value : 0)} / ${fmtRingNumber(metric, goal)}${RING_UNITS[metric]}`,
-    };
-  });
-
-  const periodEnd = isCurrentWeek ? todayIso : weekEndIso;
-  // On-pace tick over the FULL Mon–Sun week — current week only (past weeks
-  // are complete and future weeks are empty; both hide the tick anyway).
-  const weekOnPace = isCurrentWeek
-    ? onPaceFraction(weekStartIso, weekEndIso, todayIso)
-    : undefined;
-  const weekRings: RingDatum[] = RING_METRICS.map((metric) => {
-    if (isFutureWeek) {
+  const weekRings: RingDatum[] = useMemo(() => {
+    const periodEnd = isCurrentWeek ? todayIso : weekEndIso;
+    // On-pace tick over the FULL Mon–Sun week — current week only (past weeks
+    // are complete and future weeks are empty; both hide the tick anyway).
+    const weekOnPace = isCurrentWeek
+      ? onPaceFraction(weekStartIso, weekEndIso, todayIso)
+      : undefined;
+    return RING_METRICS.map((metric) => {
+      if (isFutureWeek) {
+        return {
+          metric,
+          label: RING_LABELS[metric],
+          progress: 0,
+          color: RING_COLORS[metric],
+          valueLabel: "—",
+        };
+      }
+      const days = weekMetrics.map((m) => ({
+        date: m.date,
+        value: (m[metric] as number | undefined) ?? null,
+      }));
+      const progress = periodRingProgress(
+        days,
+        ringGoals,
+        metric,
+        weekStartIso,
+        periodEnd
+      );
+      const actual = days.reduce(
+        (s, d) =>
+          s +
+          (d.value != null && d.value > 0 && d.date <= periodEnd ? d.value : 0),
+        0
+      );
+      const goalTotal = eachDate(weekStartIso, periodEnd).reduce(
+        (s, date) => s + resolveGoalForDate(ringGoals, metric, date),
+        0
+      );
       return {
         metric,
         label: RING_LABELS[metric],
-        progress: 0,
+        progress,
         color: RING_COLORS[metric],
-        valueLabel: "—",
+        valueLabel: `${fmtRingNumber(metric, actual)} / ${fmtRingNumber(metric, goalTotal)}${RING_UNITS[metric]}`,
+        onPaceFraction: weekOnPace,
       };
-    }
-    const days = weekMetrics.map((m) => ({
-      date: m.date,
-      value: (m[metric] as number | undefined) ?? null,
-    }));
-    const progress = periodRingProgress(
-      days,
-      ringGoals,
-      metric,
-      weekStartIso,
-      periodEnd
-    );
-    const actual = days.reduce(
-      (s, d) =>
-        s +
-        (d.value != null && d.value > 0 && d.date <= periodEnd ? d.value : 0),
-      0
-    );
-    const goalTotal = eachDate(weekStartIso, periodEnd).reduce(
-      (s, date) => s + resolveGoalForDate(ringGoals, metric, date),
-      0
-    );
-    return {
-      metric,
-      label: RING_LABELS[metric],
-      progress,
-      color: RING_COLORS[metric],
-      valueLabel: `${fmtRingNumber(metric, actual)} / ${fmtRingNumber(metric, goalTotal)}${RING_UNITS[metric]}`,
-      onPaceFraction: weekOnPace,
-    };
-  });
+    });
+  }, [
+    weekMetrics,
+    ringGoals,
+    weekStartIso,
+    weekEndIso,
+    todayIso,
+    isCurrentWeek,
+    isFutureWeek,
+  ]);
+
+  const rings = mode === "today" ? todayRings : weekRings;
 
   return (
     <Card className="h-full">
-      <CardTitle>Activity Rings</CardTitle>
-      <div className="flex items-start justify-center gap-8">
-        {isCurrentWeek && (
-          <div className="flex flex-col items-center gap-1.5">
-            <ActivityRings
-              rings={todayRings}
-              size={110}
-              onRingClick={onMetricClick}
-            />
-            <span className="text-xs text-textSecondary">Today</span>
-          </div>
-        )}
-        <div className="flex flex-col items-center gap-1.5">
-          <ActivityRings
-            rings={weekRings}
-            size={110}
-            onRingClick={onMetricClick}
-          />
-          <span className="text-xs text-textSecondary">This Week</span>
-        </div>
+      <div className="flex items-center justify-between gap-2 mb-4">
+        <h2 className="text-sm font-semibold uppercase tracking-widest text-textSecondary">
+          Activity Rings
+        </h2>
+        <TodayWeekToggle mode={mode} onChange={setMode} />
       </div>
-    </Card>
-  );
-}
-
-// ─── Health KPIs Row ──────────────────────────────────────────────────────────
-
-interface HealthKpisRowProps {
-  metrics: HealthMetric[];
-  goals: HealthGoals | null;
-  totalWeekCalories: number;
-}
-
-/** Tailwind text-color token for a GoalStatus. Neutral → primary text. */
-function goalStatusTextClass(status: GoalStatus): string {
-  switch (status) {
-    case "success": return "text-success";
-    case "warning": return "text-warning";
-    case "danger":  return "text-danger";
-    default:        return "text-textPrimary";
-  }
-}
-
-/**
- * Horizontal row of per-day averages for the selected week's healthMetrics:
- * Steps, Exercise Mins, Move Calories, Stand Hours, Sleep Hours. The Sleep
- * tile applies goal-driven conditional formatting when a sleep goal is set;
- * the other tiles stay neutral (their goal coloring lives on the Health page).
- */
-function HealthKpisRow({ metrics, goals, totalWeekCalories }: HealthKpisRowProps) {
-  const weeklyAvg = (field: keyof HealthMetric): number | null => {
-    const values = metrics
-      .map((m) => m[field])
-      .filter((v): v is number => typeof v === "number" && v > 0);
-    if (values.length === 0) return null;
-    return values.reduce((a, b) => a + b, 0) / values.length;
-  };
-
-  const avgSteps    = weeklyAvg("steps");
-  const avgExercise = weeklyAvg("exercise_mins");
-  const avgMoveCal  = weeklyAvg("move_calories");
-  const avgStand    = weeklyAvg("stand_hours");
-  const avgSleep    = weeklyAvg("sleep_total_hours");
-
-  const stepsStatus: GoalStatus =
-    avgSteps != null && goals?.steps
-      ? evaluateMetricGoal(avgSteps, goals.steps.goal, "higher", goals.steps.warningPct, goals.steps.dangerPct)
-      : "neutral";
-  const exerciseStatus: GoalStatus =
-    avgExercise != null && goals?.exerciseMins
-      ? evaluateMetricGoal(avgExercise, goals.exerciseMins.goal, "higher", goals.exerciseMins.warningPct, goals.exerciseMins.dangerPct)
-      : "neutral";
-  const moveCalStatus: GoalStatus =
-    avgMoveCal != null && goals?.moveCalories
-      ? evaluateMetricGoal(avgMoveCal, goals.moveCalories.goal, "higher", goals.moveCalories.warningPct, goals.moveCalories.dangerPct)
-      : "neutral";
-  const standStatus: GoalStatus =
-    avgStand != null && goals?.standHours
-      ? evaluateMetricGoal(avgStand, goals.standHours.goal, "higher", goals.standHours.warningPct, goals.standHours.dangerPct)
-      : "neutral";
-  const sleepStatus: GoalStatus =
-    avgSleep != null && goals?.sleep
-      ? evaluateMetricGoal(avgSleep, goals.sleep.goal, "higher", goals.sleep.warningPct, goals.sleep.dangerPct)
-      : "neutral";
-
-  const tiles: {
-    label: string;
-    value: string;
-    valueClass?: string;
-    caption?: string;
-  }[] = [
-    {
-      label: "Steps",
-      value: avgSteps == null ? "—" : Math.round(avgSteps).toLocaleString(),
-      valueClass: goalStatusTextClass(stepsStatus),
-    },
-    {
-      label: "Exercise Mins",
-      value: avgExercise == null ? "—" : `${Math.round(avgExercise)} min`,
-      valueClass: goalStatusTextClass(exerciseStatus),
-    },
-    {
-      label: "Move Calories",
-      value: avgMoveCal == null ? "—" : `${Math.round(avgMoveCal)} kcal`,
-      valueClass: goalStatusTextClass(moveCalStatus),
-    },
-    {
-      label: "Stand Hours",
-      value: avgStand == null ? "—" : `${avgStand.toFixed(1)} hrs`,
-      valueClass: goalStatusTextClass(standStatus),
-    },
-    {
-      label: "Sleep Hours",
-      value: avgSleep == null ? "—" : `${avgSleep.toFixed(1)} hrs`,
-      valueClass: goalStatusTextClass(sleepStatus),
-    },
-    {
-      label: "Total Calories",
-      value:
-        totalWeekCalories > 0
-          ? `${Math.round(totalWeekCalories).toLocaleString()} kcal`
-          : "—",
-      caption: "this week",
-    },
-  ];
-
-  return (
-    <Card className="h-full">
-      <CardTitle>Health</CardTitle>
-      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
-        {tiles.map((t) => (
-          <div key={t.label} className="flex flex-col gap-0.5">
-            <div
-              className={`text-2xl font-bold tabular-nums leading-tight ${
-                t.valueClass ?? "text-textPrimary"
-              }`}
-            >
-              {t.value}
-            </div>
-            <span className="text-xs text-textPrimary">{t.label}</span>
-            <span className="text-[10px] text-textSecondary uppercase tracking-wide">
-              {t.caption ?? "avg/day"}
-            </span>
-          </div>
-        ))}
+      <div className="flex justify-center">
+        <ActivityRings
+          rings={rings}
+          size={220}
+          showLegend
+          onRingClick={onMetricClick}
+        />
       </div>
     </Card>
   );
@@ -1537,7 +1465,7 @@ export default function DashboardPage() {
     null
   );
   const [weekMetrics, setWeekMetrics] = useState<HealthMetric[]>([]);
-  const [healthGoals, setHealthGoals] = useState<HealthGoals | null>(null);
+  const [todayMetric, setTodayMetric] = useState<HealthMetric | null>(null);
   const [ringGoals, setRingGoals] = useState<HealthGoalDoc[]>([]);
   const router = useRouter();
   const [userSettings, setUserSettings] = useState<UserSettings | null>();
@@ -1580,13 +1508,21 @@ export default function DashboardPage() {
     };
   }, [selectedWorkout]);
 
-  // One-time fetch for user-defined health goals. Drives the Sleep KPI
-  // tile's conditional formatting on the row below the weekly stats bar.
+  // One-time fetch for today's healthMetrics doc — powers the hero tile's
+  // "Today" mode independently of week navigation, so toggling to Today always
+  // shows the live day even when a past/future week is selected.
   useEffect(() => {
     if (!uid) return;
-    fetchHealthGoals(uid)
-      .then(setHealthGoals)
-      .catch((err) => console.error("[fetchHealthGoals]", err));
+    const iso = toIsoDate(new Date());
+    let cancelled = false;
+    fetchHealthMetricsRange(uid, iso, iso)
+      .then((m) => {
+        if (!cancelled) setTodayMetric(m.find((d) => d.date === iso) ?? null);
+      })
+      .catch((err) => console.error("[fetchTodayMetric]", err));
+    return () => {
+      cancelled = true;
+    };
   }, [uid]);
 
   // One-time fetch for the effective-dated ring goal versions
@@ -1687,16 +1623,6 @@ export default function DashboardPage() {
     if (weekIndex < 0 || weekIndex >= activePlan.weeks.length) return 0;
     return activePlan.weeks[weekIndex].entries.reduce((s, e) => s + e.distanceMiles, 0);
   }, [activePlan, selectedWeekStart]);
-
-  // Sum of calories across ALL workouts (runs + non-runs) in the selected
-  // week — moved out of the old stats bar and into the Health section.
-  const totalWeekCalories = useMemo(
-    () =>
-      workouts
-        .filter((w) => isInWeek(w, selectedWeekStart, selectedWeekEnd))
-        .reduce((s, w) => s + w.calories, 0),
-    [workouts, selectedWeekStart, selectedWeekEnd]
-  );
 
   // ── Week Score inputs ────────────────────────────────────────────────────
   // All six numbers fed into computeWeekScore() live here so the score
@@ -1817,24 +1743,17 @@ export default function DashboardPage() {
         />
       </section>
 
-      {/* Row 4: Health — activity rings (above on mobile, beside on desktop)
-          + KPI tiles. Both reuse the same weekMetrics range fetch. */}
-      <div className="flex flex-col lg:flex-row gap-4 items-stretch">
-        <HealthRingsCard
-          weekMetrics={weekMetrics}
-          ringGoals={ringGoals}
-          weekStart={selectedWeekStart}
-          weekEnd={selectedWeekEnd}
-          onMetricClick={goToHealthTrend}
-        />
-        <div className="flex-1 min-w-0">
-          <HealthKpisRow
-            metrics={weekMetrics}
-            goals={healthGoals}
-            totalWeekCalories={totalWeekCalories}
-          />
-        </div>
-      </div>
+      {/* Row 4: Health — single hero rings tile (full-size ActivityRings +
+          5-metric legend) with a Today/Week toggle. Week mode respects the
+          selected week; Today mode uses the live day's doc. */}
+      <HealthHeroTile
+        todayMetric={todayMetric}
+        weekMetrics={weekMetrics}
+        ringGoals={ringGoals}
+        weekStart={selectedWeekStart}
+        weekEnd={selectedWeekEnd}
+        onMetricClick={goToHealthTrend}
+      />
 
       {/* Row 5: Training Load row — Mileage + Load Score side-by-side */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
