@@ -63,6 +63,7 @@ import {
   onPaceFraction,
   periodRingProgress,
   resolveGoalForDate,
+  ringDailyAverage,
   type HealthGoalDoc,
   type RingMetric,
 } from "@/lib/ringMath";
@@ -93,6 +94,12 @@ function todayISO(): string {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+/** Parse a local "YYYY-MM-DD" string to a local-midnight Date. */
+function parseIsoDate(dateStr: string): Date {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(y, m - 1, d);
 }
 
 /** Shift a "YYYY-MM-DD" string by N calendar days (local). */
@@ -693,6 +700,14 @@ const RING_TIMEFRAME_OPTIONS: { value: RingTimeframe; label: string }[] = [
   { value: "ytd", label: "YTD" },
 ];
 
+/** Total period numbers vs. daily-average numbers (multi-day timeframes only). */
+type RingValueMode = "total" | "avg";
+
+const RING_VALUE_MODE_OPTIONS: { value: RingValueMode; label: string }[] = [
+  { value: "total", label: "Total" },
+  { value: "avg", label: "Daily Avg" },
+];
+
 /** All KPI fields that have a chart section on the Trends tab. */
 const TREND_FIELDS: readonly string[] = [
   ...BODY_KPIS,
@@ -718,6 +733,10 @@ interface RingStat {
   progress: number;
   actual: number;
   goalTotal: number;
+  /** Daily-average value over the elapsed window (= actual on Today). */
+  avgValue: number;
+  /** Daily-average goal over the elapsed window (= goalTotal on Today). */
+  avgGoal: number;
   /** Expected-progress tick position for period rings (undefined on Today). */
   onPaceFraction?: number;
 }
@@ -765,6 +784,38 @@ function RingTimeframeSelector({
   return (
     <div className="inline-flex items-center gap-1 bg-surface rounded-lg p-0.5">
       {RING_TIMEFRAME_OPTIONS.map((o) => {
+        const active = o.value === value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            onClick={() => onChange(o.value)}
+            aria-pressed={active}
+            className={`text-xs px-3 h-7 rounded-lg font-semibold transition-colors ${
+              active
+                ? "bg-primary text-white"
+                : "text-textSecondary hover:text-textPrimary"
+            }`}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Segmented pill-group for Total vs Daily Avg (shown only on multi-day timeframes). */
+function RingValueModeSelector({
+  value,
+  onChange,
+}: {
+  value: RingValueMode;
+  onChange: (v: RingValueMode) => void;
+}) {
+  return (
+    <div className="inline-flex items-center gap-1 bg-surface rounded-lg p-0.5">
+      {RING_VALUE_MODE_OPTIONS.map((o) => {
         const active = o.value === value;
         return (
           <button
@@ -1224,6 +1275,7 @@ export default function HealthPage() {
   // ── Tabs + activity rings state ─────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<HealthTab>("today");
   const [ringTimeframe, setRingTimeframe] = useState<RingTimeframe>("today");
+  const [ringMode, setRingMode] = useState<RingValueMode>("total");
   const [ringGoals, setRingGoals] = useState<HealthGoalDoc[]>([]);
   const [ringGoalEditorOpen, setRingGoalEditorOpen] = useState(false);
   // Metric whose Trends section should be scrolled into view after a ring /
@@ -1599,11 +1651,17 @@ export default function HealthPage() {
       let progress: number;
       let actual: number;
       let goalTotal: number;
+      // Daily-average value/goal over the elapsed window. On Today they collapse
+      // to the single-day actual/goal (the avg toggle is hidden there anyway).
+      let avgValue: number;
+      let avgGoal: number;
       if (ringTimeframe === "today") {
         const value = today?.[metric];
         goalTotal = resolveGoalForDate(ringGoals, metric, anchorDate);
         actual = typeof value === "number" && value > 0 ? value : 0;
         progress = dailyRingProgress(value, goalTotal);
+        avgValue = actual;
+        avgGoal = goalTotal;
       } else {
         const days = tfDocs.map((m) => ({
           date: m.date,
@@ -1620,10 +1678,19 @@ export default function HealthPage() {
           (s, d) => s + (d.value != null && d.value > 0 ? d.value : 0),
           0
         );
-        goalTotal = eachDate(ringRange.start, ringRange.end).reduce(
-          (s, date) => s + resolveGoalForDate(ringGoals, metric, date),
-          0
+        const dailyGoals = eachDate(ringRange.start, ringRange.end).map((date) =>
+          resolveGoalForDate(ringGoals, metric, date)
         );
+        goalTotal = dailyGoals.reduce((s, g) => s + g, 0);
+        const avg = ringDailyAverage({
+          periodTotal: actual,
+          periodStart: parseIsoDate(ringRange.start),
+          periodEnd: parseIsoDate(ringRange.end),
+          dailyGoals,
+          today: new Date(),
+        });
+        avgValue = avg.avgValue;
+        avgGoal = avg.avgGoal;
       }
       return {
         metric,
@@ -1632,12 +1699,16 @@ export default function HealthPage() {
         progress,
         actual,
         goalTotal,
+        avgValue,
+        avgGoal,
         onPaceFraction: onPace,
       };
     });
   }, [ringTimeframe, ringGoals, today, anchorDate, tfDocs, ringRange]);
 
   // Hero ring data, derived from ringStats.
+  // Avg mode only applies to multi-day timeframes; Today always shows totals.
+  const showAvg = ringMode === "avg" && ringTimeframe !== "today";
   const ringData: RingDatum[] = useMemo(
     () =>
       ringStats.map((s) => ({
@@ -1645,10 +1716,12 @@ export default function HealthPage() {
         label: s.label,
         progress: s.progress,
         color: s.color,
-        valueLabel: `${fmtRingNumber(s.metric, s.actual)} / ${fmtRingNumber(s.metric, s.goalTotal)}${RING_UNITS[s.metric]}`,
+        valueLabel: showAvg
+          ? `avg ${fmtRingNumber(s.metric, s.avgValue)} / ${fmtRingNumber(s.metric, s.avgGoal)}${RING_UNITS[s.metric]} per day`
+          : `${fmtRingNumber(s.metric, s.actual)} / ${fmtRingNumber(s.metric, s.goalTotal)}${RING_UNITS[s.metric]}`,
         onPaceFraction: s.onPaceFraction,
       })),
-    [ringStats]
+    [ringStats, showAvg]
   );
 
   // Chart data — last 90 days ascending
@@ -2022,10 +2095,16 @@ export default function HealthPage() {
           {/* Hero rings + timeframe selector + ring-goal editor */}
           <div className="bg-card rounded-2xl border border-border p-5 mb-8">
             <div className="flex items-center justify-between gap-2 flex-wrap mb-5">
-              <RingTimeframeSelector
-                value={ringTimeframe}
-                onChange={setRingTimeframe}
-              />
+              <div className="flex items-center gap-2 flex-wrap">
+                <RingTimeframeSelector
+                  value={ringTimeframe}
+                  onChange={setRingTimeframe}
+                />
+                {/* Total ↔ Daily Avg — only meaningful on multi-day timeframes. */}
+                {!isTodayTimeframe && (
+                  <RingValueModeSelector value={ringMode} onChange={setRingMode} />
+                )}
+              </div>
               <button
                 type="button"
                 onClick={() => setRingGoalEditorOpen(true)}
@@ -2054,12 +2133,12 @@ export default function HealthPage() {
                   key={metric}
                   metric={metric}
                   label={stat.label}
-                  value={stat.actual}
-                  goal={stat.goalTotal}
+                  value={showAvg ? stat.avgValue : stat.actual}
+                  goal={showAvg ? stat.avgGoal : stat.goalTotal}
                   progress={stat.progress}
                   color={stat.color}
                   valueFormatter={(v) =>
-                    `${fmtRingNumber(metric, v)}${RING_UNITS[metric]}`
+                    `${fmtRingNumber(metric, v)}${RING_UNITS[metric]}${showAvg ? "/day" : ""}`
                   }
                   onClick={() => goToTrend(metric)}
                 />

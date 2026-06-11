@@ -112,6 +112,51 @@ export function onPaceFraction(
 }
 
 /**
+ * Daily-average view of a multi-day ring period (Total ↔ Daily Avg toggle).
+ *
+ * The ring FILL never changes — this only reshapes the displayed value/goal:
+ * - daysElapsed = inclusive days from periodStart through min(today, periodEnd)
+ *   (current week on a Thursday → 4; a completed month → its full day count;
+ *   YTD → day-of-year). Before the period starts → 0.
+ * - avgValue = periodTotal / daysElapsed
+ * - avgGoal  = (Σ resolved per-day goals over the SAME daysElapsed window) /
+ *   daysElapsed — `dailyGoals` are the per-day resolved goals (already
+ *   per-day-of-week aware); only the first daysElapsed entries are summed, so
+ *   the goal average respects the elapsed window rather than the full period.
+ *
+ * Zero daysElapsed (period starts in the future) returns zeros — no divide.
+ */
+export function ringDailyAverage(args: {
+  periodTotal: number;
+  periodStart: Date;
+  periodEnd: Date;
+  dailyGoals: number[];
+  today: Date;
+}): { avgValue: number; avgGoal: number; daysElapsed: number } {
+  const { periodTotal, periodStart, periodEnd, dailyGoals, today } = args;
+  const startIso = toIsoDate(periodStart);
+  const endIso = toIsoDate(periodEnd);
+  const todayIso = toIsoDate(today);
+
+  // Period hasn't started yet → nothing elapsed, guard divide-by-zero.
+  if (todayIso < startIso) return { avgValue: 0, avgGoal: 0, daysElapsed: 0 };
+
+  const cappedEnd = todayIso > endIso ? endIso : todayIso;
+  const daysElapsed = inclusiveDays(startIso, cappedEnd);
+  if (daysElapsed <= 0) return { avgValue: 0, avgGoal: 0, daysElapsed: 0 };
+
+  const goalSum = dailyGoals
+    .slice(0, daysElapsed)
+    .reduce((s, g) => s + (Number.isFinite(g) ? g : 0), 0);
+
+  return {
+    avgValue: periodTotal / daysElapsed,
+    avgGoal: goalSum / daysElapsed,
+    daysElapsed,
+  };
+}
+
+/**
  * Resolve the goal for one metric on one date: pick the goal version with
  * the LATEST effectiveFrom <= date (createdAt breaks same-day ties); within
  * it, the value for that date's weekday. Falls back to DEFAULT_GOALS when no

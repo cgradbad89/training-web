@@ -7,6 +7,7 @@ import {
   onPaceFraction,
   periodRingProgress,
   resolveGoalForDate,
+  ringDailyAverage,
   shiftDate,
   weekdayKey,
   type DayOfWeekGoals,
@@ -280,5 +281,133 @@ describe("onPaceFraction", () => {
 
   it("returns 0 for a degenerate range (start > end)", () => {
     expect(onPaceFraction(SUN, MON, WED)).toBe(0);
+  });
+});
+
+// ── ringDailyAverage ─────────────────────────────────────────────────────────
+
+describe("ringDailyAverage", () => {
+  // Local-midnight Date from a "YYYY-MM-DD" string (mirrors the page helpers).
+  const d = (iso: string): Date => {
+    const [y, m, dd] = iso.split("-").map(Number);
+    return new Date(y, m - 1, dd);
+  };
+
+  it("uses an elapsed-days denominator mid-week (Thursday → 4)", () => {
+    // Mon–Sun week, viewed on Thursday: 4 days elapsed.
+    const THU = "2026-06-11";
+    const result = ringDailyAverage({
+      periodTotal: 40000,
+      periodStart: d(MON),
+      periodEnd: d(SUN),
+      dailyGoals: [10000, 10000, 10000, 10000, 10000, 10000, 10000],
+      today: d(THU),
+    });
+    expect(result.daysElapsed).toBe(4);
+    expect(result.avgValue).toBe(10000); // 40000 / 4
+    // Only the first 4 per-day goals count toward the average.
+    expect(result.avgGoal).toBe(10000); // (10000×4) / 4
+  });
+
+  it("divides by the full day count for a completed 30-day period", () => {
+    // A fully-elapsed trailing 30-day window (today at/after the end).
+    const start = "2026-05-13";
+    const end = "2026-06-11"; // 30 inclusive days
+    const result = ringDailyAverage({
+      periodTotal: 150000,
+      periodStart: d(start),
+      periodEnd: d(end),
+      dailyGoals: Array.from({ length: 30 }, () => 8000),
+      today: d("2026-06-11"),
+    });
+    expect(result.daysElapsed).toBe(30);
+    expect(result.avgValue).toBe(5000); // 150000 / 30
+    expect(result.avgGoal).toBe(8000);
+  });
+
+  it("uses day-of-year as the denominator for YTD", () => {
+    // YTD as of Jan 10 → 10 days elapsed (Jan 1 … Jan 10 inclusive).
+    const result = ringDailyAverage({
+      periodTotal: 1000,
+      periodStart: d("2026-01-01"),
+      periodEnd: d("2026-12-31"),
+      dailyGoals: Array.from({ length: 365 }, () => 500),
+      today: d("2026-01-10"),
+    });
+    expect(result.daysElapsed).toBe(10);
+    expect(result.avgValue).toBe(100); // 1000 / 10
+    // Only the first 10 of the 365 goals are summed.
+    expect(result.avgGoal).toBe(500); // (500×10) / 10
+  });
+
+  it("respects per-day-of-week goals (non-flat avgGoal)", () => {
+    // Mon=100, Tue=200, Wed=300, Thu=400 over a 4-day elapsed window.
+    const THU = "2026-06-11";
+    const result = ringDailyAverage({
+      periodTotal: 800,
+      periodStart: d(MON),
+      periodEnd: d(SUN),
+      dailyGoals: [100, 200, 300, 400, 999, 999, 999],
+      today: d(THU),
+    });
+    expect(result.daysElapsed).toBe(4);
+    // (100+200+300+400) / 4 = 250 — not a flat per-day goal.
+    expect(result.avgGoal).toBe(250);
+    expect(result.avgValue).toBe(200); // 800 / 4
+  });
+
+  it("caps daysElapsed at the period end when today is past it", () => {
+    // Past completed week viewed later — denominator is the full 7 days,
+    // never the days between the week end and today.
+    const result = ringDailyAverage({
+      periodTotal: 70,
+      periodStart: d(MON),
+      periodEnd: d(SUN),
+      dailyGoals: [10, 10, 10, 10, 10, 10, 10],
+      today: d("2026-06-30"),
+    });
+    expect(result.daysElapsed).toBe(7);
+    expect(result.avgValue).toBe(10);
+    expect(result.avgGoal).toBe(10);
+  });
+
+  it("returns zeros when the period starts in the future (no divide-by-zero)", () => {
+    const result = ringDailyAverage({
+      periodTotal: 0,
+      periodStart: d("2026-07-06"),
+      periodEnd: d("2026-07-12"),
+      dailyGoals: [10000, 10000, 10000, 10000, 10000, 10000, 10000],
+      today: d("2026-06-11"),
+    });
+    expect(result.daysElapsed).toBe(0);
+    expect(result.avgValue).toBe(0);
+    expect(result.avgGoal).toBe(0);
+    expect(Number.isNaN(result.avgGoal)).toBe(false);
+  });
+
+  it("single-day period (today only) → 1 day, avg equals the total", () => {
+    const result = ringDailyAverage({
+      periodTotal: 8432,
+      periodStart: d(WED),
+      periodEnd: d(WED),
+      dailyGoals: [10000],
+      today: d(WED),
+    });
+    expect(result.daysElapsed).toBe(1);
+    expect(result.avgValue).toBe(8432);
+    expect(result.avgGoal).toBe(10000);
+  });
+
+  it("ignores non-finite per-day goals when averaging", () => {
+    const result = ringDailyAverage({
+      periodTotal: 300,
+      periodStart: d(MON),
+      periodEnd: d("2026-06-10"), // Mon–Wed, 3 days
+      dailyGoals: [100, Number.NaN, 200],
+      today: d("2026-06-10"),
+    });
+    expect(result.daysElapsed).toBe(3);
+    // NaN goal contributes 0; (100+0+200)/3 = 100.
+    expect(result.avgGoal).toBe(100);
   });
 });

@@ -48,6 +48,7 @@ import {
   onPaceFraction,
   periodRingProgress,
   resolveGoalForDate,
+  ringDailyAverage,
 } from "@/lib/ringMath";
 import type { HealthGoalDoc, RingMetric } from "@/types/healthGoal";
 
@@ -113,6 +114,12 @@ function toIsoDate(d: Date): string {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+/** Parse a local "YYYY-MM-DD" string to a local-midnight Date. */
+function parseIsoDate(dateStr: string): Date {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Date(y, m - 1, d);
 }
 
 function getWorkoutLocalDate(w: HealthWorkout): Date {
@@ -891,6 +898,8 @@ function WorkoutPlanProgressCard({
 // ─── Health Hero Tile ─────────────────────────────────────────────────────────
 
 type HeroMode = "today" | "week";
+/** Week-ring number display: period total vs. daily average. */
+type RingValueMode = "total" | "avg";
 
 interface HealthHeroTileProps {
   /** Today's healthMetrics doc — fetched independently of the selected week so
@@ -941,6 +950,42 @@ function TodayWeekToggle({
   );
 }
 
+/** Small segmented Total / Daily Avg control for the week ring. */
+function TotalAvgToggle({
+  mode,
+  onChange,
+}: {
+  mode: RingValueMode;
+  onChange: (m: RingValueMode) => void;
+}) {
+  const options: { value: RingValueMode; label: string }[] = [
+    { value: "total", label: "Total" },
+    { value: "avg", label: "Daily Avg" },
+  ];
+  return (
+    <div className="inline-flex items-center gap-1 bg-surface rounded-lg p-0.5">
+      {options.map((o) => {
+        const active = o.value === mode;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            onClick={() => onChange(o.value)}
+            aria-pressed={active}
+            className={`text-xs px-3 h-7 rounded-lg font-semibold transition-colors ${
+              active
+                ? "bg-primary text-white"
+                : "text-textSecondary hover:text-textPrimary"
+            }`}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 /**
  * Hero activity-rings tile — mirrors the Health page Today hero (full-size
  * ActivityRings + the 5-metric value/goal/% legend) with a Today/Week toggle
@@ -966,6 +1011,8 @@ function HealthHeroTile({
   onMetricClick,
 }: HealthHeroTileProps) {
   const [mode, setMode] = useState<HeroMode>("week");
+  // Total ↔ Daily Avg for the WEEK ring only (today is single-day, unaffected).
+  const [valueMode, setValueMode] = useState<RingValueMode>("total");
 
   const todayIso = toIsoDate(new Date());
   const weekStartIso = toIsoDate(weekStart);
@@ -1024,38 +1071,59 @@ function HealthHeroTile({
           (d.value != null && d.value > 0 && d.date <= periodEnd ? d.value : 0),
         0
       );
-      const goalTotal = eachDate(weekStartIso, periodEnd).reduce(
-        (s, date) => s + resolveGoalForDate(ringGoals, metric, date),
-        0
+      const dailyGoals = eachDate(weekStartIso, periodEnd).map((date) =>
+        resolveGoalForDate(ringGoals, metric, date)
       );
+      const goalTotal = dailyGoals.reduce((s, g) => s + g, 0);
+      const valueLabel =
+        valueMode === "avg"
+          ? (() => {
+              const avg = ringDailyAverage({
+                periodTotal: actual,
+                periodStart: weekStart,
+                periodEnd: parseIsoDate(periodEnd),
+                dailyGoals,
+                today: new Date(),
+              });
+              return `avg ${fmtRingNumber(metric, avg.avgValue)} / ${fmtRingNumber(metric, avg.avgGoal)}${RING_UNITS[metric]} per day`;
+            })()
+          : `${fmtRingNumber(metric, actual)} / ${fmtRingNumber(metric, goalTotal)}${RING_UNITS[metric]}`;
       return {
         metric,
         label: RING_LABELS[metric],
         progress,
         color: RING_COLORS[metric],
-        valueLabel: `${fmtRingNumber(metric, actual)} / ${fmtRingNumber(metric, goalTotal)}${RING_UNITS[metric]}`,
+        valueLabel,
         onPaceFraction: weekOnPace,
       };
     });
   }, [
     weekMetrics,
     ringGoals,
+    weekStart,
     weekStartIso,
     weekEndIso,
     todayIso,
     isCurrentWeek,
     isFutureWeek,
+    valueMode,
   ]);
 
   const rings = mode === "today" ? todayRings : weekRings;
 
   return (
     <Card className="h-full">
-      <div className="flex items-center justify-between gap-2 mb-4">
+      <div className="flex items-center justify-between gap-2 flex-wrap mb-4">
         <h2 className="text-sm font-semibold uppercase tracking-widest text-textSecondary">
           Activity Rings
         </h2>
-        <TodayWeekToggle mode={mode} onChange={setMode} />
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Total ↔ Daily Avg applies to the multi-day week ring only. */}
+          {mode === "week" && !isFutureWeek && (
+            <TotalAvgToggle mode={valueMode} onChange={setValueMode} />
+          )}
+          <TodayWeekToggle mode={mode} onChange={setMode} />
+        </div>
       </div>
       <div className="flex justify-center">
         <ActivityRings
