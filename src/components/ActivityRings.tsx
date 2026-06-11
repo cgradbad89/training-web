@@ -45,6 +45,13 @@ export interface RingDatum {
   color: string;
   /** e.g. "8,432 / 10,000" */
   valueLabel: string;
+  /**
+   * Where progress SHOULD be at this point in the period (0..1, from
+   * ringMath's onPaceFraction). When provided and strictly between 0 and 1,
+   * a subtle tick mark is drawn on the ring at that angle. Omit on daily
+   * rings — the marker is for to-date period rings only.
+   */
+  onPaceFraction?: number;
 }
 
 export interface ActivityRingsProps {
@@ -141,6 +148,31 @@ export function ActivityRings({
                   strokeDasharray={`${overFrac * circumference} ${circumference}`}
                 />
               )}
+              {/* On-pace tick — a thin muted notch across the track at the
+                  expected-progress angle (same start/direction as the arc).
+                  Hidden at 0 and 1, so daily rings and completed periods
+                  never show it. */}
+              {(() => {
+                const opf = ring.onPaceFraction;
+                if (opf == null || opf <= 0 || opf >= 1) return null;
+                const angle = opf * 2 * Math.PI;
+                const rIn = r - strokeW / 2 + 0.5;
+                const rOut = r + strokeW / 2 - 0.5;
+                const cos = Math.cos(angle);
+                const sin = Math.sin(angle);
+                return (
+                  <line
+                    x1={center + cos * rIn}
+                    y1={center + sin * rIn}
+                    x2={center + cos * rOut}
+                    y2={center + sin * rOut}
+                    stroke="var(--color-textSecondary)"
+                    strokeOpacity={0.65}
+                    strokeWidth={Math.max(1, strokeW * 0.22)}
+                    strokeLinecap="round"
+                  />
+                );
+              })()}
             </g>
           );
         })}

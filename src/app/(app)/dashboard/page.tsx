@@ -47,6 +47,7 @@ import {
   RING_METRICS,
   dailyRingProgress,
   eachDate,
+  onPaceFraction,
   periodRingProgress,
   resolveGoalForDate,
 } from "@/lib/ringMath";
@@ -940,6 +941,11 @@ function HealthRingsCard({
   });
 
   const periodEnd = isCurrentWeek ? todayIso : weekEndIso;
+  // On-pace tick over the FULL Mon–Sun week — current week only (past weeks
+  // are complete and future weeks are empty; both hide the tick anyway).
+  const weekOnPace = isCurrentWeek
+    ? onPaceFraction(weekStartIso, weekEndIso, todayIso)
+    : undefined;
   const weekRings: RingDatum[] = RING_METRICS.map((metric) => {
     if (isFutureWeek) {
       return {
@@ -977,6 +983,7 @@ function HealthRingsCard({
       progress,
       color: RING_COLORS[metric],
       valueLabel: `${fmtRingNumber(metric, actual)} / ${fmtRingNumber(metric, goalTotal)}${RING_UNITS[metric]}`,
+      onPaceFraction: weekOnPace,
     };
   });
 

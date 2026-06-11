@@ -79,6 +79,38 @@ export function eachDate(startDate: string, endDate: string): string[] {
   return dates;
 }
 
+/** Inclusive day count between two local ISO dates; 0 when start > end. */
+function inclusiveDays(startDate: string, endDate: string): number {
+  if (startDate > endDate) return 0;
+  const [y1, m1, d1] = startDate.split("-").map(Number);
+  const [y2, m2, d2] = endDate.split("-").map(Number);
+  const ms =
+    new Date(y2, m2 - 1, d2).getTime() - new Date(y1, m1 - 1, d1).getTime();
+  // Math.round absorbs the ±1h DST offset in local-date diffs.
+  return Math.round(ms / 86_400_000) + 1;
+}
+
+/**
+ * Where progress SHOULD be at this point in a period: elapsedDays/totalDays,
+ * clamped to [0, 1]. totalDays spans the FULL period [startDate..endDate]
+ * (e.g. 7 for a week, even when actuals are capped at today); elapsedDays
+ * spans [startDate..min(today, endDate)], inclusive — Wednesday of a Mon–Sun
+ * week → 3/7. Before the period starts → 0. Renderers hide the tick at 0
+ * and 1, so completed periods and single-day periods show no marker.
+ */
+export function onPaceFraction(
+  startDate: string,
+  endDate: string,
+  today: string
+): number {
+  const total = inclusiveDays(startDate, endDate);
+  if (total <= 0) return 0;
+  if (today < startDate) return 0;
+  const cappedEnd = today > endDate ? endDate : today;
+  const elapsed = inclusiveDays(startDate, cappedEnd);
+  return Math.min(1, Math.max(0, elapsed / total));
+}
+
 /**
  * Resolve the goal for one metric on one date: pick the goal version with
  * the LATEST effectiveFrom <= date (createdAt breaks same-day ties); within

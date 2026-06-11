@@ -4,6 +4,7 @@ import {
   RING_METRICS,
   dailyRingProgress,
   eachDate,
+  onPaceFraction,
   periodRingProgress,
   resolveGoalForDate,
   shiftDate,
@@ -240,5 +241,44 @@ describe("periodRingProgress", () => {
     const zeroGoals = [goalDoc("2026-01-01", 0)];
     const days = [{ date: MON, value: 1000 }];
     expect(periodRingProgress(days, zeroGoals, "steps", MON, SUN)).toBe(0);
+  });
+});
+
+// ── onPaceFraction ───────────────────────────────────────────────────────────
+
+describe("onPaceFraction", () => {
+  it("returns 3/7 mid-week (Wednesday of a Mon–Sun week)", () => {
+    expect(onPaceFraction(MON, SUN, WED)).toBeCloseTo(3 / 7);
+  });
+
+  it("returns 0 before the period starts (tick hidden)", () => {
+    expect(onPaceFraction(MON, SUN, "2026-06-07")).toBe(0);
+  });
+
+  it("counts the first day inclusively (1/7 on the start date)", () => {
+    expect(onPaceFraction(MON, SUN, MON)).toBeCloseTo(1 / 7);
+  });
+
+  it("returns 1 when today is the period end (tick hidden)", () => {
+    expect(onPaceFraction(MON, SUN, SUN)).toBe(1);
+  });
+
+  it("clamps to 1 after the period ends (past weeks hide the tick)", () => {
+    expect(onPaceFraction(MON, SUN, "2026-06-20")).toBe(1);
+  });
+
+  it("returns 1 for a single-day period (daily view never shows a tick)", () => {
+    expect(onPaceFraction(WED, WED, WED)).toBe(1);
+  });
+
+  it("handles a partial YTD period", () => {
+    // Jan 1 → Jun 11, 2026 = 162 elapsed days of a 365-day year.
+    expect(onPaceFraction("2026-01-01", "2026-12-31", "2026-06-11")).toBeCloseTo(
+      162 / 365
+    );
+  });
+
+  it("returns 0 for a degenerate range (start > end)", () => {
+    expect(onPaceFraction(SUN, MON, WED)).toBe(0);
   });
 });

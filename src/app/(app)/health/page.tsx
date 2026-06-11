@@ -60,6 +60,7 @@ import {
   RING_METRICS,
   dailyRingProgress,
   eachDate,
+  onPaceFraction,
   periodRingProgress,
   resolveGoalForDate,
   type HealthGoalDoc,
@@ -717,6 +718,8 @@ interface RingStat {
   progress: number;
   actual: number;
   goalTotal: number;
+  /** Expected-progress tick position for period rings (undefined on Today). */
+  onPaceFraction?: number;
 }
 
 /** Segmented pill-group for the Today / Calendar / Trends tabs. */
@@ -1581,6 +1584,17 @@ export default function HealthPage() {
   // for value/goal/progress per timeframe — the hero rings and the per-ring
   // KPI cards are both derived from this; never add a second math path.
   const ringStats: RingStat[] = useMemo(() => {
+    // Full-period end for the on-pace tick: trailing 7d/30d windows already
+    // end at the range end (fully elapsed → fraction 1 → tick hidden); YTD's
+    // full period runs to Dec 31 while actuals stay capped at the anchor.
+    const tickEnd =
+      ringTimeframe === "ytd"
+        ? `${anchorDate.slice(0, 4)}-12-31`
+        : ringRange.end;
+    const onPace =
+      ringTimeframe === "today"
+        ? undefined
+        : onPaceFraction(ringRange.start, tickEnd, todayISO());
     return RING_METRICS.map((metric) => {
       let progress: number;
       let actual: number;
@@ -1618,6 +1632,7 @@ export default function HealthPage() {
         progress,
         actual,
         goalTotal,
+        onPaceFraction: onPace,
       };
     });
   }, [ringTimeframe, ringGoals, today, anchorDate, tfDocs, ringRange]);
@@ -1631,6 +1646,7 @@ export default function HealthPage() {
         progress: s.progress,
         color: s.color,
         valueLabel: `${fmtRingNumber(s.metric, s.actual)} / ${fmtRingNumber(s.metric, s.goalTotal)}${RING_UNITS[s.metric]}`,
+        onPaceFraction: s.onPaceFraction,
       })),
     [ringStats]
   );
