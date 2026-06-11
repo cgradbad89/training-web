@@ -2051,9 +2051,33 @@ export default function HealthPage() {
             })}
           </div>
 
-          {/* KPI tiles — values follow the timeframe selector; tap → Trends */}
-          <Section title="Body">
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+        </>
+      )}
+
+      {/* ── Calendar tab ───────────────────────────────────────────── */}
+      {activeTab === "calendar" && (
+        <RingCalendar
+          metricsByDate={calendarMetricsLive}
+          goals={ringGoals}
+          onVisibleRangeChange={handleCalendarRange}
+          onMetricClick={goToTrend}
+        />
+      )}
+
+      {activeTab === "trends" && (
+      <>
+
+      {/* ── Body ─────────────────────────────────────────────────── */}
+      <Section
+        title="Body"
+        actions={
+          <SectionActions
+            onSelectAll={() => selectAllInSection(BODY_KPIS)}
+            onClear={() => clearSection(BODY_KPIS)}
+          />
+        }
+      >
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
               <KpiCard
                 icon={Scale}
                 label="Weight"
@@ -2112,150 +2136,9 @@ export default function HealthPage() {
                 onToggle={() => goToTrend("resting_hr")}
               />
             </div>
-          </Section>
-
-          <Section title="Activity">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <KpiCard
-                icon={Footprints}
-                label="Steps"
-                color={getColor("steps")}
-                today={dispSteps}
-                avg7={a7("steps")}
-                avg30={a30("steps")}
-                formatter={(v) => (v ? Math.round(v).toLocaleString() : "—")}
-                status={stepsStatus}
-                goalText={stepsGoalText}
-                subtitle={tfSubtitle}
-                onToggle={() => goToTrend("steps")}
-              />
-              <KpiCard
-                icon={Clock}
-                label="Exercise Mins"
-                color={getColor("exercise")}
-                today={dispExercise}
-                avg7={a7("exercise_mins")}
-                avg30={a30("exercise_mins")}
-                formatter={(v) => (v !== undefined ? `${Math.round(v)} min` : "—")}
-                status={exerciseStatus}
-                goalText={exerciseGoalText}
-                subtitle={tfSubtitle}
-                onToggle={() => goToTrend("exercise_mins")}
-              />
-              <KpiCard
-                icon={Zap}
-                label="Move Calories"
-                color={getColor("calories")}
-                today={dispMoveCal}
-                avg7={a7("move_calories")}
-                avg30={a30("move_calories")}
-                formatter={(v) => (v !== undefined ? `${Math.round(v)} kcal` : "—")}
-                status={moveCalStatus}
-                goalText={moveCalGoalText}
-                subtitle={tfSubtitle}
-                onToggle={() => goToTrend("move_calories")}
-              />
-              <KpiCard
-                icon={PersonStanding}
-                label="Stand Hours"
-                color={getColor("stand")}
-                today={dispStand}
-                avg7={a7("stand_hours")}
-                avg30={a30("stand_hours")}
-                formatter={(v) => (v !== undefined ? `${Math.round(v)}h` : "—")}
-                status={standStatus}
-                goalText={standGoalText}
-                subtitle={tfSubtitle}
-                onToggle={() => goToTrend("stand_hours")}
-              />
-            </div>
-          </Section>
-
-          <Section title="Recovery">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <KpiCard
-                icon={Moon}
-                label="Total Sleep"
-                color={getColor("sleep")}
-                today={dispSleep}
-                avg7={a7("sleep_total_hours")}
-                avg30={a30("sleep_total_hours")}
-                formatter={(v) => formatHours(v)}
-                status={sleepStatus}
-                goalText={sleepGoalText}
-                subtitle={tfSubtitle}
-                onToggle={() => goToTrend("sleep_total_hours")}
-              />
-              <KpiCard
-                icon={Moon}
-                label="Awake Time"
-                color="#6b7280"
-                today={dispAwake}
-                avg7={a7("sleep_awake_mins")}
-                avg30={a30("sleep_awake_mins")}
-                formatter={(v) => (v !== undefined ? `${Math.round(v)} min` : "—")}
-                status={awakeStatus}
-                goalText={awakeGoalText}
-                subtitle={tfSubtitle}
-                onToggle={() => goToTrend("sleep_awake_mins")}
-              />
-              <KpiCard
-                icon={SmilePlus}
-                label="Brushing Sessions"
-                color={getColor("brush")}
-                today={dispBrushCount}
-                avg7={a7("brush_count")}
-                avg30={a30("brush_count")}
-                formatter={(v) => (v !== undefined ? `${v.toFixed(1)}x` : "—")}
-                status={brushingStatus}
-                goalText={brushingGoalText}
-                subtitle={tfSubtitle}
-                onToggle={() => goToTrend("brush_count")}
-              />
-              <KpiCard
-                icon={Clock}
-                label="Avg Brush Time"
-                color={getColor("brush")}
-                today={dispAvgBrush}
-                avg7={a7("brush_avg_duration_mins")}
-                avg30={a30("brush_avg_duration_mins")}
-                formatter={(v) => (v !== undefined ? `${v.toFixed(1)} min` : "—")}
-                status={avgBrushStatus}
-                goalText={avgBrushGoalText}
-                subtitle={tfSubtitle}
-                onToggle={() => goToTrend("brush_avg_duration_mins")}
-              />
-            </div>
-          </Section>
-        </>
-      )}
-
-      {/* ── Calendar tab ───────────────────────────────────────────── */}
-      {activeTab === "calendar" && (
-        <RingCalendar
-          metricsByDate={calendarMetricsLive}
-          goals={ringGoals}
-          onVisibleRangeChange={handleCalendarRange}
-          onMetricClick={goToTrend}
-        />
-      )}
-
-      {activeTab === "trends" && (
-      <>
-
-      {/* ── Body ─────────────────────────────────────────────────── */}
-      <Section
-        title="Body"
-        actions={
-          <SectionActions
-            onSelectAll={() => selectAllInSection(BODY_KPIS)}
-            onClear={() => clearSection(BODY_KPIS)}
-          />
-        }
-      >
         {!sectionAnyActive(BODY_KPIS) && (
           <p className="text-xs text-textSecondary">
-            No charts selected — use “All”, or tap a KPI card on the Today tab.
+            No charts selected — use “All”, or tap a KPI card above.
           </p>
         )}
         {sectionAnyActive(BODY_KPIS) && (
@@ -2411,9 +2294,63 @@ export default function HealthPage() {
           />
         }
       >
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+              <KpiCard
+                icon={Footprints}
+                label="Steps"
+                color={getColor("steps")}
+                today={dispSteps}
+                avg7={a7("steps")}
+                avg30={a30("steps")}
+                formatter={(v) => (v ? Math.round(v).toLocaleString() : "—")}
+                status={stepsStatus}
+                goalText={stepsGoalText}
+                subtitle={tfSubtitle}
+                onToggle={() => goToTrend("steps")}
+              />
+              <KpiCard
+                icon={Clock}
+                label="Exercise Mins"
+                color={getColor("exercise")}
+                today={dispExercise}
+                avg7={a7("exercise_mins")}
+                avg30={a30("exercise_mins")}
+                formatter={(v) => (v !== undefined ? `${Math.round(v)} min` : "—")}
+                status={exerciseStatus}
+                goalText={exerciseGoalText}
+                subtitle={tfSubtitle}
+                onToggle={() => goToTrend("exercise_mins")}
+              />
+              <KpiCard
+                icon={Zap}
+                label="Move Calories"
+                color={getColor("calories")}
+                today={dispMoveCal}
+                avg7={a7("move_calories")}
+                avg30={a30("move_calories")}
+                formatter={(v) => (v !== undefined ? `${Math.round(v)} kcal` : "—")}
+                status={moveCalStatus}
+                goalText={moveCalGoalText}
+                subtitle={tfSubtitle}
+                onToggle={() => goToTrend("move_calories")}
+              />
+              <KpiCard
+                icon={PersonStanding}
+                label="Stand Hours"
+                color={getColor("stand")}
+                today={dispStand}
+                avg7={a7("stand_hours")}
+                avg30={a30("stand_hours")}
+                formatter={(v) => (v !== undefined ? `${Math.round(v)}h` : "—")}
+                status={standStatus}
+                goalText={standGoalText}
+                subtitle={tfSubtitle}
+                onToggle={() => goToTrend("stand_hours")}
+              />
+            </div>
         {!sectionAnyActive(ACTIVITY_KPIS) && (
           <p className="text-xs text-textSecondary">
-            No charts selected — use “All”, or tap a KPI card on the Today tab.
+            No charts selected — use “All”, or tap a KPI card above.
           </p>
         )}
         {sectionAnyActive(ACTIVITY_KPIS) && (
@@ -2548,9 +2485,63 @@ export default function HealthPage() {
           />
         }
       >
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+              <KpiCard
+                icon={Moon}
+                label="Total Sleep"
+                color={getColor("sleep")}
+                today={dispSleep}
+                avg7={a7("sleep_total_hours")}
+                avg30={a30("sleep_total_hours")}
+                formatter={(v) => formatHours(v)}
+                status={sleepStatus}
+                goalText={sleepGoalText}
+                subtitle={tfSubtitle}
+                onToggle={() => goToTrend("sleep_total_hours")}
+              />
+              <KpiCard
+                icon={Moon}
+                label="Awake Time"
+                color="#6b7280"
+                today={dispAwake}
+                avg7={a7("sleep_awake_mins")}
+                avg30={a30("sleep_awake_mins")}
+                formatter={(v) => (v !== undefined ? `${Math.round(v)} min` : "—")}
+                status={awakeStatus}
+                goalText={awakeGoalText}
+                subtitle={tfSubtitle}
+                onToggle={() => goToTrend("sleep_awake_mins")}
+              />
+              <KpiCard
+                icon={SmilePlus}
+                label="Brushing Sessions"
+                color={getColor("brush")}
+                today={dispBrushCount}
+                avg7={a7("brush_count")}
+                avg30={a30("brush_count")}
+                formatter={(v) => (v !== undefined ? `${v.toFixed(1)}x` : "—")}
+                status={brushingStatus}
+                goalText={brushingGoalText}
+                subtitle={tfSubtitle}
+                onToggle={() => goToTrend("brush_count")}
+              />
+              <KpiCard
+                icon={Clock}
+                label="Avg Brush Time"
+                color={getColor("brush")}
+                today={dispAvgBrush}
+                avg7={a7("brush_avg_duration_mins")}
+                avg30={a30("brush_avg_duration_mins")}
+                formatter={(v) => (v !== undefined ? `${v.toFixed(1)} min` : "—")}
+                status={avgBrushStatus}
+                goalText={avgBrushGoalText}
+                subtitle={tfSubtitle}
+                onToggle={() => goToTrend("brush_avg_duration_mins")}
+              />
+            </div>
         {!sectionAnyActive(RECOVERY_KPIS) && (
           <p className="text-xs text-textSecondary">
-            No charts selected — use “All”, or tap a KPI card on the Today tab.
+            No charts selected — use “All”, or tap a KPI card above.
           </p>
         )}
         {sectionAnyActive(RECOVERY_KPIS) && (
