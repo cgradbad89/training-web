@@ -54,6 +54,7 @@ import {
 } from "@/components/ActivityRings";
 import { RingGoalEditorModal } from "@/components/health/RingGoalEditorModal";
 import { RingCalendar } from "@/components/health/RingCalendar";
+import { RingKpiCard } from "@/components/health/RingKpiCard";
 import { fetchHealthGoals as fetchRingGoalVersions } from "@/services/healthGoals";
 import {
   RING_METRICS,
@@ -697,6 +698,26 @@ const TREND_FIELDS: readonly string[] = [
   ...ACTIVITY_KPIS,
   ...RECOVERY_KPIS,
 ];
+
+/** Per-ring KPI card order on the Today tab (mockup: Move first). */
+const RING_KPI_ORDER: readonly RingMetric[] = [
+  "move_calories",
+  "exercise_mins",
+  "stand_hours",
+  "steps",
+  "sleep_total_hours",
+];
+
+/** Raw per-metric ring stats — one computation feeds the hero rings AND the
+ * per-ring KPI cards so the two surfaces can never disagree. */
+interface RingStat {
+  metric: RingMetric;
+  label: string;
+  color: string;
+  progress: number;
+  actual: number;
+  goalTotal: number;
+}
 
 /** Segmented pill-group for the Today / Calendar / Trends tabs. */
 function HealthTabsBar({
@@ -1556,8 +1577,10 @@ export default function HealthPage() {
         ? "30-day daily avg"
         : "YTD daily avg";
 
-  // Activity ring data for the hero rings (outer → inner = RING_METRICS).
-  const ringData: RingDatum[] = useMemo(() => {
+  // Per-metric ring stats (outer → inner = RING_METRICS). The SINGLE source
+  // for value/goal/progress per timeframe — the hero rings and the per-ring
+  // KPI cards are both derived from this; never add a second math path.
+  const ringStats: RingStat[] = useMemo(() => {
     return RING_METRICS.map((metric) => {
       let progress: number;
       let actual: number;
@@ -1591,12 +1614,26 @@ export default function HealthPage() {
       return {
         metric,
         label: RING_LABELS[metric],
-        progress,
         color: RING_COLORS[metric],
-        valueLabel: `${fmtRingNumber(metric, actual)} / ${fmtRingNumber(metric, goalTotal)}${RING_UNITS[metric]}`,
+        progress,
+        actual,
+        goalTotal,
       };
     });
   }, [ringTimeframe, ringGoals, today, anchorDate, tfDocs, ringRange]);
+
+  // Hero ring data, derived from ringStats.
+  const ringData: RingDatum[] = useMemo(
+    () =>
+      ringStats.map((s) => ({
+        metric: s.metric,
+        label: s.label,
+        progress: s.progress,
+        color: s.color,
+        valueLabel: `${fmtRingNumber(s.metric, s.actual)} / ${fmtRingNumber(s.metric, s.goalTotal)}${RING_UNITS[s.metric]}`,
+      })),
+    [ringStats]
+  );
 
   // Chart data — last 90 days ascending
   const chartData = useMemo(() => [...metrics90].reverse(), [metrics90]);
@@ -1989,6 +2026,29 @@ export default function HealthPage() {
               showLegend
               onRingClick={goToTrend}
             />
+          </div>
+
+          {/* Per-ring KPI cards — same stats as the hero legend; tap → Trends */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-8">
+            {RING_KPI_ORDER.map((metric) => {
+              const stat = ringStats.find((s) => s.metric === metric);
+              if (!stat) return null;
+              return (
+                <RingKpiCard
+                  key={metric}
+                  metric={metric}
+                  label={stat.label}
+                  value={stat.actual}
+                  goal={stat.goalTotal}
+                  progress={stat.progress}
+                  color={stat.color}
+                  valueFormatter={(v) =>
+                    `${fmtRingNumber(metric, v)}${RING_UNITS[metric]}`
+                  }
+                  onClick={() => goToTrend(metric)}
+                />
+              );
+            })}
           </div>
 
           {/* KPI tiles — values follow the timeframe selector; tap → Trends */}
