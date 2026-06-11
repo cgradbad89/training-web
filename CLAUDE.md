@@ -8,6 +8,14 @@
 - **Commit**: Stage files by explicit path (`git add PRD.md src/...`). Never use `git add -A`. Commit and push only after build + tests pass.
 - **No broken commits**: Do not commit if `npm run build` or `npm test` fail.
 
+## Deploying Firestore Rules
+
+- `firestore.rules` at the repo root is the **canonical source** — never edit rules in the Firebase console without mirroring the change back into the repo and committing it.
+- Deploy command (CLI configured via `firebase.json` + `.firebaserc`):
+  `firebase deploy --only firestore:rules --project malignant-metro`
+- Requires a one-time `firebase login` (the CLI is a global tool, not an app dependency).
+- Editing `firestore.rules` does nothing until deployed. Deploys are manual and only happen when a task explicitly authorizes them.
+
 ## PRD Maintenance
 
 After every session, update `PRD.md` if any of the following changed:
