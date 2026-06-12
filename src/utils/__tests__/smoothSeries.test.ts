@@ -41,4 +41,20 @@ describe("rollingAverage", () => {
     const out = rollingAverage([600, 1200, 600], 25, [5, 5, 5]);
     expect(out.every((v) => v != null && Number.isFinite(v))).toBe(true);
   });
+
+  it("empty series → empty output (no crash)", () => {
+    expect(rollingAverage([], 25, [])).toEqual([]);
+  });
+
+  it("window larger than the whole series → every point becomes the series mean", () => {
+    // 3 samples spanning 2s, smoothed with a 600s window: every window covers
+    // the entire series, so each output is the overall mean.
+    const out = rollingAverage([500, 700, 900], 600, ts(3));
+    expect(out).toHaveLength(3);
+    for (const v of out) expect(v).toBeCloseTo(700, 5);
+  });
+
+  it("single-element series → unchanged", () => {
+    expect(rollingAverage([640], 25, [0])).toEqual([640]);
+  });
 });

@@ -6,7 +6,7 @@ import {
   formatRaceTime,
   buildQualifyingEfforts, fitRiegel, predictSeconds
 } from '@/utils/riegelFit'
-import { weekStart as getWeekStart } from '@/utils/dates'
+import { weekStart as getWeekStart, parseLocalDate, daysUntil } from '@/utils/dates'
 import {
   resolveDisplayLoad,
   DEFAULT_MAX_HR,
@@ -41,11 +41,6 @@ function formatDateStr(d: Date): string {
   return d.toLocaleDateString('en-US', {
     month: 'short', day: 'numeric', year: 'numeric'
   })
-}
-
-// Compute days between two dates
-function daysBetween(a: Date, b: Date): number {
-  return Math.ceil((b.getTime() - a.getTime()) / 86400000)
 }
 
 // Get distance miles for a race
@@ -226,8 +221,8 @@ export function buildCoachContext(
   // Active race context
   let raceContext = null
   if (activeRace) {
-    const raceDate = new Date(activeRace.raceDate)
-    const daysAway = daysBetween(new Date(), raceDate)
+    const raceDate = parseLocalDate(activeRace.raceDate)
+    const daysAway = daysUntil(activeRace.raceDate)
     const distanceMiles = getRaceDistanceMiles(activeRace)
 
     // Predicted time via Riegel — race-anchored: the active race's planned

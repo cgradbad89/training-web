@@ -884,8 +884,8 @@ export function CrossTrainingPlanDetail({
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
-      {/* Header */}
-      <div className="px-6 py-4 border-b border-border bg-card flex items-start gap-4">
+      {/* Header — compact padding below lg; desktop unchanged */}
+      <div className="px-4 py-3 lg:px-6 lg:py-4 border-b border-border bg-card flex items-start gap-4">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-3 flex-wrap">
             {isEditMode ? (
@@ -949,11 +949,15 @@ export function CrossTrainingPlanDetail({
           )}
         </div>
         <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+          {/* In edit mode on mobile, secondary actions hide so the title input
+              + Done stay on one compact row; all return on Done or at lg. */}
           {plan.status !== "active" && (
             <button
               onClick={onSetActive}
               disabled={saving}
-              className="text-sm px-3 py-1.5 rounded-lg bg-primary text-white font-medium hover:bg-primary/90 disabled:opacity-50"
+              className={`${
+                isEditMode ? "hidden lg:inline-flex" : ""
+              } text-sm px-3 py-1.5 rounded-lg bg-primary text-white font-medium hover:bg-primary/90 disabled:opacity-50`}
             >
               Set Active
             </button>
@@ -996,7 +1000,9 @@ export function CrossTrainingPlanDetail({
             }}
             disabled={saving}
             title="Copy plan"
-            className="flex items-center gap-1 text-sm px-2.5 py-1.5 rounded-lg border border-border text-textSecondary hover:text-textPrimary hover:bg-surface disabled:opacity-50"
+            className={`${
+              isEditMode ? "hidden lg:flex" : "flex"
+            } items-center gap-1 text-sm px-2.5 py-1.5 rounded-lg border border-border text-textSecondary hover:text-textPrimary hover:bg-surface disabled:opacity-50`}
           >
             <Copy className="w-3.5 h-3.5" />
             Copy plan
@@ -1005,7 +1011,9 @@ export function CrossTrainingPlanDetail({
             onClick={() => setConfirmDelete(true)}
             disabled={saving}
             title="Delete plan"
-            className="p-1.5 rounded-lg hover:bg-danger/10 text-textSecondary hover:text-danger disabled:opacity-50"
+            className={`${
+              isEditMode ? "hidden lg:inline-flex" : ""
+            } p-1.5 rounded-lg hover:bg-danger/10 text-textSecondary hover:text-danger disabled:opacity-50`}
           >
             <Trash2 className="w-4 h-4" />
           </button>

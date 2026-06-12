@@ -29,6 +29,7 @@ import {
   formatDuration,
   parsePaceString,
 } from "@/utils/pace";
+import { parseLocalDate, daysUntil } from "@/utils/dates";
 import {
   Calendar,
   MapPin,
@@ -44,12 +45,9 @@ import {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function daysFromToday(dateStr: string): number {
-  const race = new Date(dateStr + "T00:00:00");
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  return Math.round((race.getTime() - today.getTime()) / 86400000);
-}
+// Days-until math is shared app-wide via daysUntil (src/utils/dates.ts) so the
+// Races page and Plan Insights can never disagree on a race's countdown.
+const daysFromToday = daysUntil;
 
 function raceMiles(race: Race): number {
   if (race.raceDistance === "custom") {
@@ -65,7 +63,7 @@ function goalTime(paceSecPerMile: number, distanceMiles: number): string {
 }
 
 function formatRaceDate(dateStr: string): string {
-  const d = new Date(dateStr + "T00:00:00");
+  const d = parseLocalDate(dateStr);
   return d.toLocaleDateString("en-US", {
     weekday: "short",
     month: "short",
@@ -90,7 +88,7 @@ function nearbyRuns(
   activities: HealthWorkout[],
   raceDateStr: string
 ): HealthWorkout[] {
-  const raceMs = new Date(raceDateStr + "T00:00:00").getTime();
+  const raceMs = parseLocalDate(raceDateStr).getTime();
   const window = 30 * 86400000;
   return activities.filter((a) => {
     if (!a.isRunLike) return false;
@@ -935,17 +933,17 @@ export default function RacesPage() {
   today.setHours(0, 0, 0, 0);
 
   const upcomingRaces = races
-    .filter((r) => new Date(r.raceDate + "T00:00:00") > today)
+    .filter((r) => parseLocalDate(r.raceDate) > today)
     .sort(
       (a, b) =>
-        new Date(a.raceDate).getTime() - new Date(b.raceDate).getTime()
+        parseLocalDate(a.raceDate).getTime() - parseLocalDate(b.raceDate).getTime()
     );
 
   const pastRaces = races
-    .filter((r) => new Date(r.raceDate + "T00:00:00") <= today)
+    .filter((r) => parseLocalDate(r.raceDate) <= today)
     .sort(
       (a, b) =>
-        new Date(b.raceDate).getTime() - new Date(a.raceDate).getTime()
+        parseLocalDate(b.raceDate).getTime() - parseLocalDate(a.raceDate).getTime()
     );
 
   function linkedActivity(race: Race): HealthWorkout | undefined {

@@ -42,6 +42,14 @@ export interface RunGap {
    * is NET, distinct from the device's TOTAL cumulative `elevationGainM`.
    */
   netRiseM: number | null;
+  /**
+   * True when the run HAS usable elevation geometry but the aggregate grade
+   * resolved to flat (zero net grade, or snapped to zero by the aggregate
+   * dead-band) — i.e. GAP was INTENTIONALLY left unadjusted and equals the
+   * base pace. Display-only signal: lets the GAP KPI say "flat" instead of
+   * looking like missing data. Never true when geometry is absent.
+   */
+  aggregateGradeFlat: boolean;
 }
 
 // ─── Constants & guards ───────────────────────────────────────────────────────
@@ -212,6 +220,7 @@ export function computeRunGap(
       perPointGap: [],
       perMileGapSecPerMile: [],
       netRiseM: null,
+      aggregateGradeFlat: false,
     };
   }
 
@@ -416,6 +425,10 @@ export function computeRunGap(
   if (Math.abs(aggregateGradePercent) <= AGGREGATE_GRADE_DEADBAND_PERCENT) {
     aggregateGradePercent = 0;
   }
+  // Flat = real geometry whose aggregate grade resolved to zero (incl. the
+  // dead-band snap above) → GAP deliberately unadjusted. Surfaced so the UI
+  // can label the value "flat" rather than implying missing data.
+  const aggregateGradeFlat = netRiseM != null && aggregateGradePercent === 0;
   const aggregateFactor = gradeAdjustmentFactor(aggregateGradePercent);
   // adjusted time / actual time: < 1 net-uphill (faster GAP), > 1 net-downhill.
   const gradeRatio = aggregateFactor > 0 ? 1 / aggregateFactor : 1;
@@ -452,5 +465,29 @@ export function computeRunGap(
     perPointGap: perPointGapScaled,
     perMileGapSecPerMile,
     netRiseM,
+    aggregateGradeFlat,
   };
+}
+
+// ─── GAP display selector ─────────────────────────────────────────────────────
+
+export type GapDisplay =
+  /** No usable route/elevation data → render "—". */
+  | { mode: "none" }
+  /** Dead-band/zero aggregate grade → show the (unadjusted) pace + "flat". */
+  | { mode: "flat"; paceSecPerMile: number }
+  /** Normal grade-adjusted value. */
+  | { mode: "value"; paceSecPerMile: number };
+
+/**
+ * Pure display selector for the run-header GAP stat. Display-only — the GAP
+ * math above is untouched. "—" is reserved for runs with genuinely no
+ * route/elevation data; a flat run shows its actual pace labelled "flat".
+ */
+export function selectGapDisplay(gap: RunGap): GapDisplay {
+  if (!(gap.runGapSecPerMile > 0)) return { mode: "none" };
+  if (gap.aggregateGradeFlat) {
+    return { mode: "flat", paceSecPerMile: gap.runGapSecPerMile };
+  }
+  return { mode: "value", paceSecPerMile: gap.runGapSecPerMile };
 }

@@ -2,6 +2,8 @@ import { describe, it, expect, vi } from "vitest";
 import {
   gradeAdjustmentFactor,
   computeRunGap,
+  selectGapDisplay,
+  type RunGap,
 } from "../gradeAdjustedPace";
 import { type RoutePoint } from "@/services/routes";
 
@@ -457,5 +459,70 @@ describe("computeRunGap — aggregate-grade dead-band (Phase 2)", () => {
     const g = computeRunGap(pts, 0, 0, AVG_PACE);
     expect(g.runGapSecPerMile).toBeGreaterThan(AVG_PACE + 5); // clearly not snapped
     expect(g.runGapSecPerMile).toBeLessThan(AVG_PACE + 10);
+  });
+});
+
+// ─── GAP display selector (display-only — math untouched) ───────────────────
+// Dead-band-suppressed runs show the actual pace labelled "flat"; the dash is
+// reserved for runs with genuinely no route/elevation data.
+describe("aggregateGradeFlat flag + selectGapDisplay", () => {
+  const AVG_PACE = 588;
+
+  function buildRamp(count: number, startAlt: number, slope: number): RoutePoint[] {
+    return Array.from({ length: count }, (_, i) => ({
+      index: i,
+      lat: 40,
+      lng: -100 + i * 0.0001,
+      altitude: startAlt + i * slope,
+      timestamp: new Date(BASE_MS + i * 3 * 1000).toISOString(),
+      speed: null,
+      hr: null,
+    }));
+  }
+
+  it("dead-band-snapped run → aggregateGradeFlat true → mode 'flat' with the actual pace", () => {
+    // ~0.05% net grade — inside the ±0.10% aggregate dead-band.
+    const g = computeRunGap(buildRamp(400, 100, 0.0043), 0, 0, AVG_PACE);
+    expect(g.aggregateGradeFlat).toBe(true);
+    const display = selectGapDisplay(g);
+    expect(display.mode).toBe("flat");
+    if (display.mode === "flat") {
+      expect(display.paceSecPerMile).toBeCloseTo(AVG_PACE, 6);
+    }
+  });
+
+  it("perfectly flat run → mode 'flat' (zero grade is flat, not missing data)", () => {
+    const g = computeRunGap(buildRamp(400, 100, 0), 0, 0, AVG_PACE);
+    expect(g.aggregateGradeFlat).toBe(true);
+    expect(selectGapDisplay(g).mode).toBe("flat");
+  });
+
+  it("real shallow descent (−0.229%) → flag false → mode 'value' (adjusted GAP)", () => {
+    const g = computeRunGap(buildRamp(400, 200, -0.0198), 0, 0, AVG_PACE);
+    expect(g.aggregateGradeFlat).toBe(false);
+    const display = selectGapDisplay(g);
+    expect(display.mode).toBe("value");
+    if (display.mode === "value") {
+      expect(display.paceSecPerMile).toBeGreaterThan(AVG_PACE);
+    }
+  });
+
+  it("no route data → mode 'none' (dash kept only for genuinely missing data)", () => {
+    // The run-detail page's no-route default: zero GAP, no geometry.
+    const noData: RunGap = {
+      runGapSecPerMile: 0,
+      perPointGap: [],
+      perMileGapSecPerMile: [],
+      netRiseM: null,
+      aggregateGradeFlat: false,
+    };
+    expect(selectGapDisplay(noData).mode).toBe("none");
+  });
+
+  it("empty-points early return never claims flat", () => {
+    const g = computeRunGap([], 2, 1200);
+    expect(g.aggregateGradeFlat).toBe(false);
+    // Pace is derivable (1200s/2mi) so it displays as a value, not a dash.
+    expect(selectGapDisplay(g).mode).toBe("value");
   });
 });

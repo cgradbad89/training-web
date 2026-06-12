@@ -392,15 +392,28 @@ export function PlanEditor<TEntry extends PlanEditorEntryBase>({
         </button>
 
         <div className="text-center flex-1 min-w-0">
-          <div className="text-sm font-semibold text-textPrimary">
-            Week {week?.weekNumber ?? selectedWeekIndex + 1}
-          </div>
-          <div className="text-xs text-textSecondary">{dateRange}</div>
-          {summaryLabel && (
-            <div className="text-[11px] text-textSecondary mt-0.5">
-              {summaryLabel}
+          {/* Edit mode on mobile collapses the 3-line center into ONE compact
+              row so the sticky bar stops crowding the day list; view mode and
+              desktop (lg+) keep the full stack unchanged. */}
+          {isEditMode && (
+            <div className="lg:hidden text-sm font-semibold text-textPrimary truncate">
+              Week {week?.weekNumber ?? selectedWeekIndex + 1}
+              <span className="font-normal text-xs text-textSecondary">
+                {" "}· {dateRange}
+              </span>
             </div>
           )}
+          <div className={isEditMode ? "hidden lg:block" : ""}>
+            <div className="text-sm font-semibold text-textPrimary">
+              Week {week?.weekNumber ?? selectedWeekIndex + 1}
+            </div>
+            <div className="text-xs text-textSecondary">{dateRange}</div>
+            {summaryLabel && (
+              <div className="text-[11px] text-textSecondary mt-0.5">
+                {summaryLabel}
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="flex items-center gap-1 shrink-0 relative">
@@ -417,7 +430,8 @@ export function PlanEditor<TEntry extends PlanEditorEntryBase>({
               className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg border border-border text-textSecondary hover:text-textPrimary hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed"
             >
               <Copy className="w-3 h-3" />
-              Copy week →
+              {/* Icon-only on mobile keeps the edit-mode nav to one row */}
+              <span className="hidden lg:inline">Copy week →</span>
             </button>
           )}
           {copyFlashText && (

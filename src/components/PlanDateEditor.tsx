@@ -20,6 +20,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { ChevronRight } from "lucide-react";
 import { type Plan } from "@/types/plan";
 import {
   snapToMonday,
@@ -68,6 +69,11 @@ export function PlanDateEditor({
   // on a pre-existing mismatch shows nothing). Set true whenever an edit
   // actually persists.
   const [touched, setTouched] = useState(false);
+
+  // Mobile-only (< lg): the whole metadata block (dates, length, date rules)
+  // collapses behind a "Plan dates ▸" disclosure row so the edit-mode header
+  // doesn't eat two-thirds of a phone viewport. Desktop is always expanded.
+  const [datesExpanded, setDatesExpanded] = useState(false);
 
   const derivedEnd = derivePlanEndDate(plan);
 
@@ -148,6 +154,27 @@ export function PlanDateEditor({
 
   return (
     <div className="mt-2 flex flex-col gap-1.5 lg:gap-2">
+      {/* Mobile-only disclosure row — collapsed by default so the edit-mode
+          header stays compact; hidden at lg where the block always shows. */}
+      <button
+        type="button"
+        onClick={() => setDatesExpanded((v) => !v)}
+        aria-expanded={datesExpanded}
+        className="lg:hidden flex items-center gap-1 self-start py-1 text-xs font-medium text-textSecondary hover:text-textPrimary"
+      >
+        Plan dates
+        <ChevronRight
+          className={`w-3.5 h-3.5 transition-transform ${
+            datesExpanded ? "rotate-90" : ""
+          }`}
+        />
+      </button>
+
+      <div
+        className={`${
+          datesExpanded ? "flex" : "hidden"
+        } lg:flex flex-col gap-1.5 lg:gap-2`}
+      >
       {/* Dates sit two-across on mobile (grid), reverting to the original
           inline flow at lg so desktop is unchanged. */}
       <div className="grid grid-cols-2 gap-2 lg:flex lg:flex-wrap lg:items-end lg:gap-3">
@@ -198,6 +225,7 @@ export function PlanDateEditor({
       </details>
 
       {raceNote && <p className="text-xs text-warning">{raceNote}</p>}
+      </div>
 
       <ConfirmDialog
         isOpen={pendingShorten != null}

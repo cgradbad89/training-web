@@ -24,7 +24,11 @@ import {
   resolveMaxHr,
   resolveRestingHr,
 } from "@/utils/trainingLoad";
-import { weekStart as getWeekStart } from "@/utils/dates";
+import {
+  weekStart as getWeekStart,
+  parseLocalDate,
+  daysUntil,
+} from "@/utils/dates";
 import {
   predictSeconds,
   formatRaceTime,
@@ -43,12 +47,6 @@ import { predictRaceTime, buildPredictionTrend } from "@/utils/racePrediction";
 import { type UserSettings } from "@/types/userSettings";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function daysUntil(dateStr: string): number {
-  const target = new Date(dateStr);
-  const now = new Date();
-  return Math.ceil((target.getTime() - now.getTime()) / 86400000);
-}
 
 /** Parse a finish-time string ("H:MM:SS" or "M:SS") into seconds. */
 function parseResultToSeconds(result: string): number | null {
@@ -210,12 +208,11 @@ export default function PlanInsightsPage() {
 
   // Sorted race list for the picker — upcoming first (asc), then past (desc).
   const sortedRaces = useMemo(() => {
-    const todayStr = new Date().toISOString().split("T")[0];
     const upcoming = races
-      .filter((r) => r.raceDate >= todayStr)
+      .filter((r) => daysUntil(r.raceDate) >= 0)
       .sort((a, b) => a.raceDate.localeCompare(b.raceDate));
     const past = races
-      .filter((r) => r.raceDate < todayStr)
+      .filter((r) => daysUntil(r.raceDate) < 0)
       .sort((a, b) => b.raceDate.localeCompare(a.raceDate));
     return [...upcoming, ...past];
   }, [races]);
@@ -245,7 +242,7 @@ export default function PlanInsightsPage() {
   // the plan totals, while runs after race day are excluded.
   const raceDateCutoff = useMemo<Date | null>(() => {
     if (!activeRace) return null;
-    const d = new Date(activeRace.raceDate + "T00:00:00");
+    const d = parseLocalDate(activeRace.raceDate);
     d.setHours(23, 59, 59, 999);
     return d;
   }, [activeRace]);
@@ -255,8 +252,7 @@ export default function PlanInsightsPage() {
   // This lets today's race show the Actual Performance tile all day.
   const isPastRace = useMemo(() => {
     if (!activeRace) return false;
-    const todayStr = new Date().toISOString().split("T")[0];
-    return activeRace.raceDate <= todayStr;
+    return daysUntil(activeRace.raceDate) <= 0;
   }, [activeRace]);
 
   // TEMP debug: log PNC race fields so we can confirm what's set on the doc
@@ -398,7 +394,7 @@ export default function PlanInsightsPage() {
   // Current week in plan
   const currentPlanWeek = useMemo(() => {
     if (!activePlan) return null;
-    const planStart = new Date(activePlan.startDate);
+    const planStart = parseLocalDate(activePlan.startDate);
     const now = new Date();
     const weekIndex = Math.floor(
       (getWeekStart(now).getTime() - planStart.getTime()) / (7 * 86400000)
@@ -434,7 +430,7 @@ export default function PlanInsightsPage() {
   //   3) 30-day fallback (e.g. race with no linked plan), with a warning.
   const planStartDate = useMemo<Date | null>(() => {
     if (activePlan?.startDate) {
-      const d = new Date(activePlan.startDate);
+      const d = parseLocalDate(activePlan.startDate);
       if (!isNaN(d.getTime())) return d;
     }
     if (activePlan?.weeks?.length) {
@@ -636,7 +632,9 @@ export default function PlanInsightsPage() {
 
   // ── Performance by Run Type (plan period) ─────────────────────────────────
 
-  const planStartMs = activePlan ? new Date(activePlan.startDate).getTime() : 0;
+  const planStartMs = activePlan
+    ? parseLocalDate(activePlan.startDate).getTime()
+    : 0;
 
   const planPeriodRuns = planStartMs > 0
     ? runs.filter((r) => toMs(r.startDate) >= planStartMs)
@@ -740,7 +738,7 @@ export default function PlanInsightsPage() {
             className="bg-surface border border-border rounded-lg px-3 py-2 text-sm text-textPrimary"
           >
             {sortedRaces.map((race) => {
-              const dateLabel = new Date(race.raceDate + "T00:00:00").toLocaleDateString(
+              const dateLabel = parseLocalDate(race.raceDate).toLocaleDateString(
                 "en-US",
                 { month: "short", day: "numeric", year: "numeric" }
               );
@@ -775,7 +773,7 @@ export default function PlanInsightsPage() {
               <div>
                 <p className="text-sm font-semibold text-textPrimary">{activeRace.name}</p>
                 <p className="text-xs text-textSecondary">
-                  {raceDistanceLabel} · {new Date(activeRace.raceDate).toLocaleDateString("en-US", {
+                  {raceDistanceLabel} · {parseLocalDate(activeRace.raceDate).toLocaleDateString("en-US", {
                     weekday: "short",
                     month: "short",
                     day: "numeric",

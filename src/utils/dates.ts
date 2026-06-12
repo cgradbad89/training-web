@@ -79,6 +79,32 @@ export function normalizeToMonday(date: Date): string {
 }
 
 /**
+ * Parse a date-only ISO string ("YYYY-MM-DD") as LOCAL midnight.
+ *
+ * `new Date("YYYY-MM-DD")` interprets the string as UTC midnight, which
+ * renders as the PREVIOUS calendar day in any timezone west of UTC (e.g.
+ * "2026-09-06" → "Sat, Sep 5" in US Eastern). All race/plan/goal date-only
+ * strings must be parsed through this helper so every page agrees on the
+ * weekday, date, and days-away count.
+ */
+export function parseLocalDate(isoDate: string): Date {
+  const [y, m, d] = isoDate.split("-").map(Number);
+  return new Date(y, (m ?? 1) - 1, d ?? 1);
+}
+
+/**
+ * Whole calendar days from `from` (default: now) until `isoDate`, both at
+ * LOCAL midnight. 0 = today, 1 = tomorrow, negative = past. Time of day never
+ * shifts the count; DST hour offsets are absorbed by the rounding.
+ */
+export function daysUntil(isoDate: string, from: Date = new Date()): number {
+  const target = parseLocalDate(isoDate);
+  const base = new Date(from);
+  base.setHours(0, 0, 0, 0);
+  return Math.round((target.getTime() - base.getTime()) / 86400000);
+}
+
+/**
  * Safely converts a Firestore Timestamp, Date, or ISO string to a JS Date.
  * Firestore Timestamp objects have a .toDate() method.
  * Use this everywhere instead of new Date(someFirestoreField).

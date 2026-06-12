@@ -47,7 +47,11 @@ import {
   driftLevel,
 } from "@/utils/metrics";
 import { computeMileSplits, type MileSplit } from "@/utils/mileSplits";
-import { computeRunGap, type RunGap } from "@/utils/gradeAdjustedPace";
+import {
+  computeRunGap,
+  selectGapDisplay,
+  type RunGap,
+} from "@/utils/gradeAdjustedPace";
 import {
   deriveEffectiveHasRoute,
   isRoutePresent,
@@ -157,6 +161,7 @@ export default function RunDetailPage() {
           perPointGap: [],
           perMileGapSecPerMile: [],
           netRiseM: null,
+          aggregateGradeFlat: false,
         };
       }
       return computeRunGap(
@@ -681,15 +686,23 @@ export default function RunDetailPage() {
             }
             unit={displayWorkout.avgPaceSecPerMile ? "/mi" : undefined}
           />
-          <StatBlock
-            label="GAP"
-            value={
-              runGap.runGapSecPerMile > 0
-                ? formatPace(runGap.runGapSecPerMile)
-                : "\u2014"
-            }
-            unit={runGap.runGapSecPerMile > 0 ? "/mi" : undefined}
-          />
+          {(() => {
+            // Dead-band/flat runs show the actual pace labelled "flat" \u2014 "\u2014"
+            // is reserved for runs with no route/elevation data at all.
+            const gapDisplay = selectGapDisplay(runGap);
+            return (
+              <StatBlock
+                label="GAP"
+                value={
+                  gapDisplay.mode === "none"
+                    ? "\u2014"
+                    : formatPace(gapDisplay.paceSecPerMile)
+                }
+                unit={gapDisplay.mode === "none" ? undefined : "/mi"}
+                sublabel={gapDisplay.mode === "flat" ? "flat" : undefined}
+              />
+            );
+          })()}
           <StatBlock
             label="Duration"
             value={formatDuration(displayWorkout.durationSeconds)}

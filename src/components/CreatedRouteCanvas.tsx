@@ -43,18 +43,36 @@ function getBestZoom(
 // ── Main component ────────────────────────────────────────────
 
 function CreatedRouteCanvasInner({ waypoints, className, onClick }: Props) {
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [visible, setVisible] = useState(false);
   const [status, setStatus] = useState<"idle" | "loading" | "done" | "error">(
     "idle"
   );
 
+  // Defer tile fetching + drawing until the card scrolls into view (same
+  // IntersectionObserver pattern as StaticRouteMap). Once visible, the map
+  // stays mounted — `visible` is never reset on scroll-away.
   useEffect(() => {
+    if (visible) return;
+    const obs = new IntersectionObserver(
+      ([e]) => {
+        if (e.isIntersecting) setVisible(true);
+      },
+      { threshold: 0.1 }
+    );
+    if (wrapperRef.current) obs.observe(wrapperRef.current);
+    return () => obs.disconnect();
+  }, [visible]);
+
+  useEffect(() => {
+    if (!visible) return;
     if (waypoints.length < 2) {
       setStatus("error");
       return;
     }
     let cancelled = false;
-    setStatus("loading");
+    setStatus((s) => (s === "done" ? "done" : "loading"));
 
     async function draw() {
       try {
@@ -194,13 +212,13 @@ function CreatedRouteCanvasInner({ waypoints, className, onClick }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [waypoints]);
+  }, [visible, waypoints]);
 
   return (
     <div
+      ref={wrapperRef}
       onClick={onClick}
-      className={`relative overflow-hidden cursor-pointer ${className ?? ""}`}
-      style={{ backgroundColor: "#e8ecf0" }}
+      className={`relative overflow-hidden cursor-pointer bg-surface ${className ?? ""}`}
     >
       <canvas
         ref={canvasRef}
@@ -209,17 +227,21 @@ function CreatedRouteCanvasInner({ waypoints, className, onClick }: Props) {
         className="w-full h-full"
         style={{ display: "block" }}
       />
-      {(status === "idle" || status === "loading") && (
-        <div className="absolute inset-0 flex items-center justify-center bg-gray-100/60">
+      {/* Not-yet-visible placeholder (token-styled, no spinner until loading) */}
+      {!visible && (
+        <div className="absolute inset-0 bg-surface border-b border-border" />
+      )}
+      {(status === "idle" || status === "loading") && visible && (
+        <div className="absolute inset-0 flex items-center justify-center bg-surface/60">
           <div
-            className="w-5 h-5 rounded-full border-2 border-blue-500
+            className="w-5 h-5 rounded-full border-2 border-primary
                           border-t-transparent animate-spin"
           />
         </div>
       )}
       {status === "error" && (
-        <div className="absolute inset-0 flex items-center justify-center bg-gray-100">
-          <span className="text-xs text-gray-400">No route data</span>
+        <div className="absolute inset-0 flex items-center justify-center bg-surface">
+          <span className="text-xs text-textSecondary">No route data</span>
         </div>
       )}
     </div>

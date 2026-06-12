@@ -7,6 +7,12 @@ import {
   FALLBACK_MAX_HR,
   paceZoneRanges,
 } from "../zones";
+import {
+  resolveMaxHr,
+  zoneBoundsBpmForActivity,
+  WORKOUT_ZONES,
+} from "../trainingLoad";
+import { type UserSettings } from "@/types/userSettings";
 
 describe("maxHRForAge", () => {
   it("uses 220 − age when age is known", () => {
@@ -151,5 +157,57 @@ describe("paceZoneRanges", () => {
       minPaceSecPerMile: null,
       maxPaceSecPerMile: 540,
     });
+  });
+});
+
+// ─── Settings-provided max HR drives zone boundaries ─────────────────────────
+// The max HR set at /settings (users/{uid}/settings/prefs.maxHeartRate) is the
+// single source of truth for client-side HR-zone math: every consumer resolves
+// it via resolveMaxHr(settings) and passes it down — no hardcoded constants.
+describe("zone boundaries from a settings-provided max HR", () => {
+  it("hrZoneIndex boundaries scale with the settings max HR (172 bpm)", () => {
+    const maxHr = resolveMaxHr({ maxHeartRate: 172 } as UserSettings);
+    expect(maxHr).toBe(172);
+    // Bands at 60/70/80/90% of 172 = 103.2 / 120.4 / 137.6 / 154.8 bpm.
+    expect(hrZoneIndex(103, maxHr)).toBe(1);
+    expect(hrZoneIndex(104, maxHr)).toBe(2);
+    expect(hrZoneIndex(120, maxHr)).toBe(2);
+    expect(hrZoneIndex(121, maxHr)).toBe(3);
+    expect(hrZoneIndex(137, maxHr)).toBe(3);
+    expect(hrZoneIndex(138, maxHr)).toBe(4);
+    expect(hrZoneIndex(154, maxHr)).toBe(4);
+    expect(hrZoneIndex(155, maxHr)).toBe(5);
+  });
+
+  it("the same bpm lands in a different zone under the 185 default — settings value matters", () => {
+    const settingsMax = resolveMaxHr({ maxHeartRate: 172 } as UserSettings);
+    const defaultMax = resolveMaxHr(undefined);
+    expect(defaultMax).toBe(185);
+    // 160 bpm: 93% of 172 → Z5, but only 86% of 185 → Z4.
+    expect(hrZoneIndex(160, settingsMax)).toBe(5);
+    expect(hrZoneIndex(160, defaultMax)).toBe(4);
+  });
+
+  it("computeHRZones buckets time using the settings max HR", () => {
+    const maxHr = resolveMaxHr({ maxHeartRate: 172 } as UserSettings);
+    const zones = computeHRZones(
+      [
+        { bpm: 100, seconds: 60 }, // 58% → Z1
+        { bpm: 130, seconds: 60 }, // 76% → Z3
+        { bpm: 160, seconds: 60 }, // 93% → Z5
+      ],
+      maxHr
+    );
+    const byZone = Object.fromEntries(zones.map((z) => [z.zone, z.seconds]));
+    expect(byZone[1]).toBe(60);
+    expect(byZone[3]).toBe(60);
+    expect(byZone[5]).toBe(60);
+  });
+
+  it("zoneBoundsBpmForActivity floors each band at the settings max HR", () => {
+    const maxHr = resolveMaxHr({ maxHeartRate: 172 } as UserSettings);
+    const z2 = WORKOUT_ZONES.running.find((z) => z.zone === 2)!;
+    // Z2 starts at 60% of max HR → ceil(0.6 × 172) = 104 bpm.
+    expect(zoneBoundsBpmForActivity(z2, "running", maxHr).min).toBe(104);
   });
 });

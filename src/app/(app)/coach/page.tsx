@@ -11,6 +11,7 @@ import { fetchRaces } from '@/services/races'
 import { fetchHealthMetrics } from '@/services/healthMetrics'
 import { fetchUserSettings } from '@/services/userSettings'
 import { buildCoachContext } from '@/utils/coachContext'
+import { parseLocalDate, daysUntil } from '@/utils/dates'
 import { resolveMaxHr, resolveRestingHr } from '@/utils/trainingLoad'
 import { applyOverride } from '@/types/workoutOverride'
 import {
@@ -75,14 +76,12 @@ export default function CoachPage() {
       // Find active plan and race (running plans only — coach is running-focused)
       const runningPlans = plans.filter(isRunningPlan)
       const activePlan = runningPlans.find(p => p.status === "active") ?? runningPlans[0] ?? null
-      const now = new Date()
+      // Race dates are date-only strings — local-midnight parsing via the shared
+      // helpers keeps the coach's "days away" consistent with Races/Plan Insights.
       const upcomingRaces = races
-        .filter(r => {
-          const d = new Date(r.raceDate)
-          return d >= now
-        })
+        .filter(r => daysUntil(r.raceDate) >= 0)
         .sort((a, b) => {
-          return new Date(a.raceDate).getTime() - new Date(b.raceDate).getTime()
+          return parseLocalDate(a.raceDate).getTime() - parseLocalDate(b.raceDate).getTime()
         })
       const activeRace = upcomingRaces.find(r => r.isActive) ?? upcomingRaces[0] ?? null
 

@@ -241,8 +241,7 @@ function StaticRouteMapInner({
     <div
       ref={wrapperRef}
       onClick={onClick}
-      className={`relative overflow-hidden cursor-pointer ${className ?? ""}`}
-      style={{ backgroundColor: "#e8ecf0" }}
+      className={`relative overflow-hidden cursor-pointer bg-surface ${className ?? ""}`}
     >
       <canvas
         ref={canvasRef}
@@ -252,17 +251,22 @@ function StaticRouteMapInner({
         style={{ display: "block" }}
       />
 
+      {/* Not-yet-visible placeholder (token-styled, no spinner until loading) */}
+      {!visible && (
+        <div className="absolute inset-0 bg-surface border-b border-border" />
+      )}
+
       {/* Loading overlay */}
       {(status === "idle" || status === "loading") && visible && (
-        <div className="absolute inset-0 flex items-center justify-center bg-gray-100/60 backdrop-blur-[1px]">
-          <div className="w-5 h-5 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
+        <div className="absolute inset-0 flex items-center justify-center bg-surface/60 backdrop-blur-[1px]">
+          <div className="w-5 h-5 rounded-full border-2 border-primary border-t-transparent animate-spin" />
         </div>
       )}
 
       {/* Error */}
       {status === "error" && (
-        <div className="absolute inset-0 flex items-center justify-center bg-gray-100">
-          <span className="text-xs text-gray-400">No route data</span>
+        <div className="absolute inset-0 flex items-center justify-center bg-surface">
+          <span className="text-xs text-textSecondary">No route data</span>
         </div>
       )}
     </div>
