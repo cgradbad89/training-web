@@ -4,8 +4,6 @@ import React, { useState, useEffect, useMemo } from "react";
 import {
   LineChart,
   Line,
-  BarChart,
-  Bar,
   XAxis,
   YAxis,
   Tooltip,
@@ -75,6 +73,11 @@ import {
   type HRZoneNumber,
 } from "@/utils/trainingLoad";
 import { InfoTooltip } from "@/components/ui/InfoTooltip";
+import { WeeklyLoadTile } from "@/components/charts/WeeklyLoadTile";
+import {
+  buildWeeklyLoadModel,
+  type WeeklyLoadModel,
+} from "@/utils/weeklyLoad";
 import { type UserSettings } from "@/types/userSettings";
 
 // ─── Training Load KPI tooltip copy ───────────────────────────────────────────
@@ -278,12 +281,6 @@ interface TrainingLoadSectionData {
   workoutSessionLoads: number[];
   thisWeekRunAvg: number | null;
   thisWeekWorkoutAvg: number | null;
-}
-
-interface WeeklyLoadDatum {
-  label: string;
-  runLoad: number;
-  workoutLoad: number;
 }
 
 function tsbBand(tsb: number): string {
@@ -515,13 +512,13 @@ function tsbStatusLabel(tsb: number): string {
 
 function TrainingLoadSection({
   data,
-  weeklyData,
+  weeklyLoad,
   intensity,
   intensityLoading,
   maxHr,
 }: {
   data: TrainingLoadSectionData;
-  weeklyData: WeeklyLoadDatum[];
+  weeklyLoad: WeeklyLoadModel;
   intensity: {
     zoneMiles: Record<HRZoneNumber, number>;
     totalMiles: number;
@@ -605,10 +602,6 @@ function TrainingLoadSection({
     tsb: Math.round(p.tsb),
   }));
 
-  // Weekly bars: show empty-state if every week has 0 load.
-  const hasWeeklyData = weeklyData.some(
-    (w) => w.runLoad > 0 || w.workoutLoad > 0
-  );
 
   return (
     <>
@@ -845,89 +838,11 @@ function TrainingLoadSection({
         )}
       </Card>
 
-      {/* Weekly load trend */}
-      <Card>
-        <h3 className="text-sm font-semibold text-textPrimary mb-3">
-          Weekly training load — last 16 weeks
-        </h3>
-        {hasWeeklyData ? (
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart
-              data={weeklyData}
-              margin={{ top: 4, right: 8, bottom: 0, left: 8 }}
-            >
-              <CartesianGrid
-                strokeDasharray="3 3"
-                vertical={false}
-                stroke="var(--color-border)"
-              />
-              <XAxis
-                dataKey="label"
-                tick={{ fontSize: 10 }}
-                axisLine={false}
-                tickLine={false}
-              />
-              <YAxis
-                allowDecimals={false}
-                tick={{ fontSize: 10 }}
-                axisLine={false}
-                tickLine={false}
-                width={52}
-              />
-              <Tooltip
-                cursor={{ fill: "rgba(0,0,0,0.04)" }}
-                formatter={(value, name) => {
-                  const label =
-                    name === "runLoad"
-                      ? "Run load"
-                      : name === "workoutLoad"
-                        ? "Workout load"
-                        : name;
-                  return [Math.round(Number(value)), label];
-                }}
-                labelFormatter={(l) => `Week of ${l}`}
-                contentStyle={{
-                  fontSize: 12,
-                  backgroundColor: "var(--color-chart-tooltip-bg)",
-                  border: "1px solid var(--color-border)",
-                  borderRadius: "0.375rem",
-                  color: "var(--color-textPrimary)",
-                }}
-                labelStyle={{ color: "var(--color-textSecondary)" }}
-                itemStyle={{ color: "var(--color-textPrimary)" }}
-              />
-              <Legend
-                wrapperStyle={{ fontSize: 11 }}
-                formatter={(v) =>
-                  v === "runLoad"
-                    ? "Run load"
-                    : v === "workoutLoad"
-                      ? "Workout load"
-                      : v
-                }
-              />
-              <Bar
-                dataKey="runLoad"
-                stackId="load"
-                fill="var(--color-chart-primary)"
-                radius={[0, 0, 0, 0]}
-                name="runLoad"
-              />
-              <Bar
-                dataKey="workoutLoad"
-                stackId="load"
-                fill="var(--color-chart-teal)"
-                radius={[6, 6, 0, 0]}
-                name="workoutLoad"
-              />
-            </BarChart>
-          </ResponsiveContainer>
-        ) : (
-          <p className="text-sm text-textSecondary text-center py-6">
-            Not enough HR-bearing activity in the last 16 weeks.
-          </p>
-        )}
-      </Card>
+      {/* Weekly Training Load tile (replaced the 16-week stacked bar chart) */}
+      <WeeklyLoadTile
+        weeks={weeklyLoad.weeks}
+        medianWeekly={weeklyLoad.medianWeekly}
+      />
 
       {/* Running Intensity by HR Zone — distance-weighted share per zone */}
       <Card>
@@ -1854,42 +1769,14 @@ export default function PersonalInsightsPage() {
     };
   }, [workouts, maxHr, restingHr]);
 
-  const weeklyLoadData = useMemo(() => {
-    // Last 16 weeks, Monday-anchored — matches Workout Frequency chart bucketing.
-    const today = new Date();
-    const currentMonday = getWeekStart(today);
-
-    return Array.from({ length: 16 }, (_, i) => {
-      const weekDate = new Date(currentMonday);
-      weekDate.setDate(weekDate.getDate() - (15 - i) * 7);
-      const label = weekDate.toLocaleDateString("en-US", {
-        month: "short",
-        day: "numeric",
-      });
-
-      let runLoad = 0;
-      let workoutLoad = 0;
-      for (let d = 0; d < 7; d++) {
-        const day = new Date(weekDate);
-        day.setDate(weekDate.getDate() + d);
-        const iso = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(
-          2,
-          "0"
-        )}-${String(day.getDate()).padStart(2, "0")}`;
-        const entry = trainingLoadData.dailyMap.get(iso);
-        if (entry) {
-          runLoad += entry.runLoad;
-          workoutLoad += entry.workoutLoad;
-        }
-      }
-
-      return {
-        label,
-        runLoad: Math.round(runLoad),
-        workoutLoad: Math.round(workoutLoad),
-      };
-    });
-  }, [trainingLoadData.dailyMap]);
+  // Weekly Training Load tile model — 16 Monday-anchored weeks with
+  // per-activity rows + the 6-month median baseline, all from the
+  // already-loaded `workouts` (overrides applied, excluded filtered) via
+  // resolveDisplayLoad. Replaces the old runLoad/workoutLoad bar data.
+  const weeklyLoadModel = useMemo(
+    () => buildWeeklyLoadModel(workouts, maxHr, restingHr, new Date()),
+    [workouts, maxHr, restingHr]
+  );
 
   if (loading) {
     return (
@@ -1934,7 +1821,7 @@ export default function PersonalInsightsPage() {
 
       <TrainingLoadSection
         data={trainingLoadData}
-        weeklyData={weeklyLoadData}
+        weeklyLoad={weeklyLoadModel}
         intensity={intensityData}
         intensityLoading={intensityLoading}
         maxHr={maxHr}
