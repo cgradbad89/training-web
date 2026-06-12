@@ -517,16 +517,6 @@ export default function RunDetailPage() {
         </div>
       </div>
 
-      {/* ── Date / time + weather ───────────────────────────── */}
-      <div className="flex justify-between items-start gap-3">
-        <p className="text-sm font-medium text-textSecondary pt-1">
-          {dateTimeDisplay}
-        </p>
-        {displayWorkout.weather && (
-          <WeatherTile weather={displayWorkout.weather} />
-        )}
-      </div>
-
       {/* ── Exclude confirm ─────────────────────────────────── */}
       <ConfirmDialog
         isOpen={showExcludeConfirm}
@@ -763,7 +753,7 @@ export default function RunDetailPage() {
         </div>
 
         {/* Second row */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-5 mt-5 pt-5 border-t border-border">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-5 mt-5 pt-5 border-t border-border items-start">
           <StatBlock
             label="Total Ascent"
             value={
@@ -774,6 +764,17 @@ export default function RunDetailPage() {
             unit={displayWorkout.elevationGainM != null ? "ft" : undefined}
             sublabel={netElevationLabel}
           />
+          <div className="flex flex-col gap-0.5">
+            <span className="text-xs text-textSecondary uppercase tracking-wide">
+              {"Date & Time"}
+            </span>
+            <span className="text-sm font-medium text-textPrimary">
+              {dateTimeDisplay}
+            </span>
+          </div>
+          {displayWorkout.weather && (
+            <WeatherTile weather={displayWorkout.weather} />
+          )}
           <div className="flex flex-col gap-0.5">
             <span className="text-xs text-textSecondary uppercase tracking-wide">Shoe</span>
             {assignedShoe ? (
