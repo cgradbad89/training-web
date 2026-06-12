@@ -15,19 +15,24 @@ import { StatBlock } from "@/components/ui/StatBlock";
 import { MetricBadge } from "@/components/ui/MetricBadge";
 import { TrainingLoadBadge } from "@/components/ui/TrainingLoadBadge";
 import { WeatherTile } from "@/components/runs/WeatherTile";
+import { RoutePerformanceSection } from "@/components/runs/RoutePerformanceSection";
+import { RunImpactSection } from "@/components/runs/RunImpactSection";
 import { useAuth } from "@/hooks/useAuth";
 import { useUnsavedChanges } from "@/hooks/useUnsavedChanges";
 import {
   computeAndStoreBestEfforts,
   fetchHealthWorkout,
+  fetchHealthWorkouts,
   saveWeatherForWorkout,
 } from "@/services/healthWorkouts";
 import { fetchRoutePoints, type RoutePoint } from "@/services/routes";
 import { fetchUserSettings } from "@/services/userSettings";
+import { fetchRaces } from "@/services/races";
 import { fetchShoes, fetchManualShoeAssignmentsMap, saveManualAssignments } from "@/services/shoes";
 import { useResolvedShoeAssignment } from "@/hooks/useResolvedShoeAssignment";
 import {
   fetchOverride,
+  fetchAllOverrides,
   saveOverride,
   deleteOverride,
   excludeWorkout,
@@ -62,6 +67,21 @@ import {
   resolveRestingHr,
   resolveDisplayLoad,
 } from "@/utils/trainingLoad";
+import {
+  clusterRoutesGeographic,
+  findClusterForRun,
+  type RouteCluster,
+} from "@/utils/routeClustering";
+import {
+  computeRoutePerformance,
+  toMatchedRunSummaries,
+} from "@/utils/routePerformance";
+import {
+  computePredictionImpact,
+  computeCtlImpact,
+} from "@/utils/runImpact";
+import { parseLocalDate } from "@/utils/dates";
+import { type Race, RACE_DISTANCE_MILES } from "@/types/race";
 import { type UserSettings } from "@/types/userSettings";
 import {
   collection,
@@ -114,6 +134,18 @@ export default function RunDetailPage() {
   const [userSettings, setUserSettings] = useState<UserSettings | null>();
   const [loading, setLoading] = useState(true);
   const [routeLoading, setRouteLoading] = useState(true);
+
+  // Route Performance + Run Impact data — loaded in a SEPARATE, non-blocking
+  // effect so the core run view never waits on the all-workouts query.
+  const [allWorkoutsRaw, setAllWorkoutsRaw] = useState<HealthWorkout[] | null>(
+    null
+  );
+  const [allOverrides, setAllOverrides] = useState<Record<
+    string,
+    WorkoutOverride
+  > | null>(null);
+  const [races, setRaces] = useState<Race[]>([]);
+  const [clusters, setClusters] = useState<RouteCluster[] | null>(null);
 
   // Edit panel state
   const [isEditing, setIsEditing] = useState(false);
@@ -288,6 +320,139 @@ export default function RunDetailPage() {
       .catch(console.error)
       .finally(() => setLoading(false));
   }, [uid, workoutId]);
+
+  // ── Route Performance + Run Impact data (deferred, non-blocking) ──────────
+  // Same data path the Routes / insights pages already use: one all-workouts
+  // query + overrides + races. No new collections, fields, or rules.
+  useEffect(() => {
+    if (!uid) return;
+    let cancelled = false;
+    Promise.all([
+      fetchHealthWorkouts(uid, { limitCount: 500 }),
+      fetchAllOverrides(uid),
+      fetchRaces(uid),
+    ])
+      .then(([all, overrides, fetchedRaces]) => {
+        if (cancelled) return;
+        setAllWorkoutsRaw(all);
+        setAllOverrides(overrides);
+        setRaces(fetchedRaces);
+      })
+      .catch(console.error);
+    return () => {
+      cancelled = true;
+    };
+  }, [uid]);
+
+  // Cluster input — EXACTLY the Routes page's filter (isRunLike && hasRoute on
+  // raw docs), so the run detail's "matched runs" agree with the Routes page.
+  const clusterInput = useMemo(
+    () =>
+      allWorkoutsRaw
+        ? allWorkoutsRaw.filter((w) => w.isRunLike && w.hasRoute)
+        : null,
+    [allWorkoutsRaw]
+  );
+
+  useEffect(() => {
+    if (!uid || !clusterInput || clusterInput.length === 0) return;
+    let cancelled = false;
+    clusterRoutesGeographic(clusterInput, uid)
+      .then((result) => {
+        if (!cancelled) setClusters(result);
+      })
+      .catch(console.error);
+    return () => {
+      cancelled = true;
+    };
+  }, [uid, clusterInput]);
+
+  // Insights run set — overrides applied, excluded filtered (the same shaping
+  // Personal/Plan Insights use), so the prediction here matches those pages.
+  const workoutsForInsights = useMemo(() => {
+    if (!allWorkoutsRaw || !allOverrides) return null;
+    return allWorkoutsRaw
+      .map((w) => applyOverride(w, allOverrides[w.workoutId] ?? null))
+      .filter((w) => !allOverrides[w.workoutId]?.isExcluded);
+  }, [allWorkoutsRaw, allOverrides]);
+
+  const currentCluster = useMemo(
+    () => (clusters ? findClusterForRun(clusters, workoutId) : null),
+    [clusters, workoutId]
+  );
+
+  const matchedSummaries = useMemo(
+    () =>
+      currentCluster
+        ? toMatchedRunSummaries(
+            currentCluster.allRuns,
+            resolvedMaxHR,
+            resolvedRestingHR
+          )
+        : [],
+    [currentCluster, resolvedMaxHR, resolvedRestingHR]
+  );
+
+  const routePerformance = useMemo(
+    () => computeRoutePerformance(workoutId, matchedSummaries),
+    [workoutId, matchedSummaries]
+  );
+
+  // Active goal race + its distance/inputs (same mapping Plan Insights uses).
+  const activeRace = useMemo(
+    () => races.find((r) => r.isActive) ?? null,
+    [races]
+  );
+  const raceDistanceMiles = useMemo(() => {
+    if (!activeRace) return null;
+    if (activeRace.raceDistance === "custom")
+      return activeRace.customDistanceMiles ?? null;
+    return RACE_DISTANCE_MILES[activeRace.raceDistance] ?? null;
+  }, [activeRace]);
+  const raceInputs = useMemo(
+    () =>
+      races
+        .map((r) => {
+          const distance =
+            r.raceDistance === "custom"
+              ? r.customDistanceMiles ?? 0
+              : RACE_DISTANCE_MILES[r.raceDistance] ?? 0;
+          return { raceDate: r.raceDate, distanceMiles: distance };
+        })
+        .filter((r) => r.distanceMiles > 0),
+    [races]
+  );
+
+  // Prediction impact — runs only, capped at end of race day (parity with
+  // Plan Insights; for an upcoming race the cutoff is in the future → no-op).
+  const predictionImpact = useMemo(() => {
+    if (!workoutsForInsights || !activeRace || !raceDistanceMiles) return null;
+    const cutoff = parseLocalDate(activeRace.raceDate);
+    cutoff.setHours(23, 59, 59, 999);
+    const predictionRuns = workoutsForInsights.filter(
+      (w) => w.isRunLike && w.startDate <= cutoff
+    );
+    return computePredictionImpact(predictionRuns, workoutId, {
+      raceDistanceMiles,
+      races: raceInputs,
+    });
+  }, [
+    workoutsForInsights,
+    activeRace,
+    raceDistanceMiles,
+    raceInputs,
+    workoutId,
+  ]);
+
+  const ctlImpact = useMemo(() => {
+    if (!workoutsForInsights || workoutsForInsights.length === 0) return null;
+    return computeCtlImpact(
+      workoutsForInsights,
+      workoutId,
+      resolvedMaxHR,
+      resolvedRestingHR
+    );
+  }, [workoutsForInsights, workoutId, resolvedMaxHR, resolvedRestingHR]);
 
   if (loading) {
     return (
@@ -818,6 +983,32 @@ export default function RunDetailPage() {
             </span>
           ))}
         </div>
+      )}
+
+      {/* ── Route Performance (renders only when matched to a ≥2-run group) ─ */}
+      {routePerformance && currentCluster && (
+        <RoutePerformanceSection
+          performance={routePerformance}
+          matchedRuns={matchedSummaries}
+          currentRunId={workoutId}
+          routeDistanceMiles={currentCluster.distanceMiles}
+        />
+      )}
+
+      {/* ── This Run's Impact (independent of route matching) ── */}
+      {displayWorkout.isRunLike && (predictionImpact || ctlImpact) && (
+        <RunImpactSection
+          prediction={
+            predictionImpact && activeRace
+              ? {
+                  impact: predictionImpact,
+                  raceName: activeRace.name,
+                  raceDateIso: activeRace.raceDate,
+                }
+              : null
+          }
+          ctl={ctlImpact}
+        />
       )}
 
       {/* ── Route Map ───────────────────────────────────────── */}

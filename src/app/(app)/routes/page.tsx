@@ -21,103 +21,24 @@ import {
   deleteCreatedRoute,
 } from "@/services/createdRoutes";
 import { formatPace, formatDuration } from "@/utils/pace";
-import { getRouteStartPoint, haversineMeters } from "@/utils/routeCache";
+// Clustering now lives in src/utils/routeClustering.ts (extracted verbatim)
+// so the Run Detail page reuses the exact same grouping.
+import {
+  clusterRoutesGeographic,
+  type RouteCluster,
+} from "@/utils/routeClustering";
+import { toMatchedRunSummaries } from "@/utils/routePerformance";
+import { resolveMaxHr, resolveRestingHr } from "@/utils/trainingLoad";
+import { fetchUserSettings } from "@/services/userSettings";
+import { type UserSettings } from "@/types/userSettings";
 
 import { CreatedRouteCanvas } from "@/components/CreatedRouteCanvas";
 import { CreatedRouteDetailModal } from "@/components/CreatedRouteDetailModal";
+import { RouteTrendSparkline } from "@/components/routes/RouteTrendSparkline";
+import { RouteTrendDrawer } from "@/components/routes/RouteTrendDrawer";
 
 const RunMap = dynamic(() => import("@/components/RunMap"), { ssr: false });
 const RouteDrawModal = dynamic(() => import("@/components/RouteDrawModal"), { ssr: false });
-
-// ─── Types ───────────────────────────────────────────────────────────────────
-
-interface RouteCluster {
-  id: string;
-  representativeRun: HealthWorkout;
-  allRuns: HealthWorkout[];
-  distanceMiles: number;
-  startLat: number;
-  startLng: number;
-}
-
-// ─── Clustering ──────────────────────────────────────────────────────────────
-
-/**
- * Phase 1: Group runs by distance (±0.5 miles).
- * Phase 2: Within each distance group, sub-cluster by start GPS point.
- * Two runs cluster together only if start points are within 300m.
- */
-async function clusterRoutesGeographic(
-  runs: HealthWorkout[],
-  uid: string
-): Promise<RouteCluster[]> {
-  // Fetch start points for all runs in parallel (batched)
-  const startPoints = new Map<string, { lat: number; lng: number } | null>();
-
-  for (let i = 0; i < runs.length; i += 10) {
-    const batch = runs.slice(i, i + 10);
-    await Promise.all(
-      batch.map(async (run) => {
-        const pt = await getRouteStartPoint(uid, run.workoutId);
-        startPoints.set(run.workoutId, pt);
-      })
-    );
-  }
-
-  // Sort by pace (best pace first = representative run)
-  const sorted = [...runs].sort(
-    (a, b) => (a.avgPaceSecPerMile ?? 999) - (b.avgPaceSecPerMile ?? 999)
-  );
-
-  const clusters: RouteCluster[] = [];
-  const assigned = new Set<string>();
-
-  for (const run of sorted) {
-    if (assigned.has(run.workoutId)) continue;
-
-    const runStart = startPoints.get(run.workoutId);
-    const cluster: RouteCluster = {
-      id: run.workoutId,
-      representativeRun: run,
-      allRuns: [run],
-      distanceMiles: run.distanceMiles ?? 0,
-      startLat: runStart?.lat ?? 0,
-      startLng: runStart?.lng ?? 0,
-    };
-
-    for (const other of sorted) {
-      if (other.workoutId === run.workoutId) continue;
-      if (assigned.has(other.workoutId)) continue;
-
-      // Distance must be within ±0.5 miles
-      const distDiff = Math.abs(
-        (run.distanceMiles ?? 0) - (other.distanceMiles ?? 0)
-      );
-      if (distDiff > 0.5) continue;
-
-      // If either run has no start point, fall back to distance-only
-      const otherStart = startPoints.get(other.workoutId);
-      if (runStart && otherStart) {
-        // Start points must be within 300 meters
-        const dist = haversineMeters(
-          runStart.lat,
-          runStart.lng,
-          otherStart.lat,
-          otherStart.lng
-        );
-        if (dist > 300) continue;
-      }
-
-      cluster.allRuns.push(other);
-      assigned.add(other.workoutId);
-    }
-
-    assigned.add(run.workoutId);
-    clusters.push(cluster);
-  }
-
-  return clusters;
-}
 
 // ─── Distance Filter ─────────────────────────────────────────────────────────
 
@@ -163,14 +84,30 @@ function formatShortDate(d: Date): string {
 interface RouteCardProps {
   cluster: RouteCluster;
   uid: string;
+  maxHr: number;
+  restingHr: number;
   onExpand: () => void;
+  onOpenTrend: () => void;
 }
 
-function RouteCard({ cluster, uid, onExpand }: RouteCardProps) {
+function RouteCard({
+  cluster,
+  uid,
+  maxHr,
+  restingHr,
+  onExpand,
+  onOpenTrend,
+}: RouteCardProps) {
   const router = useRouter();
   const [showSimilar, setShowSimilar] = useState(false);
   const run = cluster.representativeRun;
   const otherRuns = cluster.allRuns.slice(1);
+
+  // In-memory rows for the sparkline (already-loaded workouts — no new reads).
+  const matchedSummaries = useMemo(
+    () => toMatchedRunSummaries(cluster.allRuns, maxHr, restingHr),
+    [cluster, maxHr, restingHr]
+  );
 
   return (
     <div className="bg-card rounded-2xl border border-border overflow-hidden shadow-sm">
@@ -180,7 +117,9 @@ function RouteCard({ cluster, uid, onExpand }: RouteCardProps) {
         className="h-48"
         onClick={onExpand}
       />
-      <div className="p-4 flex flex-col gap-3">
+      {/* Card body opens the pace-trend drawer; the map, "View on map →" and
+          the similar-runs expander keep their own actions (stopPropagation). */}
+      <div className="p-4 flex flex-col gap-3 cursor-pointer" onClick={onOpenTrend}>
         {/* Row 1: distance + run count */}
         <div className="flex items-center gap-2">
           <span className="text-sm font-semibold bg-primary/10 text-primary px-2.5 py-0.5 rounded-full">
@@ -224,9 +163,15 @@ function RouteCard({ cluster, uid, onExpand }: RouteCardProps) {
           </div>
         </div>
 
+        {/* Pace trend sparkline (renders only with ≥3 runs in window) */}
+        <RouteTrendSparkline runs={matchedSummaries} />
+
         {/* Row 3: view link */}
         <button
-          onClick={onExpand}
+          onClick={(e) => {
+            e.stopPropagation();
+            onExpand();
+          }}
           className="text-xs text-primary font-medium text-left hover:underline"
         >
           View on map &rarr;
@@ -236,7 +181,10 @@ function RouteCard({ cluster, uid, onExpand }: RouteCardProps) {
         {otherRuns.length > 0 && (
           <div className="border-t border-border pt-2">
             <button
-              onClick={() => setShowSimilar(!showSimilar)}
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowSimilar(!showSimilar);
+              }}
               className="flex items-center gap-1 text-xs text-textSecondary hover:text-textPrimary transition-colors w-full"
             >
               {showSimilar ? (
@@ -252,7 +200,10 @@ function RouteCard({ cluster, uid, onExpand }: RouteCardProps) {
                 {otherRuns.map((r) => (
                   <button
                     key={r.workoutId}
-                    onClick={() => router.push(`/runs/${r.workoutId}`)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      router.push(`/runs/${r.workoutId}`);
+                    }}
                     className="flex items-center justify-between text-xs py-1 hover:bg-surface rounded px-1 transition-colors"
                   >
                     <span className="text-textPrimary">
@@ -452,6 +403,9 @@ export default function RoutesPage() {
   const [expandedCluster, setExpandedCluster] = useState<RouteCluster | null>(
     null
   );
+  /** Cluster whose pace-trend drawer is open (card-body click). */
+  const [trendCluster, setTrendCluster] = useState<RouteCluster | null>(null);
+  const [userSettings, setUserSettings] = useState<UserSettings | null>(null);
   const [clusters, setClusters] = useState<RouteCluster[]>([]);
   const [clusteringLoading, setClusteringLoading] = useState(false);
   const [createdRoutes, setCreatedRoutes] = useState<CreatedRoute[]>([]);
@@ -493,6 +447,16 @@ export default function RoutesPage() {
     if (!uid) return;
     fetchCreatedRoutes(uid).then(setCreatedRoutes).catch(console.error);
   }, [uid]);
+
+  // Settings → resolved max/resting HR for the Load chips in the trend drawer
+  // (resolveDisplayLoad is the single source of truth for displayed load).
+  useEffect(() => {
+    if (!uid) return;
+    fetchUserSettings(uid).then(setUserSettings).catch(console.error);
+  }, [uid]);
+
+  const resolvedMaxHr = resolveMaxHr(userSettings);
+  const resolvedRestingHr = resolveRestingHr(userSettings);
 
   const handleSaveRoute = async (data: {
     name: string;
@@ -652,7 +616,10 @@ export default function RoutesPage() {
               key={cluster.id}
               cluster={cluster}
               uid={uid!}
+              maxHr={resolvedMaxHr}
+              restingHr={resolvedRestingHr}
               onExpand={() => setExpandedCluster(cluster)}
+              onOpenTrend={() => setTrendCluster(cluster)}
             />
           ))}
         </div>
@@ -760,6 +727,19 @@ export default function RoutesPage() {
             name: editingRoute.name,
             waypoints: editingRoute.waypoints,
           }}
+        />
+      )}
+
+      {/* Pace-trend drawer (card-body click) */}
+      {trendCluster && (
+        <RouteTrendDrawer
+          distanceMiles={trendCluster.distanceMiles}
+          runs={toMatchedRunSummaries(
+            trendCluster.allRuns,
+            resolvedMaxHr,
+            resolvedRestingHr
+          )}
+          onClose={() => setTrendCluster(null)}
         />
       )}
 
