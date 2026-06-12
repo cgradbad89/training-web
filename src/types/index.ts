@@ -6,3 +6,4 @@ export * from "./goal";
 export * from "./race";
 export * from "./userSettings";
 export * from "./workoutOverride";
+export * from "./weather";

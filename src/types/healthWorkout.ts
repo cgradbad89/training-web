@@ -1,4 +1,5 @@
 import { type BestEffortsMap } from "@/utils/bestEfforts";
+import { type WeatherSnapshot } from "@/types/weather";
 
 /**
  * HealthWorkout — mirrors the Firestore document stored at
@@ -52,6 +53,10 @@ export interface HealthWorkout {
   /** Which V2 model produced trainingLoadV2: per-second "streamed" integral or
    *  the avg-HR baseline ("avg-hr-fallback"). */
   trainingLoadMethod?: "streamed" | "avg-hr-fallback";
+  /** Historical weather at the run's start point/time, fetched from Open-Meteo
+   *  and persisted by the web app. Absent on iOS-synced docs until backfilled
+   *  (null/undefined = not yet fetched or no GPS). */
+  weather?: WeatherSnapshot | null;
 }
 
 export function isRunWorkout(w: HealthWorkout): boolean {

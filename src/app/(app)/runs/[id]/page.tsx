@@ -14,11 +14,13 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { StatBlock } from "@/components/ui/StatBlock";
 import { MetricBadge } from "@/components/ui/MetricBadge";
 import { TrainingLoadBadge } from "@/components/ui/TrainingLoadBadge";
+import { WeatherTile } from "@/components/runs/WeatherTile";
 import { useAuth } from "@/hooks/useAuth";
 import { useUnsavedChanges } from "@/hooks/useUnsavedChanges";
 import {
   computeAndStoreBestEfforts,
   fetchHealthWorkout,
+  saveWeatherForWorkout,
 } from "@/services/healthWorkouts";
 import { fetchRoutePoints, type RoutePoint } from "@/services/routes";
 import { fetchUserSettings } from "@/services/userSettings";
@@ -64,6 +66,7 @@ import {
   orderBy,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { fetchWeatherForRun } from "@/lib/weather";
 
 const RunMap = dynamic(() => import("@/components/RunMap"), { ssr: false });
 
@@ -219,6 +222,24 @@ export default function RunDetailPage() {
           .then((points) => {
             setRoutePoints(points);
 
+            // Weather backfill: a run with GPS but no stored weather yet gets
+            // its start-point/time conditions fetched from Open-Meteo and
+            // persisted. Already-stored weather is reused (no fetch). Failures
+            // are swallowed — the tile simply doesn't render.
+            if (w && w.weather == null && points.length > 0) {
+              fetchWeatherForRun(points[0].lat, points[0].lng, w.startDate)
+                .then((weather) => {
+                  if (!weather) return;
+                  setWorkout((current) =>
+                    current ? { ...current, weather } : current
+                  );
+                  saveWeatherForWorkout(uid, workoutId, weather).catch(
+                    console.error
+                  );
+                })
+                .catch(console.error);
+            }
+
             if (isRoutePresent(points.length)) {
               // Natural new-run hook: the detail page already reads route
               // points for maps/splits/GAP, so computing missing best efforts
@@ -323,16 +344,13 @@ export default function RunDetailPage() {
     month: "short",
     day: "numeric",
   });
-  const fullDateDisplay = startDate.toLocaleDateString("en-US", {
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  });
   const timeDisplay = startDate.toLocaleTimeString("en-US", {
     hour: "numeric",
     minute: "2-digit",
   });
+  // Combined meta-row format: "Sat Jun 7 · 6:42 AM". Strip the comma en-US adds
+  // after the short weekday; native Intl only, no date library.
+  const dateTimeDisplay = `${dateDisplay.replace(",", "")} · ${timeDisplay}`;
 
   // HR Drift
   const driftBadgeLevel = getDriftBadgeLevel(displayWorkout);
@@ -497,6 +515,16 @@ export default function RunDetailPage() {
             </button>
           )}
         </div>
+      </div>
+
+      {/* ── Date / time + weather ───────────────────────────── */}
+      <div className="flex justify-between items-start gap-3">
+        <p className="text-sm font-medium text-textSecondary pt-1">
+          {dateTimeDisplay}
+        </p>
+        {displayWorkout.weather && (
+          <WeatherTile weather={displayWorkout.weather} />
+        )}
       </div>
 
       {/* ── Exclude confirm ─────────────────────────────────── */}
@@ -745,11 +773,6 @@ export default function RunDetailPage() {
             }
             unit={displayWorkout.elevationGainM != null ? "ft" : undefined}
             sublabel={netElevationLabel}
-          />
-          <StatBlock
-            label="Date & Time"
-            value={fullDateDisplay}
-            sublabel={timeDisplay}
           />
           <div className="flex flex-col gap-0.5">
             <span className="text-xs text-textSecondary uppercase tracking-wide">Shoe</span>

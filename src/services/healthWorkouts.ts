@@ -46,6 +46,7 @@ import {
 import { db } from "@/lib/firebase";
 import { toDate } from "@/utils/dates";
 import { type HealthWorkout } from "@/types/healthWorkout";
+import { type WeatherSnapshot } from "@/types/weather";
 import { type UserSettings } from "@/types/userSettings";
 import {
   computeBestEfforts,
@@ -81,6 +82,47 @@ function parseBestEfforts(value: unknown): BestEffortsMap | undefined {
   }
 
   return parsed;
+}
+
+function parseWeather(value: unknown): WeatherSnapshot | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const r = value as Record<string, unknown>;
+  const num = (v: unknown): number | null =>
+    typeof v === "number" && Number.isFinite(v) ? v : null;
+
+  const tempF = num(r.tempF);
+  const feelsLikeF = num(r.feelsLikeF);
+  const humidity = num(r.humidity);
+  const windMph = num(r.windMph);
+  const dewPointF = num(r.dewPointF);
+  const conditionCode = num(r.conditionCode);
+  const conditionText =
+    typeof r.conditionText === "string" ? r.conditionText : null;
+  const fetchedAt = typeof r.fetchedAt === "string" ? r.fetchedAt : null;
+
+  if (
+    tempF === null ||
+    feelsLikeF === null ||
+    humidity === null ||
+    windMph === null ||
+    dewPointF === null ||
+    conditionCode === null ||
+    conditionText === null ||
+    fetchedAt === null
+  ) {
+    return undefined;
+  }
+
+  return {
+    tempF,
+    feelsLikeF,
+    humidity,
+    windMph,
+    dewPointF,
+    conditionCode,
+    conditionText,
+    fetchedAt,
+  };
 }
 
 function bestEffortsEqual(
@@ -147,6 +189,7 @@ function docToHealthWorkout(
       data.trainingLoadMethod === "avg-hr-fallback"
         ? data.trainingLoadMethod
         : undefined,
+    weather: parseWeather(data.weather),
   };
 }
 
@@ -234,6 +277,21 @@ export async function computeAndStoreBestEfforts(
 
   await setDoc(ref, stripUndefined({ bestEfforts }), { merge: true });
   return bestEfforts;
+}
+
+/**
+ * Persist a fetched WeatherSnapshot onto the workout document via an owner
+ * merge write — the same pattern as computeAndStoreBestEfforts, so no new
+ * Firestore rule is required. The web app augments the iOS-synced doc with
+ * `weather`; merge leaves every other field untouched.
+ */
+export async function saveWeatherForWorkout(
+  uid: string,
+  workoutId: string,
+  weather: WeatherSnapshot
+): Promise<void> {
+  const ref = doc(db, "users", uid, "healthWorkouts", workoutId);
+  await setDoc(ref, stripUndefined({ weather }), { merge: true });
 }
 
 /**
