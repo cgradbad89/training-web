@@ -1,14 +1,22 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { RunningPlan, WorkoutPlan, WorkoutCategory } from "@/types/plan";
+import type {
+  RunningPlan,
+  WorkoutPlan,
+  WorkoutCategory,
+  PlannedRunEntry,
+} from "@/types/plan";
+import { isRunningPlan } from "@/types/plan";
 import type { HealthWorkout } from "@/types/healthWorkout";
 import {
   buildCalendarEvents,
   type CalendarEvent,
 } from "@/utils/planCalendar";
+import { matchPlanToActual } from "@/utils/planMatching";
 import { weekStart as getWeekStart } from "@/utils/dates";
+import { RunActivityModal } from "@/components/runs/RunActivityModal";
 
 // ─── Color helpers ────────────────────────────────────────────────────────────
 
@@ -105,6 +113,17 @@ export function WeekCalendar({
 }: WeekCalendarProps) {
   const router = useRouter();
 
+  // Planned-vs-actual modal for RUNNING events — replaces the old
+  // router.push("/plans"). Workout events still navigate to the follow-along
+  // page (see handleClick). State declared before any early return.
+  const [modalOpen, setModalOpen] = useState(false);
+  const [selectedEntry, setSelectedEntry] = useState<PlannedRunEntry | null>(
+    null
+  );
+  const [selectedMatchedRun, setSelectedMatchedRun] =
+    useState<HealthWorkout | null>(null);
+  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+
   const monday = useMemo(
     () => weekStart ?? getWeekStart(new Date()),
     [weekStart]
@@ -130,12 +149,30 @@ export function WeekCalendar({
       router.push(
         `/workout/${event.planId}/${event.weekIndex}/${event.weekday}/${event.sessionIndex}`
       );
-    } else {
-      router.push("/plans");
+      return;
     }
+    // Running event → open the planned-vs-actual RunActivityModal in place of
+    // the old router.push("/plans"). The full PlannedRunEntry + matched run are
+    // looked up from the already-loaded plans/actualRuns props (no new fetch);
+    // bail quietly if either can't be resolved.
+    const plan = plans.find((p) => p.id === event.planId);
+    if (!plan || !isRunningPlan(plan)) return;
+    let entry: PlannedRunEntry | undefined;
+    for (const week of plan.weeks) {
+      entry = week.entries.find((e) => e.id === event.entryId);
+      if (entry) break;
+    }
+    if (!entry) return;
+    const matchedRun =
+      matchPlanToActual(plan, actualRuns).get(entry.id)?.activity ?? null;
+    setSelectedEntry(entry);
+    setSelectedMatchedRun(matchedRun);
+    setSelectedDate(event.date);
+    setModalOpen(true);
   }
 
   return (
+    <>
     <div className="overflow-x-auto">
       <div className="min-w-[560px] grid grid-cols-7 gap-px bg-border rounded-xl overflow-hidden border border-border">
         {/* Header row */}
@@ -178,5 +215,16 @@ export function WeekCalendar({
         })}
       </div>
     </div>
+
+    {modalOpen && selectedEntry && selectedDate && (
+      <RunActivityModal
+        isOpen={modalOpen}
+        onClose={() => setModalOpen(false)}
+        plannedEntry={selectedEntry}
+        matchedRun={selectedMatchedRun}
+        sessionDate={selectedDate}
+      />
+    )}
+    </>
   );
 }
