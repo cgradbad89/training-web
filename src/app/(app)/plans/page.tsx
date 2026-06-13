@@ -783,12 +783,6 @@ export default function PlansPage() {
               isRunningPlan(p) || isWorkoutPlan(p)
           )}
           actualRuns={activities}
-          onRunningEventClick={(planId, weekIndex) => {
-            setPageView("plans");
-            setSelectedPlanId(planId);
-            setSelectedWeekIndex(weekIndex);
-            setMobileView("detail");
-          }}
         />
       ) : pageView === "goals" ? (
         <GoalsTab

@@ -3,11 +3,18 @@
 import React, { useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import type { RunningPlan, WorkoutPlan } from "@/types/plan";
+import {
+  isRunningPlan,
+  type RunningPlan,
+  type WorkoutPlan,
+  type PlannedRunEntry,
+} from "@/types/plan";
 import type { HealthWorkout } from "@/types/healthWorkout";
+import { matchPlanToActual, type PlanMatch } from "@/utils/planMatching";
 import { buildCalendarEvents, type CalendarEvent } from "@/utils/planCalendar";
 import { weekStart } from "@/utils/dates";
 import { WeekCalendar, EventPill } from "@/components/WeekCalendar";
+import { RunActivityModal } from "@/components/runs/RunActivityModal";
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
 
@@ -114,10 +121,9 @@ function MonthGrid({
 interface CalendarViewProps {
   plans: (RunningPlan | WorkoutPlan)[];
   actualRuns?: HealthWorkout[];
-  onRunningEventClick?: (planId: string, weekIndex: number) => void;
 }
 
-export function CalendarView({ plans, actualRuns = [], onRunningEventClick }: CalendarViewProps) {
+export function CalendarView({ plans, actualRuns = [] }: CalendarViewProps) {
   const router = useRouter();
 
   const [calView, setCalView] = useState<"week" | "month">("week");
@@ -126,7 +132,28 @@ export function CalendarView({ plans, actualRuns = [], onRunningEventClick }: Ca
     getMonthStart(new Date())
   );
 
+  // Planned run → opens the RunActivityModal (planned vs actual quick-look).
+  const [selectedSession, setSelectedSession] = useState<{
+    entry: PlannedRunEntry;
+    matchedRun: HealthWorkout | null;
+    date: Date;
+  } | null>(null);
+
   const events = useMemo(() => buildCalendarEvents(plans, actualRuns), [plans, actualRuns]);
+
+  // Per-running-plan match maps (entryId → matched run), reusing the canonical
+  // matcher over the already-loaded workouts — no new Firestore reads. Keyed by
+  // planId so a clicked running pill resolves to the same match the pill's
+  // ✓ "completed" state was derived from.
+  const runningMatchMaps = useMemo(() => {
+    const maps = new Map<string, Map<string, PlanMatch | null>>();
+    for (const plan of plans) {
+      if (plan.status === "active" && isRunningPlan(plan)) {
+        maps.set(plan.id, matchPlanToActual(plan, actualRuns));
+      }
+    }
+    return maps;
+  }, [plans, actualRuns]);
 
   const hasActivePlans = plans.some((p) => p.status === "active");
 
@@ -152,15 +179,24 @@ export function CalendarView({ plans, actualRuns = [], onRunningEventClick }: Ca
   }
 
   function handleEventClick(event: CalendarEvent) {
+    // Workout pills are unchanged — navigate to the workout follow-along.
     if (event.planType === "workout") {
       router.push(
         `/workout/${event.planId}/${event.weekIndex}/${event.weekday}/${event.sessionIndex}`
       );
-    } else if (onRunningEventClick) {
-      onRunningEventClick(event.planId, event.weekIndex);
-    } else {
-      router.push("/plans");
+      return;
     }
+    // Running pills open the planned-vs-actual modal. Resolve the planned entry
+    // and its matched run from already-loaded data (no new Firestore fetch).
+    const plan = plans.find((p) => p.id === event.planId);
+    if (!plan || !isRunningPlan(plan)) return;
+    const entry = plan.weeks
+      .flatMap((w) => w.entries)
+      .find((e) => e.id === event.entryId);
+    if (!entry) return;
+    const matchedRun =
+      runningMatchMaps.get(event.planId)?.get(entry.id)?.activity ?? null;
+    setSelectedSession({ entry, matchedRun, date: event.date });
   }
 
   if (!hasActivePlans) {
@@ -174,6 +210,7 @@ export function CalendarView({ plans, actualRuns = [], onRunningEventClick }: Ca
   }
 
   return (
+    <>
     <div className="flex flex-col flex-1 overflow-hidden p-4 gap-4">
       {/* Controls bar */}
       <div className="flex justify-between items-center shrink-0">
@@ -226,5 +263,16 @@ export function CalendarView({ plans, actualRuns = [], onRunningEventClick }: Ca
         />
       )}
     </div>
+
+    {selectedSession && (
+      <RunActivityModal
+        isOpen
+        onClose={() => setSelectedSession(null)}
+        plannedEntry={selectedSession.entry}
+        matchedRun={selectedSession.matchedRun}
+        sessionDate={selectedSession.date}
+      />
+    )}
+    </>
   );
 }

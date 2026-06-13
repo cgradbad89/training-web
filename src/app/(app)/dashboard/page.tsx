@@ -80,6 +80,7 @@ import { type UserSettings } from "@/types/userSettings";
 import { type WorkoutOverride } from "@/types/workoutOverride";
 import { fetchAllOverrides } from "@/services/workoutOverrides";
 import { WorkoutDetailModal } from "@/components/WorkoutDetailModal";
+import { RunActivityModal } from "@/components/runs/RunActivityModal";
 import {
   computeWeekScore,
   buildWeekScoreBreakdown,
@@ -93,6 +94,7 @@ import {
 import {
   type RunningPlan,
   type WorkoutPlan,
+  type PlannedRunEntry,
   type PlannedWorkoutEntry,
   isRunningPlan,
   isWorkoutPlan,
@@ -628,6 +630,14 @@ function PlanProgressCard({ activePlan, workouts, weekStart, weekEnd }: PlanProg
     [activePlan, workouts]
   );
 
+  // Selected planned run → opens the RunActivityModal (planned vs actual).
+  // Hook MUST come before the early return below (Rules of Hooks).
+  const [selectedSession, setSelectedSession] = useState<{
+    entry: PlannedRunEntry;
+    matchedRun: HealthWorkout | null;
+    date: Date;
+  } | null>(null);
+
   if (!activePlan) {
     return (
       <Card className="h-full">
@@ -664,6 +674,7 @@ function PlanProgressCard({ activePlan, workouts, weekStart, weekEnd }: PlanProg
   const progressPct = plannedMiles > 0 ? Math.min(1, actualMiles / plannedMiles) : 0;
 
   return (
+    <>
     <Card className="h-full">
       <CardTitle>Running Plan</CardTitle>
       <p className="text-sm font-semibold text-textPrimary mb-0.5">{activePlan.name}</p>
@@ -680,9 +691,10 @@ function PlanProgressCard({ activePlan, workouts, weekStart, weekEnd }: PlanProg
           {planWeek.entries.map((entry) => {
             const status = statusForRunEntry(activePlan, entry, matchMap);
             const dayLabel = DAY_LABELS[entry.dayOfWeek];
+            const isRest = entry.runType === "rest";
 
-            return (
-              <div key={entry.id} className="flex items-center gap-2.5 py-1.5">
+            const rowContent = (
+              <>
                 <StatusIcon status={status} />
                 <span className="text-xs text-textSecondary w-7 shrink-0">{dayLabel}</span>
                 <span className="text-sm text-textPrimary flex-1">
@@ -696,6 +708,43 @@ function PlanProgressCard({ activePlan, workouts, weekStart, weekEnd }: PlanProg
                 {entry.paceTarget && (
                   <span className="text-xs text-textSecondary">{entry.paceTarget}</span>
                 )}
+              </>
+            );
+
+            // Rest days are not clickable — only running sessions open the modal.
+            if (isRest) {
+              return (
+                <div key={entry.id} className="flex items-center gap-2.5 py-1.5">
+                  {rowContent}
+                </div>
+              );
+            }
+
+            const openSession = () => {
+              const date = new Date(weekStart);
+              date.setDate(weekStart.getDate() + entry.dayOfWeek);
+              setSelectedSession({
+                entry,
+                matchedRun: matchMap.get(entry.id)?.activity ?? null,
+                date,
+              });
+            };
+
+            return (
+              <div
+                key={entry.id}
+                role="button"
+                tabIndex={0}
+                onClick={openSession}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    openSession();
+                  }
+                }}
+                className="flex items-center gap-2.5 py-1.5 rounded-lg -mx-1 px-1 cursor-pointer hover:bg-surface transition-colors"
+              >
+                {rowContent}
               </div>
             );
           })}
@@ -718,6 +767,17 @@ function PlanProgressCard({ activePlan, workouts, weekStart, weekEnd }: PlanProg
         </div>
       </div>
     </Card>
+
+    {selectedSession && (
+      <RunActivityModal
+        isOpen
+        onClose={() => setSelectedSession(null)}
+        plannedEntry={selectedSession.entry}
+        matchedRun={selectedSession.matchedRun}
+        sessionDate={selectedSession.date}
+      />
+    )}
+    </>
   );
 }
 

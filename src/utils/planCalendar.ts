@@ -4,6 +4,8 @@ import type { HealthWorkout } from "@/types/healthWorkout";
 
 export interface CalendarEvent {
   date: Date;
+  /** Id of the source plan entry — used to look the entry/match back up on click. */
+  entryId: string;
   planId: string;
   planName: string;
   planType: "running" | "workout";
@@ -61,6 +63,7 @@ export function buildCalendarEvents(
           counters.set(key, sessionIndex + 1);
           events.push({
             date: sessionDate(plan.startDate, entry.weekIndex, dayIndex),
+            entryId: entry.id,
             planId: plan.id,
             planName: plan.name,
             planType: "workout",
@@ -90,6 +93,7 @@ export function buildCalendarEvents(
             (entry.runType ? (RUN_TYPE_LABELS[entry.runType] ?? entry.runType) : "Run");
           events.push({
             date: sessionDate(plan.startDate, entry.weekIndex, dayIndex),
+            entryId: entry.id,
             planId: plan.id,
             planName: plan.name,
             planType: "running",
