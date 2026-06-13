@@ -72,7 +72,7 @@ src/
   services/         # All Firestore read/write (one file per collection)
   types/            # TypeScript interfaces mirroring Firestore documents
   utils/            # Domain logic: metrics, pace, dates, trainingLoad, riegelFit, etc.
-    __tests__/      # Vitest unit tests (51 tests across pace, metrics, riegelFit)
+    __tests__/      # Vitest unit tests (1,169 tests across 79 files)
 ```
 
 **See also**: `PRD.md` — full domain reference (data model, invariants, calculations, backlog, services).
