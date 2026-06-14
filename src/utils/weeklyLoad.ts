@@ -20,6 +20,9 @@ export interface WeekActivity {
   kind: "run" | "workout";
   /** Existing display-name logic: HealthWorkout.name (== displayType). */
   name: string;
+  /** Raw HK activityType — drives the workout friendly-label tier. In-memory
+   *  only (no extra read); absent on legacy in-memory rows. */
+  activityType?: string;
   /** Total distance in miles (for the distance-qualified auto-title); may be
    *  absent/0 for non-distance workouts. In-memory only — no extra read. */
   distanceMiles?: number;
@@ -126,6 +129,7 @@ export function buildWeeklyLoadModel(
       id: w.workoutId,
       kind: w.isRunLike ? "run" : "workout",
       name: w.name || w.displayType,
+      activityType: w.activityType,
       distanceMiles: w.distanceMiles,
       date: toLocalIsoDate(w.startDate),
       elapsedSeconds: w.durationSeconds,

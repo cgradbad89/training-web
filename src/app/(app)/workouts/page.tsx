@@ -423,6 +423,7 @@ function WorkoutRow({
         <span className="text-sm font-medium truncate max-w-[200px]">
           {resolveActivityTitle({
             activityType: workout.displayType,
+            rawActivityType: workout.activityType,
             distanceMiles: workout.distanceMiles,
           })}
         </span>

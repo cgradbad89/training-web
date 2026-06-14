@@ -20,6 +20,9 @@ import {
 } from "@/services/shoes";
 import { formatPace } from "@/utils/pace";
 import { resolveActivityTitle } from "@/utils/resolveActivityTitle";
+import { buildRunTitleMap, findActiveRunningPlan } from "@/utils/runPlanTitle";
+import { fetchPlans } from "@/services/plans";
+import { type RunningPlan } from "@/types/plan";
 import { formatShortDate, formatMonthYear } from "@/utils/dates";
 import { projectShoeReplacement } from "@/utils/shoeProjection";
 import { type HealthWorkout } from "@/types/healthWorkout";
@@ -902,6 +905,7 @@ interface RunsPanelProps {
   shoe: RunningShoe;
   activities: HealthWorkout[];
   assignments: Record<string, string | null>;
+  activeRunningPlan: RunningPlan | null;
   onClose: () => void;
   onAssignmentChange: (activityId: string, shoeId: string | null) => Promise<void>;
 }
@@ -910,6 +914,7 @@ function RunsPanel({
   shoe,
   activities,
   assignments,
+  activeRunningPlan,
   onClose,
   onAssignmentChange,
 }: RunsPanelProps) {
@@ -926,6 +931,12 @@ function RunsPanel({
   const runs = useMemo(
     () => activities.filter((a) => a.isRunLike),
     [activities]
+  );
+
+  // workoutId → matched plan-entry title context (priority-1 run label).
+  const runTitleMap = useMemo(
+    () => buildRunTitleMap(activeRunningPlan, activities),
+    [activeRunningPlan, activities]
   );
 
   const assignedRuns = useMemo(
@@ -1042,6 +1053,7 @@ function RunsPanel({
                               {resolveActivityTitle({
                                 activityType: run.displayType,
                                 distanceMiles: run.distanceMiles,
+                                matchedPlanEntry: runTitleMap.get(run.workoutId) ?? null,
                               })}
                             </span>
                           </div>
@@ -1099,6 +1111,7 @@ function RunsPanel({
                             {resolveActivityTitle({
                               activityType: run.displayType,
                               distanceMiles: run.distanceMiles,
+                              matchedPlanEntry: runTitleMap.get(run.workoutId) ?? null,
                             })}
                           </span>
                         </div>
@@ -1140,6 +1153,7 @@ export default function ShoesPage() {
   const [shoes, setShoes] = useState<RunningShoe[]>([]);
   const [activities, setActivities] = useState<HealthWorkout[]>([]);
   const [assignments, setAssignments] = useState<Record<string, string | null>>({});
+  const [activeRunningPlan, setActiveRunningPlan] = useState<RunningPlan | null>(null);
   const [loading, setLoading] = useState(true);
 
   // Modal state
@@ -1172,13 +1186,15 @@ export default function ShoesPage() {
 
   const loadAll = useCallback(async () => {
     if (!uid) return;
-    const [fetchedShoes, fetchedActs, fetchedAssign] = await Promise.all([
+    const [fetchedShoes, fetchedActs, fetchedAssign, fetchedPlans] = await Promise.all([
       fetchShoes(uid),
       fetchHealthWorkouts(uid, { limitCount: 500 }),
       fetchManualShoeAssignmentsMap(uid),
+      fetchPlans(uid),
     ]);
     setShoes(fetchedShoes);
     setActivities(fetchedActs);
+    setActiveRunningPlan(findActiveRunningPlan(fetchedPlans));
     // Compute auto-assignments
     const autoAssigned = evaluateAutoAssignRules(fetchedActs, fetchedShoes, fetchedAssign);
     setAutoAssignedMap(autoAssigned);
@@ -1453,6 +1469,7 @@ export default function ShoesPage() {
           shoe={runsPanel}
           activities={activities}
           assignments={assignments}
+          activeRunningPlan={activeRunningPlan}
           onClose={() => setRunsPanel(null)}
           onAssignmentChange={handlePanelAssignmentChange}
         />

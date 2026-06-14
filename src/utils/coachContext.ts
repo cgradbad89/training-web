@@ -8,6 +8,7 @@ import {
 } from '@/utils/riegelFit'
 import { weekStart as getWeekStart, parseLocalDate, daysUntil } from '@/utils/dates'
 import { resolveActivityTitle } from '@/utils/resolveActivityTitle'
+import { buildRunTitleMap } from '@/utils/runPlanTitle'
 import {
   resolveDisplayLoad,
   DEFAULT_MAX_HR,
@@ -74,6 +75,9 @@ export function buildCoachContext(
       return new Date(b.startDate).getTime() - new Date(a.startDate).getTime()
     })
 
+  // Priority-1 plan labels: invert matchPlanToActual once over the full run set.
+  const runTitleMap = buildRunTitleMap(activePlan, allRuns)
+
   // Build runs array for prompt
   const runs = recentRuns.map(r => {
     const d = new Date(r.startDate)
@@ -89,6 +93,7 @@ export function buildCoachContext(
       runType: resolveActivityTitle({
         activityType: r.displayType ?? "Run",
         distanceMiles: miles,
+        matchedPlanEntry: runTitleMap.get(r.workoutId) ?? null,
       }),
     }
   })

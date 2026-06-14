@@ -34,6 +34,13 @@ import { WorkoutTrendsSection } from "@/components/WorkoutTrendsSection";
 import { useAuth } from "@/hooks/useAuth";
 import { fetchHealthWorkouts } from "@/services/healthWorkouts";
 import { fetchRaces } from "@/services/races";
+import { fetchPlans } from "@/services/plans";
+import { type RunningPlan } from "@/types/plan";
+import {
+  buildRunTitleMap,
+  findActiveRunningPlan,
+  type RunTitleContext,
+} from "@/utils/runPlanTitle";
 import { fetchRoutePoints, type RoutePoint } from "@/services/routes";
 import { fetchAllOverrides } from "@/services/workoutOverrides";
 import { fetchUserSettings } from "@/services/userSettings";
@@ -513,12 +520,14 @@ function tsbStatusLabel(tsb: number): string {
 function TrainingLoadSection({
   data,
   weeklyLoad,
+  runTitleMap,
   intensity,
   intensityLoading,
   maxHr,
 }: {
   data: TrainingLoadSectionData;
   weeklyLoad: WeeklyLoadModel;
+  runTitleMap: Map<string, RunTitleContext>;
   intensity: {
     zoneMiles: Record<HRZoneNumber, number>;
     totalMiles: number;
@@ -842,6 +851,7 @@ function TrainingLoadSection({
       <WeeklyLoadTile
         weeks={weeklyLoad.weeks}
         medianWeekly={weeklyLoad.medianWeekly}
+        runTitleMap={runTitleMap}
       />
 
       {/* Running Intensity by HR Zone — distance-weighted share per zone */}
@@ -1155,6 +1165,7 @@ export default function PersonalInsightsPage() {
   }
 
   const [workouts, setWorkouts] = useState<HealthWorkout[]>([]);
+  const [activeRunningPlan, setActiveRunningPlan] = useState<RunningPlan | null>(null);
   const [races, setRaces] = useState<Race[]>([]);
   const [userSettings, setUserSettings] = useState<UserSettings | null>();
   const [loading, setLoading] = useState(true);
@@ -1194,13 +1205,15 @@ export default function PersonalInsightsPage() {
       fetchHealthWorkouts(uid, { limitCount: 500 }),
       fetchAllOverrides(uid),
       fetchRaces(uid),
+      fetchPlans(uid),
     ])
-      .then(([wkts, overrides, racesData]) => {
+      .then(([wkts, overrides, racesData, plansData]) => {
         const processed = wkts
           .map((w) => applyOverride(w, overrides[w.workoutId] ?? null))
           .filter((w) => !overrides[w.workoutId]?.isExcluded);
         setWorkouts(processed);
         setRaces(racesData);
+        setActiveRunningPlan(findActiveRunningPlan(plansData));
       })
       .catch(console.error)
       .finally(() => setLoading(false));
@@ -1778,6 +1791,13 @@ export default function PersonalInsightsPage() {
     [workouts, maxHr, restingHr]
   );
 
+  // workoutId → matched plan-entry title context (priority-1 run label) for the
+  // Weekly Load tile's run rows. Inverts matchPlanToActual once over the set.
+  const runTitleMap = useMemo(
+    () => buildRunTitleMap(activeRunningPlan, workouts),
+    [activeRunningPlan, workouts]
+  );
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -1822,6 +1842,7 @@ export default function PersonalInsightsPage() {
       <TrainingLoadSection
         data={trainingLoadData}
         weeklyLoad={weeklyLoadModel}
+        runTitleMap={runTitleMap}
         intensity={intensityData}
         intensityLoading={intensityLoading}
         maxHr={maxHr}

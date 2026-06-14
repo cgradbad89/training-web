@@ -32,6 +32,13 @@ import {
 } from "@/utils/trainingLoad";
 import { formatPace, formatDuration, formatMiles } from "@/utils/pace";
 import { resolveActivityTitle } from "@/utils/resolveActivityTitle";
+import {
+  buildRunTitleMap,
+  findActiveRunningPlan,
+  type RunTitleContext,
+} from "@/utils/runPlanTitle";
+import { fetchPlans } from "@/services/plans";
+import { type RunningPlan } from "@/types/plan";
 import { weekStart as getWeekStart } from "@/utils/dates";
 import {
   classifyRun,
@@ -370,6 +377,8 @@ interface RunRowProps {
   isDuplicate?: boolean;
   maxHr: number;
   restingHr: number;
+  /** Matched active-plan entry title context, or null when the run is off-plan. */
+  matchedPlanEntry?: RunTitleContext | null;
 }
 
 function RunRow({
@@ -383,6 +392,7 @@ function RunRow({
   isDuplicate,
   maxHr,
   restingHr,
+  matchedPlanEntry,
 }: RunRowProps) {
   const localDate = getLocalDate(run);
   const dayAbbrev = DAY_ABBREVS[(localDate.getDay() + 6) % 7];
@@ -413,6 +423,7 @@ function RunRow({
               {resolveActivityTitle({
                 activityType: run.displayType,
                 distanceMiles: run.distanceMiles,
+                matchedPlanEntry,
               })}
             </span>
             {isDuplicate && (
@@ -558,6 +569,7 @@ interface WeekGroupProps {
   duplicateIds: Set<string>;
   maxHr: number;
   restingHr: number;
+  runTitleMap: Map<string, RunTitleContext>;
 }
 
 function WeekGroup({
@@ -573,6 +585,7 @@ function WeekGroup({
   duplicateIds,
   onRunClick,
   maxHr,
+  runTitleMap,
 }: WeekGroupProps) {
   const wStart = new Date(wKey + "T00:00:00");
   const weekLabel = wStart.toLocaleDateString("en-US", { month: "short", day: "numeric" });
@@ -628,6 +641,7 @@ function WeekGroup({
             isDuplicate={duplicateIds.has(run.workoutId)}
             maxHr={maxHr}
             restingHr={restingHr}
+            matchedPlanEntry={runTitleMap.get(run.workoutId) ?? null}
           />
         );
       })}
@@ -716,6 +730,7 @@ export default function RunsPage() {
   const [manualAssignments, setManualAssignments] = useState<Record<string, string | null>>({});
   const [overrides, setOverrides] = useState<Record<string, WorkoutOverride>>({});
   const [userSettings, setUserSettings] = useState<UserSettings | null>();
+  const [activeRunningPlan, setActiveRunningPlan] = useState<RunningPlan | null>(null);
   const [showExcluded, setShowExcluded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
@@ -750,6 +765,22 @@ export default function RunsPage() {
       .then(setUserSettings)
       .catch((err) => console.error("[fetchUserSettings]", err));
   }, [uid]);
+
+  // Active running plan — feeds the priority-1 plan label into run titles.
+  // One fetch per surface; matching is memoized below (never per row).
+  useEffect(() => {
+    if (!uid) return;
+    fetchPlans(uid)
+      .then((plans) => setActiveRunningPlan(findActiveRunningPlan(plans)))
+      .catch((err) => console.error("[fetchPlans]", err));
+  }, [uid]);
+
+  // workoutId → matched plan-entry title context. Inverts matchPlanToActual
+  // once over the loaded run set; rows do an O(1) lookup.
+  const runTitleMap = useMemo(
+    () => buildRunTitleMap(activeRunningPlan, allRuns),
+    [activeRunningPlan, allRuns]
+  );
 
   const maxHr = resolveMaxHr(userSettings);
   const restingHr = resolveRestingHr(userSettings);
@@ -1297,6 +1328,7 @@ export default function RunsPage() {
               duplicateIds={duplicateIds}
               maxHr={maxHr}
               restingHr={restingHr}
+              runTitleMap={runTitleMap}
               innerRef={(el) => {
                 weekRefs.current[wk] = el;
               }}

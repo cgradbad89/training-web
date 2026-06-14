@@ -25,6 +25,7 @@ import {
 import { parseLocalDate } from "@/utils/dates";
 import { formatDuration } from "@/utils/pace";
 import { resolveActivityTitle } from "@/utils/resolveActivityTitle";
+import { type RunTitleContext } from "@/utils/runPlanTitle";
 import { computeLoadIntensity } from "@/utils/loadScale";
 
 interface WeeklyLoadTileProps {
@@ -32,6 +33,9 @@ interface WeeklyLoadTileProps {
   weeks: WeekLoadSummary[];
   /** 6-month median weekly load; 0 = no baseline yet. */
   medianWeekly: number;
+  /** workoutId → matched plan-entry title context (priority-1 run label).
+   *  Empty/omitted when no active plan is in scope. */
+  runTitleMap?: Map<string, RunTitleContext>;
 }
 
 const BAND_LABEL: Record<LoadBand, string> = {
@@ -75,7 +79,7 @@ function activityDateLabel(iso: string): string {
  * selected week's activity list (runs navigate to /runs/[id]; workouts have
  * no detail route, so their rows are non-clickable).
  */
-export function WeeklyLoadTile({ weeks, medianWeekly }: WeeklyLoadTileProps) {
+export function WeeklyLoadTile({ weeks, medianWeekly, runTitleMap }: WeeklyLoadTileProps) {
   const router = useRouter();
   // Default selection: current week (last entry).
   const [selectedIndex, setSelectedIndex] = useState(
@@ -327,7 +331,9 @@ export function WeeklyLoadTile({ weeks, medianWeekly }: WeeklyLoadTileProps) {
                     <span className="text-sm font-medium text-textPrimary truncate">
                       {resolveActivityTitle({
                         activityType: a.name,
+                        rawActivityType: a.activityType,
                         distanceMiles: a.distanceMiles,
+                        matchedPlanEntry: runTitleMap?.get(a.id) ?? null,
                       })}
                     </span>
                     <span className="text-xs text-textSecondary">

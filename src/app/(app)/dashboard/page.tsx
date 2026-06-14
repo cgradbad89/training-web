@@ -571,6 +571,7 @@ function WorkoutSummaryCard({
                     <span className="text-sm text-textPrimary truncate">
                       {resolveActivityTitle({
                         activityType: w.displayType,
+                        rawActivityType: w.activityType,
                         distanceMiles: w.distanceMiles,
                       })}
                     </span>

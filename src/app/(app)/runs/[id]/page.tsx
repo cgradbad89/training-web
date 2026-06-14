@@ -48,6 +48,9 @@ import {
 } from "@/types/workoutOverride";
 import { formatPace, formatDuration } from "@/utils/pace";
 import { resolveActivityTitle } from "@/utils/resolveActivityTitle";
+import { buildRunTitleMap, findActiveRunningPlan } from "@/utils/runPlanTitle";
+import { fetchPlans } from "@/services/plans";
+import { type RunningPlan } from "@/types/plan";
 import {
   distanceBucket,
   driftLevel,
@@ -135,6 +138,7 @@ export default function RunDetailPage() {
   const [userSettings, setUserSettings] = useState<UserSettings | null>();
   const [loading, setLoading] = useState(true);
   const [routeLoading, setRouteLoading] = useState(true);
+  const [activeRunningPlan, setActiveRunningPlan] = useState<RunningPlan | null>(null);
 
   // Route Performance + Run Impact data — loaded in a SEPARATE, non-blocking
   // effect so the core run view never waits on the all-workouts query.
@@ -455,6 +459,21 @@ export default function RunDetailPage() {
     );
   }, [workoutsForInsights, workoutId, resolvedMaxHR, resolvedRestingHR]);
 
+  // Active running plan → priority-1 plan label. Cheap one-shot fetch; the
+  // match is computed over the deferred all-workouts set so this run gets the
+  // SAME entry assignment the Runs list shows.
+  useEffect(() => {
+    if (!uid) return;
+    fetchPlans(uid)
+      .then((plans) => setActiveRunningPlan(findActiveRunningPlan(plans)))
+      .catch((err) => console.error("[fetchPlans]", err));
+  }, [uid]);
+
+  const runTitleMap = useMemo(
+    () => buildRunTitleMap(activeRunningPlan, allWorkoutsRaw ?? []),
+    [activeRunningPlan, allWorkoutsRaw]
+  );
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -479,6 +498,7 @@ export default function RunDetailPage() {
 
   // Apply override for display
   const displayWorkout = applyOverride(workout, override);
+  const matchedPlanEntry = runTitleMap.get(displayWorkout.workoutId) ?? null;
   // Derive route availability from the DATA, not just the parent flag. The iOS
   // headless sync can leave `hasRoute: false` on a doc that nonetheless has a
   // populated `route` subcollection; once we've read >= 2 points, render the
@@ -644,6 +664,7 @@ export default function RunDetailPage() {
             {resolveActivityTitle({
               activityType: displayWorkout.displayType,
               distanceMiles: displayWorkout.distanceMiles,
+              matchedPlanEntry,
             })}{" "}
             &middot; {dateDisplay}
           </h1>
