@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Activity, HeartPulse, Save, Sparkles } from "lucide-react";
 
 import { InfoTooltip } from "@/components/ui/InfoTooltip";
@@ -12,7 +12,12 @@ import {
   saveUserSettings,
   saveUserSettingsSuggestions,
 } from "@/services/userSettings";
-import { fetchHealthWorkouts } from "@/services/healthWorkouts";
+import {
+  fetchHealthWorkouts,
+  recomputeAllTrainingLoad,
+} from "@/services/healthWorkouts";
+import { hrAnchorsChanged, type HrAnchors } from "@/utils/trainingLoad";
+import { type UserSettings } from "@/types/userSettings";
 import { fetchRaces } from "@/services/races";
 import { RACE_DISTANCE_MILES } from "@/types/race";
 import { formatPace, parsePaceString } from "@/utils/pace";
@@ -96,6 +101,11 @@ export default function SettingsPage() {
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [recomputing, setRecomputing] = useState(false);
+  const [recomputeMessage, setRecomputeMessage] = useState<string | null>(null);
+  // Anchors as last persisted — the baseline handleSave diffs against to decide
+  // whether a stored-load recompute is needed. Seeded on load + after each save.
+  const prevAnchorsRef = useRef<HrAnchors>({});
   const [suggestingHr, setSuggestingHr] = useState(false);
   const [displayName, setDisplayName] = useState("");
   const [defaultTargetPace, setDefaultTargetPace] = useState("");
@@ -135,6 +145,10 @@ export default function SettingsPage() {
         setRestingHeartRate(
           settings?.restingHeartRate ? String(settings.restingHeartRate) : ""
         );
+        prevAnchorsRef.current = {
+          maxHeartRate: settings?.maxHeartRate,
+          restingHeartRate: settings?.restingHeartRate,
+        };
         setThresholdPace(
           settings?.thresholdPaceSecPerMile
             ? formatPace(settings.thresholdPaceSecPerMile)
@@ -228,11 +242,12 @@ export default function SettingsPage() {
   }
 
   async function handleSave() {
-    if (!uid || saving) return;
+    if (!uid || saving || recomputing) return;
 
     setSaving(true);
     setMessage(null);
     setError(null);
+    setRecomputeMessage(null);
     try {
       const parsedMaxHr = maxHeartRate.trim()
         ? Number(maxHeartRate.trim())
@@ -277,6 +292,36 @@ export default function SettingsPage() {
           thresholdSuggestion?.paceSecPerMile ?? undefined,
       });
       setMessage("Settings saved.");
+
+      // If either HR anchor changed, the STORED training loads were computed
+      // against the old reserve and are now stale. Recompute every HR-bearing
+      // workout under the new anchors (reusing computeAndStoreTrainingLoad).
+      const newAnchors: HrAnchors = {
+        maxHeartRate: parsedMaxHr,
+        restingHeartRate: parsedRestingHr,
+      };
+      if (hrAnchorsChanged(prevAnchorsRef.current, newAnchors)) {
+        setRecomputing(true);
+        try {
+          const stats = await recomputeAllTrainingLoad(uid, {
+            maxHeartRate: parsedMaxHr,
+            restingHeartRate: parsedRestingHr,
+          } as UserSettings);
+          setRecomputeMessage(`Updated ${stats.processed} workouts.`);
+        } catch (recomputeErr) {
+          // Non-blocking: settings ARE saved; recompute is idempotent and safe
+          // to retry by saving again. Leave already-written docs intact.
+          console.error("[SettingsPage] training-load recompute failed", recomputeErr);
+          setError(
+            "Settings saved, but updating training loads didn't finish. Save again to retry."
+          );
+        } finally {
+          setRecomputing(false);
+        }
+      }
+      // Advance the baseline only after the attempt, so a failed recompute is
+      // re-detected (and retried) on the next save.
+      prevAnchorsRef.current = newAnchors;
     } catch (err) {
       console.error("[SettingsPage] save failed", err);
       setError("Could not save settings.");
@@ -473,16 +518,33 @@ export default function SettingsPage() {
       {message ? (
         <p className="text-sm font-medium text-success">{message}</p>
       ) : null}
+      {recomputing ? (
+        <p className="flex items-center gap-2 text-sm font-medium text-textSecondary">
+          <LoadingSpinner size="sm" />
+          Recomputing training loads…
+        </p>
+      ) : null}
+      {!recomputing && recomputeMessage ? (
+        <p className="text-sm font-medium text-success">{recomputeMessage}</p>
+      ) : null}
 
       <div>
         <button
           type="button"
           onClick={handleSave}
-          disabled={saving}
+          disabled={saving || recomputing}
           className="inline-flex items-center gap-2 rounded-xl bg-primary text-white px-5 py-2.5 text-sm font-semibold hover:bg-primary/90 disabled:opacity-50 transition-colors"
         >
-          {saving ? <LoadingSpinner size="sm" /> : <Save size={16} />}
-          {saving ? "Saving..." : "Save Settings"}
+          {saving || recomputing ? (
+            <LoadingSpinner size="sm" />
+          ) : (
+            <Save size={16} />
+          )}
+          {recomputing
+            ? "Recomputing…"
+            : saving
+              ? "Saving..."
+              : "Save Settings"}
         </button>
       </div>
     </div>

@@ -439,6 +439,70 @@ export async function backfillTrainingLoad(
   return stats;
 }
 
+/**
+ * Recompute Training Load V2 for ALL of the user's HR-bearing workouts (ANY
+ * activity type — runs, HIIT/OTF, strength, Pilates) under the given settings,
+ * persisting each via computeAndStoreTrainingLoad (the verbatim per-workout
+ * compute+write — no new math). This is the source-of-truth realignment run
+ * when a user changes their HR anchors (max/resting) on the Settings page, so
+ * the STORED loads track the new reserve instead of the values they were last
+ * written with.
+ *
+ * UNLIKE backfillTrainingLoad, there is deliberately NO `isRunLike` filter:
+ * HIIT/OTF is exactly where the avg-HRR factor (and therefore the anchors)
+ * matter most, so it must be included. A doc is recomputed only when it has an
+ * HR basis (route, hrStream, or a finite positive avgHeartRate) — mirroring the
+ * widened admin backfill's selection; no-HR docs could only yield a null load,
+ * so they are skipped (never written). Idempotent — safe to re-run.
+ */
+export async function recomputeAllTrainingLoad(
+  uid: string,
+  settings: UserSettings | null | undefined
+): Promise<{
+  processed: number;
+  streamed: number;
+  fallback: number;
+  skipped: number;
+}> {
+  const stats = { processed: 0, streamed: 0, fallback: 0, skipped: 0 };
+
+  // ALL workouts, any type (no isRunLike filter), newest-first.
+  const q = query(
+    collection(db, "users", uid, "healthWorkouts"),
+    orderBy("startDate", "desc")
+  );
+  const snap = await getDocs(q);
+
+  for (const workoutDoc of snap.docs) {
+    const data = workoutDoc.data() as Record<string, unknown>;
+    const hasRoute = (data.hasRoute as boolean) ?? false;
+    const hasHRStream = (data.hasHRStream as boolean) ?? false;
+    const avgHeartRate = data.avgHeartRate;
+    const hasFiniteAvgHr =
+      typeof avgHeartRate === "number" &&
+      Number.isFinite(avgHeartRate) &&
+      avgHeartRate > 0;
+
+    // No route, no stream, no usable avgHR ⇒ the 3-tier chain could only return
+    // null. Skip pre-compute (matches the admin backfill's HR-basis filter).
+    if (!hasRoute && !hasHRStream && !hasFiniteAvgHr) {
+      stats.skipped++;
+      continue;
+    }
+
+    const result = await computeAndStoreTrainingLoad(uid, workoutDoc.id, settings);
+    if (!result) {
+      stats.skipped++;
+      continue;
+    }
+    stats.processed++;
+    if (result.method === "streamed") stats.streamed++;
+    else stats.fallback++;
+  }
+
+  return stats;
+}
+
 export async function backfillBestEfforts(uid: string): Promise<{
   scanned: number;
   computed: number;

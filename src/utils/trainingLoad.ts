@@ -47,6 +47,26 @@ export function resolveRestingHr(
   return settings?.restingHeartRate ?? DEFAULT_RESTING_HR;
 }
 
+/** The HR anchors that drive every Training Load V2 score. */
+export interface HrAnchors {
+  maxHeartRate?: number;
+  restingHeartRate?: number;
+}
+
+/**
+ * True when EITHER HR anchor differs between the previously-saved settings and
+ * the just-saved settings — the trigger for a stored-load recompute. An anchor
+ * moving between unset (undefined) and a number counts as a change, so the
+ * first time a user sets a value their historical loads realign too. Pure:
+ * strict per-field comparison, no rounding/coercion.
+ */
+export function hrAnchorsChanged(prev: HrAnchors, next: HrAnchors): boolean {
+  return (
+    prev.maxHeartRate !== next.maxHeartRate ||
+    prev.restingHeartRate !== next.restingHeartRate
+  );
+}
+
 // Minimum thresholds for including an activity in a Training Load *average*.
 // Individual badges still render for all activities regardless of these values —
 // these only filter out short/aborted activities (warmups, restarts) so they
