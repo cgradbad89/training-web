@@ -5,6 +5,7 @@ import { GoogleMap, Polyline, Marker } from "@react-google-maps/api";
 
 import { type RoutePoint } from "@/services/routes";
 import { useGoogleMaps } from "@/components/GoogleMapsProvider";
+import { DARK_MAP_STYLES } from "@/utils/mapStyles";
 
 interface RunMapProps {
   points: RoutePoint[];
@@ -66,6 +67,7 @@ export default function RunMap({ points, className = "" }: RunMapProps) {
           streetViewControl: false,
           mapTypeControl: false,
           fullscreenControl: false,
+          styles: DARK_MAP_STYLES,
         }}
       >
         <Polyline

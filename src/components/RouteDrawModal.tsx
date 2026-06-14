@@ -5,6 +5,7 @@ import { GoogleMap, Marker, Polyline, Autocomplete } from "@react-google-maps/ap
 import { Undo2, Trash2, X, Pencil, Hand } from "lucide-react";
 import { haversineMeters } from "@/utils/routeCache";
 import { useGoogleMaps } from "@/components/GoogleMapsProvider";
+import { DARK_MAP_STYLES } from "@/utils/mapStyles";
 import type { CreatedRouteWaypoint } from "@/types/createdRoute";
 
 interface RouteDrawModalProps {
@@ -575,6 +576,7 @@ export default function RouteDrawModal({
       draggable: !drawMode,
       draggableCursor: drawMode ? "crosshair" : "grab",
       gestureHandling: "greedy",
+      styles: DARK_MAP_STYLES,
     }),
     [drawMode]
   );

@@ -19,6 +19,7 @@ import {
   saveManualAssignments,
 } from "@/services/shoes";
 import { formatPace } from "@/utils/pace";
+import { resolveActivityTitle } from "@/utils/resolveActivityTitle";
 import { formatShortDate, formatMonthYear } from "@/utils/dates";
 import { projectShoeReplacement } from "@/utils/shoeProjection";
 import { type HealthWorkout } from "@/types/healthWorkout";
@@ -1038,7 +1039,10 @@ function RunsPanel({
                               {formatShortDate(run.startDate)}
                             </span>
                             <span className="text-sm font-medium text-textPrimary truncate">
-                              {run.displayType}
+                              {resolveActivityTitle({
+                                activityType: run.displayType,
+                                distanceMiles: run.distanceMiles,
+                              })}
                             </span>
                           </div>
                           <div className="text-xs text-textSecondary mt-0.5">
@@ -1092,7 +1096,10 @@ function RunsPanel({
                             {formatShortDate(run.startDate)}
                           </span>
                           <span className="text-sm font-medium text-textPrimary truncate">
-                            {run.displayType}
+                            {resolveActivityTitle({
+                              activityType: run.displayType,
+                              distanceMiles: run.distanceMiles,
+                            })}
                           </span>
                         </div>
                         <div className="text-xs text-textSecondary mt-0.5">

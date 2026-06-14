@@ -47,6 +47,7 @@ import {
   applyOverride,
 } from "@/types/workoutOverride";
 import { formatPace, formatDuration } from "@/utils/pace";
+import { resolveActivityTitle } from "@/utils/resolveActivityTitle";
 import {
   distanceBucket,
   driftLevel,
@@ -640,7 +641,11 @@ export default function RunDetailPage() {
         </button>
         <div className="flex-1 min-w-0 flex items-center gap-2">
           <h1 className="text-lg font-bold text-textPrimary truncate">
-            {displayWorkout.displayType} &middot; {dateDisplay}
+            {resolveActivityTitle({
+              activityType: displayWorkout.displayType,
+              distanceMiles: displayWorkout.distanceMiles,
+            })}{" "}
+            &middot; {dateDisplay}
           </h1>
           {hasOverrides && (
             <span className="text-[10px] bg-warning/15 text-warning px-2 py-0.5 rounded-full font-semibold shrink-0">

@@ -70,6 +70,7 @@ import {
   formatDuration,
   formatMiles,
 } from "@/utils/pace";
+import { resolveActivityTitle } from "@/utils/resolveActivityTitle";
 import {
   weekStart as getWeekStart,
   weekEnd as getWeekEnd,
@@ -567,7 +568,12 @@ function WorkoutSummaryCard({
                   <div className="flex items-center gap-2.5 min-w-0">
                     <Icon size={15} className="text-textSecondary shrink-0" />
                     <span className="text-xs text-textSecondary w-7 shrink-0">{dayLabel}</span>
-                    <span className="text-sm text-textPrimary truncate">{w.displayType}</span>
+                    <span className="text-sm text-textPrimary truncate">
+                      {resolveActivityTitle({
+                        activityType: w.displayType,
+                        distanceMiles: w.distanceMiles,
+                      })}
+                    </span>
                   </div>
                   <div className="flex items-center gap-2 text-xs text-textSecondary whitespace-nowrap">
                     <span>{formatDuration(w.durationSeconds)}</span>

@@ -28,6 +28,7 @@ import {
 } from "@/services/dismissedDuplicates";
 import { type WorkoutOverride } from "@/types/workoutOverride";
 import { formatDuration } from "@/utils/pace";
+import { resolveActivityTitle } from "@/utils/resolveActivityTitle";
 import { weekStart } from "@/utils/dates";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { WorkoutDetailModal } from "@/components/WorkoutDetailModal";
@@ -418,7 +419,12 @@ function WorkoutRow({
       {/* Col 2: Icon + Name */}
       <div className="flex items-center gap-2 flex-1 min-w-0">
         <Icon size={16} className="text-textSecondary shrink-0" />
-        <span className="text-sm font-medium truncate max-w-[200px]">{workout.displayType}</span>
+        <span className="text-sm font-medium truncate max-w-[200px]">
+          {resolveActivityTitle({
+            activityType: workout.displayType,
+            distanceMiles: workout.distanceMiles,
+          })}
+        </span>
       </div>
 
       {/* Col 3: Type Badge */}

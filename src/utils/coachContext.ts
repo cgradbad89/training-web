@@ -7,6 +7,7 @@ import {
   buildQualifyingEfforts, fitRiegel, predictSeconds
 } from '@/utils/riegelFit'
 import { weekStart as getWeekStart, parseLocalDate, daysUntil } from '@/utils/dates'
+import { resolveActivityTitle } from '@/utils/resolveActivityTitle'
 import {
   resolveDisplayLoad,
   DEFAULT_MAX_HR,
@@ -85,7 +86,10 @@ export function buildCoachContext(
       pace,
       avgHR: r.avgHeartRate ?? null,
       trainingLoad,
-      runType: r.displayType ?? null,
+      runType: resolveActivityTitle({
+        activityType: r.displayType ?? "Run",
+        distanceMiles: miles,
+      }),
     }
   })
 

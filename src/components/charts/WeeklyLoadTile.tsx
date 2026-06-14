@@ -24,6 +24,8 @@ import {
 } from "@/utils/weeklyLoad";
 import { parseLocalDate } from "@/utils/dates";
 import { formatDuration } from "@/utils/pace";
+import { resolveActivityTitle } from "@/utils/resolveActivityTitle";
+import { computeLoadIntensity } from "@/utils/loadScale";
 
 interface WeeklyLoadTileProps {
   /** Oldest → newest; last entry = current week. */
@@ -109,6 +111,22 @@ export function WeeklyLoadTile({ weeks, medianWeekly }: WeeklyLoadTileProps) {
 
   const hasAnyActivity = useMemo(
     () => weeks.some((w) => w.activities.length > 0),
+    [weeks]
+  );
+
+  // Single shared load scale for the Load chips: cap = highest RUN load across
+  // ALL weeks in the tile (stable as the user navigates weeks). 0 when there
+  // are no runs → intensity is skipped and chips render exactly as before.
+  const runLoadCap = useMemo(
+    () =>
+      Math.max(
+        0,
+        ...weeks.flatMap((w) =>
+          w.activities
+            .filter((a) => a.kind === "run")
+            .map((a) => a.load ?? 0)
+        )
+      ),
     [weeks]
   );
 
@@ -307,7 +325,10 @@ export function WeeklyLoadTile({ weeks, medianWeekly }: WeeklyLoadTileProps) {
                   </span>
                   <span className="flex flex-col min-w-0 text-left">
                     <span className="text-sm font-medium text-textPrimary truncate">
-                      {a.name}
+                      {resolveActivityTitle({
+                        activityType: a.name,
+                        distanceMiles: a.distanceMiles,
+                      })}
                     </span>
                     <span className="text-xs text-textSecondary">
                       {activityDateLabel(a.date)}
@@ -316,8 +337,17 @@ export function WeeklyLoadTile({ weeks, medianWeekly }: WeeklyLoadTileProps) {
                   <span className="text-sm text-textSecondary tabular-nums ml-auto shrink-0">
                     {formatDuration(a.elapsedSeconds)}
                   </span>
-                  {/* Existing Load chip — renders "—" itself when load is null */}
-                  <TrainingLoadBadge score={a.load} avgHeartRate={undefined} />
+                  {/* Load chip — renders "—" itself when load is null. Single
+                      shared scale via runLoadCap (skipped when no runs). */}
+                  <TrainingLoadBadge
+                    score={a.load}
+                    avgHeartRate={undefined}
+                    intensity={
+                      runLoadCap > 0
+                        ? computeLoadIntensity(a.load, runLoadCap)
+                        : undefined
+                    }
+                  />
                 </>
               );
               const rowClass =

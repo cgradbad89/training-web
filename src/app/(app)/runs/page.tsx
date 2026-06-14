@@ -30,6 +30,7 @@ import {
   resolveRestingHr,
 } from "@/utils/trainingLoad";
 import { formatPace, formatDuration, formatMiles } from "@/utils/pace";
+import { resolveActivityTitle } from "@/utils/resolveActivityTitle";
 import { weekStart as getWeekStart } from "@/utils/dates";
 import {
   classifyRun,
@@ -408,7 +409,10 @@ function RunRow({
         <div className="flex flex-col min-w-0 flex-1 gap-0.5">
           <div className="flex items-center gap-1.5">
             <span className="text-sm font-medium text-textPrimary truncate max-w-[180px]">
-              {run.displayType}
+              {resolveActivityTitle({
+                activityType: run.displayType,
+                distanceMiles: run.distanceMiles,
+              })}
             </span>
             {isDuplicate && (
               <span className="text-warning" title="Possible duplicate — click to view and exclude if needed">

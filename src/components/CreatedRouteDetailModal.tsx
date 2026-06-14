@@ -8,6 +8,7 @@ import { useGoogleMaps } from "@/components/GoogleMapsProvider";
 import { useAuth } from "@/hooks/useAuth";
 import { updateCreatedRoute } from "@/services/createdRoutes";
 import { haversineMeters } from "@/utils/routeCache";
+import { DARK_MAP_STYLES } from "@/utils/mapStyles";
 
 interface Props {
   route: CreatedRoute | null;
@@ -301,6 +302,7 @@ export function CreatedRouteDetailModal({
                   streetViewControl: false,
                   mapTypeControl: false,
                   fullscreenControl: false,
+                  styles: DARK_MAP_STYLES,
                 }}
               >
                 {/* Dashed planned-route polyline */}

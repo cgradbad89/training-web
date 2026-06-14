@@ -20,6 +20,9 @@ export interface WeekActivity {
   kind: "run" | "workout";
   /** Existing display-name logic: HealthWorkout.name (== displayType). */
   name: string;
+  /** Total distance in miles (for the distance-qualified auto-title); may be
+   *  absent/0 for non-distance workouts. In-memory only — no extra read. */
+  distanceMiles?: number;
   /** ISO "YYYY-MM-DD" (local calendar date). */
   date: string;
   elapsedSeconds: number;
@@ -123,6 +126,7 @@ export function buildWeeklyLoadModel(
       id: w.workoutId,
       kind: w.isRunLike ? "run" : "workout",
       name: w.name || w.displayType,
+      distanceMiles: w.distanceMiles,
       date: toLocalIsoDate(w.startDate),
       elapsedSeconds: w.durationSeconds,
       load: resolveDisplayLoad(w, maxHr, restingHr),

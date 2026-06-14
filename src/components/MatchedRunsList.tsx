@@ -8,6 +8,7 @@ import { TrainingLoadBadge } from "@/components/ui/TrainingLoadBadge";
 import { type MatchedRunSummary } from "@/utils/routePerformance";
 import { formatPace } from "@/utils/pace";
 import { parseLocalDate } from "@/utils/dates";
+import { computeLoadIntensity } from "@/utils/loadScale";
 
 export interface MatchedRunsListProps {
   /** Caller controls order (both current entry points pass newest first). */
@@ -43,6 +44,9 @@ function Rows({
   currentRunId?: string;
   onNavigate: (runId: string) => void;
 }) {
+  // Single shared load scale: cap = highest load among these matched runs (all
+  // runs). 0 when none have a load → intensity skipped (chips render as before).
+  const runLoadCap = Math.max(0, ...runs.map((r) => r.load ?? 0));
   return (
     <div className="flex flex-col">
       {/* Column header */}
@@ -89,8 +93,17 @@ function Rows({
             <span className="text-sm text-textSecondary tabular-nums">
               {r.distanceMiles.toFixed(1)} mi
             </span>
-            {/* Existing Load chip — renders "—" itself when load is null */}
-            <TrainingLoadBadge score={r.load} avgHeartRate={undefined} />
+            {/* Load chip — renders "—" itself when load is null. Single
+                shared scale via runLoadCap (skipped when no loads). */}
+            <TrainingLoadBadge
+              score={r.load}
+              avgHeartRate={undefined}
+              intensity={
+                runLoadCap > 0
+                  ? computeLoadIntensity(r.load, runLoadCap)
+                  : undefined
+              }
+            />
           </button>
         );
       })}

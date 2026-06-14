@@ -34,16 +34,54 @@ interface TrainingLoadBadgeProps {
   durationSeconds?: number;
   restingHr?: number;
   trainingLoadMethod?: "streamed" | "avg-hr-fallback" | null;
+  /**
+   * Optional 0–1 visual intensity (see computeLoadIntensity in
+   * @/utils/loadScale) for a single shared load scale across a mixed list.
+   * When provided, the chip's BACKGROUND OPACITY scales with it — text, border,
+   * and hue stay exactly as before so the number is always readable. Omitted →
+   * renders identically to before (backward compatible, no callsite breaks).
+   */
+  intensity?: number;
 }
 
-const STATUS_CLASSES: Record<TrainingLoadStatus, string> = {
-  low: "bg-blue-500/10 text-blue-500 border-blue-500/20",
-  moderate: "bg-green-500/10 text-green-500 border-green-500/20",
-  hard: "bg-orange-500/10 text-orange-500 border-orange-500/20",
-  "very-hard": "bg-red-500/10 text-red-500 border-red-500/20",
+// Text + border classes per load tier. The HUE is preserved at every
+// intensity; only the background opacity changes (when `intensity` is given).
+const STATUS_FG_BORDER: Record<TrainingLoadStatus, string> = {
+  low: "text-blue-500 border-blue-500/20",
+  moderate: "text-green-500 border-green-500/20",
+  hard: "text-orange-500 border-orange-500/20",
+  "very-hard": "text-red-500 border-red-500/20",
+};
+
+// Default (no-intensity) background — unchanged from before: bg-*/10 = 0.10.
+const STATUS_BG_CLASS: Record<TrainingLoadStatus, string> = {
+  low: "bg-blue-500/10",
+  moderate: "bg-green-500/10",
+  hard: "bg-orange-500/10",
+  "very-hard": "bg-red-500/10",
+};
+
+// RGB triplets mirroring the Tailwind *-500 hues above, used for the
+// intensity-scaled inline background (same hue, variable alpha).
+const STATUS_RGB: Record<TrainingLoadStatus, string> = {
+  low: "59 130 246", // blue-500
+  moderate: "34 197 94", // green-500
+  hard: "249 115 22", // orange-500
+  "very-hard": "239 68 68", // red-500
 };
 
 const NEUTRAL_CLASSES = "bg-surface text-textSecondary border-border";
+
+// Intensity 0..1 → background alpha. Low intensity stays very faint; high
+// intensity fills toward a strong (but still text-legible) tint.
+const INTENSITY_MIN_ALPHA = 0.05;
+const INTENSITY_MAX_ALPHA = 0.3;
+function intensityAlpha(intensity: number): number {
+  const clamped = Math.min(Math.max(intensity, 0), 1);
+  return (
+    INTENSITY_MIN_ALPHA + (INTENSITY_MAX_ALPHA - INTENSITY_MIN_ALPHA) * clamped
+  );
+}
 
 /**
  * Compact Training Load badge with a fixed-positioned tooltip on hover.
@@ -62,6 +100,7 @@ export function TrainingLoadBadge({
   durationSeconds,
   restingHr,
   trainingLoadMethod,
+  intensity,
 }: TrainingLoadBadgeProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
@@ -85,7 +124,20 @@ export function TrainingLoadBadge({
       ? getHRZoneForActivity(avgHeartRate, context, maxHr)
       : null;
 
-  const colorClasses = status ? STATUS_CLASSES[status] : NEUTRAL_CLASSES;
+  // Intensity-scaled background only when we have a score AND a caller-supplied
+  // intensity; otherwise fall back to the original static tier background.
+  const showIntensityBg = status != null && intensity != null;
+  const colorClasses = status
+    ? `${STATUS_FG_BORDER[status]} ${showIntensityBg ? "" : STATUS_BG_CLASS[status]}`
+    : NEUTRAL_CLASSES;
+  const bgStyle =
+    status != null && intensity != null
+      ? {
+          backgroundColor: `rgb(${STATUS_RGB[status]} / ${intensityAlpha(
+            intensity
+          )})`,
+        }
+      : undefined;
   const sizeClasses =
     size === "large"
       ? "px-3 py-1.5 [&_.tl-label]:text-[11px] [&_.tl-value]:text-xl"
@@ -105,6 +157,7 @@ export function TrainingLoadBadge({
         ref={ref}
         onMouseEnter={() => setPos(computePos())}
         onMouseLeave={() => setPos(null)}
+        style={bgStyle}
         className={`flex flex-col items-center rounded-lg border cursor-help select-none ${sizeClasses} ${colorClasses}`}
         aria-label="Training Load score"
       >
