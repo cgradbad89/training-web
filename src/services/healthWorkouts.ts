@@ -58,6 +58,7 @@ import {
   computeStreamedTrainingLoad,
   resolveMaxHr,
   resolveRestingHr,
+  shouldEnrichLoad,
   MIN_HRSTREAM_SAMPLES,
 } from "@/utils/trainingLoad";
 import { fetchRoutePoints, type RoutePoint } from "@/services/routes";
@@ -501,6 +502,37 @@ export async function recomputeAllTrainingLoad(
   }
 
   return stats;
+}
+
+/**
+ * Enrich-on-load: compute + store Training Load V2 for the workouts in a freshly
+ * loaded list that need it. A workout needs it when it has an HR basis but no
+ * stored load (STORE), or when it was stored via the avg-HR fallback and a
+ * route/stream has since arrived (UPGRADE → "streamed") — see {@link shouldEnrichLoad}.
+ *
+ * Reuses computeAndStoreTrainingLoad VERBATIM (the same 3-tier writer the admin
+ * backfill and the Settings recompute call) so there is exactly one load model and
+ * no new math. Sequential (concurrency 1) to avoid a write burst on first load;
+ * idempotent and safe to run on every snapshot — the caller's per-basis guard
+ * (useEnrichTrainingLoads) keeps the snapshot→write→snapshot cycle from repeating
+ * work. Returns the number of workouts actually written.
+ */
+export async function enrichTrainingLoads(
+  uid: string,
+  workouts: HealthWorkout[],
+  settings: UserSettings | null | undefined
+): Promise<number> {
+  let enriched = 0;
+  for (const workout of workouts) {
+    if (!shouldEnrichLoad(workout)) continue;
+    const result = await computeAndStoreTrainingLoad(
+      uid,
+      workout.workoutId,
+      settings
+    );
+    if (result) enriched++;
+  }
+  return enriched;
 }
 
 export async function backfillBestEfforts(uid: string): Promise<{

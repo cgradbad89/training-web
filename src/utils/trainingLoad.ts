@@ -470,6 +470,84 @@ export function resolveDisplayLoad(
   );
 }
 
+// ─── Auto-enrichment of the STORED load (enrich-on-snapshot) ─────────────────
+//
+// iOS writes each workout doc with NO training load, and in two phases: the base
+// doc first (often before the Watch has flushed avgHeartRate / the hrStream), then
+// those HR inputs in a later write. computeAndStoreTrainingLoad has no ingest-time
+// caller, so a new workout's STORED trainingLoadV2 stays null until something runs
+// the writer. resolveDisplayLoad keeps the SCREEN correct (live avg-HR), but the
+// stored field — which a streamed value can only ever come from — needs an explicit
+// write once the workout has loaded. These two pure helpers decide which loaded
+// workouts need that write and give each attempt a stable key, so the enrich pass
+// can't loop when the page's snapshot listener re-fires on its own writes.
+
+/** The minimal HealthWorkout shape `shouldEnrichLoad` reads. */
+export interface EnrichableWorkout {
+  trainingLoadV2?: number | null;
+  trainingLoadMethod?: "streamed" | "avg-hr-fallback";
+  hasRoute?: boolean;
+  hasHRStream?: boolean;
+  avgHeartRate?: number | null;
+}
+
+/**
+ * True when computeAndStoreTrainingLoad should run against a loaded workout, for
+ * one of two reasons:
+ *
+ *  a) STORE   — no finite stored trainingLoadV2 yet, but the workout HAS an HR
+ *               basis to compute from (a route, an hrStream, or a finite avgHR).
+ *               A workout with NO HR basis yet (iOS hasn't flushed HR) returns
+ *               false and correctly keeps rendering "—" until the data arrives.
+ *  b) UPGRADE — already stored, but via the avg-HR fallback, AND a richer basis
+ *               (route or hrStream) has SINCE arrived. Re-running upgrades the
+ *               method "avg-hr-fallback" → "streamed". A workout already stored as
+ *               "streamed" is never re-enriched.
+ *
+ * Pure. The caller (useEnrichTrainingLoads) pairs this with a per-basis attempted
+ * key (see enrichBasisKey) so a re-fired snapshot can't re-run the same attempt.
+ */
+export function shouldEnrichLoad(workout: EnrichableWorkout): boolean {
+  const hasStoredLoad =
+    typeof workout.trainingLoadV2 === "number" &&
+    Number.isFinite(workout.trainingLoadV2);
+  const hasRicherBasis =
+    workout.hasRoute === true || workout.hasHRStream === true;
+  const hasAnyHrBasis =
+    hasRicherBasis ||
+    (typeof workout.avgHeartRate === "number" &&
+      Number.isFinite(workout.avgHeartRate) &&
+      workout.avgHeartRate > 0);
+
+  // (a) STORE — nothing stored yet, but there's something to compute from.
+  if (!hasStoredLoad && hasAnyHrBasis) return true;
+
+  // (b) UPGRADE — stored via avg-HR, but a route/stream arrived later.
+  if (workout.trainingLoadMethod === "avg-hr-fallback" && hasRicherBasis) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Stable per-attempt key for the enrich loop guard. Keyed on the workoutId plus
+ * the BASIS that determines the compute result (hasRoute, hasHRStream) — NOT on the
+ * result. Two consequences:
+ *   - re-running the same basis would yield the same value, so the guard skips it
+ *     (this is what stops a compute that legitimately yields null — no usable HR
+ *     yet — from re-writing forever); and
+ *   - when the basis genuinely changes (the iOS hrStream finally lands) the key
+ *     changes too, so the one UPGRADE pass is allowed through.
+ */
+export function enrichBasisKey(workout: {
+  workoutId: string;
+  hasRoute?: boolean;
+  hasHRStream?: boolean;
+}): string {
+  return `${workout.workoutId}|${workout.hasRoute === true}|${workout.hasHRStream === true}`;
+}
+
 // ─── Load-score tooltip explainer (pure, testable) ──────────────────────────
 
 export interface LoadExplainerInputs {

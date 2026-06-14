@@ -17,6 +17,7 @@ import {
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useAuth } from "@/hooks/useAuth";
+import { useEnrichTrainingLoads } from "@/hooks/useEnrichTrainingLoads";
 import { onHealthWorkoutsSnapshot } from "@/services/healthWorkouts";
 import { fetchUserSettings } from "@/services/userSettings";
 import { fetchAllOverrides, excludeWorkout } from "@/services/workoutOverrides";
@@ -696,6 +697,11 @@ export default function WorkoutsPage() {
       unsubscribe?.();
     };
   }, [uid]);
+
+  // Auto-store Training Load V2 for the non-run workouts this page loads (the
+  // Runs page covers runs). Stores a missing load / upgrades an avg-HR value once
+  // a stream arrives. Runs after paint; writes flow back through the snapshot above.
+  useEnrichTrainingLoads(uid, allWorkouts, userSettings);
 
   const availableYears = useMemo(() => {
     const years = Array.from(

@@ -16,6 +16,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { MiniCalendar, toLocalIsoDateForCalendar } from "@/components/MiniCalendar";
 import { useAuth } from "@/hooks/useAuth";
 import { onHealthWorkoutsSnapshot } from "@/services/healthWorkouts";
+import { useEnrichTrainingLoads } from "@/hooks/useEnrichTrainingLoads";
 import {
   fetchShoes,
   fetchManualShoeAssignmentsMap,
@@ -752,6 +753,11 @@ export default function RunsPage() {
 
   const maxHr = resolveMaxHr(userSettings);
   const restingHr = resolveRestingHr(userSettings);
+
+  // Auto-store Training Load V2 for the runs this page loads (the Workouts page
+  // covers non-runs). Stores a missing load / upgrades an avg-HR value once a
+  // route or stream arrives. Runs after paint; writes flow back via the snapshot.
+  useEnrichTrainingLoads(uid, allRuns, userSettings);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
