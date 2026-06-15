@@ -86,6 +86,7 @@ import {
   computeWeekScore,
   buildWeekScoreBreakdown,
   isWeekEmpty,
+  isWeekScoreReady,
   daysElapsedInWeek,
   isScheduledThroughToday,
   type WeekScoreInput,
@@ -1390,12 +1391,58 @@ function fmtWeekScoreValue(c: WeekScoreComponent): string {
   return `${Math.round(c.actual)} / ${Math.round(c.target)} load`;
 }
 
+/** Loading placeholder for the Week Score card — mirrors the loaded layout
+ *  (ring gauge + label + three sub-score bars) so there's no layout shift when
+ *  the score resolves. Reuses the page's `bg-surface … animate-pulse` skeleton
+ *  pattern. */
+function WeekScoreSkeleton() {
+  return (
+    <Card>
+      <div className="flex items-center gap-6" aria-hidden="true">
+        {/* Ring gauge placeholder — matches WeekScoreRing's 110px footprint. */}
+        <div className="shrink-0 w-[110px] h-[110px] rounded-full bg-surface animate-pulse" />
+
+        {/* Label + bars placeholder. */}
+        <div className="flex-1 min-w-0 flex flex-col gap-3">
+          <div className="flex flex-col gap-2">
+            <div className="h-3 w-20 rounded bg-surface animate-pulse" />
+            <div className="h-5 w-32 rounded bg-surface animate-pulse" />
+            <div className="h-3 w-40 rounded bg-surface animate-pulse" />
+          </div>
+          <div className="h-px bg-border" />
+          <div className="flex flex-col gap-2">
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="h-2.5 rounded-full bg-surface animate-pulse" />
+            ))}
+          </div>
+        </div>
+      </div>
+      <span className="sr-only">Loading week score…</span>
+    </Card>
+  );
+}
+
 /** Single ring + three sub-score bars summarising the current week's
  *  adherence and load. Pure presentation — all numbers come from
  *  computeWeekScore() at the page level. */
-function WeekScoreCard({ input }: { input: WeekScoreInput }) {
-  // Disclosure state — declared before any early return (React #310).
+function WeekScoreCard({
+  input,
+  loading = false,
+}: {
+  input: WeekScoreInput;
+  loading?: boolean;
+}) {
+  // Disclosure state — declared before any early return (React #310). The
+  // loading early-return below MUST stay after this hook to keep hook order
+  // stable across the loading→ready transition.
   const [showBreakdown, setShowBreakdown] = useState(false);
+
+  // Gate the score until ALL inputs (runs/miles, workouts, resolved load) are
+  // loaded. Without this, an unloaded plan zeroes the run/workout denominators
+  // and the zero-denominator → 100% rule flashes a false perfect score.
+  if (loading) {
+    return <WeekScoreSkeleton />;
+  }
 
   const empty = isWeekEmpty(input);
 
@@ -1611,6 +1658,13 @@ export default function DashboardPage() {
   const router = useRouter();
   const [userSettings, setUserSettings] = useState<UserSettings | null>();
   const [loading, setLoading] = useState(true);
+  // Per-source "fetch resolved" flags for the Week Score gate. `loading` only
+  // tracks the workouts snapshot; plans + settings load independently, so the
+  // card must wait for these too (else an unloaded plan flashes a false
+  // perfect score via the zero-denominator → 100% rule). Set on BOTH success
+  // and error so a failed fetch still resolves the gate (never stuck loading).
+  const [plansLoaded, setPlansLoaded] = useState(false);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
 
   // Workout detail modal state — matches the workouts-page pattern so the
   // "This Week's Workouts" tile can pop the same modal on row click.
@@ -1626,7 +1680,8 @@ export default function DashboardPage() {
     if (!uid) return;
     fetchUserSettings(uid)
       .then(setUserSettings)
-      .catch((err) => console.error("[fetchUserSettings]", err));
+      .catch((err) => console.error("[fetchUserSettings]", err))
+      .finally(() => setSettingsLoaded(true));
   }, [uid]);
 
   const maxHr = resolveMaxHr(userSettings);
@@ -1697,7 +1752,8 @@ export default function DashboardPage() {
           workoutPlansList.find((p) => p.status === "active") ?? null
         );
       })
-      .catch(console.error);
+      .catch(console.error)
+      .finally(() => setPlansLoaded(true));
   }, [uid]);
 
   // Fetch healthMetrics for the selected week's date range. Re-runs whenever
@@ -1912,6 +1968,16 @@ export default function DashboardPage() {
     daysElapsed,
   };
 
+  // Gate the Week Score card until every source feeding it has loaded. `!loading`
+  // = workouts snapshot in; plans/settings tracked separately. A loaded-but-empty
+  // source (no active plan) still counts as ready, so a real zero-scheduled week
+  // shows its on-track result rather than the skeleton.
+  const weekScoreReady = isWeekScoreReady({
+    workoutsLoaded: !loading,
+    plansLoaded,
+    settingsLoaded,
+  });
+
   // ─── KPI data ────────────────────────────────────────────────────────────────
 
   if (loading) {
@@ -1939,7 +2005,7 @@ export default function DashboardPage() {
       {/* Row 2: Week Score — single-glance summary of run/load/workout
           adherence for the selected week. (The standalone Plan Progress
           row was folded into the Running row's first two tiles below.) */}
-      <WeekScoreCard input={weekScoreInput} />
+      <WeekScoreCard input={weekScoreInput} loading={!weekScoreReady} />
 
       {/* Row 3: Mon–Sun weekly activity calendar */}
       <section>

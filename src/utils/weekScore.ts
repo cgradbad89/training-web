@@ -265,6 +265,34 @@ export function buildWeekScoreBreakdown(input: WeekScoreInput): WeekScoreBreakdo
   return { components, total: r.total };
 }
 
+/**
+ * Loaded-state flags for the three independent data sources that feed the
+ * Week Score. Each fetch resolves on its own (workouts snapshot, plans,
+ * settings), so the card must wait for ALL of them before scoring — otherwise
+ * an unloaded plan yields zero denominators and the zero-denominator → 100%
+ * rule flashes a false "perfect week" before the real plan arrives.
+ */
+export interface WeekScoreReadiness {
+  /** healthWorkouts snapshot has arrived (runs/miles + load actuals). */
+  workoutsLoaded: boolean;
+  /** Active running + workout plans have been fetched (denominators). A loaded
+   *  state with no active plan is still "ready" — the score renders on-track. */
+  plansLoaded: boolean;
+  /** User settings have been fetched (maxHr/restingHr → resolved load). */
+  settingsLoaded: boolean;
+}
+
+/**
+ * True only when EVERY Week Score input source has finished loading. Until
+ * then the card shows its loading state; once true the score renders even if a
+ * source is genuinely empty (no active plan, rest day) — readiness is about
+ * "did the fetch resolve", NOT "is there data". This is what separates "still
+ * loading" from "loaded but zero scheduled".
+ */
+export function isWeekScoreReady(flags: WeekScoreReadiness): boolean {
+  return flags.workoutsLoaded && flags.plansLoaded && flags.settingsLoaded;
+}
+
 /** True when every numeric input is 0 — the "empty-state" trigger for
  *  the WeekScoreCard's "Check back as your week builds" placeholder. */
 export function isWeekEmpty(input: WeekScoreInput): boolean {
