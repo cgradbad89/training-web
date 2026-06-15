@@ -69,13 +69,40 @@ export function isSameWeek(a: Date, b: Date): boolean {
   return weekStart(a).getTime() === weekStart(b).getTime();
 }
 
-/** Normalize a date to the Monday of its week (ISO string, local date) */
-export function normalizeToMonday(date: Date): string {
-  const d = weekStart(date);
+/** Format a Date as a local "YYYY-MM-DD" string (no UTC drift). */
+function toLocalIsoDate(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+/** Normalize a date to the Monday of its week (ISO string, local date) */
+export function normalizeToMonday(date: Date): string {
+  return toLocalIsoDate(weekStart(date));
+}
+
+/**
+ * Monday-start week-to-date window for the "This Week" ring view.
+ *
+ * Given an anchor local "YYYY-MM-DD" (normally today), returns three local
+ * "YYYY-MM-DD" strings:
+ *  - `start`:   Monday of the anchor's week (via the canonical weekStart /
+ *               normalizeToMonday boundary — never a second week definition).
+ *  - `end`:     the anchor itself — week-to-date, so days later in the week
+ *               are excluded from the window.
+ *  - `weekEnd`: Sunday of the anchor's week (the FULL Mon–Sun period), used to
+ *               place the on-pace tick at elapsed/7 mid-week.
+ */
+export function weekToDateWindow(anchorIso: string): {
+  start: string;
+  end: string;
+  weekEnd: string;
+} {
+  const start = normalizeToMonday(parseLocalDate(anchorIso));
+  const sunday = parseLocalDate(start);
+  sunday.setDate(sunday.getDate() + 6);
+  return { start, end: anchorIso, weekEnd: toLocalIsoDate(sunday) };
 }
 
 /**

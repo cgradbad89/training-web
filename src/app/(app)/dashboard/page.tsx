@@ -991,7 +991,7 @@ function TodayWeekToggle({
 }) {
   const options: { value: HeroMode; label: string }[] = [
     { value: "today", label: "Today" },
-    { value: "week", label: "Week" },
+    { value: "week", label: "This Week" },
   ];
   return (
     <div className="inline-flex items-center gap-1 bg-surface rounded-lg p-0.5">

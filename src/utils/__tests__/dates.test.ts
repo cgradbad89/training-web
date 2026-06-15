@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { formatMonthYear, parseLocalDate, daysUntil } from "@/utils/dates";
+import {
+  formatMonthYear,
+  parseLocalDate,
+  daysUntil,
+  weekStart,
+  normalizeToMonday,
+  weekToDateWindow,
+} from "@/utils/dates";
+import { ringDailyAverage } from "@/lib/ringMath";
 
 describe("formatMonthYear", () => {
   it("formats as full month name + year", () => {
@@ -47,5 +55,84 @@ describe("daysUntil", () => {
     // US DST ends Nov 1 2026; Oct 30 → Nov 2 is 3 calendar days even though
     // one of them is 25 hours long.
     expect(daysUntil("2026-11-02", new Date(2026, 9, 30, 12, 0))).toBe(3);
+  });
+});
+
+// ── Monday-start week boundary + "This Week" week-to-date window ─────────────
+// Reference week: Mon 2026-06-15 … Sun 2026-06-21 (2026-06-15 is a Monday).
+const MON = "2026-06-15";
+const WED = "2026-06-17";
+const THU = "2026-06-18";
+const SUN = "2026-06-21";
+
+describe("weekStart / normalizeToMonday — Monday-start boundary", () => {
+  it("a mid-week date resolves to that week's Monday", () => {
+    expect(normalizeToMonday(parseLocalDate(WED))).toBe(MON);
+    expect(normalizeToMonday(parseLocalDate(THU))).toBe(MON);
+    const ws = weekStart(parseLocalDate(THU));
+    expect(ws.getDay()).toBe(1); // Monday
+    expect(ws.getDate()).toBe(15);
+  });
+
+  it("a Monday resolves to itself", () => {
+    expect(normalizeToMonday(parseLocalDate(MON))).toBe(MON);
+  });
+
+  it("Sunday stays in the same week (its Monday is 6 days back, not next week)", () => {
+    // Regression guard: a Sunday must NOT roll forward to the next Monday.
+    expect(normalizeToMonday(parseLocalDate(SUN))).toBe(MON);
+  });
+});
+
+describe("weekToDateWindow — Monday-start week-to-date", () => {
+  it("a mid-week anchor: start=Monday, end=anchor, weekEnd=Sunday", () => {
+    expect(weekToDateWindow(THU)).toEqual({
+      start: MON,
+      end: THU,
+      weekEnd: SUN,
+    });
+  });
+
+  it("excludes future days in the week (end < weekEnd mid-week)", () => {
+    const { end, weekEnd } = weekToDateWindow(THU);
+    expect(end < weekEnd).toBe(true); // Fri/Sat/Sun not yet in the window
+  });
+
+  it("Sunday edge: still this week — end and weekEnd both land on Sunday", () => {
+    expect(weekToDateWindow(SUN)).toEqual({
+      start: MON,
+      end: SUN,
+      weekEnd: SUN,
+    });
+  });
+
+  it("full Mon–Sun span is always exactly 7 days (never a 30d/YTD window)", () => {
+    for (const anchor of [MON, WED, THU, SUN]) {
+      const { start, weekEnd } = weekToDateWindow(anchor);
+      expect(daysUntil(weekEnd, parseLocalDate(start))).toBe(6); // 6 nights → 7 days
+    }
+  });
+
+  it("daysElapsed feeding the avg toggle: Monday → 1, Thursday → 4", () => {
+    const dailyGoals = [10, 10, 10, 10, 10, 10, 10];
+    const monWindow = weekToDateWindow(MON);
+    const mon = ringDailyAverage({
+      periodTotal: 100,
+      periodStart: parseLocalDate(monWindow.start),
+      periodEnd: parseLocalDate(monWindow.end),
+      dailyGoals,
+      today: parseLocalDate(MON),
+    });
+    expect(mon.daysElapsed).toBe(1);
+
+    const thuWindow = weekToDateWindow(THU);
+    const thu = ringDailyAverage({
+      periodTotal: 100,
+      periodStart: parseLocalDate(thuWindow.start),
+      periodEnd: parseLocalDate(thuWindow.end),
+      dailyGoals,
+      today: parseLocalDate(THU),
+    });
+    expect(thu.daysElapsed).toBe(4);
   });
 });

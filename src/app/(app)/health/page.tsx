@@ -67,6 +67,7 @@ import {
   type HealthGoalDoc,
   type RingMetric,
 } from "@/lib/ringMath";
+import { weekToDateWindow } from "@/utils/dates";
 import {
   evaluateMetricGoal,
   evaluateWeightGoal,
@@ -695,7 +696,7 @@ type RingTimeframe = "today" | "7d" | "30d" | "ytd";
 
 const RING_TIMEFRAME_OPTIONS: { value: RingTimeframe; label: string }[] = [
   { value: "today", label: "Today" },
-  { value: "7d", label: "7D" },
+  { value: "7d", label: "This Week" },
   { value: "30d", label: "30D" },
   { value: "ytd", label: "YTD" },
 ];
@@ -1599,8 +1600,15 @@ export default function HealthPage() {
   // All ranges are to-date, ending at the anchor date (= today unless the
   // user stepped back with the day navigator). YTD = Jan 1 → anchor.
   const ringRange = useMemo(() => {
-    if (ringTimeframe === "7d")
-      return { start: shiftISODate(anchorDate, -6), end: anchorDate };
+    if (ringTimeframe === "7d") {
+      // "This Week" = Monday-start week-to-date: the Monday of the anchor's
+      // week through the anchor itself (future days in the week excluded).
+      // weekToDateWindow reuses the canonical weekStart boundary — the same
+      // one the dashboard hero + Week Score use, so there is one week
+      // definition app-wide.
+      const { start, end } = weekToDateWindow(anchorDate);
+      return { start, end };
+    }
     if (ringTimeframe === "30d")
       return { start: shiftISODate(anchorDate, -29), end: anchorDate };
     if (ringTimeframe === "ytd")
@@ -1627,7 +1635,7 @@ export default function HealthPage() {
   const tfSubtitle = isTodayTimeframe
     ? undefined
     : ringTimeframe === "7d"
-      ? "7-day daily avg"
+      ? "This week daily avg"
       : ringTimeframe === "30d"
         ? "30-day daily avg"
         : "YTD daily avg";
@@ -1636,13 +1644,19 @@ export default function HealthPage() {
   // for value/goal/progress per timeframe — the hero rings and the per-ring
   // KPI cards are both derived from this; never add a second math path.
   const ringStats: RingStat[] = useMemo(() => {
-    // Full-period end for the on-pace tick: trailing 7d/30d windows already
-    // end at the range end (fully elapsed → fraction 1 → tick hidden); YTD's
-    // full period runs to Dec 31 while actuals stay capped at the anchor.
+    // Full-period end for the on-pace tick: "This Week" (7d) runs to its
+    // Sunday so the tick sits at elapsed/7 mid-week; the trailing 30d window
+    // already ends at the range end (fully elapsed → fraction 1 → tick
+    // hidden); YTD's full period runs to Dec 31 while actuals stay capped at
+    // the anchor.
     const tickEnd =
       ringTimeframe === "ytd"
         ? `${anchorDate.slice(0, 4)}-12-31`
-        : ringRange.end;
+        : ringTimeframe === "7d"
+          ? // Full Mon–Sun week so the on-pace tick sits at elapsed/7 mid-week
+            // (week-to-date actuals stay capped at the anchor via ringRange.end).
+            weekToDateWindow(anchorDate).weekEnd
+          : ringRange.end;
     const onPace =
       ringTimeframe === "today"
         ? undefined
