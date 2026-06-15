@@ -19,6 +19,7 @@ import {
   Pencil,
   Trash2,
   Copy,
+  CalendarPlus,
   X,
   Check,
   CheckCircle,
@@ -249,6 +250,8 @@ interface RunningPlanDetailProps {
   onComplete: () => void;
   onReopen: () => void;
   onCopyPlan: (newName: string, startIso: string) => void | Promise<void>;
+  /** Open the calendar (.ics) export modal — state owned by the Plans page. */
+  onExport: () => void;
   /** 0-based week to land on initially (e.g. calendar deep-link). Optional. */
   initialWeekIndex?: number;
   /** Linked race date (ISO) for the in-place editor's race-alignment note. */
@@ -264,6 +267,7 @@ export function RunningPlanDetail({
   onComplete,
   onReopen,
   onCopyPlan,
+  onExport,
   initialWeekIndex,
   linkedRaceDate,
 }: RunningPlanDetailProps) {
@@ -635,6 +639,17 @@ export function RunningPlanDetail({
           >
             <Copy className="w-3.5 h-3.5" />
             Copy plan
+          </button>
+          {/* Export to calendar (.ics) */}
+          <button
+            onClick={onExport}
+            title="Export to calendar (.ics)"
+            className={`${
+              isEditMode ? "hidden lg:flex" : "flex"
+            } items-center gap-1 text-sm px-2.5 py-1.5 rounded-lg border border-border text-textSecondary hover:text-textPrimary hover:bg-surface`}
+          >
+            <CalendarPlus className="w-3.5 h-3.5" />
+            Export
           </button>
           {/* Delete */}
           <button

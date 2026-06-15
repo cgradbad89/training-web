@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from "react";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CrossTrainingPlanDetail } from "@/components/CrossTrainingPlanDetail";
 import { RunningPlanDetail } from "@/components/RunningPlanDetail";
+import { PlanExportModal } from "@/components/PlanExportModal";
 import { useAuth } from "@/hooks/useAuth";
 import {
   fetchPlans,
@@ -337,6 +338,9 @@ export default function PlansPage() {
   const [showCopyRunningPlanModal, setShowCopyRunningPlanModal] = useState(false);
   const [copyRunningPlanName, setCopyRunningPlanName] = useState("");
   const [copyPlanFlash, setCopyPlanFlash] = useState<string | null>(null);
+
+  // Calendar (.ics) export modal — lifted here since `plans` lives on the page.
+  const [showExportModal, setShowExportModal] = useState(false);
 
   const weekTabsRef = useRef<HTMLDivElement>(null);
 
@@ -954,6 +958,7 @@ export default function PlansPage() {
             onComplete={() => handleCompletePlan(selectedRunningPlan.id)}
             onReopen={() => handleReopenPlan(selectedRunningPlan.id)}
             onCopyPlan={handleCopyRunningPlanNamed}
+            onExport={() => setShowExportModal(true)}
             linkedRaceDate={selectedRaceDate}
           />
         ) : !selectedPlan ? (
@@ -1171,6 +1176,14 @@ export default function PlansPage() {
           </div>
         </div>
       )}
+
+      {/* Calendar (.ics) export modal — runningPlans already filtered above */}
+      <PlanExportModal
+        open={showExportModal}
+        onClose={() => setShowExportModal(false)}
+        runningPlans={runningPlans}
+        initialPlanId={selectedPlanId ?? undefined}
+      />
 
       {/* Copy plan success flash (running plans — shown in header area) */}
       {copyPlanFlash && (
