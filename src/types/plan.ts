@@ -46,6 +46,8 @@ export interface PlannedRunEntry {
   description?: string;
   notes?: string;
   targetHeartRate?: number | null;
+  /** Optional time of day, 24h "HH:MM" (e.g. "07:00"). Used for calendar export. */
+  scheduledTime?: string;
   workoutType?: "easy" | "tempo" | "long" | "race" | "rest" | "cross";
 }
 

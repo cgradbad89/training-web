@@ -45,6 +45,7 @@ import {
   makeNewRunEntry,
   runningWeekSummaryLabel,
   computeWeekCompletion,
+  normalizeScheduledTime,
 } from "@/utils/planEditorLogic";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -105,6 +106,7 @@ function EntryForm({ initial, weekday, weekIndex, onSave, onCancel }: EntryFormP
   const [targetHeartRate, setTargetHeartRate] = useState(
     initial.targetHeartRate != null ? String(initial.targetHeartRate) : ""
   );
+  const [scheduledTime, setScheduledTime] = useState(initial.scheduledTime ?? "");
   const [notes, setNotes] = useState(initial.notes ?? "");
 
   function handleSave() {
@@ -128,6 +130,7 @@ function EntryForm({ initial, weekday, weekIndex, onSave, onCancel }: EntryFormP
       description: description.trim() || undefined,
       notes: notes.trim() || undefined,
       targetHeartRate: hr,
+      scheduledTime: normalizeScheduledTime(scheduledTime),
     });
   }
 
@@ -196,7 +199,17 @@ function EntryForm({ initial, weekday, weekIndex, onSave, onCancel }: EntryFormP
           />
           <span className="text-sm text-textSecondary shrink-0">bpm</span>
         </div>
-        <div>
+        <div className="flex items-center gap-1">
+          <input
+            type="time"
+            value={scheduledTime}
+            onChange={(e) => setScheduledTime(e.target.value)}
+            aria-label="Time (optional)"
+            className="flex-1 text-sm border border-border rounded-lg px-2 py-1.5 bg-card text-textPrimary placeholder:text-textSecondary"
+          />
+          <span className="text-sm text-textSecondary shrink-0">Time (optional)</span>
+        </div>
+        <div className="md:col-span-2">
           <input
             type="text"
             value={notes}

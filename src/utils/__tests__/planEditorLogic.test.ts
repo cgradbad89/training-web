@@ -11,6 +11,7 @@ import {
   computeWeekCompletion,
   resolveInitialWeekIndex,
   runMutationWithDirty,
+  normalizeScheduledTime,
 } from "@/utils/planEditorLogic";
 import type { PlannedWorkoutEntry, PlannedRunEntry } from "@/types/plan";
 import { deepCopyRunEntry } from "@/utils/planCopy";
@@ -391,5 +392,66 @@ describe("runMutationWithDirty", () => {
     // A no-op cancel handler touches nothing.
     void setDirty;
     expect(dirty).toBe(false);
+  });
+});
+
+// ─── scheduledTime normalization + persistence ────────────────────────────────
+
+describe("normalizeScheduledTime", () => {
+  it("stores a set time as the raw HH:MM string", () => {
+    expect(normalizeScheduledTime("07:00")).toBe("07:00");
+  });
+
+  it("yields undefined (not an empty string) for a blank input", () => {
+    const result = normalizeScheduledTime("");
+    expect(result).toBeUndefined();
+    expect(result).not.toBe("");
+  });
+
+  it("yields undefined for a whitespace-only input", () => {
+    expect(normalizeScheduledTime("   ")).toBeUndefined();
+  });
+
+  it("trims surrounding whitespace from a set time", () => {
+    expect(normalizeScheduledTime("  07:00 ")).toBe("07:00");
+  });
+});
+
+// The write path serializes the whole plan via stripUndefined, which is
+// JSON.parse(JSON.stringify(...)) — so these JSON round-trips mirror exactly
+// what reaches Firestore for an entry's scheduledTime field.
+describe("scheduledTime write-path round-trip", () => {
+  const baseEntry: PlannedRunEntry = {
+    id: "e1",
+    weekIndex: 0,
+    weekday: 1,
+    dayOfWeek: 0,
+    distanceMiles: 5,
+    runType: "outdoor",
+  };
+
+  it("persists scheduledTime when set", () => {
+    const entry: PlannedRunEntry = {
+      ...baseEntry,
+      scheduledTime: normalizeScheduledTime("07:00"),
+    };
+    const written = JSON.parse(JSON.stringify(entry)) as PlannedRunEntry;
+    expect(written.scheduledTime).toBe("07:00");
+  });
+
+  it("drops scheduledTime entirely when the input is empty (never writes \"\")", () => {
+    const entry: PlannedRunEntry = {
+      ...baseEntry,
+      scheduledTime: normalizeScheduledTime(""),
+    };
+    const written = JSON.parse(JSON.stringify(entry)) as Record<string, unknown>;
+    expect("scheduledTime" in written).toBe(false);
+    expect(written.scheduledTime).not.toBe("");
+  });
+
+  it("round-trips an entry with no scheduledTime unchanged", () => {
+    const written = JSON.parse(JSON.stringify(baseEntry)) as PlannedRunEntry;
+    expect(written).toEqual(baseEntry);
+    expect("scheduledTime" in written).toBe(false);
   });
 });

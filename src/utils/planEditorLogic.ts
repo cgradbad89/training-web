@@ -119,6 +119,16 @@ export function makeNewRunEntry(
   };
 }
 
+/**
+ * Normalize an entry-form time input into the value stored on a
+ * PlannedRunEntry.scheduledTime. A blank/whitespace-only input becomes
+ * `undefined` so stripUndefined drops it on write (never an empty string);
+ * a non-blank input is stored trimmed as the raw "HH:MM" string.
+ */
+export function normalizeScheduledTime(input: string): string | undefined {
+  return input.trim() || undefined;
+}
+
 /** Per-week summary label for running plans: total planned miles (e.g. "20.5 mi"). */
 export function runningWeekSummaryLabel(entries: PlannedRunEntry[]): string {
   const miles = entries
