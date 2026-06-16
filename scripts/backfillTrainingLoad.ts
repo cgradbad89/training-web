@@ -29,7 +29,7 @@
  * Owner field-merge to healthWorkouts is already permitted (Prompt 2 rule check).
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import admin from "firebase-admin";
 import {
   computeStreamedTrainingLoad,
@@ -50,6 +50,10 @@ interface BackfillOptions {
   uid?: string;
   /** Epoch ms for "now" — injectable for determinism; defaults to Date.now(). */
   nowMs?: number;
+  /** When true (commit only), restrict writes to STALE-flagged docs (see
+   *  isStaleLoad) instead of every processed doc. Opt-in; does NOT change the
+   *  default commit behavior. Used by the targeted two-pass-collapse repair. */
+  staleOnly?: boolean;
 }
 
 export interface BackfillSummary {
@@ -72,6 +76,9 @@ export interface BackfillSummary {
   fallback: number;
   /** Computed but load was null (not written; UI falls back to "—"). */
   skipped: number;
+  /** READ-ONLY report metric: docs whose stored "streamed" load is a stale
+   *  two-pass collapse vs the fresh recompute (see isStaleLoad). */
+  staleFlagged: number;
   written: number;
   committed: boolean;
 }
@@ -125,18 +132,60 @@ interface Row {
   date: string;
   type: string;
   distanceMiles: number;
+  durationMin: number;
   avgHR: number | null;
   /** Which tier's data fed the compute (independent of the resulting method). */
   source: "route" | "hrStream" | "avg-hr";
   method: "streamed" | "avg-hr-fallback";
   hrCoverage: number;
   load: number | null;
+  /** Currently-stored trainingLoadV2 on the doc (what the UI shows today). */
+  storedLoad: number | null;
+  /** Currently-stored trainingLoadMethod on the doc. */
+  storedMethod: string | undefined;
+  /** True when the stored value is a two-pass-sync STALE collapse (see isStaleLoad). */
+  stale: boolean;
+}
+
+// ─── Stale-value detection (READ-ONLY report; does NOT affect commit writes) ──
+//
+// A two-pass iOS sync can leave a "streamed" trainingLoadV2 computed mid-sync over
+// a PARTIAL stream that was never recomputed after the resume completed (e.g. 6/16:
+// stored 14, now-complete stream recomputes to 187). We flag such a run when its
+// stored method is "streamed" AND the fresh recompute is materially HIGHER than the
+// stored value — i.e. a collapse, not normal rounding. The recompute is idempotent
+// under unchanged anchors (a healthy run recomputes to within rounding of its stored
+// value — see 6/9), so this threshold cleanly separates the collapse class.
+export const STALE_ABS_GAP = 25; // recomputed − stored ≥ 25 load points → stale
+export const STALE_RATIO = 1.5; // OR recomputed ≥ 1.5× stored …
+export const STALE_RATIO_MIN_GAP = 10; // … but only when backed by a ≥10 abs gap
+
+export function isStaleLoad(
+  storedLoad: number | null,
+  storedMethod: string | undefined,
+  recomputed: number | null
+): boolean {
+  if (storedMethod !== "streamed") return false;
+  if (storedLoad == null || !Number.isFinite(storedLoad)) return false;
+  if (recomputed == null || !Number.isFinite(recomputed)) return false;
+  // Collapse class: the fresh recompute is materially HIGHER than the stored
+  // (mid-sync) value — a big absolute jump, OR a clear ratio jump backed by a
+  // non-trivial absolute gap. The gap floors are ESSENTIAL: a ratio-only test
+  // wrongly flags the degenerate stored == recomputed case (e.g. 0→0, where
+  // 1.5×0 = 0 makes "recomputed ≥ 1.5×stored" trivially true). A run that
+  // recomputes to the SAME value (no discrepancy) is never stale.
+  const gap = recomputed - storedLoad;
+  return (
+    gap >= STALE_ABS_GAP ||
+    (storedLoad > 0 && recomputed >= STALE_RATIO * storedLoad && gap >= STALE_RATIO_MIN_GAP)
+  );
 }
 
 export async function runBackfillTrainingLoad(
   opts: BackfillOptions = {}
 ): Promise<BackfillSummary> {
   const commit = opts.commit === true;
+  const staleOnly = opts.staleOnly === true;
   const nowMs = opts.nowMs ?? Date.now();
   const db = getDb();
   const uid = await resolveUid(db, opts.uid);
@@ -172,7 +221,8 @@ export async function runBackfillTrainingLoad(
     .get();
 
   console.log(
-    `[backfill] uid=${uid} mode=${commit ? "COMMIT" : "DRY-RUN"} ` +
+    `[backfill] uid=${uid} mode=${commit ? "COMMIT" : "DRY-RUN"}` +
+      `${staleOnly ? " [STALE-ONLY]" : ""} ` +
       `maxHr=${maxHr} restingHr=${restingHr} selectedInWindow=${snap.size} ` +
       `(last 12mo, all types — HR-basis filtered in memory)`
   );
@@ -191,6 +241,7 @@ export async function runBackfillTrainingLoad(
     streamedHrStream: 0,
     fallback: 0,
     skipped: 0,
+    staleFlagged: 0,
     written: 0,
     committed: commit,
   };
@@ -207,6 +258,16 @@ export async function runBackfillTrainingLoad(
     const hasRoute = (data.hasRoute as boolean) ?? false;
     const hasHRStream = (data.hasHRStream as boolean) ?? false;
     const distanceMiles = (data.distanceMiles as number) ?? 0;
+    // Currently-stored values (READ-ONLY — for the staleness report only).
+    const storedLoad =
+      typeof data.trainingLoadV2 === "number" && Number.isFinite(data.trainingLoadV2)
+        ? (data.trainingLoadV2 as number)
+        : null;
+    const storedMethod =
+      data.trainingLoadMethod === "streamed" ||
+      data.trainingLoadMethod === "avg-hr-fallback"
+        ? (data.trainingLoadMethod as string)
+        : undefined;
     const displayType = (data.displayType as string) ?? (activityType ?? "Workout");
     const startDate =
       data.startDate && typeof (data.startDate as { toDate?: () => Date }).toDate === "function"
@@ -317,17 +378,23 @@ export async function runBackfillTrainingLoad(
       source = "avg-hr";
     }
 
+    const stale = isStaleLoad(storedLoad, storedMethod, load);
     rows.push({
       workoutId: docSnap.id,
       date: fmtDate(startDate),
       type: displayType,
       distanceMiles: Math.round(distanceMiles * 100) / 100,
-      avgHR: avgHeartRate,
+      durationMin: Math.round((durationSeconds / 60) * 10) / 10,
+      avgHR: avgHeartRate == null ? null : Math.round(avgHeartRate),
       source,
       method,
       hrCoverage: Math.round(hrCoverage * 100) / 100,
       load,
+      storedLoad,
+      storedMethod,
+      stale,
     });
+    if (stale) summary.staleFlagged += 1;
 
     summary.processed += 1;
     if (load == null) {
@@ -342,10 +409,14 @@ export async function runBackfillTrainingLoad(
       summary.fallback += 1;
     }
 
-    writes.push({
-      ref: docSnap.ref,
-      data: { trainingLoadV2: load, trainingLoadMethod: method },
-    });
+    // Default: queue a write for every processed doc (idempotent). staleOnly:
+    // queue ONLY the two-pass-collapse repairs, leaving all other docs untouched.
+    if (!staleOnly || stale) {
+      writes.push({
+        ref: docSnap.ref,
+        data: { trainingLoadV2: load, trainingLoadMethod: method },
+      });
+    }
   }
 
   // Per-workout table (dry-run shows the full picture; commit shows it too).
@@ -366,6 +437,54 @@ export async function runBackfillTrainingLoad(
       `skipped(no-HR-basis)=${summary.skippedNoHrBasis} ` +
       `| skipped(null-load)=${summary.skipped} | sum(load)=${totalLoad}`
   );
+
+  // ─── Stale-value REPORT (read-only) ────────────────────────────────────────
+  // Flag stored "streamed" loads that the fresh recompute reveals as two-pass
+  // collapses. Columns match the repair brief: docId|date|miles|durationMin|
+  // avgHR|storedLoad|recomputedLoad|storedMethod.
+  const staleRows = rows.filter((r) => r.stale);
+  console.log(
+    `[backfill] STALE flagged (storedMethod="streamed" AND recomputed >= ${STALE_RATIO}x stored OR gap >= ${STALE_ABS_GAP}): ${staleRows.length}`
+  );
+  const staleReport = staleRows.map((r) => ({
+    docId: r.workoutId,
+    date: r.date,
+    miles: r.distanceMiles,
+    durationMin: r.durationMin,
+    avgHR: r.avgHR,
+    storedLoad: r.storedLoad,
+    recomputedLoad: r.load,
+    storedMethod: r.storedMethod,
+  }));
+  console.table(staleReport);
+
+  // Vitest buffers console output, so optionally dump a plain-text report to a
+  // file for reliable capture. Opt-in via BACKFILL_REPORT=<path>; READ-ONLY.
+  const reportPath = process.env.BACKFILL_REPORT;
+  if (reportPath) {
+    const lines: string[] = [];
+    lines.push(
+      `[backfill] mode=${commit ? "COMMIT" : "DRY-RUN"} uid=${uid} maxHr=${maxHr} restingHr=${restingHr}`
+    );
+    lines.push(
+      `selectedInWindow=${summary.selectedInWindow} selected=${summary.selected} ` +
+        `processed=${summary.processed} staleFlagged=${summary.staleFlagged} written=${summary.written}`
+    );
+    lines.push("");
+    lines.push(`ALL stored-"streamed" rows (stored vs recomputed):`);
+    for (const r of rows.filter((x) => x.storedMethod === "streamed")) {
+      lines.push(
+        `  ${r.stale ? "STALE" : " ok  "} ${r.date} ${r.workoutId} ` +
+          `miles=${r.distanceMiles} durMin=${r.durationMin} avgHR=${r.avgHR} ` +
+          `stored=${r.storedLoad} recomputed=${r.load} method=${r.storedMethod}`
+      );
+    }
+    lines.push("");
+    lines.push(`STALE-FLAGGED (${staleReport.length}):`);
+    for (const r of staleReport) lines.push(`  ${JSON.stringify(r)}`);
+    writeFileSync(reportPath, lines.join("\n"), "utf8");
+    console.log(`[backfill] wrote report to ${reportPath}`);
+  }
 
   if (commit && writes.length > 0) {
     for (let i = 0; i < writes.length; i += WRITE_BATCH_SIZE) {
