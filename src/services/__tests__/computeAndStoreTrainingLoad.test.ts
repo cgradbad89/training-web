@@ -69,9 +69,10 @@ describe("computeAndStoreTrainingLoad — 3-tier method selection", () => {
     expect(result?.method).toBe("streamed");
     expect(fetchRoutePointsMock).toHaveBeenCalledTimes(1);
     expect(fetchHRStreamMock).not.toHaveBeenCalled();
-    // Stored method matches.
+    // Stored method matches; route not flagged partial → basis recorded complete.
     expect(setDocMock.mock.calls[0][1]).toMatchObject({
       trainingLoadMethod: "streamed",
+      trainingLoadBasisComplete: true,
     });
   });
 
@@ -111,6 +112,32 @@ describe("computeAndStoreTrainingLoad — 3-tier method selection", () => {
     expect(fetchHRStreamMock).not.toHaveBeenCalled();
     expect(setDocMock.mock.calls[0][1]).toMatchObject({
       trainingLoadMethod: "avg-hr-fallback",
+    });
+  });
+
+  it("records trainingLoadBasisComplete=false for a still-syncing partial route", async () => {
+    workoutData = {
+      hasRoute: true,
+      hasHRStream: false,
+      routeComplete: false, // iOS partial route, resume pending
+      durationSeconds: 5400,
+      avgHeartRate: 145,
+      activityType: "running",
+    };
+    // Mid-sync: only a short prefix of the route has landed → collapsed score.
+    fetchRoutePointsMock.mockResolvedValue(
+      Array.from({ length: 60 }, (_, i) => ({
+        timestamp: new Date(START + i * 1000).toISOString(),
+        hr: 145,
+      }))
+    );
+
+    await computeAndStoreTrainingLoad("uid", "w5", null);
+
+    // The basis is recorded as INCOMPLETE so a later completion recomputes once.
+    expect(setDocMock.mock.calls[0][1]).toMatchObject({
+      trainingLoadMethod: "streamed",
+      trainingLoadBasisComplete: false,
     });
   });
 

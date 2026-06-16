@@ -53,6 +53,12 @@ export interface HealthWorkout {
   /** Which V2 model produced trainingLoadV2: per-second "streamed" integral or
    *  the avg-HR baseline ("avg-hr-fallback"). */
   trainingLoadMethod?: "streamed" | "avg-hr-fallback";
+  /** Whether the route basis was COMPLETE (routeComplete !== false) at the moment
+   *  trainingLoadV2 was computed. Written by computeAndStoreTrainingLoad. Lets the
+   *  enrich guard recompute a "streamed" load exactly once after a two-pass iOS
+   *  sync finishes — when routeComplete flips to true but this still reads false —
+   *  without re-running healthy, already-complete loads. Absent on legacy docs. */
+  trainingLoadBasisComplete?: boolean;
   /** Historical weather at the run's start point/time, fetched from Open-Meteo
    *  and persisted by the web app. Absent on iOS-synced docs until backfilled
    *  (null/undefined = not yet fetched or no GPS). */

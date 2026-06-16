@@ -190,6 +190,10 @@ function docToHealthWorkout(
       data.trainingLoadMethod === "avg-hr-fallback"
         ? data.trainingLoadMethod
         : undefined,
+    trainingLoadBasisComplete:
+      typeof data.trainingLoadBasisComplete === "boolean"
+        ? (data.trainingLoadBasisComplete as boolean)
+        : undefined,
     weather: parseWeather(data.weather),
   };
 }
@@ -332,6 +336,12 @@ export async function computeAndStoreTrainingLoad(
   const activityType = (data.activityType as string) ?? undefined;
   const hasRoute = (data.hasRoute as boolean) ?? false;
   const hasHRStream = (data.hasHRStream as boolean) ?? false;
+  // Record whether the route basis is COMPLETE at compute time. Only an explicit
+  // routeComplete === false (iOS partial route still syncing) counts as
+  // incomplete; true / absent (legacy) are treated as complete. This is the
+  // signal shouldEnrichLoad (case c) uses to recompute exactly once after a
+  // two-pass sync finishes.
+  const basisComplete = data.routeComplete !== false;
 
   let load: number | null;
   let method: "streamed" | "avg-hr-fallback";
@@ -389,10 +399,16 @@ export async function computeAndStoreTrainingLoad(
   }
 
   // stripUndefined drops `undefined` keys but PRESERVES explicit null, so a
-  // null load is stored (→ "—") rather than written as 0.
+  // null load is stored (→ "—") rather than written as 0. trainingLoadBasisComplete
+  // records the route-completeness this load was computed from, so a later
+  // resume-completion can trigger exactly one recompute (shouldEnrichLoad case c).
   await setDoc(
     ref,
-    stripUndefined({ trainingLoadV2: load, trainingLoadMethod: method }),
+    stripUndefined({
+      trainingLoadV2: load,
+      trainingLoadMethod: method,
+      trainingLoadBasisComplete: basisComplete,
+    }),
     { merge: true }
   );
 

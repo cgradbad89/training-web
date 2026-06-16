@@ -489,6 +489,12 @@ export interface EnrichableWorkout {
   hasRoute?: boolean;
   hasHRStream?: boolean;
   avgHeartRate?: number | null;
+  /** iOS route-completion marker: false = partial route still syncing on a later
+   *  wake; true = full route written; absent = legacy (treat as complete). */
+  routeComplete?: boolean;
+  /** Whether the route basis was complete when the STORED load was computed. Set
+   *  by computeAndStoreTrainingLoad. Drives the post-completion recompute (c). */
+  trainingLoadBasisComplete?: boolean;
 }
 
 /**
@@ -501,8 +507,14 @@ export interface EnrichableWorkout {
  *               false and correctly keeps rendering "—" until the data arrives.
  *  b) UPGRADE — already stored, but via the avg-HR fallback, AND a richer basis
  *               (route or hrStream) has SINCE arrived. Re-running upgrades the
- *               method "avg-hr-fallback" → "streamed". A workout already stored as
- *               "streamed" is never re-enriched.
+ *               method "avg-hr-fallback" → "streamed".
+ *  c) RECOMPUTE — a stored "streamed" load whose ROUTE has COMPLETED since the
+ *               load was computed (two-pass iOS sync): a partial route produced a
+ *               collapsed score that the now-complete route recomputes correctly.
+ *               Detected by routeComplete === true AND trainingLoadBasisComplete
+ *               === false (the basis recorded at compute time). Without this, a
+ *               stored "streamed" value is otherwise terminal, so the collapse
+ *               (e.g. 6/16: 14 vs the correct 187) would persist forever.
  *
  * Pure. The caller (useEnrichTrainingLoads) pairs this with a per-basis attempted
  * key (see enrichBasisKey) so a re-fired snapshot can't re-run the same attempt.
@@ -527,25 +539,46 @@ export function shouldEnrichLoad(workout: EnrichableWorkout): boolean {
     return true;
   }
 
+  // (c) RECOMPUTE — a "streamed" load computed from a still-partial route, now
+  //     that the route has COMPLETED. Gated on trainingLoadBasisComplete === false
+  //     (the basis recorded at compute time), so it fires at most ONCE per
+  //     completion: the recompute stores basisComplete=true, after which this is
+  //     false again. A legacy doc (basisComplete absent → undefined, NOT false) is
+  //     left alone — never re-run — so healthy historical loads don't churn.
+  if (
+    workout.trainingLoadMethod === "streamed" &&
+    workout.routeComplete === true &&
+    workout.trainingLoadBasisComplete === false
+  ) {
+    return true;
+  }
+
   return false;
 }
 
 /**
  * Stable per-attempt key for the enrich loop guard. Keyed on the workoutId plus
- * the BASIS that determines the compute result (hasRoute, hasHRStream) — NOT on the
- * result. Two consequences:
+ * the BASIS that determines the compute result — NOT on the result. Two
+ * consequences:
  *   - re-running the same basis would yield the same value, so the guard skips it
  *     (this is what stops a compute that legitimately yields null — no usable HR
  *     yet — from re-writing forever); and
- *   - when the basis genuinely changes (the iOS hrStream finally lands) the key
- *     changes too, so the one UPGRADE pass is allowed through.
+ *   - when the basis genuinely changes the key changes too, so the one UPGRADE /
+ *     RECOMPUTE pass is allowed through.
+ *
+ * Includes `routeComplete` so a two-pass sync (partial route → complete route)
+ * changes the key, letting the post-completion recompute (shouldEnrichLoad case c)
+ * through even though hasRoute/hasHRStream stayed true across both passes. (No
+ * point-count field exists on the doc; routeComplete is the available completion
+ * signal — see PRD "Known Sharp Edges".)
  */
 export function enrichBasisKey(workout: {
   workoutId: string;
   hasRoute?: boolean;
   hasHRStream?: boolean;
+  routeComplete?: boolean;
 }): string {
-  return `${workout.workoutId}|${workout.hasRoute === true}|${workout.hasHRStream === true}`;
+  return `${workout.workoutId}|${workout.hasRoute === true}|${workout.hasHRStream === true}|${workout.routeComplete === true}`;
 }
 
 // ─── Load-score tooltip explainer (pure, testable) ──────────────────────────
