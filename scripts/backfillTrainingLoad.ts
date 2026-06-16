@@ -54,6 +54,11 @@ interface BackfillOptions {
    *  isStaleLoad) instead of every processed doc. Opt-in; does NOT change the
    *  default commit behavior. Used by the targeted two-pass-collapse repair. */
   staleOnly?: boolean;
+  /** When true (commit only), restrict writes to docs whose stored load is
+   *  MISSING (null/0) but which have an HR basis — i.e. the audit's MISSING_LOAD
+   *  class. Opt-in; combines with staleOnly (write if stale OR missing). Does NOT
+   *  change the default commit behavior. */
+  missingOnly?: boolean;
 }
 
 export interface BackfillSummary {
@@ -99,7 +104,7 @@ function loadServiceAccount(): Record<string, unknown> {
   return JSON.parse(val);
 }
 
-function getDb(): admin.firestore.Firestore {
+export function getDb(): admin.firestore.Firestore {
   if (!admin.apps.length) {
     const svc = loadServiceAccount();
     admin.initializeApp({
@@ -110,7 +115,7 @@ function getDb(): admin.firestore.Firestore {
   return admin.firestore();
 }
 
-async function resolveUid(
+export async function resolveUid(
   db: admin.firestore.Firestore,
   override?: string
 ): Promise<string> {
@@ -181,11 +186,130 @@ export function isStaleLoad(
   );
 }
 
+export interface RecomputeResult {
+  load: number | null;
+  method: "streamed" | "avg-hr-fallback";
+  /** Which tier's data fed the compute (independent of the resulting method). */
+  source: "route" | "hrStream" | "avg-hr";
+  /** Fraction of points with finite HR (0 for the avg-HR tier). */
+  hrCoverage: number;
+  /** Route/hrStream samples actually read (0 for the avg-HR tier). */
+  pointCount: number;
+}
+
+/**
+ * Recompute trainingLoadV2 for ONE doc via the 3-tier chain (route → hrStream →
+ * avg-HR), reading the relevant subcollection under the admin SDK. Extracted so
+ * both the backfill writer and the read-only audit (scripts/auditRunQuality.ts)
+ * share ONE recompute path — same math, no duplication. Pure read; never writes.
+ */
+export async function recomputeLoadForDoc(
+  db: admin.firestore.Firestore,
+  uid: string,
+  docId: string,
+  data: Record<string, unknown>,
+  maxHr: number,
+  restingHr: number
+): Promise<RecomputeResult> {
+  const durationSeconds = (data.durationSeconds as number) ?? 0;
+  const avgHeartRate = (data.avgHeartRate as number | null) ?? null;
+  const activityType = (data.activityType as string) ?? undefined;
+  const hasRoute = (data.hasRoute as boolean) ?? false;
+  const hasHRStream = (data.hasHRStream as boolean) ?? false;
+
+  // Tier 1 — route runs: per-second integral over route-point HR (UNCHANGED).
+  if (hasRoute) {
+    const routeSnap = await db
+      .collection(`users/${uid}/healthWorkouts/${docId}/route`)
+      .orderBy("index", "asc")
+      .get();
+    const points = routeSnap.docs.map((d) => {
+      const r = d.data() as Record<string, unknown>;
+      const ts = r.timestamp as { toDate?: () => Date } | null;
+      return {
+        timestamp: ts?.toDate?.()?.toISOString() ?? "",
+        hr: (r.hr as number | null) ?? null,
+      };
+    });
+    const result = computeStreamedTrainingLoad(
+      points,
+      durationSeconds,
+      avgHeartRate,
+      maxHr,
+      restingHr,
+      activityType
+    );
+    return {
+      load: result.load,
+      method: result.method,
+      hrCoverage: result.hrCoverage,
+      source: "route",
+      pointCount: points.length,
+    };
+  }
+
+  // Tier 2 — non-route workouts with an iOS hrStream subcollection.
+  if (hasHRStream) {
+    const streamSnap = await db
+      .collection(`users/${uid}/healthWorkouts/${docId}/hrStream`)
+      .orderBy("chunkIndex", "asc")
+      .get();
+    const samples: { timestamp: string; hr: number }[] = [];
+    for (const d of streamSnap.docs) {
+      const r = d.data() as Record<string, unknown>;
+      const chunk = Array.isArray(r.samples)
+        ? (r.samples as Array<{ t?: { toDate?: () => Date } | null; hr?: number }>)
+        : [];
+      for (const s of chunk) {
+        samples.push({
+          timestamp: s.t?.toDate?.()?.toISOString() ?? "",
+          hr: (s.hr as number) ?? 0,
+        });
+      }
+    }
+    if (samples.length >= MIN_HRSTREAM_SAMPLES) {
+      const result = computeStreamedTrainingLoad(
+        samples,
+        durationSeconds,
+        avgHeartRate,
+        maxHr,
+        restingHr,
+        activityType
+      );
+      return {
+        load: result.load,
+        method: result.method,
+        hrCoverage: result.hrCoverage,
+        source: "hrStream",
+        pointCount: samples.length,
+      };
+    }
+    // Empty/too-sparse stream despite the flag → avg-HR fallback.
+    return {
+      load: computeTrainingLoadV2(durationSeconds, avgHeartRate, maxHr, restingHr, activityType),
+      method: "avg-hr-fallback",
+      hrCoverage: 0,
+      source: "avg-hr",
+      pointCount: samples.length,
+    };
+  }
+
+  // Tier 3 — avg-HR Banister baseline.
+  return {
+    load: computeTrainingLoadV2(durationSeconds, avgHeartRate, maxHr, restingHr, activityType),
+    method: "avg-hr-fallback",
+    hrCoverage: 0,
+    source: "avg-hr",
+    pointCount: 0,
+  };
+}
+
 export async function runBackfillTrainingLoad(
   opts: BackfillOptions = {}
 ): Promise<BackfillSummary> {
   const commit = opts.commit === true;
   const staleOnly = opts.staleOnly === true;
+  const missingOnly = opts.missingOnly === true;
   const nowMs = opts.nowMs ?? Date.now();
   const db = getDb();
   const uid = await resolveUid(db, opts.uid);
@@ -222,7 +346,7 @@ export async function runBackfillTrainingLoad(
 
   console.log(
     `[backfill] uid=${uid} mode=${commit ? "COMMIT" : "DRY-RUN"}` +
-      `${staleOnly ? " [STALE-ONLY]" : ""} ` +
+      `${staleOnly ? " [STALE-ONLY]" : ""}${missingOnly ? " [MISSING-ONLY]" : ""} ` +
       `maxHr=${maxHr} restingHr=${restingHr} selectedInWindow=${snap.size} ` +
       `(last 12mo, all types — HR-basis filtered in memory)`
   );
@@ -287,96 +411,16 @@ export async function runBackfillTrainingLoad(
     }
     summary.selected += 1;
 
-    let load: number | null;
-    let method: "streamed" | "avg-hr-fallback";
-    let source: "route" | "hrStream" | "avg-hr";
-    let hrCoverage = 0;
-
-    // 3-tier method-selection — matches computeAndStoreTrainingLoad:
-    //   1. hasRoute    → streamed integral over route-point HR (UNCHANGED).
-    //   2. hasHRStream → streamed integral over the iOS hrStream subcollection.
-    //   3. else        → avg-HR Banister baseline.
-    if (hasRoute) {
-      const routeSnap = await db
-        .collection(`users/${uid}/healthWorkouts/${docSnap.id}/route`)
-        .orderBy("index", "asc")
-        .get();
-      const points = routeSnap.docs.map((d) => {
-        const r = d.data() as Record<string, unknown>;
-        const ts = r.timestamp as { toDate?: () => Date } | null;
-        return {
-          timestamp: ts?.toDate?.()?.toISOString() ?? "",
-          hr: (r.hr as number | null) ?? null,
-        };
-      });
-      const result = computeStreamedTrainingLoad(
-        points,
-        durationSeconds,
-        avgHeartRate,
-        maxHr,
-        restingHr,
-        activityType
-      );
-      load = result.load;
-      method = result.method;
-      hrCoverage = result.hrCoverage;
-      source = "route";
-    } else if (hasHRStream) {
-      // Read users/{uid}/healthWorkouts/{id}/hrStream ascending by chunkIndex;
-      // concatenate each doc's samples ({ t: Timestamp, hr: Int }) in order.
-      const streamSnap = await db
-        .collection(`users/${uid}/healthWorkouts/${docSnap.id}/hrStream`)
-        .orderBy("chunkIndex", "asc")
-        .get();
-      const samples: { timestamp: string; hr: number }[] = [];
-      for (const d of streamSnap.docs) {
-        const r = d.data() as Record<string, unknown>;
-        const chunk = Array.isArray(r.samples)
-          ? (r.samples as Array<{ t?: { toDate?: () => Date } | null; hr?: number }>)
-          : [];
-        for (const s of chunk) {
-          samples.push({
-            timestamp: s.t?.toDate?.()?.toISOString() ?? "",
-            hr: (s.hr as number) ?? 0,
-          });
-        }
-      }
-      if (samples.length >= MIN_HRSTREAM_SAMPLES) {
-        const result = computeStreamedTrainingLoad(
-          samples,
-          durationSeconds,
-          avgHeartRate,
-          maxHr,
-          restingHr,
-          activityType
-        );
-        load = result.load;
-        method = result.method;
-        hrCoverage = result.hrCoverage;
-        source = "hrStream";
-      } else {
-        // Empty/too-sparse stream despite the flag → avg-HR fallback.
-        load = computeTrainingLoadV2(
-          durationSeconds,
-          avgHeartRate,
-          maxHr,
-          restingHr,
-          activityType
-        );
-        method = "avg-hr-fallback";
-        source = "avg-hr";
-      }
-    } else {
-      load = computeTrainingLoadV2(
-        durationSeconds,
-        avgHeartRate,
-        maxHr,
-        restingHr,
-        activityType
-      );
-      method = "avg-hr-fallback";
-      source = "avg-hr";
-    }
+    // 3-tier method-selection (route → hrStream → avg-HR) via the shared helper
+    // — same recompute path the read-only audit uses.
+    const { load, method, source, hrCoverage } = await recomputeLoadForDoc(
+      db,
+      uid,
+      docSnap.id,
+      data,
+      maxHr,
+      restingHr
+    );
 
     const stale = isStaleLoad(storedLoad, storedMethod, load);
     rows.push({
@@ -409,9 +453,16 @@ export async function runBackfillTrainingLoad(
       summary.fallback += 1;
     }
 
-    // Default: queue a write for every processed doc (idempotent). staleOnly:
-    // queue ONLY the two-pass-collapse repairs, leaving all other docs untouched.
-    if (!staleOnly || stale) {
+    // Write selection. Default (no targeting): queue every processed doc
+    // (idempotent). Targeted: queue ONLY the requested repair class —
+    //   staleOnly   → two-pass-collapse repairs (stale)
+    //   missingOnly → docs with a null/0 stored load (MISSING_LOAD)
+    // Both flags combine (write if stale OR missing). Untargeted docs untouched.
+    const isMissing = storedLoad == null || storedLoad === 0;
+    const targeted = staleOnly || missingOnly;
+    const include =
+      !targeted || (staleOnly && stale) || (missingOnly && isMissing);
+    if (include) {
       writes.push({
         ref: docSnap.ref,
         data: { trainingLoadV2: load, trainingLoadMethod: method },
