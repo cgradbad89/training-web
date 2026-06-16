@@ -466,9 +466,13 @@ export async function runBackfillTrainingLoad(
     lines.push(
       `[backfill] mode=${commit ? "COMMIT" : "DRY-RUN"} uid=${uid} maxHr=${maxHr} restingHr=${restingHr}`
     );
+    // NB: this file is written before the commit batch runs, so report the
+    // queued write count (what was/will be written) rather than summary.written
+    // (still 0 at this point). writesQueued === docs committed in commit mode.
     lines.push(
       `selectedInWindow=${summary.selectedInWindow} selected=${summary.selected} ` +
-        `processed=${summary.processed} staleFlagged=${summary.staleFlagged} written=${summary.written}`
+        `processed=${summary.processed} staleFlagged=${summary.staleFlagged} ` +
+        `writesQueued=${writes.length}${commit ? "" : " (DRY-RUN: not written)"}`
     );
     lines.push("");
     lines.push(`ALL stored-"streamed" rows (stored vs recomputed):`);
