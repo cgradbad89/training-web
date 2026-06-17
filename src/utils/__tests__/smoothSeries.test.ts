@@ -58,3 +58,56 @@ describe("rollingAverage", () => {
     expect(rollingAverage([640], 25, [0])).toEqual([640]);
   });
 });
+
+// ── Elevation series smoothing (RunOverlayChart ELEV_SMOOTH_WINDOW_SEC = 20) ──
+// Elevation feeds the overlay chart's altitude Area. It is always finite
+// (altitude defaults to 0 in docToRoutePoint), so a valid series must keep its
+// length and never gain a null after the light 20s smooth.
+const sumAbsDiff = (xs: number[]) =>
+  xs.slice(1).reduce((acc, x, i) => acc + Math.abs(x - xs[i]), 0);
+
+describe("rollingAverage — elevation series (20s window)", () => {
+  const ELEV_WINDOW = 20; // mirrors RunOverlayChart's ELEV_SMOOTH_WINDOW_SEC
+
+  it("smooths a noisy climb locally while preserving the overall trend", () => {
+    // 40 points, 1s apart (span 39s) so the 20s window is LOCAL, not whole-series:
+    // a linear climb (+2 ft/pt) with alternating ±5 ft GPS jitter on top.
+    const elevFt = Array.from(
+      { length: 40 },
+      (_, i) => 100 + i * 2 + (i % 2 === 0 ? 5 : -5)
+    );
+    const out = rollingAverage(elevFt, ELEV_WINDOW, ts(elevFt.length));
+
+    // Length preserved; no nulls introduced for valid (all-finite) input.
+    expect(out).toHaveLength(elevFt.length);
+    expect(out.every((v) => v != null && Number.isFinite(v))).toBe(true);
+
+    // Overall climb is preserved (end well above start) — not flattened.
+    expect(out[out.length - 1]!).toBeGreaterThan(out[0]!);
+
+    // Jitter is damped: the smoothed trace is far less jagged than the raw one.
+    expect(sumAbsDiff(out as number[])).toBeLessThan(sumAbsDiff(elevFt));
+  });
+
+  it("series shorter than the window → same length, no nulls (every point = mean)", () => {
+    // 4 points spanning 3s vs a 20s window: each window covers the whole series,
+    // so every output equals the series mean.
+    const elevFt = [200, 210, 190, 220];
+    const out = rollingAverage(elevFt, ELEV_WINDOW, ts(elevFt.length));
+
+    expect(out).toHaveLength(elevFt.length);
+    expect(out.every((v) => v != null && Number.isFinite(v))).toBe(true);
+
+    const mean = (200 + 210 + 190 + 220) / 4;
+    for (const v of out) expect(v!).toBeCloseTo(mean, 5);
+  });
+
+  it("output length always equals input length (no nulls for valid input)", () => {
+    for (const n of [1, 5, 20, 60]) {
+      const elevFt = Array.from({ length: n }, (_, i) => 100 + i);
+      const out = rollingAverage(elevFt, ELEV_WINDOW, ts(n));
+      expect(out).toHaveLength(n);
+      expect(out.every((v) => v != null && Number.isFinite(v))).toBe(true);
+    }
+  });
+});

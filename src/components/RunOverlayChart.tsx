@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import {
   ComposedChart,
   Area,
@@ -22,7 +22,7 @@ const EARTH_RADIUS_MI = 3958.8;
 const METERS_TO_FEET = 3.28084;
 
 /** Downsample threshold — routes denser than this are strided down for responsiveness. */
-const MAX_CHART_POINTS = 300;
+const MAX_CHART_POINTS = 200;
 
 /**
  * GAP gets a wider smoothing window than pace: grade-adjustment amplifies
@@ -31,6 +31,14 @@ const MAX_CHART_POINTS = 300;
  * Pace stays at SMOOTH_WINDOW_SEC (25s).
  */
 const GAP_SMOOTH_WINDOW_SEC = 60;
+
+/**
+ * Elevation gets a LIGHT centered smoothing window so the altitude trace isn't
+ * the only jagged line on the chart. 20s is lighter than pace (25s) / GAP (60s)
+ * — enough to settle GPS vertical jitter without flattening real hills.
+ * Display-only: the Total Ascent KPI reads the device `elevationGainM`, not this.
+ */
+const ELEV_SMOOTH_WINDOW_SEC = 20;
 
 // Anomaly filters (consistent with existing charts)
 const MAX_PACE = 1800; // sec/mi
@@ -101,6 +109,14 @@ function OverlayTooltip({
 }
 
 export function RunOverlayChart({ points, perPointGap }: RunOverlayChartProps) {
+  // Series visibility toggles — both default OFF, so the chart opens showing
+  // only Pace + Elevation (both always-on). In-memory ONLY: this resets to
+  // both-off on every remount / page load and is never persisted (no Firestore,
+  // localStorage, or settings). Declared before any early return so the hook
+  // order is stable (React Rules of Hooks / error #310).
+  const [showGap, setShowGap] = useState(false);
+  const [showHr, setShowHr] = useState(false);
+
   const { data, hasHR } = useMemo<{
     data: OverlayDatum[];
     hasHR: boolean;
@@ -176,24 +192,49 @@ export function RunOverlayChart({ points, perPointGap }: RunOverlayChartProps) {
   const timeSec = data.map((d) => d.timeSec);
   const smoothedPace = rollingAverage(paceSeries, SMOOTH_WINDOW_SEC, timeSec);
   const smoothedGap = rollingAverage(gapSeries, GAP_SMOOTH_WINDOW_SEC, timeSec);
+  // Light elevation smoothing (display-only): the altitude trace is otherwise the
+  // only jagged line. Elevation is always finite (altitude defaults to 0), so a
+  // valid series never gains a null — the `?? d.elevationFt` is defensive only.
+  // HR is intentionally NOT smoothed.
+  const smoothedElev = rollingAverage(
+    data.map((d) => d.elevationFt),
+    ELEV_SMOOTH_WINDOW_SEC,
+    timeSec
+  );
 
   const displayData = data.map((d, i) => ({
     ...d,
+    elevationFt: smoothedElev[i] ?? d.elevationFt,
     pace: smoothedPace[i],
     gap: smoothedGap[i],
   }));
 
   return (
     <div className="bg-card rounded-2xl border border-border p-5">
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center justify-between gap-2 flex-wrap mb-3">
         <h2 className="text-sm font-semibold text-textPrimary">
           Elevation, Pace &amp; HR
         </h2>
-        {!hasHR && (
-          <span className="text-xs text-textSecondary">
-            Per-point HR not available for this run
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {!hasHR && (
+            <span className="text-xs text-textSecondary">
+              Per-point HR not available for this run
+            </span>
+          )}
+          <SeriesToggle
+            label="GAP"
+            color="var(--color-chart-warning)"
+            active={showGap}
+            onClick={() => setShowGap((v) => !v)}
+          />
+          <SeriesToggle
+            label="HR"
+            color="var(--color-chart-hr)"
+            active={hasHR && showHr}
+            disabled={!hasHR}
+            onClick={() => setShowHr((v) => !v)}
+          />
+        </div>
       </div>
       <ResponsiveContainer width="100%" height={260}>
         <ComposedChart
@@ -276,18 +317,20 @@ export function RunOverlayChart({ points, perPointGap }: RunOverlayChartProps) {
             connectNulls={false}
             isAnimationActive={false}
           />
-          <Line
-            yAxisId="pace"
-            type="monotone"
-            dataKey="gap"
-            stroke="var(--color-chart-warning)"
-            strokeWidth={2}
-            strokeDasharray="5 4"
-            dot={false}
-            connectNulls={false}
-            isAnimationActive={false}
-          />
-          {hasHR && (
+          {showGap && (
+            <Line
+              yAxisId="pace"
+              type="monotone"
+              dataKey="gap"
+              stroke="var(--color-chart-warning)"
+              strokeWidth={2}
+              strokeDasharray="5 4"
+              dot={false}
+              connectNulls={false}
+              isAnimationActive={false}
+            />
+          )}
+          {hasHR && showHr && (
             <Line
               yAxisId="hr"
               type="monotone"
@@ -303,8 +346,12 @@ export function RunOverlayChart({ points, perPointGap }: RunOverlayChartProps) {
       </ResponsiveContainer>
       <div className="flex flex-wrap gap-4 mt-3 text-xs text-textSecondary">
         <LegendDot color="var(--color-chart-pace)" label="Pace" />
-        <LegendDot color="var(--color-chart-warning)" label="GAP" dashed />
-        {hasHR && <LegendDot color="var(--color-chart-hr)" label="HR" />}
+        {showGap && (
+          <LegendDot color="var(--color-chart-warning)" label="GAP" dashed />
+        )}
+        {hasHR && showHr && (
+          <LegendDot color="var(--color-chart-hr)" label="HR" />
+        )}
         <LegendDot color="var(--color-chart-teal)" label="Elevation (ft)" />
       </div>
     </div>
@@ -331,5 +378,52 @@ function LegendDot({
       />
       {label}
     </span>
+  );
+}
+
+/**
+ * Small pill toggle for an optional chart series (GAP / HR). ON reflects the
+ * series' chart color token (text + border + a faint tint so it stays legible
+ * in both light and dark mode); OFF is muted. `disabled` renders a muted,
+ * non-interactive pill — used for HR when the run has no per-point HR data.
+ */
+function SeriesToggle({
+  label,
+  color,
+  active,
+  disabled,
+  onClick,
+}: {
+  label: string;
+  color: string;
+  active: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-pressed={active}
+      className={`px-2.5 py-1 rounded-full text-xs font-semibold border transition-colors ${
+        disabled
+          ? "border-border text-textSecondary opacity-50 cursor-not-allowed"
+          : active
+            ? ""
+            : "border-border text-textSecondary hover:text-textPrimary"
+      }`}
+      style={
+        active && !disabled
+          ? {
+              color,
+              borderColor: color,
+              backgroundColor: `color-mix(in srgb, ${color} 18%, transparent)`,
+            }
+          : undefined
+      }
+    >
+      {label}
+    </button>
   );
 }
