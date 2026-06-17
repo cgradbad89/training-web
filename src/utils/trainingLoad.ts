@@ -706,6 +706,21 @@ export const MIN_HRSTREAM_SAMPLES = 2;
  */
 export const STREAMED_LOAD_COLLAPSE_THRESHOLD = 5;
 
+/**
+ * Relative collapse guard (PRD §6 #26): even ABOVE the absolute floor, a streamed
+ * integral that is an implausibly small FRACTION of the same run's avg-HR Banister
+ * reference is a collapse (degenerate/partial hrStream timestamps), not a genuine
+ * easy effort. When the streamed result is below this fraction of the avg-HR
+ * reference, fall back to that reference. 0.35 sits well below legitimate
+ * clean-stream ratios (which cluster near ~1.0 — a streamed result reconciles with
+ * the avg-HR model within ~5%) yet above genuine easy/short-run ratios (~0.6–0.8),
+ * so it catches the 6–15 collapse band the absolute `<= 5` floor misses (e.g.
+ * C40CAA54: streamed 11 vs avg-HR ref ~53 → ratio 0.21) without false-rescuing real
+ * easy efforts. Layered AFTER the absolute guard — evaluated ONLY when the integral
+ * is strictly above STREAMED_LOAD_COLLAPSE_THRESHOLD. TUNABLE.
+ */
+export const STREAMED_LOAD_RELATIVE_THRESHOLD = 0.35;
+
 export interface StreamedLoadResult {
   load: number | null;
   /** "streamed" (per-sample integral) · "avg-hr-fallback" (whole-run avg-HR, incl.
@@ -843,6 +858,33 @@ export function computeStreamedTrainingLoad(
     // Collapsed AND no usable avgHR → don't guess; return 0 (same as today),
     // method "none" so callers/tooltip don't mislabel it as a real streamed score.
     return { load: 0, method: "none", hrCoverage };
+  }
+
+  // RELATIVE COLLAPSE GUARD (PRD §6 #26) — the absolute guard above only rescues
+  // integrals that land AT OR BELOW STREAMED_LOAD_COLLAPSE_THRESHOLD; some degenerate
+  // hrStreams collapse to a small-but-above-floor value (the 6–15 band). Compare the
+  // streamed result against the SAME run's avg-HR Banister reference: an implausibly
+  // small fraction of it is still a collapse, not a real easy effort. Only reached
+  // when load > the absolute threshold (the absolute guard returned otherwise). Does
+  // NOT alter the absolute guard or the avg-HR fallback math — same reference value.
+  const avgHrRef = computeTrainingLoadV2(
+    durationSeconds,
+    avgHeartRate,
+    maxHr,
+    restingHr,
+    activityType
+  );
+  if (
+    avgHrRef != null &&
+    avgHrRef > 0 &&
+    load < avgHrRef * STREAMED_LOAD_RELATIVE_THRESHOLD
+  ) {
+    if (typeof console !== "undefined") {
+      console.log(
+        `[TrainingLoad] Streamed load relatively collapsed for ${workoutId ?? "unknown"}: ${load} < ${STREAMED_LOAD_RELATIVE_THRESHOLD}× avg-HR ref (${avgHrRef}) — falling back`
+      );
+    }
+    return { load: avgHrRef, method: "avg-hr-fallback", hrCoverage };
   }
 
   return { load, method: "streamed", hrCoverage };

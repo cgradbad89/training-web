@@ -15,6 +15,7 @@ import {
   TRAINING_LOAD_DT_CLAMP_SEC,
   STREAMED_HR_COVERAGE_MIN,
   STREAMED_LOAD_COLLAPSE_THRESHOLD,
+  STREAMED_LOAD_RELATIVE_THRESHOLD,
 } from "@/utils/trainingLoad";
 import { type UserSettings } from "@/types/userSettings";
 
@@ -416,6 +417,72 @@ describe("computeStreamedTrainingLoad — collapse guard (PRD §6 #24)", () => {
     expect(atThreshold.load as number).toBeGreaterThan(
       STREAMED_LOAD_COLLAPSE_THRESHOLD
     );
+  });
+});
+
+describe("computeStreamedTrainingLoad — relative collapse guard (PRD §6 #26)", () => {
+  // C40CAA54's real profile anchors (maxHr 175 / restingHr 65 → reserve 110), so
+  // the avg-HR reference for a 25.6-min @ 144 bpm run lands at 53 (the 45–55 band).
+  const MX = 175;
+  const RST = 65;
+
+  it("exports STREAMED_LOAD_RELATIVE_THRESHOLD === 0.35", () => {
+    expect(STREAMED_LOAD_RELATIVE_THRESHOLD).toBe(0.35);
+  });
+
+  it("C40CAA54 profile: ~11 streamed integral vs ~53 avg-HR ref (ratio≈0.21) → relative guard fires → avg-hr-fallback", () => {
+    // 33 hr=144 points 10 s apart → 32 dt=10 steps → a PARTIAL integral (~11): the
+    // stream covers only ~320 s of the 25.6-min (1533 s) workout (the degenerate
+    // hrStream collapse). 11 > 5, so the ABSOLUTE guard does NOT fire.
+    const pts = buildStream(33, () => 144, 10);
+
+    // Control — drive the SAME stream with durationSeconds matching its own ~320 s
+    // span: the avg-HR reference is then ALSO ~11, ratio ≈ 1.0, so NEITHER guard
+    // fires. This proves the raw streamed integral is ~11 (well above the =5 floor),
+    // i.e. the C40CAA54 case below is rescued by the RELATIVE guard, not the absolute.
+    const control = computeStreamedTrainingLoad(pts, 320, 144, MX, RST, "Running");
+    expect(control.method).toBe("streamed");
+    expect(control.load as number).toBeGreaterThan(STREAMED_LOAD_COLLAPSE_THRESHOLD);
+    expect(control.load as number).toBeLessThanOrEqual(15);
+
+    // Real C40CAA54: a 25.6-min workout → avg-HR ref ≈ 53; ratio 11/53 ≈ 0.21 < 0.35.
+    const durSec = 1533.35;
+    const ref = computeTrainingLoadV2(durSec, 144, MX, RST, "Running") as number;
+    const res = computeStreamedTrainingLoad(pts, durSec, 144, MX, RST, "Running", "C40CAA54-test");
+    expect(res.method).toBe("avg-hr-fallback");
+    expect(res.load).toBe(ref); // exact avg-HR Banister reference
+    expect(ref).toBeGreaterThanOrEqual(45);
+    expect(ref).toBeLessThanOrEqual(55);
+  });
+
+  it("legitimate easy short run (15 min @ 110, clean stream): streamed ≈ avg-HR ref (ratio≈0.8) → stays 'streamed'", () => {
+    // 73 hr=110 points 10 s apart → 72 dt=10 steps over 720 s of a 900 s (15-min)
+    // run → streamed ≈ 8; avg-HR ref ≈ 10; ratio ≈ 0.8 ≥ 0.35 → NOT a collapse.
+    const pts = buildStream(73, () => 110, 10);
+    const res = computeStreamedTrainingLoad(pts, 900, 110, MX, RST, "Running");
+    expect(res.method).toBe("streamed");
+    // > absolute floor (so the absolute guard didn't fire) yet genuinely small/easy.
+    expect(res.load as number).toBeGreaterThan(STREAMED_LOAD_COLLAPSE_THRESHOLD);
+    expect(res.load as number).toBeLessThanOrEqual(12);
+  });
+
+  it("absolute guard precedence: integral ≤ 5 still falls back via the absolute guard (relative layer not reached)", () => {
+    // Degenerate stream (all same timestamp) → integral 0 ≤ 5 → ABSOLUTE guard.
+    const pts = buildStream(600, () => 144, 0);
+    const ref = computeTrainingLoadV2(1533.35, 144, MX, RST, "Running") as number;
+    const res = computeStreamedTrainingLoad(pts, 1533.35, 144, MX, RST, "Running");
+    expect(res.method).toBe("avg-hr-fallback");
+    expect(res.load).toBe(ref); // same avg-HR fallback value as the relative path
+  });
+
+  it("healthy clean stream (streamed ≈ avg-HR ref, ratio ≈ 1) → unchanged 'streamed'", () => {
+    // Full-coverage 10-min stream at 150 bpm: streamed reconciles with the avg-HR
+    // reference (ratio ~1.0), far above 0.35 → relative guard must NOT fire.
+    const pts = buildStream(600, () => 150);
+    const res = computeStreamedTrainingLoad(pts, 600, 150, MX, RST, "Running");
+    expect(res.method).toBe("streamed");
+    const ref = computeTrainingLoadV2(600, 150, MX, RST, "Running") as number;
+    expect((res.load as number) / ref).toBeGreaterThan(STREAMED_LOAD_RELATIVE_THRESHOLD);
   });
 });
 

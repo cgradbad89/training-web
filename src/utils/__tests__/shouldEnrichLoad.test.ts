@@ -127,8 +127,12 @@ describe("shouldEnrichLoad — (c) post-completion recompute of a streamed load"
   });
 });
 
-// ── The underlying collapse → repair the recompute trigger relies on: the SAME
-//    workout's streamed score is far higher once the full route has landed.
+// ── Before PRD §6 #26 a SEVERE partial (a few minutes of a long run) produced a
+//    low "streamed" score that only #23's post-completion RECOMPUTE later restored.
+//    The relative collapse guard now rescues such severe partials to the avg-HR
+//    reference IMMEDIATELY (interim value), and the completed stream computes the
+//    real streamed value. (Substantial partials that clear the 0.35 floor still stay
+//    "streamed" and ride the #23 basisComplete path — see computeAndStoreTrainingLoad.)
 describe("two-pass collapse — partial vs complete streamed score", () => {
   const START = Date.parse("2026-06-16T12:00:00Z");
   const maxHr = 175;
@@ -141,18 +145,23 @@ describe("two-pass collapse — partial vs complete streamed score", () => {
   // Mid-sync PARTIAL state: only the first ~6 minutes had landed.
   const partialStream = fullStream.slice(0, 360);
 
-  it("partial extent collapses the score; completed extent restores it (new ≫ old)", () => {
+  it("severe partial is rescued to the avg-HR reference (relative guard, PRD §6 #26); complete stream computes it as 'streamed'", () => {
     const partial = computeStreamedTrainingLoad(
       partialStream, 5400, 145, maxHr, restingHr, "running"
     );
     const full = computeStreamedTrainingLoad(
       fullStream, 5400, 145, maxHr, restingHr, "running"
     );
-    expect(partial.method).toBe("streamed");
+    // Severe partial (6 min of a 90-min run): the streamed integral collapses far
+    // below 0.35× the avg-HR reference, so the relative guard rescues it — method
+    // "avg-hr-fallback" at the full-run avg-HR value (~193), NOT a collapsed ~13.
+    expect(partial.method).toBe("avg-hr-fallback");
+    expect(partial.load!).toBeGreaterThan(150);
+    // The complete stream integrates to the real streamed value (~193).
     expect(full.method).toBe("streamed");
-    expect(partial.load!).toBeLessThan(25); // 6/16-class collapse (~13)
-    expect(full.load!).toBeGreaterThan(150); // correct value (~193)
-    expect(full.load!).toBeGreaterThan(partial.load! * 5);
+    expect(full.load!).toBeGreaterThan(150);
+    // The interim rescue already matches the eventual complete value (~193).
+    expect(Math.abs(partial.load! - full.load!)).toBeLessThanOrEqual(15);
   });
 });
 

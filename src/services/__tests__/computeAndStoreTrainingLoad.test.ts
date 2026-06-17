@@ -126,11 +126,14 @@ describe("computeAndStoreTrainingLoad — 3-tier method selection", () => {
       avgHeartRate: 145,
       activityType: "running",
     };
-    // Mid-sync: a partial-but-substantial route prefix (10 min) has landed — a
-    // real "streamed" value (like 6/16's pre-resume 14), NOT degenerate, so it
-    // stays "streamed" and is recomputed later via the basisComplete=false path.
+    // Mid-sync: a partial-but-SUBSTANTIAL route prefix (60 min of a 90-min run)
+    // has landed. It must be substantial enough to clear the relative collapse
+    // floor (PRD §6 #26: streamed ≥ 0.35× the avg-HR ref), so it stays "streamed"
+    // (NOT rescued to avg-HR) and is recomputed later via the basisComplete=false
+    // RECOMPUTE path. (A SEVERE partial would now be rescued to avg-hr-fallback by
+    // the relative guard and ride the UPGRADE path instead — see shouldEnrichLoad.)
     fetchRoutePointsMock.mockResolvedValue(
-      Array.from({ length: 600 }, (_, i) => ({
+      Array.from({ length: 3600 }, (_, i) => ({
         timestamp: new Date(START + i * 1000).toISOString(),
         hr: 145,
       }))
