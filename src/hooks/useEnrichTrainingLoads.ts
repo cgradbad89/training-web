@@ -2,7 +2,12 @@ import { useEffect, useRef } from "react";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { type UserSettings } from "@/types/userSettings";
 import { enrichTrainingLoads } from "@/services/healthWorkouts";
-import { shouldEnrichLoad, enrichBasisKey } from "@/utils/trainingLoad";
+import {
+  shouldEnrichLoad,
+  enrichBasisKey,
+  resolveMaxHr,
+  resolveRestingHr,
+} from "@/utils/trainingLoad";
 
 /**
  * Auto-store / upgrade Training Load V2 for a loaded workout list.
@@ -49,14 +54,22 @@ export function useEnrichTrainingLoads(
     if (settings === undefined) return; // profile still loading — see SETTLING GUARD
     if (inFlightRef.current) return;
 
+    // Resolve HR anchors once (same source as the writer) for branch (d)'s avg-HR
+    // reference + enrichBasisKey's load band. settings is UserSettings | null here.
+    const maxHr = resolveMaxHr(settings);
+    const restingHr = resolveRestingHr(settings);
+
     // Fresh candidates: need enrichment AND not already attempted for this basis.
     const fresh = workouts.filter(
-      (w) => shouldEnrichLoad(w) && !attemptedRef.current.has(enrichBasisKey(w))
+      (w) =>
+        shouldEnrichLoad(w, maxHr, restingHr) &&
+        !attemptedRef.current.has(enrichBasisKey(w, maxHr, restingHr))
     );
     if (fresh.length === 0) return;
 
     // Record the basis up front so a snapshot re-fire mid-pass can't re-queue these.
-    for (const w of fresh) attemptedRef.current.add(enrichBasisKey(w));
+    for (const w of fresh)
+      attemptedRef.current.add(enrichBasisKey(w, maxHr, restingHr));
 
     inFlightRef.current = true;
     enrichTrainingLoads(uid, fresh, settings)

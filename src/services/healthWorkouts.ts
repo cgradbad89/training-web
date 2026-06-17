@@ -540,9 +540,13 @@ export async function enrichTrainingLoads(
   workouts: HealthWorkout[],
   settings: UserSettings | null | undefined
 ): Promise<number> {
+  // Resolve HR anchors once (same source as the writer) so shouldEnrichLoad's
+  // branch (d) avg-HR reference matches what computeAndStoreTrainingLoad will use.
+  const maxHr = resolveMaxHr(settings);
+  const restingHr = resolveRestingHr(settings);
   let enriched = 0;
   for (const workout of workouts) {
-    if (!shouldEnrichLoad(workout)) continue;
+    if (!shouldEnrichLoad(workout, maxHr, restingHr)) continue;
     const result = await computeAndStoreTrainingLoad(
       uid,
       workout.workoutId,

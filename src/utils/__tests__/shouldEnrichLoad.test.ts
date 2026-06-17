@@ -3,6 +3,8 @@ import {
   shouldEnrichLoad,
   enrichBasisKey,
   computeStreamedTrainingLoad,
+  computeTrainingLoadV2,
+  STREAMED_LOAD_RELATIVE_THRESHOLD,
 } from "@/utils/trainingLoad";
 
 // Covers the enrich-on-snapshot decision: which loaded workouts get a stored
@@ -166,14 +168,14 @@ describe("two-pass collapse — partial vs complete streamed score", () => {
 });
 
 describe("enrichBasisKey — basis identity for the loop guard", () => {
-  it("encodes id + hasRoute + hasHRStream + routeComplete", () => {
+  it("encodes id + hasRoute + hasHRStream + routeComplete + loadBand", () => {
     expect(
       enrichBasisKey({ workoutId: "w1", hasRoute: true, hasHRStream: false })
-    ).toBe("w1|true|false|false");
+    ).toBe("w1|true|false|false|0"); // GPS run → band always 0
   });
 
   it("treats missing flags as false", () => {
-    expect(enrichBasisKey({ workoutId: "w2" })).toBe("w2|false|false|false");
+    expect(enrichBasisKey({ workoutId: "w2" })).toBe("w2|false|false|false|0");
   });
 
   it("changes when a stream arrives (so the one UPGRADE pass is allowed through)", () => {
@@ -186,12 +188,94 @@ describe("enrichBasisKey — basis identity for the loop guard", () => {
     const partial = enrichBasisKey({ workoutId: "w5", hasRoute: true, routeComplete: false });
     const complete = enrichBasisKey({ workoutId: "w5", hasRoute: true, routeComplete: true });
     expect(partial).not.toBe(complete);
-    expect(complete).toBe("w5|true|false|true");
+    expect(complete).toBe("w5|true|false|true|0");
   });
 
   it("is stable for an unchanged basis (so the same attempt isn't repeated → no loop)", () => {
     expect(
       enrichBasisKey({ workoutId: "w4", hasRoute: true, routeComplete: true })
     ).toBe(enrichBasisKey({ workoutId: "w4", hasRoute: true, routeComplete: true }));
+  });
+});
+
+// ── (d) NON-ROUTE stale-load recompute (PRD §6 #27) — OTF/HIIT/strength/mindful
+//        have no routeComplete signal, so a two-pass hrStream sync (or a pre-
+//        relative-guard legacy collapse) leaves a stale "streamed" load with no way
+//        to recompute. Branch (d) detects it (stored < 35% of the avg-HR reference)
+//        and allows ONE recompute; the enrichBasisKey load band stops re-triggering.
+describe("shouldEnrichLoad — (d) non-route stale streamed load", () => {
+  // OTF profile: 45 min @ 155 bpm; anchors → avg-HR reference ≈ 119 ("~120").
+  const MX = 180;
+  const RST = 60;
+  const DUR = 2700;
+  const AVG = 155;
+  const otf = {
+    hasRoute: false,
+    hasHRStream: true,
+    trainingLoadMethod: "streamed" as const,
+    avgHeartRate: AVG,
+    durationSeconds: DUR,
+  };
+
+  it("non-route OTF with a stale streamed load (< 35% of avg-HR ref) → branch (d) fires", () => {
+    const ref = computeTrainingLoadV2(DUR, AVG, MX, RST) as number;
+    expect(ref).toBeGreaterThan(100); // OTF reference ≈ 120
+    const stale = { ...otf, trainingLoadV2: 30 }; // collapsed ~25%
+    expect(stale.trainingLoadV2).toBeLessThan(ref * STREAMED_LOAD_RELATIVE_THRESHOLD);
+    expect(shouldEnrichLoad(stale, MX, RST)).toBe(true);
+  });
+
+  it("after recompute the load is ≥ 35% of ref → branch (d) does NOT fire (no thrash)", () => {
+    const ref = computeTrainingLoadV2(DUR, AVG, MX, RST) as number;
+    const recomputed = { ...otf, trainingLoadV2: ref }; // corrected to the avg-HR value
+    expect(recomputed.trainingLoadV2).toBeGreaterThanOrEqual(
+      ref * STREAMED_LOAD_RELATIVE_THRESHOLD
+    );
+    expect(shouldEnrichLoad(recomputed, MX, RST)).toBe(false);
+  });
+
+  it("enrichBasisKey load band flips 0→1+ when the stale load is corrected (stable once correct)", () => {
+    const ref = computeTrainingLoadV2(DUR, AVG, MX, RST) as number;
+    const base = { ...otf, workoutId: "otf1" };
+    const staleKey = enrichBasisKey({ ...base, trainingLoadV2: 30 }, MX, RST);
+    const correctKey = enrichBasisKey({ ...base, trainingLoadV2: ref }, MX, RST);
+    expect(staleKey.endsWith("|0")).toBe(true); // stale → band 0
+    expect(correctKey.endsWith("|0")).toBe(false); // correct → band 1+
+    expect(staleKey).not.toBe(correctKey); // key changes → one recompute allowed
+    // Stable once correct → the per-basis guard won't re-queue it.
+    expect(enrichBasisKey({ ...base, trainingLoadV2: ref }, MX, RST)).toBe(correctKey);
+  });
+
+  it("GPS run (hasRoute=true) with a tiny load → branch (d) never fires (GPS path unchanged)", () => {
+    // Low streamed load but no completion signal: (c) can't fire, and (d) is gated
+    // on hasRoute !== true → skipped. GPS recompute stays exclusively the (c) path.
+    const gps = {
+      hasRoute: true,
+      hasHRStream: true,
+      trainingLoadMethod: "streamed" as const,
+      avgHeartRate: AVG,
+      durationSeconds: DUR,
+      trainingLoadV2: 5,
+    };
+    expect(shouldEnrichLoad(gps, MX, RST)).toBe(false);
+    expect(
+      enrichBasisKey({ ...gps, workoutId: "gps1" }, MX, RST).endsWith("|0")
+    ).toBe(true); // GPS → band always 0
+  });
+
+  it("non-route avg-hr-fallback (no richer basis) → branch (d) does NOT fire (only 'streamed' triggers)", () => {
+    const ref = computeTrainingLoadV2(DUR, AVG, MX, RST) as number;
+    // hasHRStream=false isolates (d): (b) UPGRADE can't fire (no richer basis), so a
+    // `false` result proves the method gate — a fallback value is already correct.
+    const fallback = {
+      hasRoute: false,
+      hasHRStream: false,
+      trainingLoadMethod: "avg-hr-fallback" as const,
+      avgHeartRate: AVG,
+      durationSeconds: DUR,
+      trainingLoadV2: 10,
+    };
+    expect(fallback.trainingLoadV2).toBeLessThan(ref * STREAMED_LOAD_RELATIVE_THRESHOLD);
+    expect(shouldEnrichLoad(fallback, MX, RST)).toBe(false);
   });
 });

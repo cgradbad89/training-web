@@ -489,6 +489,11 @@ export interface EnrichableWorkout {
   hasRoute?: boolean;
   hasHRStream?: boolean;
   avgHeartRate?: number | null;
+  /** Whole-run duration; with avgHeartRate (+ anchors/activityType) it yields the
+   *  avg-HR Banister reference branch (d) compares a stale streamed load against. */
+  durationSeconds?: number;
+  /** HK activity type; selects the activity load factor in the avg-HR reference. */
+  activityType?: string;
   /** iOS route-completion marker: false = partial route still syncing on a later
    *  wake; true = full route written; absent = legacy (treat as complete). */
   routeComplete?: boolean;
@@ -499,7 +504,7 @@ export interface EnrichableWorkout {
 
 /**
  * True when computeAndStoreTrainingLoad should run against a loaded workout, for
- * one of two reasons:
+ * one of several reasons:
  *
  *  a) STORE   — no finite stored trainingLoadV2 yet, but the workout HAS an HR
  *               basis to compute from (a route, an hrStream, or a finite avgHR).
@@ -515,11 +520,21 @@ export interface EnrichableWorkout {
  *               === false (the basis recorded at compute time). Without this, a
  *               stored "streamed" value is otherwise terminal, so the collapse
  *               (e.g. 6/16: 14 vs the correct 187) would persist forever.
+ *  d) RECOMPUTE (non-route) — a stored "streamed" load on a NON-route workout that
+ *               is below STREAMED_LOAD_RELATIVE_THRESHOLD × its avg-HR reference.
+ *               Non-route workouts have no routeComplete signal, so (c) can't reach
+ *               a two-pass hrStream collapse (or a pre-relative-guard legacy one);
+ *               this allows ONE recompute. enrichBasisKey's loadBand bucket flips
+ *               0→1+ once the sane value is stored, so it can't re-trigger.
  *
  * Pure. The caller (useEnrichTrainingLoads) pairs this with a per-basis attempted
  * key (see enrichBasisKey) so a re-fired snapshot can't re-run the same attempt.
  */
-export function shouldEnrichLoad(workout: EnrichableWorkout): boolean {
+export function shouldEnrichLoad(
+  workout: EnrichableWorkout,
+  maxHr: number = DEFAULT_MAX_HR,
+  restingHr: number = DEFAULT_RESTING_HR
+): boolean {
   const hasStoredLoad =
     typeof workout.trainingLoadV2 === "number" &&
     Number.isFinite(workout.trainingLoadV2);
@@ -553,6 +568,38 @@ export function shouldEnrichLoad(workout: EnrichableWorkout): boolean {
     return true;
   }
 
+  // (d) RECOMPUTE (non-route) — a stored "streamed" load on a NON-route workout
+  //     (OTF/HIIT/strength/mindful) that is an implausibly small fraction (below
+  //     the relative collapse ratio) of its own avg-HR Banister reference. Non-route
+  //     workouts have no routeComplete signal, so a two-pass hrStream sync (or a
+  //     pre-relative-guard legacy collapse) can't be caught by (c); this allows ONE
+  //     recompute. After it, the load lands at/above the ratio (the relative collapse
+  //     guard in computeStreamedTrainingLoad guarantees a sane recomputed value), so
+  //     branch (d) is false on the next load — and enrichBasisKey's loadBand bucket
+  //     changes 0→1+, so the per-basis guard won't re-queue it either. GPS runs
+  //     (hasRoute===true) never reach here. Same 0.35 ratio as the compute-time guard.
+  if (
+    workout.hasRoute !== true &&
+    workout.trainingLoadMethod === "streamed" &&
+    workout.avgHeartRate != null &&
+    workout.durationSeconds != null
+  ) {
+    const avgHrRef = computeTrainingLoadV2(
+      workout.durationSeconds,
+      workout.avgHeartRate,
+      maxHr,
+      restingHr,
+      workout.activityType
+    );
+    if (
+      avgHrRef != null &&
+      avgHrRef > 0 &&
+      (workout.trainingLoadV2 ?? 0) < avgHrRef * STREAMED_LOAD_RELATIVE_THRESHOLD
+    ) {
+      return true;
+    }
+  }
+
   return false;
 }
 
@@ -572,13 +619,33 @@ export function shouldEnrichLoad(workout: EnrichableWorkout): boolean {
  * point-count field exists on the doc; routeComplete is the available completion
  * signal — see PRD "Known Sharp Edges".)
  */
-export function enrichBasisKey(workout: {
-  workoutId: string;
-  hasRoute?: boolean;
-  hasHRStream?: boolean;
-  routeComplete?: boolean;
-}): string {
-  return `${workout.workoutId}|${workout.hasRoute === true}|${workout.hasHRStream === true}|${workout.routeComplete === true}`;
+export function enrichBasisKey(
+  workout: EnrichableWorkout & { workoutId: string },
+  maxHr: number = DEFAULT_MAX_HR,
+  restingHr: number = DEFAULT_RESTING_HR
+): string {
+  // Non-route stale-load bucket (for shouldEnrichLoad branch d): a coarse band of
+  // the stored load over its avg-HR reference × the relative ratio. A stale streamed
+  // load (< the ratio) lands in band 0; once recomputed to a sane value (≥ the ratio)
+  // it moves to band 1+, so the key changes and the per-basis guard lets exactly one
+  // recompute through, then skips re-running. GPS runs (hasRoute===true) are always
+  // band 0 — their key is byte-identical to before save for the trailing |0.
+  const avgHrRef =
+    computeTrainingLoadV2(
+      workout.durationSeconds ?? 0,
+      workout.avgHeartRate,
+      maxHr,
+      restingHr,
+      workout.activityType
+    ) ?? 0;
+  const loadBand =
+    workout.hasRoute !== true && avgHrRef > 0
+      ? Math.floor(
+          (workout.trainingLoadV2 ?? 0) /
+            (avgHrRef * STREAMED_LOAD_RELATIVE_THRESHOLD)
+        )
+      : 0;
+  return `${workout.workoutId}|${workout.hasRoute === true}|${workout.hasHRStream === true}|${workout.routeComplete === true}|${loadBand}`;
 }
 
 // ─── Load-score tooltip explainer (pure, testable) ──────────────────────────
