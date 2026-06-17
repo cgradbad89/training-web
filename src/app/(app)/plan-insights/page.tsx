@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
-import { Target, TrendingUp, Calendar, AlertTriangle, Shield, Layers, BotMessageSquare } from "lucide-react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
+import { Target, TrendingUp, Calendar, AlertTriangle, Shield, Layers, BotMessageSquare, Table2, ChevronDown, ChevronRight } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
@@ -15,7 +15,7 @@ import { fetchUserSettings } from "@/services/userSettings";
 import { fetchAllOverrides } from "@/services/workoutOverrides";
 import { applyOverride } from "@/types/workoutOverride";
 import { type HealthWorkout } from "@/types/healthWorkout";
-import { type RunningPlan, isRunningPlan } from "@/types/plan";
+import { type RunningPlan, type PlanRunType, isRunningPlan } from "@/types/plan";
 import { type Race, RACE_DISTANCE_MILES, RACE_DISTANCE_LABELS } from "@/types/race";
 import { formatPace, formatMiles } from "@/utils/pace";
 import {
@@ -38,6 +38,13 @@ import {
 } from "@/utils/riegelFit";
 import { buildPlanAdherence } from "@/utils/planAdherence";
 import {
+  buildActualVsPlannedWeeks,
+  distanceDelta,
+  paceDelta,
+  RUN_TYPE_LABELS,
+  type DeltaTone,
+} from "@/utils/planActualTable";
+import {
   PlanAdherenceChart,
   type WeekAdherenceData,
 } from "@/components/charts/PlanAdherenceChart";
@@ -47,6 +54,14 @@ import { predictRaceTime, buildPredictionTrend } from "@/utils/racePrediction";
 import { type UserSettings } from "@/types/userSettings";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Maps an Actual-vs-Planned delta tone to its text token class. Direction
+ *  rules live in planActualTable (faster pace / longer distance = positive). */
+const DELTA_TONE_CLASS: Record<DeltaTone, string> = {
+  positive: "text-success",
+  negative: "text-danger",
+  neutral: "text-textSecondary",
+};
 
 /** Parse a finish-time string ("H:MM:SS" or "M:SS") into seconds. */
 function parseResultToSeconds(result: string): number | null {
@@ -402,6 +417,50 @@ export default function PlanInsightsPage() {
     if (weekIndex < 0 || weekIndex >= activePlan.weeks.length) return null;
     return activePlan.weeks[weekIndex];
   }, [activePlan]);
+
+  // ── Actual vs Planned table (collapsible week groups) ──────────────────────
+  // In-memory derivation only — buildActualVsPlannedWeeks reuses the canonical
+  // matchPlanToActual / statusForRunEntry engine. No Firestore writes. All hooks
+  // here precede the `loading` early return (React error #310).
+  const actualVsPlannedWeeks = useMemo(() => {
+    if (!activePlan) return [];
+    return buildActualVsPlannedWeeks(activePlan, runs);
+  }, [activePlan, runs]);
+
+  // Default-expanded week: the current plan week (same date math as
+  // currentPlanWeek), falling back to the most-recent week when the plan is
+  // finished or hasn't started.
+  const defaultExpandedWeekIndex = useMemo<number | null>(() => {
+    if (!activePlan || actualVsPlannedWeeks.length === 0) return null;
+    const planStart = parseLocalDate(activePlan.startDate);
+    const wi = Math.floor(
+      (getWeekStart(new Date()).getTime() - planStart.getTime()) / (7 * 86400000)
+    );
+    if (wi >= 0 && wi < actualVsPlannedWeeks.length) return wi;
+    return actualVsPlannedWeeks[actualVsPlannedWeeks.length - 1].weekIndex;
+  }, [activePlan, actualVsPlannedWeeks]);
+
+  const [expandedWeeks, setExpandedWeeks] = useState<Set<number>>(new Set());
+  const seededExpandedPlanId = useRef<string | null>(null);
+
+  // Seed the default-expanded week once per plan; re-seeds when the selected
+  // race's linked plan changes. Manual toggles afterward are preserved.
+  useEffect(() => {
+    const planId = activePlan?.id ?? null;
+    if (!planId || defaultExpandedWeekIndex == null) return;
+    if (seededExpandedPlanId.current === planId) return;
+    setExpandedWeeks(new Set([defaultExpandedWeekIndex]));
+    seededExpandedPlanId.current = planId;
+  }, [activePlan, defaultExpandedWeekIndex]);
+
+  function toggleWeek(weekIndex: number) {
+    setExpandedWeeks((prev) => {
+      const next = new Set(prev);
+      if (next.has(weekIndex)) next.delete(weekIndex);
+      else next.add(weekIndex);
+      return next;
+    });
+  }
 
   // This week's actual mileage
   const thisWeekMiles = useMemo(() => {
@@ -1012,6 +1071,177 @@ export default function PlanInsightsPage() {
 
           {/* Plan vs Actual chart */}
           <PlanAdherenceChart data={adherenceData} />
+
+          {/* ── Actual vs Planned table ──────────────────────────────────────
+              Per-run planned-vs-actual distance, pace, and actual avg HR,
+              grouped into collapsible week rows with weighted-pace subtotals.
+              Pure in-memory derivation via buildActualVsPlannedWeeks (reuses the
+              canonical matching engine). */}
+          <SectionHeader icon={Table2} title="Actual vs Planned" />
+
+          <div className="bg-card rounded-2xl border border-border p-6">
+            <p className="text-xs text-textSecondary mb-4">
+              <span className="text-success font-medium">Positive</span> = on/ahead of plan ·{" "}
+              <span className="text-danger font-medium">Negative</span> = behind plan ·{" "}
+              <span className="text-textSecondary font-medium">Neutral</span> = rest/missed
+            </p>
+
+            {actualVsPlannedWeeks.some((w) => w.rows.length > 0) ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="text-left py-2 text-textSecondary font-medium">Run</th>
+                      <th className="text-left py-2 text-textSecondary font-medium">Type</th>
+                      <th className="text-right py-2 text-textSecondary font-medium">Distance</th>
+                      <th className="text-right py-2 text-textSecondary font-medium">Pace</th>
+                      <th className="text-right py-2 text-textSecondary font-medium">Avg HR</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {actualVsPlannedWeeks.map((week) => {
+                      const expanded = expandedWeeks.has(week.weekIndex);
+                      const wkDist = distanceDelta(
+                        week.plannedDistanceTotal,
+                        week.actualDistanceTotal
+                      );
+                      const wkPace = paceDelta(
+                        week.plannedPaceAvgSecPerMile,
+                        week.actualPaceAvgSecPerMile
+                      );
+                      return (
+                        <React.Fragment key={week.weekIndex}>
+                          {/* Week subtotal / collapse toggle */}
+                          <tr
+                            className="border-b border-border bg-surface cursor-pointer select-none"
+                            onClick={() => toggleWeek(week.weekIndex)}
+                          >
+                            <td colSpan={2} className="py-2.5 pr-2 font-semibold text-textPrimary">
+                              <span className="inline-flex items-center gap-1.5">
+                                {expanded ? (
+                                  <ChevronDown size={15} className="text-textSecondary" />
+                                ) : (
+                                  <ChevronRight size={15} className="text-textSecondary" />
+                                )}
+                                {week.weekLabel}
+                                <span className="font-normal text-textSecondary">
+                                  · {week.dateRangeLabel}
+                                </span>
+                              </span>
+                            </td>
+                            <td className="py-2.5 text-right tabular-nums text-textPrimary">
+                              {week.plannedDistanceTotal.toFixed(1)} /{" "}
+                              {week.actualDistanceTotal.toFixed(1)}
+                              {wkDist && (
+                                <span className={`ml-1.5 text-xs ${DELTA_TONE_CLASS[wkDist.tone]}`}>
+                                  {wkDist.label}
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-2.5 text-right tabular-nums text-textPrimary">
+                              {week.plannedPaceAvgSecPerMile != null
+                                ? formatPace(week.plannedPaceAvgSecPerMile)
+                                : "—"}{" "}
+                              /{" "}
+                              {week.actualPaceAvgSecPerMile != null
+                                ? formatPace(week.actualPaceAvgSecPerMile)
+                                : "—"}
+                              {wkPace && (
+                                <span className={`ml-1.5 text-xs ${DELTA_TONE_CLASS[wkPace.tone]}`}>
+                                  {wkPace.label}
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-2.5 text-right text-textSecondary">—</td>
+                          </tr>
+
+                          {/* Run rows */}
+                          {expanded &&
+                            week.rows.map((row, i) => {
+                              const isActive =
+                                row.status === "met" || row.status === "partial";
+                              const labelClass = isActive
+                                ? "text-textPrimary"
+                                : "text-textSecondary";
+                              const dDist = distanceDelta(
+                                row.plannedDistanceMiles,
+                                row.actualDistanceMiles
+                              );
+                              const dPace = paceDelta(
+                                row.plannedPaceSecPerMile,
+                                row.actualPaceSecPerMile
+                              );
+                              return (
+                                <tr
+                                  key={`${week.weekIndex}-${i}`}
+                                  className="border-b border-border/50"
+                                >
+                                  <td className={`py-2 ${labelClass}`}>
+                                    {row.weekday}{" "}
+                                    <span className="text-textSecondary">{row.dateLabel}</span>
+                                  </td>
+                                  <td className={`py-2 ${labelClass}`}>
+                                    {RUN_TYPE_LABELS[row.runType as PlanRunType] ??
+                                      (row.runType || "—")}
+                                  </td>
+                                  {/* Distance — planned / actual + delta */}
+                                  <td className="py-2 text-right tabular-nums">
+                                    <span className={labelClass}>
+                                      {row.plannedDistanceMiles != null
+                                        ? row.plannedDistanceMiles.toFixed(1)
+                                        : "—"}{" "}
+                                      /{" "}
+                                      {row.actualDistanceMiles != null
+                                        ? row.actualDistanceMiles.toFixed(1)
+                                        : "—"}
+                                    </span>
+                                    {dDist && (
+                                      <span
+                                        className={`ml-1.5 text-xs ${DELTA_TONE_CLASS[dDist.tone]}`}
+                                      >
+                                        {dDist.label}
+                                      </span>
+                                    )}
+                                  </td>
+                                  {/* Pace — planned / actual + inverted delta */}
+                                  <td className="py-2 text-right tabular-nums">
+                                    <span className={labelClass}>
+                                      {row.plannedPaceSecPerMile != null
+                                        ? formatPace(row.plannedPaceSecPerMile)
+                                        : "—"}{" "}
+                                      /{" "}
+                                      {row.actualPaceSecPerMile != null
+                                        ? formatPace(row.actualPaceSecPerMile)
+                                        : "—"}
+                                    </span>
+                                    {dPace && (
+                                      <span
+                                        className={`ml-1.5 text-xs ${DELTA_TONE_CLASS[dPace.tone]}`}
+                                      >
+                                        {dPace.label}
+                                      </span>
+                                    )}
+                                  </td>
+                                  {/* Avg HR — run-level only, no conditional color */}
+                                  <td className={`py-2 text-right tabular-nums ${labelClass}`}>
+                                    {row.actualAvgHr != null ? Math.round(row.actualAvgHr) : "—"}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                        </React.Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <EmptyState
+                title="No planned runs to compare yet"
+                description="Once this plan has scheduled runs, they'll appear here with planned-vs-actual splits."
+              />
+            )}
+          </div>
 
           {/* Weekly Run Load chart — shares adherenceData so the week buckets
               and x-axis domain line up with the mileage chart above. */}
