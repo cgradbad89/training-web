@@ -59,6 +59,11 @@ interface BackfillOptions {
    *  class. Opt-in; combines with staleOnly (write if stale OR missing). Does NOT
    *  change the default commit behavior. */
   missingOnly?: boolean;
+  /** When set, scope the ENTIRE run to exactly this one healthWorkouts docId via
+   *  a direct fetch — the 12-month window query is SKIPPED, so no other doc is
+   *  ever read or written. Opt-in; unset preserves the full-window behavior.
+   *  Combine with commit to recompute+write a single doc. */
+  docId?: string;
 }
 
 export interface BackfillSummary {
@@ -335,22 +340,43 @@ export async function runBackfillTrainingLoad(
     );
   }
 
-  // Select ALL workouts in the last 12 months by the date window only; the
-  // hasRoute || hasHRStream || finite-avgHR basis filter is applied in memory
-  // below (Firestore can't OR those field predicates with the date inequality).
-  const cutoffMs = nowMs - TWELVE_MONTHS_MS;
-  const cutoffTs = admin.firestore.Timestamp.fromMillis(cutoffMs);
-  const snap = await db
-    .collection(`users/${uid}/healthWorkouts`)
-    .where("startDate", ">=", cutoffTs)
-    .orderBy("startDate", "desc")
-    .get();
+  // Build the working set. Default: ALL workouts in the last 12 months by the
+  // date window only (the hasRoute || hasHRStream || finite-avgHR basis filter is
+  // applied in memory below — Firestore can't OR those field predicates with the
+  // date inequality). When opts.docId is set, scope to EXACTLY that one doc via a
+  // direct fetch: the window query is SKIPPED, so no other doc is ever read or
+  // written. Opt-in; unset preserves the original full-window behavior.
+  let docSnaps: admin.firestore.DocumentSnapshot[];
+  let selectionLabel: string;
+  if (opts.docId) {
+    const oneSnap = await db
+      .doc(`users/${uid}/healthWorkouts/${opts.docId}`)
+      .get();
+    if (!oneSnap.exists) {
+      throw new Error(
+        `[backfill] docId scope: users/${uid}/healthWorkouts/${opts.docId} not found`
+      );
+    }
+    docSnaps = [oneSnap];
+    selectionLabel = `single doc ${opts.docId}`;
+  } else {
+    const cutoffMs = nowMs - TWELVE_MONTHS_MS;
+    const cutoffTs = admin.firestore.Timestamp.fromMillis(cutoffMs);
+    const snap = await db
+      .collection(`users/${uid}/healthWorkouts`)
+      .where("startDate", ">=", cutoffTs)
+      .orderBy("startDate", "desc")
+      .get();
+    docSnaps = snap.docs;
+    selectionLabel = "last 12mo, all types — HR-basis filtered in memory";
+  }
 
   console.log(
     `[backfill] uid=${uid} mode=${commit ? "COMMIT" : "DRY-RUN"}` +
-      `${staleOnly ? " [STALE-ONLY]" : ""}${missingOnly ? " [MISSING-ONLY]" : ""} ` +
-      `maxHr=${maxHr} restingHr=${restingHr} selectedInWindow=${snap.size} ` +
-      `(last 12mo, all types — HR-basis filtered in memory)`
+      `${staleOnly ? " [STALE-ONLY]" : ""}${missingOnly ? " [MISSING-ONLY]" : ""}` +
+      `${opts.docId ? " [DOC-SCOPE]" : ""} ` +
+      `maxHr=${maxHr} restingHr=${restingHr} selectedInWindow=${docSnaps.length} ` +
+      `(${selectionLabel})`
   );
 
   const rows: Row[] = [];
@@ -359,7 +385,7 @@ export async function runBackfillTrainingLoad(
     usedRestingHrDefault,
     maxHr,
     restingHr,
-    selectedInWindow: snap.size,
+    selectedInWindow: docSnaps.length,
     selected: 0,
     skippedNoHrBasis: 0,
     processed: 0,
@@ -376,7 +402,7 @@ export async function runBackfillTrainingLoad(
   const writes: Array<{ ref: admin.firestore.DocumentReference; data: Record<string, unknown> }> =
     [];
 
-  for (const docSnap of snap.docs) {
+  for (const docSnap of docSnaps) {
     const data = docSnap.data() as Record<string, unknown>;
     const durationSeconds = (data.durationSeconds as number) ?? 0;
     const avgHeartRate = (data.avgHeartRate as number | null) ?? null;

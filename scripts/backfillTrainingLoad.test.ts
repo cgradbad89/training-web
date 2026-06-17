@@ -13,6 +13,9 @@
  *   BACKFILL=commit BACKFILL_STALE_ONLY=1 npx vitest run scripts/backfillTrainingLoad.test.ts
  * Targeted MISSING_LOAD repair (writes ONLY docs with a null/0 stored load):
  *   BACKFILL=commit BACKFILL_MISSING_ONLY=1 npx vitest run scripts/backfillTrainingLoad.test.ts
+ * Single-doc scope (skips the window query — touches ONLY this doc):
+ *   BACKFILL=1      BACKFILL_UID=<uid> BACKFILL_DOC_ID=<docId> npx vitest run scripts/backfillTrainingLoad.test.ts
+ *   BACKFILL=commit BACKFILL_UID=<uid> BACKFILL_DOC_ID=<docId> npx vitest run scripts/backfillTrainingLoad.test.ts
  */
 import { it } from "vitest";
 import { runBackfillTrainingLoad } from "./backfillTrainingLoad";
@@ -27,6 +30,7 @@ it.skipIf(!MODE)(
       staleOnly: process.env.BACKFILL_STALE_ONLY === "1",
       missingOnly: process.env.BACKFILL_MISSING_ONLY === "1",
       uid: process.env.BACKFILL_UID,
+      docId: process.env.BACKFILL_DOC_ID,
     });
   },
   600_000
