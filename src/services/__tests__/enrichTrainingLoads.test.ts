@@ -41,8 +41,10 @@ import { type HealthWorkout } from "@/types/healthWorkout";
 const mk = (p: Partial<HealthWorkout>): HealthWorkout => p as HealthWorkout;
 
 const START = Date.parse("2024-01-01T00:00:00Z");
-// Dense 1 Hz stream — enough to engage the streamed integral (→ "streamed").
-const denseStream = Array.from({ length: 120 }, (_, i) => ({
+// Dense 1 Hz stream — long enough (20 min) to integrate to a healthy streamed
+// load above STREAMED_LOAD_COLLAPSE_THRESHOLD, so the upgrade lands on "streamed"
+// (not the collapse fallback).
+const denseStream = Array.from({ length: 1200 }, (_, i) => ({
   timestamp: new Date(START + i * 1000).toISOString(),
   hr: i % 2 === 0 ? 180 : 110,
 }));

@@ -344,7 +344,7 @@ export async function computeAndStoreTrainingLoad(
   const basisComplete = data.routeComplete !== false;
 
   let load: number | null;
-  let method: "streamed" | "avg-hr-fallback";
+  let method: "streamed" | "avg-hr-fallback" | "none";
 
   // Tier 1 — route runs: per-second integral over route-point HR (UNCHANGED).
   if (hasRoute) {
@@ -355,7 +355,8 @@ export async function computeAndStoreTrainingLoad(
       avgHeartRate,
       maxHr,
       restingHr,
-      activityType
+      activityType,
+      workoutId
     );
     load = result.load;
     method = result.method;
@@ -371,7 +372,8 @@ export async function computeAndStoreTrainingLoad(
         avgHeartRate,
         maxHr,
         restingHr,
-        activityType
+        activityType,
+        workoutId
       );
       load = result.load;
       method = result.method;

@@ -14,6 +14,7 @@ import {
   MINDFUL_LOAD_FACTOR,
   TRAINING_LOAD_DT_CLAMP_SEC,
   STREAMED_HR_COVERAGE_MIN,
+  STREAMED_LOAD_COLLAPSE_THRESHOLD,
 } from "@/utils/trainingLoad";
 import { type UserSettings } from "@/types/userSettings";
 
@@ -332,6 +333,62 @@ describe("computeStreamedTrainingLoad", () => {
     const res = computeStreamedTrainingLoad(pts, 600, 152, 60, 60, "Running");
     expect(res.method).toBe("streamed");
     expect(res.load).toBeNull();
+  });
+});
+
+describe("computeStreamedTrainingLoad — collapse guard (PRD §6 #24)", () => {
+  it("exports STREAMED_LOAD_COLLAPSE_THRESHOLD === 5", () => {
+    expect(STREAMED_LOAD_COLLAPSE_THRESHOLD).toBe(5);
+  });
+
+  it("degenerate stream (zero dt) + valid avgHR → avg-hr-fallback, score > 0", () => {
+    // 600 dense, fully-covered samples but ALL at the same timestamp (dtSec=0) —
+    // every step's dt ≤ 0, so the integral collapses to 0 despite coverage 1.0.
+    const pts = buildStream(600, () => 150, 0);
+    const res = computeStreamedTrainingLoad(pts, 1500, 150, MAX_HR, RESTING_HR, "Running");
+    expect(res.method).toBe("avg-hr-fallback");
+    expect(res.load).not.toBeNull();
+    expect(res.load as number).toBeGreaterThan(0);
+    // Falls back to the exact avg-HR Banister value.
+    expect(res.load).toBe(
+      computeTrainingLoadV2(1500, 150, MAX_HR, RESTING_HR, "Running")
+    );
+    expect(res.hrCoverage).toBe(1);
+  });
+
+  it("healthy GPS stream (≥ threshold) → unchanged 'streamed'", () => {
+    const pts = buildStream(600, () => 152); // clean 1 Hz
+    const res = computeStreamedTrainingLoad(pts, 600, 152, MAX_HR, RESTING_HR, "Running");
+    expect(res.method).toBe("streamed");
+    expect(res.load as number).toBeGreaterThanOrEqual(
+      STREAMED_LOAD_COLLAPSE_THRESHOLD
+    );
+  });
+
+  it("degenerate stream + NO valid avgHR → load 0, method 'none' (don't guess)", () => {
+    const pts = buildStream(600, () => 150, 0); // collapses to 0
+    const res = computeStreamedTrainingLoad(pts, 1500, null, MAX_HR, RESTING_HR, "Running");
+    expect(res.method).toBe("none");
+    expect(res.load).toBe(0);
+  });
+
+  it("degenerate stream + avgHR ≤ restingHr (not usable) → load 0, method 'none'", () => {
+    const pts = buildStream(600, () => 150, 0);
+    // avgHR 55 < restingHr 60 → not a usable reserve → no fallback, don't guess.
+    const res = computeStreamedTrainingLoad(pts, 1500, 55, MAX_HR, RESTING_HR, "Running");
+    expect(res.method).toBe("none");
+    expect(res.load).toBe(0);
+  });
+
+  it("borderline easy run just above threshold → NOT triggered (stays 'streamed')", () => {
+    // Clean 10-min stream at a low HR → a small but legitimate load ≥ threshold.
+    const pts = buildStream(600, () => 110);
+    const res = computeStreamedTrainingLoad(pts, 600, 110, MAX_HR, RESTING_HR, "Running");
+    expect(res.method).toBe("streamed");
+    expect(res.load as number).toBeGreaterThanOrEqual(
+      STREAMED_LOAD_COLLAPSE_THRESHOLD
+    );
+    expect(res.load as number).toBeLessThan(40); // genuinely a low/easy effort
   });
 });
 

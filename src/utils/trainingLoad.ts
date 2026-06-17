@@ -692,9 +692,22 @@ export const STREAMED_HR_COVERAGE_MIN = 0.5;
  *  Matches computeStreamedTrainingLoad's own `< 2` degenerate guard. TUNABLE. */
 export const MIN_HRSTREAM_SAMPLES = 2;
 
+/**
+ * Collapse guard: a streamed integral BELOW this is treated as a collapse — the
+ * stream is dense and well-covered, but its per-sample timestamps are degenerate
+ * (e.g. treadmill hrStreams with ~zero elapsed time per sample), so every step is
+ * skipped and the integral lands at ~0. A legitimate run (avgHR > restingHr,
+ * duration > 5min) cannot score this low, so genuine easy/short efforts above the
+ * threshold are unaffected. On collapse we fall back to the avg-HR Banister load.
+ * See PRD §6 #24. TUNABLE.
+ */
+export const STREAMED_LOAD_COLLAPSE_THRESHOLD = 5;
+
 export interface StreamedLoadResult {
   load: number | null;
-  method: "streamed" | "avg-hr-fallback";
+  /** "streamed" (per-sample integral) · "avg-hr-fallback" (whole-run avg-HR, incl.
+   *  the collapse fallback) · "none" (collapsed AND no usable avgHR — load 0). */
+  method: "streamed" | "avg-hr-fallback" | "none";
   /** fraction of points carrying a finite hr, 0..1 */
   hrCoverage: number;
 }
@@ -724,7 +737,9 @@ export function computeStreamedTrainingLoad(
   avgHeartRate: number | null | undefined,
   maxHr: number,
   restingHr: number,
-  activityType?: string
+  activityType?: string,
+  /** Optional — used only in the collapse-fallback log line. */
+  workoutId?: string
 ): StreamedLoadResult {
   const total = points.length;
   const validHrCount = points.reduce(
@@ -794,6 +809,38 @@ export function computeStreamedTrainingLoad(
       TRAINING_LOAD_V2_SCALE *
       activityLoadFactor(activityType, avgHrrForFactor)
   );
+
+  // COLLAPSE GUARD — a dense, well-covered stream (it passed the coverage check
+  // above) can still integrate to ~0 when its per-sample timestamps are degenerate
+  // (e.g. treadmill hrStreams with zero elapsed time per sample → every dt ≤ 0 step
+  // skipped). Such a sub-threshold result is NOT a real load; fall back to the
+  // avg-HR Banister value when a usable avgHR exists. Healthy GPS runs (load ≥
+  // threshold) return unchanged. See PRD §6 #24.
+  if (load < STREAMED_LOAD_COLLAPSE_THRESHOLD) {
+    const hasValidAvgHr =
+      avgHeartRate != null && isFinite(avgHeartRate) && avgHeartRate > restingHr;
+    if (hasValidAvgHr) {
+      const fallback = computeTrainingLoadV2(
+        durationSeconds,
+        avgHeartRate,
+        maxHr,
+        restingHr,
+        activityType
+      );
+      if (fallback != null) {
+        if (typeof console !== "undefined") {
+          console.log(
+            `[TrainingLoad] Streamed integral collapsed (<${STREAMED_LOAD_COLLAPSE_THRESHOLD}) for ${workoutId ?? "unknown"} — falling back to avg-HR (avgHR=${avgHeartRate})`
+          );
+        }
+        return { load: fallback, method: "avg-hr-fallback", hrCoverage };
+      }
+    }
+    // Collapsed AND no usable avgHR → don't guess; return 0 (same as today),
+    // method "none" so callers/tooltip don't mislabel it as a real streamed score.
+    return { load: 0, method: "none", hrCoverage };
+  }
+
   return { load, method: "streamed", hrCoverage };
 }
 

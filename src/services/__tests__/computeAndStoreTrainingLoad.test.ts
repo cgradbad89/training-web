@@ -40,8 +40,10 @@ vi.mock("@/services/hrStream", () => ({
 import { computeAndStoreTrainingLoad } from "@/services/healthWorkouts";
 
 const START = Date.parse("2024-01-01T00:00:00Z");
-// Spiky 1 Hz HR stream — dense enough to engage the streamed integral.
-const spikyStream = Array.from({ length: 120 }, (_, i) => ({
+// Spiky 1 Hz HR stream — dense + long enough (20 min) to integrate to a healthy
+// streamed load well above STREAMED_LOAD_COLLAPSE_THRESHOLD, so these tier-
+// selection tests exercise the "streamed" path, not the collapse fallback.
+const spikyStream = Array.from({ length: 1200 }, (_, i) => ({
   timestamp: new Date(START + i * 1000).toISOString(),
   hr: i % 2 === 0 ? 180 : 110,
 }));
@@ -56,7 +58,7 @@ describe("computeAndStoreTrainingLoad — 3-tier method selection", () => {
     workoutData = {
       hasRoute: true,
       hasHRStream: false,
-      durationSeconds: 120,
+      durationSeconds: 1200,
       avgHeartRate: 145,
       activityType: "running",
     };
@@ -80,7 +82,7 @@ describe("computeAndStoreTrainingLoad — 3-tier method selection", () => {
     workoutData = {
       hasRoute: false,
       hasHRStream: true,
-      durationSeconds: 120,
+      durationSeconds: 1200,
       avgHeartRate: 145,
       activityType: "highIntensityIntervalTraining",
     };
@@ -124,9 +126,11 @@ describe("computeAndStoreTrainingLoad — 3-tier method selection", () => {
       avgHeartRate: 145,
       activityType: "running",
     };
-    // Mid-sync: only a short prefix of the route has landed → collapsed score.
+    // Mid-sync: a partial-but-substantial route prefix (10 min) has landed — a
+    // real "streamed" value (like 6/16's pre-resume 14), NOT degenerate, so it
+    // stays "streamed" and is recomputed later via the basisComplete=false path.
     fetchRoutePointsMock.mockResolvedValue(
-      Array.from({ length: 60 }, (_, i) => ({
+      Array.from({ length: 600 }, (_, i) => ({
         timestamp: new Date(START + i * 1000).toISOString(),
         hr: 145,
       }))

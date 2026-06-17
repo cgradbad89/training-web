@@ -141,7 +141,7 @@ interface Row {
   avgHR: number | null;
   /** Which tier's data fed the compute (independent of the resulting method). */
   source: "route" | "hrStream" | "avg-hr";
-  method: "streamed" | "avg-hr-fallback";
+  method: "streamed" | "avg-hr-fallback" | "none";
   hrCoverage: number;
   load: number | null;
   /** Currently-stored trainingLoadV2 on the doc (what the UI shows today). */
@@ -188,7 +188,7 @@ export function isStaleLoad(
 
 export interface RecomputeResult {
   load: number | null;
-  method: "streamed" | "avg-hr-fallback";
+  method: "streamed" | "avg-hr-fallback" | "none";
   /** Which tier's data fed the compute (independent of the resulting method). */
   source: "route" | "hrStream" | "avg-hr";
   /** Fraction of points with finite HR (0 for the avg-HR tier). */
@@ -237,7 +237,8 @@ export async function recomputeLoadForDoc(
       avgHeartRate,
       maxHr,
       restingHr,
-      activityType
+      activityType,
+      docId
     );
     return {
       load: result.load,
@@ -274,7 +275,8 @@ export async function recomputeLoadForDoc(
         avgHeartRate,
         maxHr,
         restingHr,
-        activityType
+        activityType,
+        docId
       );
       return {
         load: result.load,
