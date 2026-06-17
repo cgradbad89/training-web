@@ -390,6 +390,33 @@ describe("computeStreamedTrainingLoad — collapse guard (PRD §6 #24)", () => {
     );
     expect(res.load as number).toBeLessThan(40); // genuinely a low/easy effort
   });
+
+  it("integral landing EXACTLY on the threshold (==5) is rescued (PRD §6 #25, '<' → '<=')", () => {
+    // 34 hr=110 points 10s apart → 33 dt=10 steps; the per-sample integral rounds
+    // to EXACTLY STREAMED_LOAD_COLLAPSE_THRESHOLD (5). Under the original strict
+    // `<` guard this survived as a real "streamed" load of 5 (the boundary case the
+    // non-run audit surfaced); the `<=` guard now rescues it to the avg-HR value.
+    const pts = buildStream(34, () => 110, 10);
+    // First, confirm the integral really does land on the threshold (guards the
+    // test against drift — otherwise it wouldn't exercise the boundary).
+    const atThreshold = computeStreamedTrainingLoad(
+      pts,
+      // durationSeconds chosen so the avg-HR fallback is clearly ABOVE 5, making
+      // the rescue unambiguous (fallback ≈ 27, not coincidentally 5).
+      1800,
+      110,
+      MAX_HR,
+      RESTING_HR,
+      "Running"
+    );
+    expect(atThreshold.method).toBe("avg-hr-fallback");
+    expect(atThreshold.load).toBe(
+      computeTrainingLoadV2(1800, 110, MAX_HR, RESTING_HR, "Running")
+    );
+    expect(atThreshold.load as number).toBeGreaterThan(
+      STREAMED_LOAD_COLLAPSE_THRESHOLD
+    );
+  });
 });
 
 describe("resolveDisplayLoad", () => {

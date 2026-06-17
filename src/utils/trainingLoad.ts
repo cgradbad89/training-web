@@ -693,13 +693,16 @@ export const STREAMED_HR_COVERAGE_MIN = 0.5;
 export const MIN_HRSTREAM_SAMPLES = 2;
 
 /**
- * Collapse guard: a streamed integral BELOW this is treated as a collapse — the
- * stream is dense and well-covered, but its per-sample timestamps are degenerate
- * (e.g. treadmill hrStreams with ~zero elapsed time per sample), so every step is
- * skipped and the integral lands at ~0. A legitimate run (avgHR > restingHr,
- * duration > 5min) cannot score this low, so genuine easy/short efforts above the
- * threshold are unaffected. On collapse we fall back to the avg-HR Banister load.
- * See PRD §6 #24. TUNABLE.
+ * Collapse guard: a streamed integral AT OR BELOW this is treated as a collapse —
+ * the stream is dense and well-covered, but its per-sample timestamps are
+ * degenerate (e.g. treadmill hrStreams with ~zero elapsed time per sample), so
+ * every step is skipped and the integral lands at ~0. A legitimate run (avgHR >
+ * restingHr, duration > 5min) cannot score this low, so genuine easy/short
+ * efforts strictly above the threshold are unaffected. On collapse we fall back
+ * to the avg-HR Banister load. The comparison is `<=` (not `<`) so an integral
+ * that collapses to EXACTLY the threshold is rescued too — a non-run hrStream
+ * landing on precisely 5 was the boundary case that escaped the original strict
+ * `<` guard. See PRD §6 #24, #25. TUNABLE.
  */
 export const STREAMED_LOAD_COLLAPSE_THRESHOLD = 5;
 
@@ -813,10 +816,11 @@ export function computeStreamedTrainingLoad(
   // COLLAPSE GUARD — a dense, well-covered stream (it passed the coverage check
   // above) can still integrate to ~0 when its per-sample timestamps are degenerate
   // (e.g. treadmill hrStreams with zero elapsed time per sample → every dt ≤ 0 step
-  // skipped). Such a sub-threshold result is NOT a real load; fall back to the
-  // avg-HR Banister value when a usable avgHR exists. Healthy GPS runs (load ≥
-  // threshold) return unchanged. See PRD §6 #24.
-  if (load < STREAMED_LOAD_COLLAPSE_THRESHOLD) {
+  // skipped). Such an at-or-below-threshold result is NOT a real load; fall back to
+  // the avg-HR Banister value when a usable avgHR exists. Healthy runs (load >
+  // threshold) return unchanged. `<=` (not `<`) so an integral landing on EXACTLY
+  // the threshold is rescued — the non-run boundary case in PRD §6 #25. #24.
+  if (load <= STREAMED_LOAD_COLLAPSE_THRESHOLD) {
     const hasValidAvgHr =
       avgHeartRate != null && isFinite(avgHeartRate) && avgHeartRate > restingHr;
     if (hasValidAvgHr) {
@@ -830,7 +834,7 @@ export function computeStreamedTrainingLoad(
       if (fallback != null) {
         if (typeof console !== "undefined") {
           console.log(
-            `[TrainingLoad] Streamed integral collapsed (<${STREAMED_LOAD_COLLAPSE_THRESHOLD}) for ${workoutId ?? "unknown"} — falling back to avg-HR (avgHR=${avgHeartRate})`
+            `[TrainingLoad] Streamed integral collapsed (<=${STREAMED_LOAD_COLLAPSE_THRESHOLD}) for ${workoutId ?? "unknown"} — falling back to avg-HR (avgHR=${avgHeartRate})`
           );
         }
         return { load: fallback, method: "avg-hr-fallback", hrCoverage };
