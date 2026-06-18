@@ -26,9 +26,9 @@ const MAX_CHART_POINTS = 200;
 
 /**
  * GAP gets a wider smoothing window than pace: grade-adjustment amplifies
- * altitude/grade noise more than raw speed, so the pace window (25s) still
+ * altitude/grade noise more than raw speed, so the pace window (35s) still
  * leaves GAP visibly oscillating. 60s damps it without erasing sustained hills.
- * Pace stays at SMOOTH_WINDOW_SEC (25s).
+ * Pace stays at SMOOTH_WINDOW_SEC (35s).
  */
 const GAP_SMOOTH_WINDOW_SEC = 60;
 
@@ -263,7 +263,7 @@ export function RunOverlayChart({ points, perPointGap }: RunOverlayChartProps) {
       <ResponsiveContainer width="100%" height={260}>
         <ComposedChart
           data={displayData}
-          margin={{ left: 6, right: 8, top: 8, bottom: 0 }}
+          margin={{ left: 2, right: 8, top: 8, bottom: 0 }}
         >
           <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.3} />
           <XAxis
@@ -287,16 +287,14 @@ export function RunOverlayChart({ points, perPointGap }: RunOverlayChartProps) {
             tickMargin={6}
             tickLine={false}
             axisLine={false}
-            // 56px fits a right-anchored 5-char pace tick ("12:13") at fontSize
-            // 11. The rotated "Pace /mi" axis label was removed — the card title
-            // "Elevation, Pace & HR" and the "Pace" legend already convey it.
-            // With the label no longer competing for the band, the axis no longer
-            // needs the old width={100}, which on a ~240–270px mobile-portrait
-            // container ate ~40% of the width and shoved the plot (pace line AND
-            // elevation Area) into the right ~55%. 164px of fixed left+right axis
-            // chrome is a small fraction of a wide/landscape viewport, which is
-            // why the squeeze only showed at narrow widths.
-            width={56}
+            // Axis is HIDDEN (width=0): the tooltip surfaces pace on tap/hover,
+            // so the left-side tick labels add no at-a-glance value and were
+            // eating ~21% of the ~268px mobile container. hide + width=0 reclaim
+            // that band so the plot fills nearly to the card padding. The axis
+            // still EXISTS (yAxisId="pace") for the pace/GAP <Line> data mapping
+            // and `reversed` (faster = higher); only its rendering is suppressed.
+            hide
+            width={0}
           />
           {/* Elevation: right axis, feet */}
           <YAxis

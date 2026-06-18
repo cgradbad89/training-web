@@ -8,7 +8,7 @@
  */
 
 /** Centered smoothing window, in seconds. */
-export const SMOOTH_WINDOW_SEC = 25;
+export const SMOOTH_WINDOW_SEC = 35;
 
 /**
  * Centered rolling mean of `values`, windowed by TIME using `timestampsSec`
