@@ -650,7 +650,7 @@ export default function RunDetailPage() {
   })();
 
   return (
-    <div className="max-w-4xl mx-auto p-4 lg:p-6 flex flex-col gap-6">
+    <div className="max-w-4xl mx-auto px-2 py-4 lg:px-6 lg:py-6 flex flex-col gap-6">
       {/* ── Header ──────────────────────────────────────────── */}
       <div className="flex items-center gap-3">
         <button
