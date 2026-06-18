@@ -607,7 +607,7 @@ function ChartCard({
 
 // ── Time Range Filter ────────────────────────────────────────────────────────
 
-export type TimeRange = "30d" | "60d" | "90d" | "ytd" | "all";
+export type TimeRange = "today" | "30d" | "60d" | "90d" | "ytd" | "all";
 
 const TIME_RANGE_OPTIONS: readonly TimeRange[] = [
   "30d",
@@ -617,7 +617,20 @@ const TIME_RANGE_OPTIONS: readonly TimeRange[] = [
   "all",
 ];
 
+// Sleep Summary gets a "Today" option (single-day snapshot) the other trend
+// charts don't — a one-day point is meaningful for the bedtime/wake tile but
+// not for the trend lines.
+const SLEEP_SUMMARY_RANGE_OPTIONS: readonly TimeRange[] = [
+  "today",
+  "30d",
+  "60d",
+  "90d",
+  "ytd",
+  "all",
+];
+
 const TIME_RANGE_LABELS: Record<TimeRange, string> = {
+  today: "Today",
   "30d": "30D",
   "60d": "60D",
   "90d": "90D",
@@ -629,7 +642,12 @@ const TIME_RANGE_STORAGE_KEY = "health_time_range";
 
 function isTimeRange(v: unknown): v is TimeRange {
   return (
-    v === "30d" || v === "60d" || v === "90d" || v === "ytd" || v === "all"
+    v === "today" ||
+    v === "30d" ||
+    v === "60d" ||
+    v === "90d" ||
+    v === "ytd" ||
+    v === "all"
   );
 }
 
@@ -649,10 +667,12 @@ function TimeRangeSelector({
   value,
   onChange,
   size = "default",
+  options = TIME_RANGE_OPTIONS,
 }: {
   value: TimeRange;
   onChange: (v: TimeRange) => void;
   size?: "default" | "sm";
+  options?: readonly TimeRange[];
 }) {
   const compact = size === "sm";
   const base = compact
@@ -660,7 +680,7 @@ function TimeRangeSelector({
     : "text-xs px-3 h-7 rounded-lg";
   return (
     <div className="inline-flex items-center gap-1 bg-surface rounded-lg p-0.5">
-      {TIME_RANGE_OPTIONS.map((r) => {
+      {options.map((r) => {
         const active = r === value;
         return (
           <button
@@ -854,6 +874,10 @@ function filterMetricsByRange(
 ): HealthMetric[] {
   const sorted = [...metrics].sort((a, b) => a.date.localeCompare(b.date));
   if (range === "all") return sorted;
+  if (range === "today") {
+    const today = localTodayIsoDate();
+    return sorted.filter((m) => m.date === today);
+  }
   if (range === "ytd") {
     const now = new Date();
     const jan1 = `${now.getFullYear()}-01-01`;
@@ -990,7 +1014,10 @@ function SleepAnalytics({
     const daysWithData = summaryMetrics.filter(
       (m) => typeof m.sleep_total_hours === "number" && m.sleep_total_hours > 0
     );
-    if (daysWithData.length < 3) return null;
+    // "Today" is a single-day snapshot, so one night of data is enough; the
+    // multi-day ranges still require ≥3 to average meaningfully.
+    const minDays = summaryRange === "today" ? 1 : 3;
+    if (daysWithData.length < minDays) return null;
 
     const avgDuration =
       daysWithData.reduce((s, m) => s + (m.sleep_total_hours as number), 0) /
@@ -1015,7 +1042,7 @@ function SleepAnalytics({
       avgBedtime: circularMeanTime(bedDates),
       avgWakeTime: circularMeanTime(wakeDates),
     };
-  }, [summaryMetrics]);
+  }, [summaryMetrics, summaryRange]);
 
   const perDay = useMemo(() => {
     // index 0..6 = Mon..Sun
@@ -1051,6 +1078,12 @@ function SleepAnalytics({
   const hasAnyHours = perDay.some((d) => d.avgHours !== null);
   const hasAnyTimes = perDay.some((d) => d.avgBed !== null || d.avgWake !== null);
 
+  // On the single-day "Today" snapshot these are exact values, not averages.
+  const isTodaySummary = summaryRange === "today";
+  const bedtimeLabel = isTodaySummary ? "Bedtime" : "Avg Bedtime";
+  const wakeLabel = isTodaySummary ? "Wake Time" : "Avg Wake Time";
+  const durationLabel = isTodaySummary ? "Duration" : "Avg Duration";
+
   function statusFor(avgHours: number | null): GoalStatus {
     if (avgHours == null || !sleepGoal) return "neutral";
     return evaluateMetricGoal(
@@ -1069,6 +1102,7 @@ function SleepAnalytics({
         actions={
           <TimeRangeSelector
             size="sm"
+            options={SLEEP_SUMMARY_RANGE_OPTIONS}
             value={summaryRange}
             onChange={onSummaryRangeChange}
           />
@@ -1077,7 +1111,9 @@ function SleepAnalytics({
         {summary === null ? (
           <div className="h-[72px] flex items-center justify-center">
             <p className="text-xs text-textSecondary">
-              Not enough sleep data for this range
+              {isTodaySummary
+                ? "No sleep data for today"
+                : "Not enough sleep data for this range"}
             </p>
           </div>
         ) : (
@@ -1086,19 +1122,19 @@ function SleepAnalytics({
               <p className="text-xl font-bold text-textPrimary tabular-nums">
                 {formatTimeOfDay(summary.avgBedtime)}
               </p>
-              <p className="text-[11px] text-textSecondary mt-0.5">Avg Bedtime</p>
+              <p className="text-[11px] text-textSecondary mt-0.5">{bedtimeLabel}</p>
             </div>
             <div className="px-4">
               <p className="text-xl font-bold text-textPrimary tabular-nums">
                 {formatTimeOfDay(summary.avgWakeTime)}
               </p>
-              <p className="text-[11px] text-textSecondary mt-0.5">Avg Wake Time</p>
+              <p className="text-[11px] text-textSecondary mt-0.5">{wakeLabel}</p>
             </div>
             <div className="pl-4">
               <p className="text-xl font-bold text-textPrimary tabular-nums">
                 {summary.avgDuration.toFixed(1)} hrs
               </p>
-              <p className="text-[11px] text-textSecondary mt-0.5">Avg Duration</p>
+              <p className="text-[11px] text-textSecondary mt-0.5">{durationLabel}</p>
             </div>
           </div>
         )}
