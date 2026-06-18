@@ -117,11 +117,28 @@ export function RunOverlayChart({ points, perPointGap }: RunOverlayChartProps) {
   const [showGap, setShowGap] = useState(false);
   const [showHr, setShowHr] = useState(false);
 
-  const { data, hasHR } = useMemo<{
-    data: OverlayDatum[];
+  // Build the chart series. ORDER MATTERS: the pace-axis domain, outlier-
+  // nulling, and rollingAverage all run on the FULL-resolution (~1Hz) point
+  // array, and ONLY THEN is the smoothed result stride-decimated for render.
+  // Decimating first (the old order) spaced points ~duration/200s apart, which
+  // collapsed the 25s pace / 60s GAP / 20s elevation windows to ~1 sample on
+  // runs longer than ~42min — the moving average became a no-op and raw GPS
+  // jitter rendered unchanged. Smoothing the dense array first, then sampling an
+  // already-smooth curve, stays smooth at any run length and costs nothing extra
+  // at render (still ≤ MAX_CHART_POINTS on screen). For short runs (≤ ~3min, no
+  // decimation) this is identical to the old path.
+  const { displayData, paceDomain, hasHR } = useMemo<{
+    displayData: OverlayDatum[];
+    paceDomain: [number, number];
     hasHR: boolean;
   }>(() => {
-    if (points.length < 2) return { data: [], hasHR: false };
+    if (points.length < 2) {
+      return {
+        displayData: [],
+        paceDomain: computePaceAxisDomain([]),
+        hasHR: false,
+      };
+    }
 
     // Cumulative distance for every point.
     const cumMiles: number[] = [0];
@@ -151,63 +168,70 @@ export function RunOverlayChart({ points, perPointGap }: RunOverlayChartProps) {
       };
     });
 
-    // Downsample very dense routes for chart responsiveness.
-    let sampled = full;
-    if (full.length > MAX_CHART_POINTS) {
-      const stride = Math.ceil(full.length / MAX_CHART_POINTS);
-      sampled = full.filter((_, i) => i % stride === 0 || i === full.length - 1);
+    // Shared left-axis (reversed) domain for pace + GAP, from a robust
+    // percentile range so glitch spikes don't crush the real band. Computed on
+    // the FULL series so the p5–p95 band reflects the true per-point
+    // distribution, not the decimated subset.
+    const paceVals = full.flatMap((d) =>
+      [d.pace, d.gap].filter((v): v is number => v != null)
+    );
+    const domain = computePaceAxisDomain(paceVals);
+
+    // Outlier-null on the FULL series: pace/GAP values outside the domain become
+    // null so Recharts draws a line BREAK (gap) instead of a clamped full-height
+    // spike. Nulling BEFORE smoothing keeps glitch points out of the moving
+    // average and stops smoothing from bridging the breaks (connectNulls=false).
+    const paceSeries = nullifyOutliers(
+      full.map((d) => d.pace),
+      domain
+    );
+    const gapSeries = nullifyOutliers(
+      full.map((d) => d.gap),
+      domain
+    );
+
+    // Smooth pace, GAP, and elevation on the FULL (~1Hz) array using real
+    // per-point timestamps, so each window actually spans ~25s / 60s / 20s of
+    // samples. GAP uses a wider window than pace (grade-adjustment amplifies
+    // noise); elevation a lighter one. HR and the underlying GAP (KPI /
+    // per-mile) are untouched. Elevation is always finite (altitude defaults to
+    // 0), so a valid series never gains a null — the `?? d.elevationFt` below is
+    // defensive only.
+    const timeSec = full.map((d) => d.timeSec);
+    const smoothedPace = rollingAverage(paceSeries, SMOOTH_WINDOW_SEC, timeSec);
+    const smoothedGap = rollingAverage(gapSeries, GAP_SMOOTH_WINDOW_SEC, timeSec);
+    const smoothedElev = rollingAverage(
+      full.map((d) => d.elevationFt),
+      ELEV_SMOOTH_WINDOW_SEC,
+      timeSec
+    );
+
+    const smoothedFull: OverlayDatum[] = full.map((d, i) => ({
+      ...d,
+      elevationFt: smoothedElev[i] ?? d.elevationFt,
+      pace: smoothedPace[i],
+      gap: smoothedGap[i],
+    }));
+
+    // Downsample the ALREADY-SMOOTHED series for chart responsiveness. Stride
+    // math is unchanged — every stride-th point plus always the last, so the
+    // line still reaches the end of the run — it just operates on the smoothed
+    // array now instead of the raw one.
+    let sampled = smoothedFull;
+    if (smoothedFull.length > MAX_CHART_POINTS) {
+      const stride = Math.ceil(smoothedFull.length / MAX_CHART_POINTS);
+      sampled = smoothedFull.filter(
+        (_, i) => i % stride === 0 || i === smoothedFull.length - 1
+      );
     }
 
     const hrCount = sampled.filter((d) => d.hr != null).length;
-    return { data: sampled, hasHR: hrCount >= 2 };
+    return { displayData: sampled, paceDomain: domain, hasHR: hrCount >= 2 };
   }, [points, perPointGap]);
 
-  if (data.length < 2) return null;
+  if (displayData.length < 2) return null;
 
-  // Shared left-axis (reversed) domain for pace + GAP, from a robust
-  // percentile range so glitch spikes don't crush the real band.
-  const paceVals = data.flatMap((d) =>
-    [d.pace, d.gap].filter((v): v is number => v != null)
-  );
-  const paceDomain = computePaceAxisDomain(paceVals);
   const [paceDomainMin, paceDomainMax] = paceDomain;
-
-  // Display copy: pace/GAP values outside the domain become null so Recharts
-  // draws a line BREAK (gap) instead of a clamped full-height spike. Source
-  // pace/GAP arrays are untouched; elevation + HR series are unchanged.
-  const paceSeries = nullifyOutliers(
-    data.map((d) => d.pace),
-    paceDomain
-  );
-  const gapSeries = nullifyOutliers(
-    data.map((d) => d.gap),
-    paceDomain
-  );
-
-  // Smooth pace AND GAP for display — applied AFTER outlier-nulling so glitch
-  // points don't pollute the moving average and so smoothing never bridges the
-  // line breaks (connectNulls={false}). GAP uses a wider window than pace
-  // (see GAP_SMOOTH_WINDOW_SEC) because grade-adjustment amplifies noise.
-  // HR and the underlying GAP (KPI / per-mile) are untouched.
-  const timeSec = data.map((d) => d.timeSec);
-  const smoothedPace = rollingAverage(paceSeries, SMOOTH_WINDOW_SEC, timeSec);
-  const smoothedGap = rollingAverage(gapSeries, GAP_SMOOTH_WINDOW_SEC, timeSec);
-  // Light elevation smoothing (display-only): the altitude trace is otherwise the
-  // only jagged line. Elevation is always finite (altitude defaults to 0), so a
-  // valid series never gains a null — the `?? d.elevationFt` is defensive only.
-  // HR is intentionally NOT smoothed.
-  const smoothedElev = rollingAverage(
-    data.map((d) => d.elevationFt),
-    ELEV_SMOOTH_WINDOW_SEC,
-    timeSec
-  );
-
-  const displayData = data.map((d, i) => ({
-    ...d,
-    elevationFt: smoothedElev[i] ?? d.elevationFt,
-    pace: smoothedPace[i],
-    gap: smoothedGap[i],
-  }));
 
   return (
     <div className="bg-card rounded-2xl border border-border p-5">

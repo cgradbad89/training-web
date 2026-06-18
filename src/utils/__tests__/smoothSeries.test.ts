@@ -111,3 +111,77 @@ describe("rollingAverage — elevation series (20s window)", () => {
     }
   });
 });
+
+// ── Pipeline ordering: smooth-before-decimate (RunOverlayChart) ──────────────
+// The overlay chart's pace jitter was an ORDERING bug in the caller, not in
+// rollingAverage: it stride-decimated the series to MAX_CHART_POINTS BEFORE
+// smoothing, so the post-decimation spacing (~duration/200s) exceeded the 25s
+// window's half-width and each window collapsed to ~1 sample on long runs.
+// These tests pin the principle — smooth the full ~1Hz array first, THEN
+// decimate — directly, independent of the React component.
+const MAX_CHART_POINTS = 200; // mirrors RunOverlayChart
+
+/** Stride-decimation identical to RunOverlayChart: every stride-th point + the last. */
+function decimate<T>(arr: T[], max = MAX_CHART_POINTS): T[] {
+  if (arr.length <= max) return arr;
+  const stride = Math.ceil(arr.length / max);
+  return arr.filter((_, i) => i % stride === 0 || i === arr.length - 1);
+}
+
+/** Mean absolute first-difference — a simple jaggedness metric (higher = jitterier). */
+const meanAbsFirstDiff = (xs: (number | null)[]): number => {
+  const v = xs.filter((x): x is number => x != null);
+  if (v.length < 2) return 0;
+  let sum = 0;
+  for (let i = 1; i < v.length; i++) sum += Math.abs(v[i] - v[i - 1]);
+  return sum / (v.length - 1);
+};
+
+describe("rollingAverage — smooth-before-decimate ordering (RunOverlayChart)", () => {
+  it("smoothing the full ~1Hz array then decimating is far smoother than decimating then smoothing (long run)", () => {
+    // ~2500 samples at 1Hz ≈ a >42min run: a smooth underlying pace trend with
+    // high-frequency ±40 sec/mi GPS jitter on top, timestamps 1s apart.
+    const N = 2500;
+    const time = ts(N);
+    const raw = Array.from(
+      { length: N },
+      (_, i) => 540 + 60 * Math.sin(i / 300) + (i % 2 === 0 ? -40 : 40)
+    );
+
+    // Path A (old/bug): decimate to ~200, THEN smooth the sparse array.
+    const pathA = rollingAverage(decimate(raw), 25, decimate(time));
+
+    // Path B (new/fix): smooth the full 2500, THEN decimate the smooth curve.
+    const pathB = decimate(rollingAverage(raw, 25, time));
+
+    // Both render the same number of points (≤ MAX_CHART_POINTS).
+    expect(pathA.length).toBe(pathB.length);
+    expect(pathB.length).toBeLessThanOrEqual(MAX_CHART_POINTS);
+
+    const jaggedA = meanAbsFirstDiff(pathA);
+    const jaggedB = meanAbsFirstDiff(pathB);
+
+    // Sanity: Path A still carries heavy jitter — smoothing was a no-op once the
+    // points were ~13s apart, wider than the 12.5s half-window.
+    expect(jaggedA).toBeGreaterThan(10);
+    // The fix: Path B is materially smoother — well under half Path A's jaggedness.
+    expect(jaggedB).toBeLessThan(jaggedA * 0.5);
+  });
+
+  it("short series (< MAX_CHART_POINTS): both orders are identical (no decimation occurs)", () => {
+    // 150 samples → never decimated, so smooth-then-decimate == decimate-then-smooth.
+    const N = 150;
+    const time = ts(N);
+    const raw = Array.from(
+      { length: N },
+      (_, i) => 540 + 60 * Math.sin(i / 30) + (i % 2 === 0 ? -40 : 40)
+    );
+
+    const pathA = rollingAverage(decimate(raw), 25, decimate(time));
+    const pathB = decimate(rollingAverage(raw, 25, time));
+
+    expect(pathA).toHaveLength(N);
+    expect(pathB).toHaveLength(N);
+    expect(pathA).toEqual(pathB);
+  });
+});
