@@ -1,6 +1,10 @@
 "use client";
 
-import { type PredictionImpact, type CtlImpact } from "@/utils/runImpact";
+import {
+  type RunImpact,
+  type CtlImpact,
+  IMPACT_MIN_DISPLAY_SECONDS,
+} from "@/utils/runImpact";
 import { formatRaceTime } from "@/utils/riegelFit";
 import { parseLocalDate } from "@/utils/dates";
 
@@ -8,7 +12,7 @@ interface RunImpactSectionProps {
   /** Race-prediction tile inputs; null hides the tile (no active race or no
    *  current prediction). */
   prediction: {
-    impact: PredictionImpact;
+    impact: RunImpact;
     raceName: string;
     raceDateIso: string;
   } | null;
@@ -52,31 +56,66 @@ export function RunImpactSection({ prediction, ctl }: RunImpactSectionProps) {
               🎯 {prediction.raceName} Prediction &middot;{" "}
               {formatRaceDate(prediction.raceDateIso)}
             </span>
-            {prediction.impact.withoutSeconds == null ? (
-              <p className="text-sm text-textSecondary py-1.5">
-                Not enough history without this run
-              </p>
-            ) : (
-              <div className="flex items-baseline gap-2 flex-wrap">
-                <span className="text-sm text-textSecondary line-through tabular-nums">
-                  {formatRaceTime(prediction.impact.withoutSeconds)}
-                </span>
-                <span className="text-xs text-textSecondary">&rarr;</span>
-                <span className="text-xl font-bold text-textPrimary tabular-nums">
-                  {formatRaceTime(prediction.impact.withSeconds)}
-                </span>
-                {prediction.impact.deltaSeconds != null &&
-                  (() => {
-                    const delta = prediction.impact.deltaSeconds;
-                    if (Math.abs(delta) < 0.5) {
-                      return (
-                        <span className="text-xs font-semibold text-textSecondary">
-                          No change
-                        </span>
-                      );
-                    }
-                    // Negative delta = prediction got FASTER with this run.
-                    return delta < 0 ? (
+            {(() => {
+              const imp = prediction.impact;
+
+              // State 3 — out of window: too short/old to feed the model.
+              if (!imp.affectsProjection) {
+                return (
+                  <>
+                    <span className="text-xl font-bold text-textPrimary tabular-nums">
+                      {formatRaceTime(imp.withRunSeconds)}
+                    </span>
+                    <span className="text-[10px] text-textSecondary">
+                      This run doesn&rsquo;t affect your current projection
+                    </span>
+                  </>
+                );
+              }
+
+              // In-window but the remaining history can't fit without this run.
+              if (imp.withoutRunSeconds == null || imp.deltaSeconds == null) {
+                return (
+                  <>
+                    <span className="text-xl font-bold text-textPrimary tabular-nums">
+                      {formatRaceTime(imp.withRunSeconds)}
+                    </span>
+                    <span className="text-[10px] text-textSecondary">
+                      Not enough history without this run
+                    </span>
+                  </>
+                );
+              }
+
+              const delta = imp.deltaSeconds;
+
+              // State 2 — minimal impact: in-window easy run below the threshold.
+              if (Math.abs(delta) < IMPACT_MIN_DISPLAY_SECONDS) {
+                return (
+                  <>
+                    <span className="text-xl font-bold text-textPrimary tabular-nums">
+                      {formatRaceTime(imp.withRunSeconds)}
+                    </span>
+                    <span className="text-[10px] text-textSecondary">
+                      Minimal impact on your projection
+                    </span>
+                  </>
+                );
+              }
+
+              // State 1 — meaningful impact: without → with + honest delta.
+              // Negative delta = this run made the projection FASTER.
+              return (
+                <>
+                  <div className="flex items-baseline gap-2 flex-wrap">
+                    <span className="text-sm text-textSecondary line-through tabular-nums">
+                      {formatRaceTime(imp.withoutRunSeconds)}
+                    </span>
+                    <span className="text-xs text-textSecondary">&rarr;</span>
+                    <span className="text-xl font-bold text-textPrimary tabular-nums">
+                      {formatRaceTime(imp.withRunSeconds)}
+                    </span>
+                    {delta < 0 ? (
                       <span className="text-sm font-semibold text-success tabular-nums">
                         ▼ {deltaSecondsLabel(Math.abs(delta))}
                       </span>
@@ -84,13 +123,14 @@ export function RunImpactSection({ prediction, ctl }: RunImpactSectionProps) {
                       <span className="text-sm font-semibold text-danger tabular-nums">
                         ▲ {deltaSecondsLabel(delta)}
                       </span>
-                    );
-                  })()}
-              </div>
-            )}
-            <span className="text-[10px] text-textSecondary">
-              Prediction recomputed with this run vs. without it
-            </span>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-textSecondary">
+                    Prediction recomputed with this run vs. without it
+                  </span>
+                </>
+              );
+            })()}
           </div>
         )}
 

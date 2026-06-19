@@ -13,9 +13,14 @@
 
 import {
   predictRaceTime,
+  HALF_MARATHON_MILES,
   type PredictionRun,
   type RacePredictionParams,
 } from "@/utils/racePrediction";
+import {
+  buildBestEffortSegments,
+  BEST_EFFORT_RECENCY_DAYS,
+} from "@/utils/bestEffortExtraction";
 import {
   buildDailyLoadMap,
   buildLoadEwmaSeries,
@@ -63,6 +68,92 @@ export function computePredictionImpact(
       withoutSeconds == null
         ? null
         : withResult.predictedSeconds - withoutSeconds,
+  };
+}
+
+/** Below this |delta| (seconds) the tile shows a neutral "minimal impact" state
+ *  instead of a tiny number — the expected outcome for an easy in-window run. */
+export const IMPACT_MIN_DISPLAY_SECONDS = 2;
+
+export interface RunImpact {
+  /** False when the run can't move the half projection — distance < 3mi OR older
+   *  than the best-effort recency window (or not in the run set). The tile then
+   *  shows "doesn't affect your current projection" rather than a misleading 0. */
+  affectsProjection: boolean;
+  /** Predicted finish WITH this run in the dataset (seconds). */
+  withRunSeconds: number;
+  /** Predicted finish WITHOUT this run; null = remaining history can't support a
+   *  prediction ("Not enough history without this run"). */
+  withoutRunSeconds: number | null;
+  /** withRun − withoutRun (negative = this run improved/lowered the projection);
+   *  null when out of window or `withoutRunSeconds` is null. */
+  deltaSeconds: number | null;
+}
+
+/**
+ * "This Run's Impact" — how the currently-viewed run moves the race projection,
+ * through the EXACT pipeline the Plan Insights dashboard uses (§7b): HR-gated
+ * best-effort segments built per-set via {@link buildBestEffortSegments} (full-run
+ * path, no GPS reads) and folded into `predictRaceTime` as high-weight efforts.
+ *
+ * Both predictions rebuild segments from their OWN run set, so excluding the
+ * target run drops it from BOTH the base fit AND the best-effort ceiling — the
+ * delta reflects its true contribution (passing one fixed segment set would leave
+ * the run's best-effort influence in the "without" number). With best efforts the
+ * "with" value matches the dashboard's number for the same dataset.
+ *
+ * Returns null when no prediction exists even WITH the full set (tile hidden).
+ */
+export function computeRunImpact(
+  allRuns: HealthWorkout[],
+  targetRunId: string,
+  params: RacePredictionParams,
+  maxHr: number,
+  restingHr: number,
+  asOf: Date = new Date()
+): RunImpact | null {
+  const isHalfPlus = params.raceDistanceMiles >= HALF_MARATHON_MILES;
+
+  const withSegments = isHalfPlus
+    ? buildBestEffortSegments(allRuns, asOf, maxHr, restingHr)
+    : [];
+  const withResult = predictRaceTime(
+    allRuns,
+    { ...params, bestEffortSegments: withSegments },
+    asOf
+  );
+  if (withResult.predictedSeconds == null) return null;
+
+  // In-window = could feed the half fit at all (≥3mi, within the recency window).
+  const target = allRuns.find((r) => r.workoutId === targetRunId);
+  const ageDays = target
+    ? (asOf.getTime() - target.startDate.getTime()) / 86400000
+    : Infinity;
+  const affectsProjection =
+    !!target &&
+    target.distanceMiles >= 3 &&
+    ageDays >= 0 &&
+    ageDays <= BEST_EFFORT_RECENCY_DAYS;
+
+  const withoutRuns = allRuns.filter((r) => r.workoutId !== targetRunId);
+  const withoutSegments = isHalfPlus
+    ? buildBestEffortSegments(withoutRuns, asOf, maxHr, restingHr)
+    : [];
+  const withoutResult = predictRaceTime(
+    withoutRuns,
+    { ...params, bestEffortSegments: withoutSegments },
+    asOf
+  );
+  const withoutRunSeconds = withoutResult.predictedSeconds;
+
+  return {
+    affectsProjection,
+    withRunSeconds: withResult.predictedSeconds,
+    withoutRunSeconds,
+    deltaSeconds:
+      affectsProjection && withoutRunSeconds != null
+        ? withResult.predictedSeconds - withoutRunSeconds
+        : null,
   };
 }
 

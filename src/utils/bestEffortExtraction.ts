@@ -271,6 +271,31 @@ export function selectCeilingEfforts(
 }
 
 /**
+ * The canonical best-effort recipe used by BOTH the Plan Insights dashboard and
+ * the Run Detail impact tile, so they can never diverge: bound to the recent
+ * window ({@link BEST_EFFORT_RECENCY_DAYS}), extract full-run + continuous
+ * efforts at the gate, then reduce to the per-distance ceiling (≥5mi). Pure;
+ * no Firestore. Callers gate on target distance (half+ only) before invoking.
+ * `asOf` sets the recency cutoff (pass the same reference used for the fit).
+ */
+export function buildBestEffortSegments(
+  runs: HealthWorkout[],
+  asOf: Date,
+  maxHr: number,
+  restingHr: number
+): BestEffortSegment[] {
+  const cutoffMs = asOf.getTime() - BEST_EFFORT_RECENCY_DAYS * 86400000;
+  const recentRuns = runs.filter((w) => w.startDate.getTime() >= cutoffMs);
+  const raw = extractBestEfforts(recentRuns, {
+    hrrGateThreshold: HRR_GATE_THRESHOLD,
+    segmentWindowsMiles: [3, 5, 8],
+    maxHr,
+    restingHr,
+  });
+  return selectCeilingEfforts(raw, 5);
+}
+
+/**
  * Convert extracted segments into Riegel {@link EffortPoint}s — applying the
  * race-effort pace projection and tagging them at `tier` (a high-weight tier so
  * they pull the fit toward race effort; the base runs stay in as corroboration).

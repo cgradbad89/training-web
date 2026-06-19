@@ -81,7 +81,7 @@ import {
   toMatchedRunSummaries,
 } from "@/utils/routePerformance";
 import {
-  computePredictionImpact,
+  computeRunImpact,
   computeCtlImpact,
 } from "@/utils/runImpact";
 import { parseLocalDate } from "@/utils/dates";
@@ -430,6 +430,9 @@ export default function RunDetailPage() {
 
   // Prediction impact — runs only, capped at end of race day (parity with
   // Plan Insights; for an upcoming race the cutoff is in the future → no-op).
+  // Routes through computeRunImpact, which folds the SAME §7b HR-gated
+  // best-effort segments the dashboard uses (per-set, full-run path, no GPS
+  // reads), so the "with" number matches the dashboard's projection.
   const predictionImpact = useMemo(() => {
     if (!workoutsForInsights || !activeRace || !raceDistanceMiles) return null;
     const cutoff = parseLocalDate(activeRace.raceDate);
@@ -437,16 +440,21 @@ export default function RunDetailPage() {
     const predictionRuns = workoutsForInsights.filter(
       (w) => w.isRunLike && w.startDate <= cutoff
     );
-    return computePredictionImpact(predictionRuns, workoutId, {
-      raceDistanceMiles,
-      races: raceInputs,
-    });
+    return computeRunImpact(
+      predictionRuns,
+      workoutId,
+      { raceDistanceMiles, races: raceInputs },
+      resolvedMaxHR,
+      resolvedRestingHR
+    );
   }, [
     workoutsForInsights,
     activeRace,
     raceDistanceMiles,
     raceInputs,
     workoutId,
+    resolvedMaxHR,
+    resolvedRestingHR,
   ]);
 
   const ctlImpact = useMemo(() => {

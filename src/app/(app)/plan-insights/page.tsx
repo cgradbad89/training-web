@@ -56,12 +56,7 @@ import {
 import { PlanRunLoadChart } from "@/components/charts/PlanRunLoadChart";
 import { PredictionTrendChart } from "@/components/charts/PredictionTrendChart";
 import { predictRaceTime, buildPredictionTrend } from "@/utils/racePrediction";
-import {
-  extractBestEfforts,
-  selectCeilingEfforts,
-  HRR_GATE_THRESHOLD,
-  BEST_EFFORT_RECENCY_DAYS,
-} from "@/utils/bestEffortExtraction";
+import { buildBestEffortSegments } from "@/utils/bestEffortExtraction";
 import { type UserSettings } from "@/types/userSettings";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -341,18 +336,10 @@ export default function PlanInsightsPage() {
   // slow). See src/utils/bestEffortExtraction.ts. HR anchors come from prefs.
   const bestEffortSegments = useMemo(() => {
     if (!raceDistanceMiles || raceDistanceMiles < HALF_MARATHON_MILES) return [];
-    // Bound to recent runs so the ceiling reflects CURRENT race gear (not stale
-    // PRs). asOf = now for the live card; the per-week trend re-filters by date
-    // inside predictRaceTime and is a now-relative approximation for past weeks.
-    const cutoffMs = Date.now() - BEST_EFFORT_RECENCY_DAYS * 86400000;
-    const recentRuns = runs.filter((w) => w.startDate.getTime() >= cutoffMs);
-    const raw = extractBestEfforts(recentRuns, {
-      hrrGateThreshold: HRR_GATE_THRESHOLD,
-      segmentWindowsMiles: [3, 5, 8],
-      maxHr,
-      restingHr,
-    });
-    return selectCeilingEfforts(raw, 5);
+    // Shared recipe (full-run path, no GPS reads) — identical to the Run Detail
+    // impact tile so the two never diverge. asOf = now for the live card; the
+    // per-week trend re-filters by date inside predictRaceTime.
+    return buildBestEffortSegments(runs, new Date(), maxHr, restingHr);
   }, [runs, raceDistanceMiles, maxHr, restingHr]);
 
   // Riegel fit for the LIVE race prediction (asOf = now). Routed through the

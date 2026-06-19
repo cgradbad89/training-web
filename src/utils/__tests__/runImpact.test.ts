@@ -1,9 +1,14 @@
 import { describe, it, expect } from "vitest";
 import {
   computePredictionImpact,
+  computeRunImpact,
   computeCtlImpact,
 } from "@/utils/runImpact";
-import { type PredictionRun } from "@/utils/racePrediction";
+import {
+  predictRaceTime,
+  HALF_MARATHON_MILES,
+  type PredictionRun,
+} from "@/utils/racePrediction";
 import { type HealthWorkout } from "@/types/healthWorkout";
 
 // 5K target: shorter targets only need ≥4 efforts (no HM long-run gate), so
@@ -108,6 +113,139 @@ describe("computePredictionImpact", () => {
       ASOF
     )!;
     expect(impact.deltaSeconds).toBe(0);
+  });
+});
+
+// ─── computeRunImpact (HR-gated best-effort projection, §7b) ──────────────────
+
+const HALF = HALF_MARATHON_MILES;
+const HALF_PARAMS = { raceDistanceMiles: HALF, races: [] };
+const MAX_HR = 175;
+const REST_HR = 65;
+
+/** HealthWorkout with the fields computeRunImpact needs (distance/duration/HR). */
+function mkHW(
+  id: string,
+  startDate: Date,
+  miles: number,
+  paceSecPerMile: number,
+  avgHeartRate: number
+): HealthWorkout {
+  return {
+    workoutId: id,
+    name: "Run",
+    activityType: "running",
+    displayType: "Run",
+    startDate,
+    endDate: startDate,
+    durationSeconds: miles * paceSecPerMile,
+    sourceName: "Apple Watch",
+    isRunLike: true,
+    hasRoute: false,
+    syncedAt: startDate,
+    calories: 0,
+    avgHeartRate,
+    distanceMiles: miles,
+    distanceMeters: null,
+    avgPaceSecPerMile: paceSecPerMile,
+    avgSpeedMPS: null,
+    hrDriftPct: null,
+    cadenceSPM: null,
+    efficiencyRaw: null,
+    efficiencyScore: null,
+    elevationGainM: null,
+  };
+}
+
+// Easy base (HR 145 → HRR 0.73, below the 0.80 gate → no best efforts) that
+// satisfies the HM gate on its own: ≥4 efforts ≥3mi, 2+ ≥4mi in 35d, longest ≥6.
+// Two runs ≥6mi so removing one easy run still clears the longest-≥6 gate.
+function easyBase(): HealthWorkout[] {
+  return [
+    mkHW("e1", d("2026-06-12"), 7, 600, 145),
+    mkHW("e2", d("2026-06-08"), 6, 600, 145),
+    mkHW("e3", d("2026-06-04"), 5, 600, 145),
+    mkHW("e4", d("2026-05-30"), 4, 600, 145),
+    mkHW("e5", d("2026-05-26"), 4, 600, 145),
+  ];
+}
+
+const NOW = d("2026-06-20");
+
+describe("computeRunImpact", () => {
+  it("a hard in-window run improves the projection → affects + negative delta", () => {
+    const hard = mkHW("hard", d("2026-06-14"), 6, 510, 160); // 8:30/mi, HRR .864
+    const impact = computeRunImpact(
+      [...easyBase(), hard],
+      "hard",
+      HALF_PARAMS,
+      MAX_HR,
+      REST_HR,
+      NOW
+    )!;
+    expect(impact).not.toBeNull();
+    expect(impact.affectsProjection).toBe(true);
+    expect(impact.withoutRunSeconds).not.toBeNull();
+    expect(impact.deltaSeconds).toBeLessThan(0); // faster WITH the hard run
+    expect(impact.withRunSeconds).toBeLessThan(impact.withoutRunSeconds!);
+  });
+
+  it("folds in §7b best efforts → 'with' is faster than the base-only fit (matches dashboard)", () => {
+    const hard = mkHW("hard", d("2026-06-14"), 6, 510, 160);
+    const all = [...easyBase(), hard];
+    const baseOnly = predictRaceTime(all, HALF_PARAMS, NOW).predictedSeconds!;
+    const impact = computeRunImpact(all, "hard", HALF_PARAMS, MAX_HR, REST_HR, NOW)!;
+    expect(impact.withRunSeconds).toBeLessThan(baseOnly);
+  });
+
+  it("an easy in-window run has near-zero impact (in-window, |delta| small)", () => {
+    const all = easyBase();
+    const impact = computeRunImpact(all, "e1", HALF_PARAMS, MAX_HR, REST_HR, NOW)!;
+    expect(impact.affectsProjection).toBe(true);
+    expect(impact.deltaSeconds).not.toBeNull();
+    expect(Math.abs(impact.deltaSeconds!)).toBeLessThan(60); // not a big mover
+  });
+
+  it("an out-of-window run (distance < 3mi) → affectsProjection false, delta null", () => {
+    const short = mkHW("short", d("2026-06-15"), 2, 480, 165); // hard but 2mi
+    const impact = computeRunImpact(
+      [...easyBase(), short],
+      "short",
+      HALF_PARAMS,
+      MAX_HR,
+      REST_HR,
+      NOW
+    )!;
+    expect(impact.affectsProjection).toBe(false);
+    expect(impact.deltaSeconds).toBeNull();
+  });
+
+  it("an out-of-window run (older than recency window) → affectsProjection false", () => {
+    const old = mkHW("old", d("2026-04-01"), 6, 510, 160); // 80d before NOW
+    const impact = computeRunImpact(
+      [...easyBase(), old],
+      "old",
+      HALF_PARAMS,
+      MAX_HR,
+      REST_HR,
+      NOW
+    )!;
+    expect(impact.affectsProjection).toBe(false);
+    expect(impact.deltaSeconds).toBeNull();
+  });
+
+  it("a targetRunId not in the set is found-safe → affectsProjection false, no off-by-one", () => {
+    const impact = computeRunImpact(
+      easyBase(),
+      "not-a-real-id",
+      HALF_PARAMS,
+      MAX_HR,
+      REST_HR,
+      NOW
+    )!;
+    expect(impact).not.toBeNull();
+    expect(impact.affectsProjection).toBe(false);
+    expect(impact.deltaSeconds).toBeNull();
   });
 });
 
