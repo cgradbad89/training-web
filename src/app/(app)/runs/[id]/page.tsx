@@ -976,9 +976,6 @@ export default function RunDetailPage() {
               {dateTimeDisplay}
             </span>
           </div>
-          {displayWorkout.weather && (
-            <WeatherTile weather={displayWorkout.weather} />
-          )}
           <div className="flex flex-col gap-0.5">
             <span className="text-xs text-textSecondary uppercase tracking-wide">Shoe</span>
             {assignedShoe ? (
@@ -994,6 +991,9 @@ export default function RunDetailPage() {
               <span className="text-sm text-textSecondary italic">No shoe assigned</span>
             )}
           </div>
+          {displayWorkout.weather && (
+            <WeatherTile weather={displayWorkout.weather} />
+          )}
         </div>
       </div>
 
