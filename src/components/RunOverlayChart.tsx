@@ -25,16 +25,17 @@ const METERS_TO_FEET = 3.28084;
 const MAX_CHART_POINTS = 200;
 
 /**
- * GAP gets a wider smoothing window than pace: grade-adjustment amplifies
- * altitude/grade noise more than raw speed, so the pace window (35s) still
- * leaves GAP visibly oscillating. 60s damps it without erasing sustained hills.
- * Pace stays at SMOOTH_WINDOW_SEC (35s).
+ * GAP shares the pace smoothing window (35s). The earlier wider 60s window was
+ * a stopgap from when the pipeline decimated BEFORE smoothing, which collapsed
+ * the moving average to a near-no-op on long runs; now that smoothing runs on
+ * the full-resolution array first (see useMemo below), the same 35s window as
+ * pace damps grade-adjustment noise without over-smoothing sustained hills.
  */
-const GAP_SMOOTH_WINDOW_SEC = 60;
+const GAP_SMOOTH_WINDOW_SEC = 35;
 
 /**
  * Elevation gets a LIGHT centered smoothing window so the altitude trace isn't
- * the only jagged line on the chart. 20s is lighter than pace (25s) / GAP (60s)
+ * the only jagged line on the chart. 20s is lighter than pace / GAP (both 35s)
  * — enough to settle GPS vertical jitter without flattening real hills.
  * Display-only: the Total Ascent KPI reads the device `elevationGainM`, not this.
  */
@@ -121,7 +122,7 @@ export function RunOverlayChart({ points, perPointGap }: RunOverlayChartProps) {
   // nulling, and rollingAverage all run on the FULL-resolution (~1Hz) point
   // array, and ONLY THEN is the smoothed result stride-decimated for render.
   // Decimating first (the old order) spaced points ~duration/200s apart, which
-  // collapsed the 25s pace / 60s GAP / 20s elevation windows to ~1 sample on
+  // collapsed the 35s pace / 35s GAP / 20s elevation windows to ~1 sample on
   // runs longer than ~42min — the moving average became a no-op and raw GPS
   // jitter rendered unchanged. Smoothing the dense array first, then sampling an
   // already-smooth curve, stays smooth at any run length and costs nothing extra
@@ -191,9 +192,10 @@ export function RunOverlayChart({ points, perPointGap }: RunOverlayChartProps) {
     );
 
     // Smooth pace, GAP, and elevation on the FULL (~1Hz) array using real
-    // per-point timestamps, so each window actually spans ~25s / 60s / 20s of
-    // samples. GAP uses a wider window than pace (grade-adjustment amplifies
-    // noise); elevation a lighter one. HR and the underlying GAP (KPI /
+    // per-point timestamps, so each window actually spans ~35s / 35s / 20s of
+    // samples. Pace and GAP now share the 35s window; elevation uses a lighter
+    // one (grade-adjustment noise no longer needs a wider GAP window). HR and
+    // the underlying GAP (KPI /
     // per-mile) are untouched. Elevation is always finite (altitude defaults to
     // 0), so a valid series never gains a null — the `?? d.elevationFt` below is
     // defensive only.
