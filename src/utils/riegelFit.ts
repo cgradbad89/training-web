@@ -9,6 +9,11 @@ export interface EffortPoint {
   ageDays: number       // how many days ago
   isTreadmill: boolean
   tier: EffortTier
+  /** Optional extra weight multiplier applied on top of the tier/recency/etc.
+   *  weights (default 1 = no change). Used to give HR-gated, race-effort-projected
+   *  best-effort segments enough weight to act as the fit's primary signal while
+   *  the ordinary training runs remain corroboration. See bestEffortExtraction.ts. */
+  weightMultiplier?: number
 }
 
 export interface RiegelFit {
@@ -201,7 +206,8 @@ export function fitRiegel(
     distanceWeight(e.distanceMiles, targetMiles) *
     treadmillWeight(e.isTreadmill) *
     tierWeight(e.tier) *
-    longRunSupportMultiplier(e, filtered, targetMiles)
+    longRunSupportMultiplier(e, filtered, targetMiles) *
+    (e.weightMultiplier ?? 1)
   )
 
   // Normalize weights so average ~ 1.0

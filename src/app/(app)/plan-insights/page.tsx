@@ -16,7 +16,12 @@ import { fetchAllOverrides } from "@/services/workoutOverrides";
 import { applyOverride } from "@/types/workoutOverride";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { type RunningPlan, type PlanRunType, isRunningPlan } from "@/types/plan";
-import { type Race, RACE_DISTANCE_MILES, RACE_DISTANCE_LABELS } from "@/types/race";
+import {
+  type Race,
+  RACE_DISTANCE_MILES,
+  RACE_DISTANCE_LABELS,
+  HALF_MARATHON_MILES,
+} from "@/types/race";
 import { formatPace, formatMiles } from "@/utils/pace";
 import {
   resolveDisplayLoad,
@@ -51,6 +56,12 @@ import {
 import { PlanRunLoadChart } from "@/components/charts/PlanRunLoadChart";
 import { PredictionTrendChart } from "@/components/charts/PredictionTrendChart";
 import { predictRaceTime, buildPredictionTrend } from "@/utils/racePrediction";
+import {
+  extractBestEfforts,
+  selectCeilingEfforts,
+  HRR_GATE_THRESHOLD,
+  BEST_EFFORT_RECENCY_DAYS,
+} from "@/utils/bestEffortExtraction";
 import { type UserSettings } from "@/types/userSettings";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -320,15 +331,44 @@ export default function PlanInsightsPage() {
     [races]
   );
 
+  // HR-gated best-effort segments folded into the prediction (half+ targets
+  // only). Full-run efforts are derived purely from the already-loaded runs
+  // (recorded distance/duration + run-level avg HR) — NO extra Firestore reads;
+  // continuous-segment extraction (which needs GPS route hydration) is
+  // intentionally not used on the live page, as it adds ~13s here for ~30k
+  // route reads. selectCeilingEfforts keeps the fastest effort per distance
+  // ≥5mi (short fast efforts steepen the Riegel exponent and bias the half
+  // slow). See src/utils/bestEffortExtraction.ts. HR anchors come from prefs.
+  const bestEffortSegments = useMemo(() => {
+    if (!raceDistanceMiles || raceDistanceMiles < HALF_MARATHON_MILES) return [];
+    // Bound to recent runs so the ceiling reflects CURRENT race gear (not stale
+    // PRs). asOf = now for the live card; the per-week trend re-filters by date
+    // inside predictRaceTime and is a now-relative approximation for past weeks.
+    const cutoffMs = Date.now() - BEST_EFFORT_RECENCY_DAYS * 86400000;
+    const recentRuns = runs.filter((w) => w.startDate.getTime() >= cutoffMs);
+    const raw = extractBestEfforts(recentRuns, {
+      hrrGateThreshold: HRR_GATE_THRESHOLD,
+      segmentWindowsMiles: [3, 5, 8],
+      maxHr,
+      restingHr,
+    });
+    return selectCeilingEfforts(raw, 5);
+  }, [runs, raceDistanceMiles, maxHr, restingHr]);
+
   // Riegel fit for the LIVE race prediction (asOf = now). Routed through the
   // shared pure predictRaceTime so the card and the weekly trend can never
   // diverge; asOf defaults to now, reproducing the prior inline fit exactly.
   // (predictRaceTime applies the same race-anchored long-run model: races
   // dominate while fresh, 5-week half-life decay, k-clamp [1.04, 1.10] for HM+.)
+  // Best-effort segments are folded in as high-weight race-effort efforts.
   const raceFit = useMemo(() => {
     if (!raceDistanceMiles) return null;
-    return predictRaceTime(runs, { raceDistanceMiles, races: raceInputs }).fit;
-  }, [runs, raceDistanceMiles, raceInputs]);
+    return predictRaceTime(runs, {
+      raceDistanceMiles,
+      races: raceInputs,
+      bestEffortSegments,
+    }).fit;
+  }, [runs, raceDistanceMiles, raceInputs, bestEffortSegments]);
 
   // Goal finish (seconds) from the race's target pace — the trend's reference
   // line; null when no target is set.
@@ -350,8 +390,9 @@ export default function PlanInsightsPage() {
       raceDistanceMiles,
       races: raceInputs,
       goalSeconds,
+      bestEffortSegments,
     });
-  }, [activePlan, runs, raceDistanceMiles, raceInputs, goalSeconds]);
+  }, [activePlan, runs, raceDistanceMiles, raceInputs, goalSeconds, bestEffortSegments]);
 
   // Plan adherence — weekly planned vs actual (±1 day matching). Single source
   // is buildPlanAdherence; the page passes throughDate = getWeekStart(now) to

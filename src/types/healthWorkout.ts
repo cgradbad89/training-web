@@ -1,5 +1,6 @@
 import { type BestEffortsMap } from "@/utils/bestEfforts";
 import { type WeatherSnapshot } from "@/types/weather";
+import { type MileSplit } from "@/utils/mileSplits";
 
 /**
  * HealthWorkout — mirrors the Firestore document stored at
@@ -63,6 +64,11 @@ export interface HealthWorkout {
    *  and persisted by the web app. Absent on iOS-synced docs until backfilled
    *  (null/undefined = not yet fetched or no GPS). */
   weather?: WeatherSnapshot | null;
+  /** TRANSIENT (never persisted to Firestore): per-mile splits hydrated from the
+   *  GPS `route` subcollection (pace) merged with the `mileSplits` subcollection
+   *  (per-mile avgBpm). Attached at the wiring layer for HR-gated best-effort
+   *  extraction — see src/utils/bestEffortExtraction.ts. */
+  mileSplits?: MileSplit[];
 }
 
 export function isRunWorkout(w: HealthWorkout): boolean {

@@ -20,6 +20,11 @@ import {
   type RaceMatchInput,
   type RiegelFit,
 } from "@/utils/riegelFit";
+import {
+  bestEffortsToEffortPoints,
+  type BestEffortSegment,
+} from "@/utils/bestEffortExtraction";
+import { parseLocalDate } from "@/utils/dates";
 import { type RunningPlan } from "@/types/plan";
 
 /** Half-marathon threshold (miles) above which the long-run k-clamp applies. */
@@ -42,6 +47,15 @@ export interface RacePredictionParams {
   races: RaceMatchInput[];
   /** Ordinary-run lookback window in days. Default 56 (matches the page). */
   daysBack?: number;
+  /**
+   * Optional HR-gated best-effort segments (see src/utils/bestEffortExtraction.ts).
+   * predictRaceTime applies the race-effort projection + high fit weight and
+   * folds them into the fit ALONGSIDE the base runs (which stay as corroboration),
+   * pulling the prediction toward race-day pace rather than easy-run base. Each
+   * segment is aged + filtered relative to `asOf` here, so the live card and the
+   * per-week trend stay consistent. Empty/absent ⇒ identical to the base-only fit.
+   */
+  bestEffortSegments?: BestEffortSegment[];
 }
 
 export interface RacePredictionResult {
@@ -59,12 +73,27 @@ export function predictRaceTime(
   params: RacePredictionParams,
   asOf: Date = new Date()
 ): RacePredictionResult {
-  const { raceDistanceMiles, races, daysBack = 56 } = params;
+  const { raceDistanceMiles, races, daysBack = 56, bestEffortSegments } = params;
   if (!raceDistanceMiles || raceDistanceMiles <= 0) {
     return { fit: null, predictedSeconds: null };
   }
 
-  const efforts = buildQualifyingEfforts(runs, { daysBack, races, asOf });
+  // Base = easy/quality/race training efforts. The optional best-effort segments
+  // are HR-gated; here they're filtered to on/before asOf, aged relative to asOf,
+  // race-effort-projected, and tiered as high-weight, then appended so the fit
+  // reflects race-day effort WITHOUT dropping the base runs (corroboration).
+  const baseEfforts = buildQualifyingEfforts(runs, { daysBack, races, asOf });
+  const asOfMs = asOf.getTime();
+  const beEfforts =
+    bestEffortSegments && bestEffortSegments.length > 0
+      ? bestEffortsToEffortPoints(
+          bestEffortSegments.filter(
+            (s) => parseLocalDate(s.date).getTime() <= asOfMs
+          ),
+          asOf
+        )
+      : [];
+  const efforts = beEfforts.length > 0 ? [...baseEfforts, ...beEfforts] : baseEfforts;
 
   const fit =
     raceDistanceMiles >= HALF_MARATHON_MILES
