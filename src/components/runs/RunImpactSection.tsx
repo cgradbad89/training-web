@@ -120,7 +120,11 @@ export function RunImpactSection({ prediction, ctl }: RunImpactSectionProps) {
                         ▼ {deltaSecondsLabel(Math.abs(delta))}
                       </span>
                     ) : (
-                      <span className="text-sm font-semibold text-danger tabular-nums">
+                      // Slower projection (run nudged the prediction up): amber
+                      // caution, not red — a single slow run isn't a failure.
+                      // Token is --color-warning (the codebase's amber); there
+                      // is no --color-caution utility in the Tailwind v4 theme.
+                      <span className="text-sm font-semibold text-warning tabular-nums">
                         ▲ {deltaSecondsLabel(delta)}
                       </span>
                     )}
