@@ -39,6 +39,70 @@ function totalSegmentMiles(splits: { segmentMiles: number }[]): number {
   return splits.reduce((acc, s) => acc + s.segmentMiles, 0);
 }
 
+/** Fixed longitude step used by the explicit-point test routes below. */
+const STEP = 0.005;
+
+/**
+ * Build one route point at `lngUnits` × STEP east of LNG0, at `tSec` seconds.
+ * Repeating the same `lngUnits` on consecutive points yields a STOPPED segment
+ * (zero distance, advancing time).
+ */
+function pt(index: number, lngUnits: number, tSec: number): RoutePoint {
+  return {
+    index,
+    lat: LAT,
+    lng: LNG0 + lngUnits * STEP,
+    altitude: 100,
+    timestamp: new Date(BASE_MS + tSec * 1000).toISOString(),
+    speed: null,
+    hr: null,
+  };
+}
+
+/**
+ * Sum of effective (moving) seconds the splits imply: paceSecPerMile ×
+ * segmentMiles per mile, summed. When every mile has some moving time, this
+ * equals the total MOVING seconds of the whole run (stopped time excluded).
+ */
+function impliedMovingSec(
+  splits: { paceSecPerMile: number; segmentMiles: number }[]
+): number {
+  return splits.reduce((acc, s) => acc + s.paceSecPerMile * s.segmentMiles, 0);
+}
+
+/**
+ * Independent oracle for the UNFILTERED interpolated elapsed time from the run
+ * start to the `targetMiles` boundary, on the same scaled distance axis the
+ * implementation uses. Mirrors only the (uncontested) boundary interpolation —
+ * NOT the moving-time exclusion under test — so it is a fair reference.
+ */
+function unfilteredElapsedToBoundary(
+  points: RoutePoint[],
+  targetMiles: number,
+  authoritative: number
+): number {
+  const cum = [0];
+  const ts = [Date.parse(points[0].timestamp)];
+  for (let i = 1; i < points.length; i++) {
+    cum.push(
+      cum[i - 1] +
+        haversineMi(points[i - 1].lat, points[i - 1].lng, points[i].lat, points[i].lng)
+    );
+    ts.push(Date.parse(points[i].timestamp));
+  }
+  const raw = cum[cum.length - 1];
+  const sf = authoritative > 0 && raw > 0 ? authoritative / raw : 1;
+  for (let i = 0; i < cum.length; i++) cum[i] *= sf;
+  let e = 0;
+  while (e < cum.length - 1 && cum[e] < targetMiles) e++;
+  const boundaryTs =
+    e === 0
+      ? ts[0]
+      : ts[e - 1] +
+        ((targetMiles - cum[e - 1]) / (cum[e] - cum[e - 1])) * (ts[e] - ts[e - 1]);
+  return (boundaryTs - ts[0]) / 1000;
+}
+
 // ─── Phase 1: distance anchoring ────────────────────────────────────────────
 
 describe("computeMileSplits — Phase 1 distance anchoring", () => {
@@ -191,6 +255,111 @@ describe("computeMileSplits — Phase 2 partial-mile stopped-time exclusion", ()
     expect(unfilteredPace - partial.paceSecPerMile).toBeGreaterThan(
       (unfilteredPace - expectedMovingPace) * 0.9
     );
+  });
+});
+
+// ─── Full-mile moving-time exclusion ────────────────────────────────────────
+
+describe("computeMileSplits — full-mile stopped-time exclusion", () => {
+  it("a full mile with a mid-mile stop excludes the stopped seconds (faster than unfiltered)", () => {
+    // 5 moving segments (60 s each) + 1 stopped 60 s segment inside mile 1.
+    // lngUnits: 0,1,2,2(stop),3,4,5 → 1.32 mi raw, stop adds 0 distance.
+    const points = [
+      pt(0, 0, 0),
+      pt(1, 1, 60),
+      pt(2, 2, 120),
+      pt(3, 2, 180), // STOP (mid-mile, within full mile 1)
+      pt(4, 3, 240),
+      pt(5, 4, 300),
+      pt(6, 5, 360),
+    ];
+    const authoritative = 5 * segMiles(STEP); // stop adds ~0 → raw == moving dist
+    const splits = computeMileSplits(points, null, authoritative);
+
+    const full = splits.find((s) => !s.isPartial)!;
+    expect(full).toBeDefined();
+    expect(full.mile).toBe(1);
+    expect(full.segmentMiles).toBeCloseTo(1.0, 6);
+
+    // The mile-1 numerator drops the 60 s stop: filtered pace is faster than the
+    // unfiltered interpolated elapsed pace by ≈ the stopped time (segMiles == 1).
+    const unfilteredMile1Sec = unfilteredElapsedToBoundary(points, 1, authoritative);
+    expect(full.paceSecPerMile).toBeLessThan(unfilteredMile1Sec);
+    expect(unfilteredMile1Sec - full.paceSecPerMile).toBeCloseTo(60, 1);
+
+    // Whole-run check: implied moving seconds == 5 × 60 (stopped 60 s excluded),
+    // well below the 6 × 60 = 360 s of elapsed wall-clock.
+    expect(impliedMovingSec(splits)).toBeCloseTo(300, 1);
+  });
+
+  it("a full mile with NO stops is unchanged (pace == unfiltered interpolated pace)", () => {
+    // 9 moving segments → ~2.38 mi, all moving, constant speed.
+    const points = buildLineRoute(10, STEP, 60);
+    const authoritative = 9 * segMiles(STEP);
+    const splits = computeMileSplits(points, null, authoritative);
+
+    const fulls = splits.filter((s) => !s.isPartial);
+    expect(fulls.length).toBe(2);
+
+    // No stops → each full mile's moving time equals its interpolated elapsed
+    // time, so pace matches the unfiltered oracle exactly (no regression).
+    const unfilteredMile1 = unfilteredElapsedToBoundary(points, 1, authoritative);
+    const unfilteredMile2 =
+      unfilteredElapsedToBoundary(points, 2, authoritative) - unfilteredMile1;
+    expect(fulls[0].paceSecPerMile).toBeCloseTo(unfilteredMile1, 4);
+    expect(fulls[1].paceSecPerMile).toBeCloseTo(unfilteredMile2, 4);
+
+    // Whole run: implied moving seconds == total elapsed (nothing excluded).
+    expect(impliedMovingSec(splits)).toBeCloseTo(9 * 60, 3);
+  });
+
+  it("a route with BOTH a mid-run stop and an end stop excludes both, under one rule for full + partial", () => {
+    // lngUnits: 0,1,2,2(stop),3,4,5,5(stop) → 5 moving (60 s) + 2 stops (60 s).
+    const points = [
+      pt(0, 0, 0),
+      pt(1, 1, 60),
+      pt(2, 2, 120),
+      pt(3, 2, 180), // STOP #1 (mid-run, inside full mile 1)
+      pt(4, 3, 240),
+      pt(5, 4, 300),
+      pt(6, 5, 360),
+      pt(7, 5, 420), // STOP #2 (end, inside the partial mile)
+    ];
+    const authoritative = 5 * segMiles(STEP);
+    const splits = computeMileSplits(points, null, authoritative);
+
+    const full = splits.find((s) => !s.isPartial)!;
+    const partial = splits.find((s) => s.isPartial)!;
+    expect(full).toBeDefined();
+    expect(partial).toBeDefined();
+
+    // Full mile excludes the mid-run stop; partial excludes the end stop — same
+    // moving-time rule for both. Implied moving seconds == 5 × 60, with both
+    // 60 s stops (120 s total) removed from the 7 × 60 = 420 s of wall-clock.
+    expect(impliedMovingSec(splits)).toBeCloseTo(300, 1);
+
+    // The full mile specifically is faster than its unfiltered elapsed pace.
+    const unfilteredMile1Sec = unfilteredElapsedToBoundary(points, 1, authoritative);
+    expect(full.paceSecPerMile).toBeLessThan(unfilteredMile1Sec);
+  });
+
+  it("a mile entirely below the moving-speed threshold falls back to elapsed (no NaN / 0:00)", () => {
+    // Slow walk: ~85 m segments over 200 s each → ~0.43 m/s < MIN_MOVING_SPEED_MS,
+    // yet real distance accrues, so a FULL mile forms while every segment is
+    // classified "stopped". Chosen fallback: use the interpolated elapsed time
+    // (not a nonsensical 0) so the very-slow pace is reported, not dropped.
+    const points = buildLineRoute(21, 0.001, 200); // 20 segs × ~0.053 mi ≈ 1.06 mi
+    const rawTotal = 20 * segMiles(0.001);
+    const splits = computeMileSplits(points, null, rawTotal);
+
+    const full = splits[0];
+    expect(full.isPartial).toBe(false);
+    expect(Number.isFinite(full.paceSecPerMile)).toBe(true);
+    expect(full.paceSecPerMile).toBeGreaterThan(0); // fallback fired (not 0:00)
+
+    // Fallback value equals the interpolated elapsed pace for the full mile.
+    const elapsedMile1 = unfilteredElapsedToBoundary(points, 1, rawTotal);
+    expect(full.paceSecPerMile).toBeCloseTo(elapsedMile1, 4);
   });
 });
 

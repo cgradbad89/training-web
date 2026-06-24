@@ -55,6 +55,53 @@ export function haversineMeters(
   return haversineMi(lat1, lng1, lat2, lng2) * METERS_PER_MILE;
 }
 
+// ─── Moving-time accumulation ─────────────────────────────────────────────────
+
+/**
+ * Sum the MOVING seconds inside the time window [tStart, tEnd], walking the
+ * route segments whose point index runs from `startIdx` through `endIdx`
+ * (segment i spans point i-1 → i). A segment is classified MOVING using the
+ * SAME derived test the partial-mile path uses: real ground covered
+ * (≥ MIN_MOVING_DIST_M) at a real speed (≥ MIN_MOVING_SPEED_MS), where speed is
+ * DERIVED from 2D-haversine distance ÷ elapsed time (NOT point.speed). For each
+ * moving segment, only the overlap of its time span with [tStart, tEnd] is
+ * counted — so a segment straddling either interpolated mile boundary
+ * contributes just its in-window portion. Stopped sub-intervals (traffic
+ * lights, cool-down) are excluded from the numerator.
+ *
+ * This single helper backs BOTH full miles and the final partial mile, so they
+ * share one moving-time definition and one MIN_MOVING_* threshold set.
+ */
+function accumulateMovingSeconds(
+  points: RoutePoint[],
+  timestamps: number[],
+  startIdx: number,
+  endIdx: number,
+  tStart: number,
+  tEnd: number
+): number {
+  let movingSec = 0;
+  for (let i = Math.max(1, startIdx); i <= endIdx && i < points.length; i++) {
+    const prev = points[i - 1];
+    const curr = points[i];
+    const segMeters =
+      haversineMi(prev.lat, prev.lng, curr.lat, curr.lng) * METERS_PER_MILE;
+    let segSec = (timestamps[i] - timestamps[i - 1]) / 1000;
+    if (!isFinite(segSec) || segSec < 0) segSec = 0;
+    const moving =
+      segMeters >= MIN_MOVING_DIST_M &&
+      segSec > 0 &&
+      segMeters / segSec >= MIN_MOVING_SPEED_MS;
+    if (!moving) continue;
+    // Count only the overlap of [tStart, tEnd] with this segment's time span,
+    // so segments straddling a mile boundary contribute their in-window portion.
+    const lo = Math.max(tStart, timestamps[i - 1]);
+    const hi = Math.min(tEnd, timestamps[i]);
+    if (hi > lo) movingSec += (hi - lo) / 1000;
+  }
+  return movingSec;
+}
+
 // ─── Split computation ──────────────────────────────────────────────────────
 
 /**
@@ -67,6 +114,13 @@ export function haversineMeters(
  * endpoint equals the stored total before any mile boundary is placed. Time and
  * timestamps are NEVER scaled. When the param is absent (or the raw total is 0),
  * behaviour is identical to the pre-anchoring version — no caller regresses.
+ *
+ * Phase 2 (moving-time exclusion): pace for EVERY mile — full miles and the
+ * final partial alike — excludes stopped/cool-down time from its numerator using
+ * the shared moving-time test (see accumulateMovingSeconds + movingTime.ts). The
+ * interpolated boundary timestamps still define each mile's extent; only stopped
+ * sub-intervals inside are removed. A stopless mile is unchanged (its moving
+ * time equals the boundary-to-boundary elapsed time), so there is no regression.
  *
  * @param points                 - Route points ordered by index, with timestamps
  * @param avgHeartRate            - Run-level avgHeartRate (currently unused here;
@@ -174,48 +228,33 @@ export function computeMileSplits(
     // the run header shows — the prior label-vs-pace basis mismatch is gone.
     const segmentMiles = isLast ? totalDist - fullMiles : 1.0;
 
-    let elapsedSec: number;
-    if (isLast) {
-      // ─── Phase 2.2: moving-only elapsed time for the partial mile ──────────
-      // The final partial's tiny denominator made it hypersensitive to stopped /
-      // cool-down time sitting in its numerator (observed +35s blowup). Exclude
-      // stopped segments using the SHARED MIN_MOVING_* thresholds (identical to
-      // gradeAdjustedPace.ts) instead of trusting raw elapsed wall-clock.
-      // NOTE: this stopped-time filter is applied to the PARTIAL mile ONLY; full
-      // miles still use interpolated elapsed time (flagged in the session report).
-      // `segStart` here is the boundary point index `bi` (first point at/after the
-      // fullMiles boundary). The segment ending at `bi` straddles the boundary —
-      // only its post-boundary time portion belongs to the partial.
-      const bi = segStart;
-      let movingSec = 0;
-      for (let i = Math.max(1, bi); i < points.length; i++) {
-        const prev = points[i - 1];
-        const curr = points[i];
-        const segMeters =
-          haversineMi(prev.lat, prev.lng, curr.lat, curr.lng) * METERS_PER_MILE;
-        let segSec = (timestamps[i] - timestamps[i - 1]) / 1000;
-        if (!isFinite(segSec) || segSec < 0) segSec = 0;
-        const moving =
-          segMeters >= MIN_MOVING_DIST_M &&
-          segSec > 0 &&
-          segMeters / segSec >= MIN_MOVING_SPEED_MS;
-        if (!moving) continue;
-        if (i === bi && bi > 0) {
-          // Straddling segment: count only the portion after the boundary.
-          const portionMs = timestamps[i] - startTimestamp;
-          movingSec += Math.max(0, portionMs) / 1000;
-        } else {
-          movingSec += segSec;
-        }
-      }
-      elapsedSec = movingSec;
-    } else {
-      elapsedSec = (interpTimestamp - startTimestamp) / 1000;
-    }
+    // Moving-only elapsed seconds for THIS mile — full miles AND the final
+    // partial alike. Walk the segments overlapping [startTimestamp,
+    // interpTimestamp] and sum only the sub-intervals whose segment is "moving"
+    // (shared accumulateMovingSeconds → same derived speed test + same
+    // MIN_MOVING_* thresholds for every mile). Stopped sub-intervals (traffic
+    // lights, cool-down) are removed from the numerator; the interpolated
+    // boundaries still define the mile's extent. `segStart`/`segEnd` are the
+    // first point indices at/after the start (mile-1) and end (mile) boundaries.
+    const movingSec = accumulateMovingSeconds(
+      points,
+      timestamps,
+      segStart,
+      segEnd,
+      startTimestamp,
+      interpTimestamp
+    );
+
+    // Fallback: if the ENTIRE mile classified as stopped (movingSec === 0 — e.g.
+    // a GPS dropout or a mile spent paused), fall back to the interpolated
+    // elapsed time rather than reporting a nonsensical 0:00 pace. Same rule for
+    // full and partial miles, so there is no divide-by-tiny / NaN.
+    const elapsedSec = (interpTimestamp - startTimestamp) / 1000;
+    const effectiveSec = movingSec > 0 ? movingSec : elapsedSec;
 
     // Pace: seconds per mile
     const paceSecPerMile =
-      segmentMiles > 0 ? elapsedSec / segmentMiles : 0;
+      segmentMiles > 0 ? effectiveSec / segmentMiles : 0;
 
     splits.push({
       mile,
