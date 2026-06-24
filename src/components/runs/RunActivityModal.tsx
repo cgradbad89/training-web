@@ -119,7 +119,11 @@ export function RunActivityModal({
   // live inside each callback.
   const mileSplits = useMemo<MileSplit[]>(() => {
     if (routePoints.length < 2 || !matchedRun) return [];
-    const computed = computeMileSplits(routePoints, matchedRun.avgHeartRate);
+    const computed = computeMileSplits(
+      routePoints,
+      matchedRun.avgHeartRate,
+      matchedRun.distanceMiles
+    );
     return computed.map((split) => ({
       ...split,
       avgBpm: perMileHR[split.mile] ?? undefined,

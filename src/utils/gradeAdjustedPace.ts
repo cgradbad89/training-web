@@ -11,6 +11,7 @@
  */
 
 import { type RoutePoint } from "@/services/routes";
+import { MIN_MOVING_SPEED_MS, MIN_MOVING_DIST_M } from "@/utils/movingTime";
 
 export interface GapPoint {
   /** Cumulative distance at this route point, in miles (includes stopped drift) */
@@ -112,9 +113,9 @@ const AGGREGATE_GRADE_DEADBAND_PERCENT = 0.1;
  * stop time. A segment counts as MOVING only if it covers real ground
  * (≥ MIN_MOVING_DIST_M) at a real speed (≥ MIN_MOVING_SPEED_MS); otherwise its
  * time and distance are excluded from the GAP numerator and denominator.
+ * MIN_MOVING_SPEED_MS / MIN_MOVING_DIST_M now live in src/utils/movingTime.ts
+ * so the per-mile split partial can reuse the identical thresholds.
  */
-const MIN_MOVING_SPEED_MS = 0.5; // m/s (~1.1 mph) — below this = stopped
-const MIN_MOVING_DIST_M = 1.0; // min segment distance (m) to count as moving
 /**
  * If less than this much moving time can be derived from per-point timestamps,
  * the timestamps are degenerate/missing — fall back to the movingTimeSec param

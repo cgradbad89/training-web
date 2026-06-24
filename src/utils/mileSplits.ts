@@ -6,6 +6,7 @@
  */
 
 import { type RoutePoint } from "@/services/routes";
+import { MIN_MOVING_SPEED_MS, MIN_MOVING_DIST_M } from "@/utils/movingTime";
 
 export interface MileSplit {
   /** 1-indexed mile number */
@@ -59,16 +60,31 @@ export function haversineMeters(
 /**
  * Compute mile splits from GPS route points.
  *
- * @param points   - Route points ordered by index, with timestamps
- * @param fallbackHR - Run-level avgHeartRate to use when per-point HR is unavailable
+ * Phase 1 (distance anchoring): the raw cumulative 2D-haversine distance drifts
+ * vs. the workout's stored authoritative total, so each mile boundary lands at a
+ * slightly wrong physical point. When `authoritativeTotalMiles` is supplied, the
+ * cumulative-distance axis (and each segment's distance) is scaled so its
+ * endpoint equals the stored total before any mile boundary is placed. Time and
+ * timestamps are NEVER scaled. When the param is absent (or the raw total is 0),
+ * behaviour is identical to the pre-anchoring version — no caller regresses.
+ *
+ * @param points                 - Route points ordered by index, with timestamps
+ * @param avgHeartRate            - Run-level avgHeartRate (currently unused here;
+ *                                  per-mile HR is merged by the caller from the
+ *                                  iOS mileSplits subcollection — kept for API
+ *                                  compatibility / future use)
+ * @param authoritativeTotalMiles - Stored distanceMiles from the workout doc.
+ *                                  When provided, the haversine distance axis is
+ *                                  scaled so its endpoint equals this value.
  */
 export function computeMileSplits(
   points: RoutePoint[],
-  fallbackHR: number | null
+  avgHeartRate?: number | null,
+  authoritativeTotalMiles?: number
 ): MileSplit[] {
   if (points.length < 2) return [];
 
-  // Build cumulative distance (miles) and timestamps
+  // Build RAW cumulative distance (miles) and timestamps.
   const cumDist: number[] = [0];
   const timestamps: number[] = [new Date(points[0].timestamp).getTime()];
 
@@ -80,8 +96,25 @@ export function computeMileSplits(
     timestamps.push(new Date(curr.timestamp).getTime());
   }
 
+  const rawTotalMiles = cumDist[cumDist.length - 1];
+  if (rawTotalMiles < 0.1) return []; // too short to split
+
+  // ─── Phase 1: anchor the distance axis to the stored authoritative total ────
+  // Scale the cumulative distance so cumDist[last] === authoritativeTotalMiles.
+  // Mile boundaries are then placed on this scaled axis, so each boundary lands
+  // at the physically correct fraction of the run the header reports. Falls back
+  // to unscaled (scaleFactor 1) when no authoritative total is available.
+  const scaleFactor =
+    authoritativeTotalMiles != null &&
+    authoritativeTotalMiles > 0 &&
+    rawTotalMiles > 0
+      ? authoritativeTotalMiles / rawTotalMiles
+      : 1;
+  if (scaleFactor !== 1) {
+    for (let i = 0; i < cumDist.length; i++) cumDist[i] *= scaleFactor;
+  }
+
   const totalDist = cumDist[cumDist.length - 1];
-  if (totalDist < 0.1) return []; // too short to split
 
   const fullMiles = Math.floor(totalDist);
   const splits: MileSplit[] = [];
@@ -136,9 +169,49 @@ export function computeMileSplits(
       );
     })();
 
+    // segmentMiles references the SCALED total (Phase 2.1), so the "(0.X mi)"
+    // label and the pace below are computed against the same authoritative total
+    // the run header shows — the prior label-vs-pace basis mismatch is gone.
     const segmentMiles = isLast ? totalDist - fullMiles : 1.0;
-    const elapsedMs = interpTimestamp - startTimestamp;
-    const elapsedSec = elapsedMs / 1000;
+
+    let elapsedSec: number;
+    if (isLast) {
+      // ─── Phase 2.2: moving-only elapsed time for the partial mile ──────────
+      // The final partial's tiny denominator made it hypersensitive to stopped /
+      // cool-down time sitting in its numerator (observed +35s blowup). Exclude
+      // stopped segments using the SHARED MIN_MOVING_* thresholds (identical to
+      // gradeAdjustedPace.ts) instead of trusting raw elapsed wall-clock.
+      // NOTE: this stopped-time filter is applied to the PARTIAL mile ONLY; full
+      // miles still use interpolated elapsed time (flagged in the session report).
+      // `segStart` here is the boundary point index `bi` (first point at/after the
+      // fullMiles boundary). The segment ending at `bi` straddles the boundary —
+      // only its post-boundary time portion belongs to the partial.
+      const bi = segStart;
+      let movingSec = 0;
+      for (let i = Math.max(1, bi); i < points.length; i++) {
+        const prev = points[i - 1];
+        const curr = points[i];
+        const segMeters =
+          haversineMi(prev.lat, prev.lng, curr.lat, curr.lng) * METERS_PER_MILE;
+        let segSec = (timestamps[i] - timestamps[i - 1]) / 1000;
+        if (!isFinite(segSec) || segSec < 0) segSec = 0;
+        const moving =
+          segMeters >= MIN_MOVING_DIST_M &&
+          segSec > 0 &&
+          segMeters / segSec >= MIN_MOVING_SPEED_MS;
+        if (!moving) continue;
+        if (i === bi && bi > 0) {
+          // Straddling segment: count only the portion after the boundary.
+          const portionMs = timestamps[i] - startTimestamp;
+          movingSec += Math.max(0, portionMs) / 1000;
+        } else {
+          movingSec += segSec;
+        }
+      }
+      elapsedSec = movingSec;
+    } else {
+      elapsedSec = (interpTimestamp - startTimestamp) / 1000;
+    }
 
     // Pace: seconds per mile
     const paceSecPerMile =

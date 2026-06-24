@@ -178,7 +178,11 @@ export default function RunDetailPage() {
   const mileSplits = useMemo<MileSplit[]>(
     () => {
       if (routePoints.length < 2 || !displayWorkoutForSplits) return [];
-      const computed = computeMileSplits(routePoints, displayWorkoutForSplits.avgHeartRate);
+      const computed = computeMileSplits(
+        routePoints,
+        displayWorkoutForSplits.avgHeartRate,
+        displayWorkoutForSplits.distanceMiles
+      );
       // Merge in per-mile HR from iOS-synced subcollection
       return computed.map((split) => ({
         ...split,
