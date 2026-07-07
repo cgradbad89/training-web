@@ -12,6 +12,10 @@ import {
 } from "recharts";
 import { formatRaceTime } from "@/utils/riegelFit";
 import { type PredictionTrendPoint } from "@/utils/racePrediction";
+import { type PredictionProjectionPoint } from "@/utils/predictionTrend";
+
+/** Row shape after merging the historical trend with the projection series. */
+type ChartRow = PredictionTrendPoint & { projectedSeconds: number | null };
 
 /**
  * Predicted race finish recomputed at each plan week vs. the goal finish.
@@ -19,13 +23,48 @@ import { type PredictionTrendPoint } from "@/utils/racePrediction";
  * closing week over week. Styling on CSS-variable tokens; null weeks break the
  * line (no fabricated points). Renders a graceful empty state until ≥2 weeks
  * have a prediction.
+ *
+ * The optional `projection` adds a dashed line extending from the latest real
+ * point to race day — where the predicted finish is headed if the plan is
+ * completed as written (blended: recent real efforts keep informing the fit via
+ * decay while planned runs add volume). Empty projection ⇒ chart renders exactly
+ * as it does today (solid line + goal line only).
  */
-export function PredictionTrendChart({ data }: { data: PredictionTrendPoint[] }) {
+export function PredictionTrendChart({
+  data,
+  projection = [],
+}: {
+  data: PredictionTrendPoint[];
+  projection?: PredictionProjectionPoint[];
+}) {
   const predicted = data.filter(
     (d): d is PredictionTrendPoint & { predictedSeconds: number } =>
       d.predictedSeconds != null,
   );
   const goalSeconds = data.find((d) => d.goalSeconds != null)?.goalSeconds ?? null;
+
+  // Merge the projection into the trend rows by week label. The dashed series
+  // only carries values on future weeks; we bridge it back to the last real
+  // point so the dashed line visually connects to the solid one.
+  const projByLabel = new Map(
+    projection
+      .filter((p) => p.predictedSeconds != null)
+      .map((p) => [p.weekLabel, p.predictedSeconds as number]),
+  );
+  const hasProjection = projByLabel.size > 0;
+  const chartData: ChartRow[] = data.map((d) => ({
+    ...d,
+    projectedSeconds: projByLabel.get(d.label) ?? null,
+  }));
+  if (hasProjection) {
+    // Bridge: anchor the dashed line at the last real predicted week.
+    for (let i = chartData.length - 1; i >= 0; i--) {
+      if (chartData[i].predictedSeconds != null) {
+        chartData[i].projectedSeconds = chartData[i].predictedSeconds;
+        break;
+      }
+    }
+  }
 
   const Shell = ({ children }: { children: React.ReactNode }) => (
     <div className="bg-card rounded-2xl shadow-sm border border-border p-5">
@@ -34,6 +73,14 @@ export function PredictionTrendChart({ data }: { data: PredictionTrendPoint[] })
       </h2>
       <p className="text-xs text-textSecondary mb-3">
         Predicted finish recomputed each week vs. your goal (lower is faster).
+        {hasProjection && (
+          <>
+            {" "}
+            <span className="text-textSecondary">
+              Dashed = projected finish if you complete the plan as written.
+            </span>
+          </>
+        )}
       </p>
       {children}
     </div>
@@ -51,8 +98,9 @@ export function PredictionTrendChart({ data }: { data: PredictionTrendPoint[] })
     );
   }
 
-  // Y domain padded to include both the predicted range and the goal line.
+  // Y domain padded to include the predicted range, the projection, and goal.
   const values = predicted.map((d) => d.predictedSeconds);
+  for (const v of projByLabel.values()) values.push(v);
   if (goalSeconds != null) values.push(goalSeconds);
   const lo = Math.min(...values);
   const hi = Math.max(...values);
@@ -62,7 +110,7 @@ export function PredictionTrendChart({ data }: { data: PredictionTrendPoint[] })
   return (
     <Shell>
       <ResponsiveContainer width="100%" height={220}>
-        <LineChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+        <LineChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
           <CartesianGrid
             strokeDasharray="3 3"
             vertical={false}
@@ -89,7 +137,12 @@ export function PredictionTrendChart({ data }: { data: PredictionTrendPoint[] })
             }}
           />
           <Tooltip
-            formatter={(v) => [formatRaceTime(Number(v)), "Predicted"]}
+            formatter={(v, name) => [
+              formatRaceTime(Number(v)),
+              // `name` is the series name ("Predicted"/"Projected"); fall back
+              // to "Predicted" for the single-series (no-projection) case.
+              typeof name === "string" ? name : "Predicted",
+            ]}
             contentStyle={{
               fontSize: 12,
               backgroundColor: "var(--color-chart-tooltip-bg)",
@@ -122,6 +175,19 @@ export function PredictionTrendChart({ data }: { data: PredictionTrendPoint[] })
             name="Predicted"
             isAnimationActive={false}
           />
+          {hasProjection && (
+            <Line
+              type="monotone"
+              dataKey="projectedSeconds"
+              stroke="var(--color-chart-primary)"
+              strokeWidth={2}
+              strokeDasharray="6 4"
+              dot={{ r: 3 }}
+              connectNulls
+              name="Projected"
+              isAnimationActive={false}
+            />
+          )}
         </LineChart>
       </ResponsiveContainer>
     </Shell>

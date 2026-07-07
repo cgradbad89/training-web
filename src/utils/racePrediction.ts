@@ -17,6 +17,7 @@ import {
   buildQualifyingEfforts,
   fitRiegel,
   predictSeconds,
+  type EffortPoint,
   type RaceMatchInput,
   type RiegelFit,
 } from "@/utils/riegelFit";
@@ -56,6 +57,14 @@ export interface RacePredictionParams {
    * per-week trend stay consistent. Empty/absent ⇒ identical to the base-only fit.
    */
   bestEffortSegments?: BestEffortSegment[];
+  /**
+   * Optional pre-built extra efforts appended to the fit alongside the base runs
+   * and best-effort segments. Used by the plan-completion projection to inject
+   * synthetic PLANNED-tier efforts (see planEntryToSyntheticEffort); each is
+   * already aged relative to the same `asOf`. Empty/absent ⇒ no change to the
+   * fit, so the live card and historical trend are byte-for-byte identical.
+   */
+  extraEfforts?: EffortPoint[];
 }
 
 export interface RacePredictionResult {
@@ -73,7 +82,7 @@ export function predictRaceTime(
   params: RacePredictionParams,
   asOf: Date = new Date()
 ): RacePredictionResult {
-  const { raceDistanceMiles, races, daysBack = 56, bestEffortSegments } = params;
+  const { raceDistanceMiles, races, daysBack = 56, bestEffortSegments, extraEfforts } = params;
   if (!raceDistanceMiles || raceDistanceMiles <= 0) {
     return { fit: null, predictedSeconds: null };
   }
@@ -93,7 +102,11 @@ export function predictRaceTime(
           asOf
         )
       : [];
-  const efforts = beEfforts.length > 0 ? [...baseEfforts, ...beEfforts] : baseEfforts;
+  const efforts = [
+    ...baseEfforts,
+    ...beEfforts,
+    ...(extraEfforts ?? []),
+  ];
 
   const fit =
     raceDistanceMiles >= HALF_MARATHON_MILES

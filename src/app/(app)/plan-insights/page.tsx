@@ -56,6 +56,7 @@ import {
 import { PlanRunLoadChart } from "@/components/charts/PlanRunLoadChart";
 import { PredictionTrendChart } from "@/components/charts/PredictionTrendChart";
 import { predictRaceTime, buildPredictionTrend } from "@/utils/racePrediction";
+import { buildPredictionProjection } from "@/utils/predictionTrend";
 import { buildBestEffortSegments } from "@/utils/bestEffortExtraction";
 import { type UserSettings } from "@/types/userSettings";
 
@@ -380,6 +381,20 @@ export default function PlanInsightsPage() {
       bestEffortSegments,
     });
   }, [activePlan, runs, raceDistanceMiles, raceInputs, goalSeconds, bestEffortSegments]);
+
+  // Plan-completion projection — dashed line extending the trend to race day.
+  // Blends real efforts (decaying naturally) with synthetic PLANNED-tier volume
+  // from the remaining plan entries. Empty for past races / no remaining entries
+  // → the chart renders the historical line only. See predictionTrend.ts.
+  const predictionProjection = useMemo(() => {
+    if (!activePlan || !raceDistanceMiles || !activeRace) return [];
+    return buildPredictionProjection({
+      plan: activePlan,
+      historicalRuns: runs,
+      params: { raceDistanceMiles, races: raceInputs, bestEffortSegments },
+      raceDate: parseLocalDate(activeRace.raceDate),
+    });
+  }, [activePlan, runs, raceDistanceMiles, raceInputs, bestEffortSegments, activeRace]);
 
   // Plan adherence — weekly planned vs actual (±1 day matching). Single source
   // is buildPlanAdherence; the page passes throughDate = getWeekStart(now) to
@@ -999,7 +1014,7 @@ export default function PlanInsightsPage() {
               Only present with a linked plan + race distance; the chart itself
               shows a "not enough data yet" state until ≥2 weeks can predict. */}
           {predictionTrend.length > 0 && (
-            <PredictionTrendChart data={predictionTrend} />
+            <PredictionTrendChart data={predictionTrend} projection={predictionProjection} />
           )}
         </>
       )}

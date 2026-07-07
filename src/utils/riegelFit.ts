@@ -1,7 +1,22 @@
 // Riegel-based race time prediction
 // Ported from InsightsView.swift (iOS app)
 
-export type EffortTier = 'RACE' | 'QUALITY' | 'BASELINE'
+import type { PlannedRunEntry } from '@/types/plan'
+import { parsePaceString } from '@/utils/pace'
+
+/**
+ * Effort classification tiers, in descending trust:
+ *   - RACE     — a real ±1-day/±1-mi race-matched run (×3 weight, 120d memory)
+ *   - QUALITY  — a real corroborated fast training effort (×1.75 weight)
+ *   - BASELINE — an ordinary real training run (×1 weight)
+ *   - PLANNED  — a SYNTHETIC effort derived from a future PlannedRunEntry
+ *                (distance + target pace). NOT a real effort — it carries no
+ *                HR/GPS/ID and gets NO weight boost (×1, same as BASELINE). Used
+ *                only by the plan-completion projection to contribute planned
+ *                volume while real quality efforts decay naturally. See
+ *                planEntryToSyntheticEffort + buildPredictionProjection.
+ */
+export type EffortTier = 'RACE' | 'QUALITY' | 'BASELINE' | 'PLANNED'
 
 export interface EffortPoint {
   distanceMiles: number
@@ -105,6 +120,9 @@ function tierWeight(tier: EffortTier): number {
     case 'RACE':     return 3.0
     case 'QUALITY':  return 1.75
     case 'BASELINE': return 1.0
+    // PLANNED (synthetic future runs) get no boost — planned volume, not a real
+    // effort. Same base weight as BASELINE; recency decay still applies.
+    case 'PLANNED':  return 1.0
   }
 }
 
@@ -480,9 +498,66 @@ export function buildQualifyingEfforts(
 
 /** Summarize effort classification — handy for surfacing counts on insights pages. */
 export function summarizeTierCounts(efforts: EffortPoint[]): Record<EffortTier, number> {
-  const counts: Record<EffortTier, number> = { RACE: 0, QUALITY: 0, BASELINE: 0 }
+  const counts: Record<EffortTier, number> = { RACE: 0, QUALITY: 0, BASELINE: 0, PLANNED: 0 }
   for (const e of efforts) counts[e.tier]++
   return counts
+}
+
+// ─── Synthetic planned efforts (plan-completion projection) ─────────────────────
+
+/**
+ * Convert a future PlannedRunEntry into a synthetic EffortPoint tagged PLANNED.
+ *
+ * This is NOT a real effort: it carries no workout ID, HR, or GPS route — only
+ * the planned distance and target pace shaped into the fit's effort type so the
+ * projection can add planned VOLUME without a parallel fit path. It is tagged
+ * PLANNED (×1 weight, never QUALITY) so it can never masquerade as a real fast
+ * effort, and it bypasses HR-gated best-effort extraction entirely.
+ *
+ * Two dates are required — deliberately more than the original 2-arg sketch —
+ * because decay must be correct for EACH projection week:
+ *   - `performedDate`: the calendar date the planned run is scheduled (derived
+ *     from the plan's start + the entry's week/day by the caller).
+ *   - `asOf`: the projection week's reference date; `ageDays` (which drives the
+ *     5-week half-life recency decay) is measured relative to it.
+ *
+ * Returns null for entries that can't become a valid effort: rest days,
+ * zero/negative distance, no resolvable target pace, an out-of-range pace, or a
+ * performedDate AFTER asOf (a future entry has no bearing on an earlier week).
+ */
+export function planEntryToSyntheticEffort(
+  entry: PlannedRunEntry,
+  performedDate: Date,
+  asOf: Date
+): EffortPoint | null {
+  if (entry.runType === 'rest' || entry.workoutType === 'rest') return null
+
+  const miles = entry.distanceMiles
+  if (!isFinite(miles) || miles <= 0) return null
+
+  // Target pace: seconds/mi field first, else parse the "M:SS" string.
+  const paceSecPerMile =
+    entry.targetPaceSecondsPerMile != null && entry.targetPaceSecondsPerMile > 0
+      ? entry.targetPaceSecondsPerMile
+      : entry.paceTarget
+        ? parsePaceString(entry.paceTarget)
+        : null
+  if (paceSecPerMile == null || !isFinite(paceSecPerMile) || paceSecPerMile <= 0) {
+    return null
+  }
+  // Same sanity band buildQualifyingEfforts uses for real runs (4:30–15:00/mi).
+  if (paceSecPerMile < 270 || paceSecPerMile > 900) return null
+
+  const ageDays = (asOf.getTime() - performedDate.getTime()) / 86400000
+  if (!isFinite(ageDays) || ageDays < 0) return null
+
+  return {
+    distanceMiles: miles,
+    timeSeconds: miles * paceSecPerMile,
+    ageDays,
+    isTreadmill: entry.runType === 'treadmill',
+    tier: 'PLANNED',
+  }
 }
 
 /** Compute the trailing 28d easy-pace median (exposed for diagnostics/UI). */
