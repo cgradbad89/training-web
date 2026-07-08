@@ -58,6 +58,7 @@ import { PredictionTrendChart } from "@/components/charts/PredictionTrendChart";
 import { predictRaceTime, buildPredictionTrend } from "@/utils/racePrediction";
 import { buildAnchoredPredictionProjection } from "@/utils/predictionTrend";
 import { buildBestEffortSegments } from "@/utils/bestEffortExtraction";
+import { hydrateFastFinishSplits } from "@/services/fastFinishSplits";
 import { type UserSettings } from "@/types/userSettings";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -191,6 +192,10 @@ export default function PlanInsightsPage() {
   const [loading, setLoading] = useState(true);
   const maxHr = resolveMaxHr(userSettings);
   const restingHr = resolveRestingHr(userSettings);
+  // Runs with fast-finish `mileSplits` hydrated (route-derived pace + per-mile
+  // HR), for the HR-gated best-effort pipeline. Null until the async hydration
+  // resolves; the segments fall back to the full-run-only path meanwhile.
+  const [hydratedRuns, setHydratedRuns] = useState<HealthWorkout[] | null>(null);
 
   useEffect(() => {
     if (!uid) return;
@@ -310,6 +315,25 @@ export default function PlanInsightsPage() {
     return all.filter((w) => w.startDate < raceDateCutoff);
   }, [workouts, raceDateCutoff]);
 
+  // Hydrate fast-finish mileSplits for the recency-window runs (route-derived
+  // pace + per-mile HR), behind the cheap avgBpm pre-filter so route reads are
+  // spent only on runs with a genuinely hard mile. Read-only.
+  useEffect(() => {
+    if (!uid || runs.length === 0) {
+      setHydratedRuns(null);
+      return;
+    }
+    let cancelled = false;
+    hydrateFastFinishSplits(uid, runs, { maxHr, restingHr })
+      .then((res) => {
+        if (!cancelled) setHydratedRuns(res.runs);
+      })
+      .catch(console.error);
+    return () => {
+      cancelled = true;
+    };
+  }, [uid, runs, maxHr, restingHr]);
+
   // Riegel fit for race prediction
   // Race inputs for ±1-day RACE-tier matching — shared by the live prediction
   // and the weekly prediction trend so both anchor on the same races.
@@ -328,20 +352,27 @@ export default function PlanInsightsPage() {
   );
 
   // HR-gated best-effort segments folded into the prediction (half+ targets
-  // only). Full-run efforts are derived purely from the already-loaded runs
-  // (recorded distance/duration + run-level avg HR) — NO extra Firestore reads;
-  // continuous-segment extraction (which needs GPS route hydration) is
-  // intentionally not used on the live page, as it adds ~13s here for ~30k
-  // route reads. selectCeilingEfforts keeps the fastest effort per distance
-  // ≥5mi (short fast efforts steepen the Riegel exponent and bias the half
-  // slow). See src/utils/bestEffortExtraction.ts. HR anchors come from prefs.
+  // only). Full-run efforts derive purely from the already-loaded runs (no extra
+  // reads); fast-finish / continuous efforts use the hydrated mileSplits set
+  // (see the hydration effect above), whose avgBpm pre-filter keeps route reads
+  // to the handful of runs with a genuinely hard mile. selectCeilingEfforts keeps
+  // the fastest full-run/fixed-window effort per distance ≥5mi, while fast-finish
+  // segments use their own shorter floor. See src/utils/bestEffortExtraction.ts.
+  // HR anchors come from prefs.
   const bestEffortSegments = useMemo(() => {
     if (!raceDistanceMiles || raceDistanceMiles < HALF_MARATHON_MILES) return [];
-    // Shared recipe (full-run path, no GPS reads) — identical to the Run Detail
-    // impact tile so the two never diverge. asOf = now for the live card; the
-    // per-week trend re-filters by date inside predictRaceTime.
-    return buildBestEffortSegments(runs, new Date(), maxHr, restingHr);
-  }, [runs, raceDistanceMiles, maxHr, restingHr]);
+    // Shared recipe — identical to the Run Detail impact tile so the two never
+    // diverge. Uses the fast-finish-hydrated run set when available (route-derived
+    // per-mile pace + HR), falling back to the full-run-only path until hydration
+    // resolves. asOf = now for the live card; the per-week trend re-filters by
+    // date inside predictRaceTime.
+    return buildBestEffortSegments(
+      hydratedRuns ?? runs,
+      new Date(),
+      maxHr,
+      restingHr
+    );
+  }, [hydratedRuns, runs, raceDistanceMiles, maxHr, restingHr]);
 
   // Riegel fit for the LIVE race prediction (asOf = now). Routed through the
   // shared pure predictRaceTime so the card and the weekly trend can never

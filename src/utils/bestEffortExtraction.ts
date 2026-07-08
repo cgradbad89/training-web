@@ -8,13 +8,20 @@
  * rate — and feeds them into the same fit as high-weight efforts, so the
  * prediction reflects what the athlete can sustain *at race effort*.
  *
- * Two effort sources (see {@link extractBestEfforts}):
+ * Three effort sources (see {@link extractBestEfforts}):
  *   • full-run        — whole run pace from recorded distance/duration (no GPS
  *                       bias), gated on the run-level avg HR.
  *   • continuous-segment — the fastest continuous N-mile window inside a run,
  *                       paced from the GPS route (the only per-mile pace source —
  *                       the mileSplits subcollection stores HR, not pace) and
  *                       gated on that window's per-mile avg HR.
+ *   • fast-finish     — the longest contiguous stretch of miles that EACH clear
+ *                       the gate individually (see {@link bestFastFinishSegment}).
+ *                       Rescues an easy-start / hard-finish run whose whole-run
+ *                       avg HR fails the gate but whose finishing miles pass it;
+ *                       has its own short floor ({@link FAST_FINISH_MIN_SEGMENT_MILES})
+ *                       so a 2–3 mile finish is not thrown away with the 5-mile
+ *                       ceiling that governs the other two sources.
  *
  * GPS reconciliation: GPS-haversine under-counts true distance (corner-cutting),
  * which biases route-derived pace ~3% slow. Each segment's GPS distance is
@@ -42,7 +49,7 @@ export interface BestEffortSegment {
   paceSecPerMile: number;
   /** Segment avg HR as %HRR, 0–1. */
   avgHrrPercent: number;
-  segmentType: "full-run" | "continuous-segment";
+  segmentType: "full-run" | "continuous-segment" | "fast-finish";
 }
 
 export interface BestEffortConfig {
@@ -54,6 +61,9 @@ export interface BestEffortConfig {
   maxHr: number;
   /** Authoritative resting HR (bpm) — from settings/prefs, never hardcoded. */
   restingHr: number;
+  /** Min length (mi) for a contiguous fast-finish segment. Defaults to
+   *  {@link FAST_FINISH_MIN_SEGMENT_MILES}; distinct from the 5-mile ceiling. */
+  fastFinishMinSegmentMiles?: number;
 }
 
 // ─── Race-effort projection ──────────────────────────────────────────────────
@@ -79,6 +89,16 @@ export const RACE_EFFORT_HRR_TARGET = 0.9;
 export const MAX_PACE_ADJUSTMENT_PCT = 0.06;
 /** Min %HRR (0–1) for a segment to count as a race-gear effort. */
 export const HRR_GATE_THRESHOLD = 0.8;
+/**
+ * Minimum length (miles) of a contiguous per-mile "fast finish" segment for it
+ * to earn best-effort credit. Deliberately SEPARATE from — and much shorter
+ * than — the 5-mile ceiling floor used by {@link selectCeilingEfforts} for
+ * full-run / fixed-window efforts: a genuine fast finish (e.g. the last 2–3
+ * miles of an otherwise-easy long run) is exactly the shape the 5-mile floor
+ * throws away. The two floors serve different paths and must not be conflated —
+ * see {@link bestFastFinishSegment} and {@link buildBestEffortSegments}.
+ */
+export const FAST_FINISH_MIN_SEGMENT_MILES = 2;
 /**
  * Recency window (days) for best-effort CANDIDATES. Best efforts should reflect
  * CURRENT race gear, so extraction is bounded to recent runs (matches the base
@@ -184,15 +204,104 @@ function bestContinuousWindow(
   return best;
 }
 
+/**
+ * Longest contiguous "fast finish" segment inside one run: the longest run of
+ * consecutive miles where EVERY mile INDIVIDUALLY clears the HRR gate — unlike
+ * {@link bestContinuousWindow}, which finds a fixed-length window gated on the
+ * window's AVERAGE HR. A run with an easy start and a hard finish (whole-run avg
+ * HR below the gate, but the finishing miles well above it) is credited here and
+ * nowhere else.
+ *
+ * Distance = sum of the qualifying miles' actual (recorded-reconciled) mileage;
+ * pace = route-derived time over that same mile range, on the recorded-distance
+ * basis (same GPS→recorded reconciliation the fixed-window path uses). Returns
+ * null when no contiguous qualifying stretch reaches `minSegmentMiles` — a
+ * correct exclusion (e.g. a sub-2-mile surge), not a bug.
+ *
+ * Requires the transient `mileSplits` hydration (route-derived pace + per-mile
+ * avgBpm); runs without it yield null.
+ */
+function bestFastFinishSegment(
+  workout: HealthWorkout,
+  hrrGate: number,
+  maxHr: number,
+  restingHr: number,
+  minSegmentMiles: number
+): { paceSecPerMile: number; distanceMiles: number; avgHrrPercent: number } | null {
+  const splits = workout.mileSplits;
+  if (!splits || splits.length === 0) return null;
+
+  const sorted = [...splits].sort((a, b) => a.mile - b.mile);
+  const totalGps = sorted.reduce((s, x) => s + x.segmentMiles, 0);
+  if (totalGps <= 0) return null;
+  // GPS→recorded reconciliation ratio (>1 when GPS under-counts), matching the
+  // fixed-window path so extracted paces share the model's recorded-distance basis.
+  const ratio = workout.distanceMiles > 0 ? workout.distanceMiles / totalGps : 1;
+
+  // Per-mile qualification: a usable avgBpm whose HRR clears the gate. A mile
+  // with no usable HR breaks the contiguous run (we can't vouch for its effort).
+  const qualifies = (s: (typeof sorted)[number]): boolean => {
+    if (s.avgBpm == null || !isFinite(s.avgBpm) || s.avgBpm <= 0) return false;
+    return hrrFromBpm(s.avgBpm, maxHr, restingHr) >= hrrGate;
+  };
+
+  // Longest contiguous (consecutive mile-number) run of qualifying miles; tie
+  // broken toward the faster stretch so the emitted segment is the ceiling.
+  let best: { start: number; end: number } | null = null; // indices into `sorted`
+  let i = 0;
+  while (i < sorted.length) {
+    if (!qualifies(sorted[i])) {
+      i++;
+      continue;
+    }
+    let j = i;
+    while (
+      j + 1 < sorted.length &&
+      qualifies(sorted[j + 1]) &&
+      sorted[j + 1].mile === sorted[j].mile + 1
+    ) {
+      j++;
+    }
+    if (best === null) {
+      best = { start: i, end: j };
+    } else {
+      const bestLen = best.end - best.start;
+      const curLen = j - i;
+      if (curLen > bestLen) best = { start: i, end: j };
+      // (ties keep the earlier stretch — see below for pace tie-break)
+    }
+    i = j + 1;
+  }
+  if (best === null) return null;
+
+  const win = sorted.slice(best.start, best.end + 1);
+  const gpsDist = win.reduce((s, x) => s + x.segmentMiles, 0);
+  const reconciledDist = gpsDist * ratio;
+  if (reconciledDist + 1e-9 < minSegmentMiles) return null; // below the fast-finish floor
+
+  const windowTime = win.reduce((s, x) => s + x.paceSecPerMile * x.segmentMiles, 0);
+  const paceSecPerMile = windowTime / reconciledDist;
+
+  // Mileage-weighted avg HR over the segment → %HRR (all miles already clear the
+  // gate, so this is ≥ gate by construction; kept for the race-effort projection).
+  const bpmWeighted =
+    win.reduce((s, x) => s + (x.avgBpm as number) * x.segmentMiles, 0) / gpsDist;
+  const avgHrrPercent = hrrFromBpm(bpmWeighted, maxHr, restingHr);
+
+  return { paceSecPerMile, distanceMiles: reconciledDist, avgHrrPercent };
+}
+
 // ─── Extraction ──────────────────────────────────────────────────────────────
 
 /**
  * Extract HR-gated best-effort segments from a set of (candidate) runs.
  *
  * For each run: emits a `full-run` segment when the run-level avg HR clears the
- * gate, plus the fastest `continuous-segment` at each configured window whose
- * own per-mile avg HR clears the gate. Continuous segments require the transient
- * `mileSplits` hydration; runs without it contribute only their full-run effort.
+ * gate, the fastest `continuous-segment` at each configured window whose own
+ * per-mile avg HR clears the gate, and one `fast-finish` segment for the longest
+ * contiguous stretch of miles that each clear the gate (≥ fastFinishMinSegmentMiles).
+ * Continuous and fast-finish segments require the transient `mileSplits`
+ * hydration; runs without it contribute only their full-run effort.
  *
  * Returns the raw (un-projected) segments — apply {@link bestEffortsToEffortPoints}
  * to project to race effort and convert to fit inputs.
@@ -201,7 +310,13 @@ export function extractBestEfforts(
   workouts: HealthWorkout[],
   config: BestEffortConfig
 ): BestEffortSegment[] {
-  const { hrrGateThreshold, segmentWindowsMiles, maxHr, restingHr } = config;
+  const {
+    hrrGateThreshold,
+    segmentWindowsMiles,
+    maxHr,
+    restingHr,
+    fastFinishMinSegmentMiles = FAST_FINISH_MIN_SEGMENT_MILES,
+  } = config;
   const out: BestEffortSegment[] = [];
 
   for (const w of workouts) {
@@ -239,6 +354,28 @@ export function extractBestEfforts(
           });
         }
       }
+
+      // Fast finish — longest contiguous stretch where EVERY mile clears the
+      // gate individually (rescues an easy-start / hard-finish run the whole-run
+      // gate rejects). Its own short floor; kept below the 5-mile ceiling in
+      // buildBestEffortSegments so it is not thrown away with short surges.
+      const ff = bestFastFinishSegment(
+        w,
+        hrrGateThreshold,
+        maxHr,
+        restingHr,
+        fastFinishMinSegmentMiles
+      );
+      if (ff) {
+        out.push({
+          sourceWorkoutId: w.workoutId,
+          date,
+          distanceMiles: ff.distanceMiles,
+          paceSecPerMile: ff.paceSecPerMile,
+          avgHrrPercent: ff.avgHrrPercent,
+          segmentType: "fast-finish",
+        });
+      }
     }
   }
 
@@ -273,9 +410,11 @@ export function selectCeilingEfforts(
 /**
  * The canonical best-effort recipe used by BOTH the Plan Insights dashboard and
  * the Run Detail impact tile, so they can never diverge: bound to the recent
- * window ({@link BEST_EFFORT_RECENCY_DAYS}), extract full-run + continuous
- * efforts at the gate, then reduce to the per-distance ceiling (≥5mi). Pure;
- * no Firestore. Callers gate on target distance (half+ only) before invoking.
+ * window ({@link BEST_EFFORT_RECENCY_DAYS}), extract full-run + continuous +
+ * fast-finish efforts at the gate, then reduce to the per-distance ceiling —
+ * ≥5mi for full-run/fixed-window, ≥{@link FAST_FINISH_MIN_SEGMENT_MILES} for
+ * fast-finish. Pure; no Firestore. Callers gate on target distance (half+ only)
+ * before invoking.
  * `asOf` sets the recency cutoff (pass the same reference used for the fit).
  */
 export function buildBestEffortSegments(
@@ -291,8 +430,29 @@ export function buildBestEffortSegments(
     segmentWindowsMiles: [3, 5, 8],
     maxHr,
     restingHr,
+    fastFinishMinSegmentMiles: FAST_FINISH_MIN_SEGMENT_MILES,
   });
-  return selectCeilingEfforts(raw, 5);
+
+  // Two floors, one ceiling: full-run / fixed-window efforts keep the 5-mile
+  // floor (short fast efforts steepen the Riegel exponent and bias the half
+  // slow); fast-finish segments use their own shorter floor so a genuine 2–3
+  // mile hard finish survives. Merge fastest-per-rounded-distance so a
+  // fast-finish and a full-run at the same distance can't double-count.
+  const strong = selectCeilingEfforts(
+    raw.filter((s) => s.segmentType !== "fast-finish"),
+    5
+  );
+  const fast = selectCeilingEfforts(
+    raw.filter((s) => s.segmentType === "fast-finish"),
+    FAST_FINISH_MIN_SEGMENT_MILES
+  );
+  const byBucket = new Map<number, BestEffortSegment>();
+  for (const s of [...strong, ...fast]) {
+    const bucket = Math.round(s.distanceMiles);
+    const cur = byBucket.get(bucket);
+    if (!cur || s.paceSecPerMile < cur.paceSecPerMile) byBucket.set(bucket, s);
+  }
+  return [...byBucket.values()].sort((a, b) => a.distanceMiles - b.distanceMiles);
 }
 
 /**

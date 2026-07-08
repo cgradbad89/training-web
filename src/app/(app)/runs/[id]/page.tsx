@@ -26,6 +26,7 @@ import {
   saveWeatherForWorkout,
 } from "@/services/healthWorkouts";
 import { fetchRoutePoints, type RoutePoint } from "@/services/routes";
+import { hydrateFastFinishSplits } from "@/services/fastFinishSplits";
 import { fetchUserSettings } from "@/services/userSettings";
 import { fetchRaces } from "@/services/races";
 import { fetchShoes, fetchManualShoeAssignmentsMap, saveManualAssignments } from "@/services/shoes";
@@ -151,6 +152,12 @@ export default function RunDetailPage() {
   > | null>(null);
   const [races, setRaces] = useState<Race[]>([]);
   const [clusters, setClusters] = useState<RouteCluster[] | null>(null);
+  // Insights run set with fast-finish `mileSplits` hydrated (route-derived pace +
+  // per-mile HR). Null until the async hydration resolves; the impact tile falls
+  // back to the full-run-only prediction meanwhile.
+  const [hydratedInsightsRuns, setHydratedInsightsRuns] = useState<
+    HealthWorkout[] | null
+  >(null);
 
   // Edit panel state
   const [isEditing, setIsEditing] = useState(false);
@@ -385,6 +392,29 @@ export default function RunDetailPage() {
       .filter((w) => !allOverrides[w.workoutId]?.isExcluded);
   }, [allWorkoutsRaw, allOverrides]);
 
+  // Hydrate fast-finish mileSplits across the recency-window insights runs (not
+  // just the viewed run), so the impact tile credits an easy-start / hard-finish
+  // run the whole-run HR gate rejects. The avgBpm pre-filter keeps route reads to
+  // runs with a genuinely hard mile; route reads are cached. Read-only.
+  useEffect(() => {
+    if (!uid || !workoutsForInsights) {
+      setHydratedInsightsRuns(null);
+      return;
+    }
+    let cancelled = false;
+    hydrateFastFinishSplits(uid, workoutsForInsights, {
+      maxHr: resolvedMaxHR,
+      restingHr: resolvedRestingHR,
+    })
+      .then((res) => {
+        if (!cancelled) setHydratedInsightsRuns(res.runs);
+      })
+      .catch(console.error);
+    return () => {
+      cancelled = true;
+    };
+  }, [uid, workoutsForInsights, resolvedMaxHR, resolvedRestingHR]);
+
   const currentCluster = useMemo(
     () => (clusters ? findClusterForRun(clusters, workoutId) : null),
     [clusters, workoutId]
@@ -435,13 +465,15 @@ export default function RunDetailPage() {
   // Prediction impact — runs only, capped at end of race day (parity with
   // Plan Insights; for an upcoming race the cutoff is in the future → no-op).
   // Routes through computeRunImpact, which folds the SAME §7b HR-gated
-  // best-effort segments the dashboard uses (per-set, full-run path, no GPS
-  // reads), so the "with" number matches the dashboard's projection.
+  // best-effort segments the dashboard uses (per-set, incl. the fast-finish
+  // segments hydrated above), so the "with" number matches the dashboard's
+  // projection.
   const predictionImpact = useMemo(() => {
-    if (!workoutsForInsights || !activeRace || !raceDistanceMiles) return null;
+    const insightsRuns = hydratedInsightsRuns ?? workoutsForInsights;
+    if (!insightsRuns || !activeRace || !raceDistanceMiles) return null;
     const cutoff = parseLocalDate(activeRace.raceDate);
     cutoff.setHours(23, 59, 59, 999);
-    const predictionRuns = workoutsForInsights.filter(
+    const predictionRuns = insightsRuns.filter(
       (w) => w.isRunLike && w.startDate <= cutoff
     );
     return computeRunImpact(
@@ -452,6 +484,7 @@ export default function RunDetailPage() {
       resolvedRestingHR
     );
   }, [
+    hydratedInsightsRuns,
     workoutsForInsights,
     activeRace,
     raceDistanceMiles,

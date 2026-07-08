@@ -94,7 +94,8 @@ export interface RunImpact {
  * "This Run's Impact" — how the currently-viewed run moves the race projection,
  * through the EXACT pipeline the Plan Insights dashboard uses (§7b): HR-gated
  * best-effort segments built per-set via {@link buildBestEffortSegments} (full-run
- * path, no GPS reads) and folded into `predictRaceTime` as high-weight efforts.
+ * plus, when the caller has hydrated `mileSplits`, fast-finish / continuous
+ * segments) and folded into `predictRaceTime` as high-weight efforts.
  *
  * Both predictions rebuild segments from their OWN run set, so excluding the
  * target run drops it from BOTH the base fit AND the best-effort ceiling — the

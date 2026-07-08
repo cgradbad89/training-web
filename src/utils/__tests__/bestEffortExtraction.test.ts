@@ -2,11 +2,13 @@ import { describe, it, expect } from "vitest";
 import {
   extractBestEfforts,
   selectCeilingEfforts,
+  buildBestEffortSegments,
   bestEffortsToEffortPoints,
   projectPaceToRaceEffort,
   RACE_EFFORT_HRR_TARGET,
   MAX_PACE_ADJUSTMENT_PCT,
   HRR_GATE_THRESHOLD,
+  FAST_FINISH_MIN_SEGMENT_MILES,
   type BestEffortConfig,
 } from "@/utils/bestEffortExtraction";
 import { type HealthWorkout } from "@/types/healthWorkout";
@@ -158,6 +160,124 @@ describe("selectCeilingEfforts", () => {
     // 3mi dropped; 5mi keeps the faster (585); 8mi kept.
     expect(chosen.map((s) => Math.round(s.distanceMiles))).toEqual([5, 8]);
     expect(chosen.find((s) => Math.round(s.distanceMiles) === 5)!.paceSecPerMile).toBe(585);
+  });
+});
+
+// Per-mile splits with distinct pace/HR per mile (a real fast-finish shape),
+// unlike the uniform `splits()` helper above.
+function mileSplitsFrom(
+  rows: Array<{ pace: number; bpm?: number; segmentMiles?: number; isPartial?: boolean }>
+): MileSplit[] {
+  return rows.map((r, i) => ({
+    mile: i + 1,
+    segmentMiles: r.segmentMiles ?? 1.0,
+    paceSecPerMile: r.pace,
+    isPartial: r.isPartial ?? false,
+    avgBpm: r.bpm,
+  }));
+}
+
+describe("extractBestEfforts — fast-finish (contiguous per-mile gate)", () => {
+  it("credits an easy-start / hard-finish run the whole-run gate rejects", () => {
+    // Jul-7 shape: 6mi, whole-run HR 150 (0.773 < gate → no full-run), but the
+    // last 2 miles at 156/161 bpm each clear the gate individually.
+    const w = run({
+      distanceMiles: 6,
+      durationSeconds: 3600,
+      avgHeartRate: 150,
+      mileSplits: mileSplitsFrom([
+        { pace: 660, bpm: 140 },
+        { pace: 660, bpm: 138 },
+        { pace: 650, bpm: 142 },
+        { pace: 640, bpm: 148 }, // 0.755 — still below the gate
+        { pace: 490, bpm: 156 }, // 0.827 ≥ gate
+        { pace: 470, bpm: 161 }, // 0.873 ≥ gate
+      ]),
+    });
+    const segs = extractBestEfforts([w], { ...CFG, segmentWindowsMiles: [] });
+    const ff = segs.filter((s) => s.segmentType === "fast-finish");
+    expect(ff).toHaveLength(1);
+    expect(ff[0].distanceMiles).toBeCloseTo(2.0, 2); // miles 5–6, ratio 1
+    expect(ff[0].paceSecPerMile).toBeCloseTo(480, 0); // (490 + 470) / 2
+    expect(ff[0].avgHrrPercent).toBeCloseTo((158.5 - 65) / 110, 2); // weighted 158.5 bpm
+    // No full-run segment: whole-run HR is below the gate.
+    expect(segs.filter((s) => s.segmentType === "full-run")).toHaveLength(0);
+  });
+
+  it("excludes a qualifying stretch just under the 2-mile floor", () => {
+    expect(FAST_FINISH_MIN_SEGMENT_MILES).toBe(2);
+    // Miles 5 (1.0) + 6 (0.9 partial) both clear the gate → 1.9mi < floor.
+    const w = run({
+      distanceMiles: 5.9,
+      durationSeconds: 3600,
+      avgHeartRate: 150,
+      mileSplits: mileSplitsFrom([
+        { pace: 660, bpm: 140 },
+        { pace: 660, bpm: 138 },
+        { pace: 650, bpm: 142 },
+        { pace: 640, bpm: 148 },
+        { pace: 490, bpm: 158 },
+        { pace: 470, bpm: 158, segmentMiles: 0.9, isPartial: true },
+      ]),
+    });
+    const segs = extractBestEfforts([w], { ...CFG, segmentWindowsMiles: [] });
+    expect(segs.filter((s) => s.segmentType === "fast-finish")).toHaveLength(0);
+  });
+
+  it("produces no segment when no mile clears the gate (route fetch skipped upstream)", () => {
+    // Every mile below the gate — the exact shape the service pre-filter skips
+    // (no GPS route read). The extractor must also produce nothing here.
+    const w = run({
+      distanceMiles: 6,
+      durationSeconds: 3600,
+      avgHeartRate: 145, // 0.727 → no full-run either
+      mileSplits: mileSplitsFrom([
+        { pace: 660, bpm: 140 },
+        { pace: 655, bpm: 142 },
+        { pace: 650, bpm: 145 },
+        { pace: 648, bpm: 148 },
+        { pace: 645, bpm: 150 }, // 0.773 < gate
+        { pace: 642, bpm: 149 },
+      ]),
+    });
+    expect(extractBestEfforts([w], { ...CFG, segmentWindowsMiles: [] })).toHaveLength(0);
+  });
+});
+
+describe("buildBestEffortSegments — dual floors", () => {
+  it("keeps the 5mi ceiling for full-run efforts while a 2mi fast-finish survives", () => {
+    const asOf = new Date("2026-06-20T12:00:00Z");
+    // A hard 3mi run: full-run gate passes, but 3mi < the 5mi ceiling → dropped.
+    const shortHard = run({
+      workoutId: "short",
+      startDate: new Date("2026-06-12T12:00:00Z"),
+      distanceMiles: 3,
+      durationSeconds: 1755, // 585/mi
+      avgHeartRate: 160,
+    });
+    // A 6mi easy-start run with a 2mi hard finish → fast-finish credit.
+    const fastFinish = run({
+      workoutId: "ff",
+      startDate: new Date("2026-06-14T12:00:00Z"),
+      distanceMiles: 6,
+      durationSeconds: 3600,
+      avgHeartRate: 150,
+      mileSplits: mileSplitsFrom([
+        { pace: 660, bpm: 140 },
+        { pace: 660, bpm: 138 },
+        { pace: 650, bpm: 142 },
+        { pace: 640, bpm: 148 },
+        { pace: 490, bpm: 156 },
+        { pace: 470, bpm: 161 },
+      ]),
+    });
+    const segs = buildBestEffortSegments([shortHard, fastFinish], asOf, 175, 65);
+    // 3mi full-run dropped by the 5mi ceiling (floor unchanged for that path)…
+    expect(segs.some((s) => Math.round(s.distanceMiles) === 3)).toBe(false);
+    // …while the 2mi fast-finish clears its own shorter floor.
+    const ff = segs.find((s) => s.segmentType === "fast-finish");
+    expect(ff).toBeTruthy();
+    expect(ff!.distanceMiles).toBeCloseTo(2.0, 2);
   });
 });
 
