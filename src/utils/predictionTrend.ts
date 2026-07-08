@@ -19,6 +19,15 @@
  * PLANNED tier (weight ×1) and predictRaceTime's `extraEfforts` hook are used.
  *
  * No storage — everything is recomputed in-memory, same as the historical trend.
+ *
+ * ⚠️ The raw `buildPredictionProjection` is a SIGNAL generator, not the displayed
+ * series. On its own it trends monotonically slower toward race day: synthetic
+ * PLANNED efforts stay perpetually fresh (aged relative to each future week) and
+ * accumulate week over week, while the one strong real signal (the RACE anchor)
+ * decays away — so easy planned volume dominates the fit and drags its intercept
+ * toward easy pace. `buildAnchoredPredictionProjection` is what the chart renders:
+ * it anchors to TODAY'S live prediction and lets the raw signal apply only a
+ * bounded ±`MAX_PROJECTION_ADJUSTMENT_PCT` nudge.
  */
 
 import { planEntryToSyntheticEffort } from "@/utils/riegelFit";
@@ -135,4 +144,95 @@ export function buildPredictionProjection(
   }
 
   return points;
+}
+
+// ─── Anchored projection (what the chart renders) ───────────────────────────────
+
+/**
+ * Caps how far the plan is allowed to move the projected finish away from
+ * today's live prediction — ±4% of the live baseline, regardless of how many
+ * weeks out the projection runs.
+ *
+ * JUDGMENT CALL, not a derived value: too tight and the dashed line looks flat
+ * and uninformative; too loose and the raw signal's "everything trends slower"
+ * shape (see the module note above) creeps back in. 4% ≈ ±5:15 on a 2:11 half —
+ * enough to show a training block trending down or a taper nudging up, without
+ * letting easy planned volume swing the number wildly. Tune from production QA.
+ */
+export const MAX_PROJECTION_ADJUSTMENT_PCT = 0.04;
+
+export interface BuildAnchoredPredictionProjectionInput
+  extends BuildPredictionProjectionInput {
+  /**
+   * The exact predicted-finish seconds shown on the live prediction card
+   * (`predictRaceTime(...).predictedSeconds`, asOf = now, best-effort segments
+   * included). Null when the card itself has no prediction (insufficient data) —
+   * in that case the projection is empty and the chart shows its normal
+   * "not enough data" state.
+   */
+  liveBaselineSeconds: number | null;
+}
+
+/**
+ * The DISPLAYED projection series. Re-anchors the raw `buildPredictionProjection`
+ * signal to the live prediction card's number so the dashed line can never drift
+ * further than ±`MAX_PROJECTION_ADJUSTMENT_PCT` from today's actual fitness:
+ *
+ *   projectedSeconds = liveBaselineSeconds × (1 + clamp(rawDeltaPct, ±MAX))
+ *
+ * where `rawDeltaPct` is the raw signal's proportional move from its own week-0
+ * (today) value. This keeps the plan's DIRECTION and MAGNITUDE as a real signal
+ * (a quality-heavy block still nudges down; a taper still nudges up) while
+ * bounding how far it pulls the number. The raw week-0 value is computed the same
+ * way the raw trend computes any week — `predictRaceTime` at asOf = today, where
+ * no planned entries have occurred yet, so it equals the live baseline by
+ * construction (both are the same call); it is used only as the internal
+ * reference for measuring direction, never as the displayed number.
+ *
+ * Returns [] when: the live card has no prediction (`liveBaselineSeconds` null),
+ * today's raw fit is insufficient, or the raw signal itself is empty (no active
+ * plan / no remaining planned entries) — matching the existing empty-state chart.
+ */
+export function buildAnchoredPredictionProjection(
+  input: BuildAnchoredPredictionProjectionInput
+): PredictionProjectionPoint[] {
+  const { plan, historicalRuns, params, raceDate, liveBaselineSeconds } = input;
+  const today = input.today ?? new Date();
+
+  if (liveBaselineSeconds == null || !isFinite(liveBaselineSeconds)) return [];
+
+  const raw = buildPredictionProjection({
+    plan,
+    historicalRuns,
+    params,
+    raceDate,
+    today,
+  });
+  if (raw.length === 0) return [];
+
+  // Raw week-0 (today) reference — the same computation the raw trend does per
+  // week, at asOf = today. No planned entries have occurred by today, so this is
+  // exactly the live-baseline call; used only to measure the raw signal's drift.
+  const rawTodaySeconds = predictRaceTime(historicalRuns, params, today)
+    .predictedSeconds;
+  if (rawTodaySeconds == null || !isFinite(rawTodaySeconds) || rawTodaySeconds <= 0) {
+    return [];
+  }
+
+  return raw.map((point) => {
+    if (point.predictedSeconds == null) {
+      // Raw week couldn't be fit → break the line (no fabricated point).
+      return { ...point, predictedSeconds: null };
+    }
+    const rawDeltaPct =
+      (point.predictedSeconds - rawTodaySeconds) / rawTodaySeconds;
+    const clampedPct = Math.min(
+      Math.max(rawDeltaPct, -MAX_PROJECTION_ADJUSTMENT_PCT),
+      MAX_PROJECTION_ADJUSTMENT_PCT
+    );
+    return {
+      ...point,
+      predictedSeconds: liveBaselineSeconds * (1 + clampedPct),
+    };
+  });
 }

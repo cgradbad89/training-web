@@ -56,7 +56,7 @@ import {
 import { PlanRunLoadChart } from "@/components/charts/PlanRunLoadChart";
 import { PredictionTrendChart } from "@/components/charts/PredictionTrendChart";
 import { predictRaceTime, buildPredictionTrend } from "@/utils/racePrediction";
-import { buildPredictionProjection } from "@/utils/predictionTrend";
+import { buildAnchoredPredictionProjection } from "@/utils/predictionTrend";
 import { buildBestEffortSegments } from "@/utils/bestEffortExtraction";
 import { type UserSettings } from "@/types/userSettings";
 
@@ -349,14 +349,18 @@ export default function PlanInsightsPage() {
   // (predictRaceTime applies the same race-anchored long-run model: races
   // dominate while fresh, 5-week half-life decay, k-clamp [1.04, 1.10] for HM+.)
   // Best-effort segments are folded in as high-weight race-effort efforts.
-  const raceFit = useMemo(() => {
+  // One prediction call feeds BOTH the card's fit and the projection's anchor,
+  // so the dashed line can never diverge from the displayed number.
+  const livePrediction = useMemo(() => {
     if (!raceDistanceMiles) return null;
     return predictRaceTime(runs, {
       raceDistanceMiles,
       races: raceInputs,
       bestEffortSegments,
-    }).fit;
+    });
   }, [runs, raceDistanceMiles, raceInputs, bestEffortSegments]);
+  const raceFit = livePrediction?.fit ?? null;
+  const liveBaselineSeconds = livePrediction?.predictedSeconds ?? null;
 
   // Goal finish (seconds) from the race's target pace — the trend's reference
   // line; null when no target is set.
@@ -383,18 +387,21 @@ export default function PlanInsightsPage() {
   }, [activePlan, runs, raceDistanceMiles, raceInputs, goalSeconds, bestEffortSegments]);
 
   // Plan-completion projection — dashed line extending the trend to race day.
-  // Blends real efforts (decaying naturally) with synthetic PLANNED-tier volume
-  // from the remaining plan entries. Empty for past races / no remaining entries
-  // → the chart renders the historical line only. See predictionTrend.ts.
+  // Anchored to today's live prediction (liveBaselineSeconds) with the raw
+  // blended signal applying only a bounded ±MAX_PROJECTION_ADJUSTMENT_PCT nudge,
+  // so easy planned volume can't drag the number away from actual fitness. Empty
+  // for past races / no remaining entries / no live prediction → the chart
+  // renders the historical line only. See predictionTrend.ts.
   const predictionProjection = useMemo(() => {
     if (!activePlan || !raceDistanceMiles || !activeRace) return [];
-    return buildPredictionProjection({
+    return buildAnchoredPredictionProjection({
       plan: activePlan,
       historicalRuns: runs,
       params: { raceDistanceMiles, races: raceInputs, bestEffortSegments },
       raceDate: parseLocalDate(activeRace.raceDate),
+      liveBaselineSeconds,
     });
-  }, [activePlan, runs, raceDistanceMiles, raceInputs, bestEffortSegments, activeRace]);
+  }, [activePlan, runs, raceDistanceMiles, raceInputs, bestEffortSegments, activeRace, liveBaselineSeconds]);
 
   // Plan adherence — weekly planned vs actual (±1 day matching). Single source
   // is buildPlanAdherence; the page passes throughDate = getWeekStart(now) to

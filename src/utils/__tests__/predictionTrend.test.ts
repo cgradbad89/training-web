@@ -9,7 +9,11 @@ import {
   predictRaceTime,
   type PredictionRun,
 } from "@/utils/racePrediction";
-import { buildPredictionProjection } from "@/utils/predictionTrend";
+import {
+  buildPredictionProjection,
+  buildAnchoredPredictionProjection,
+  MAX_PROJECTION_ADJUSTMENT_PCT,
+} from "@/utils/predictionTrend";
 import {
   type RunningPlan,
   type PlannedRunEntry,
@@ -17,6 +21,7 @@ import {
 } from "@/types/plan";
 
 const FIVE_K = 3.10686;
+const HM = 13.109;
 
 function d(iso: string): Date {
   return new Date(iso + "T12:00:00");
@@ -296,5 +301,160 @@ describe("buildPredictionProjection", () => {
     const slowW6 = slow.find((p) => p.weekLabel === "W6")!.predictedSeconds!;
     const fastW6 = fast.find((p) => p.weekLabel === "W6")!.predictedSeconds!;
     expect(fastW6).toBeLessThan(slowW6);
+  });
+});
+
+// ── buildAnchoredPredictionProjection ───────────────────────────────────────
+
+// HM bug-repro fixture (mirrors the investigation session): a June half RACE
+// anchor + a mostly-easy 12-week plan. The RAW signal drifts well past 4% slower
+// by race week — exactly what the anchor must cap.
+const JUNE_HALF_SEC = 2 * 3600 + 11 * 60 + 38; // 2:11:38 → 7898s
+const HM_REAL: PredictionRun[] = [
+  { workoutId: "half", distanceMiles: HM, durationSeconds: JUNE_HALF_SEC, startDate: d("2026-06-06"), activityType: "running", sourceName: "Apple Watch" },
+  mkRun("r1", d("2026-06-10"), 3, 555),
+  mkRun("r2", d("2026-06-13"), 6, 570),
+  mkRun("r3", d("2026-06-20"), 8, 585),
+  mkRun("r4", d("2026-06-27"), 5, 540),
+  mkRun("r5", d("2026-07-01"), 4, 560),
+  mkRun("r6", d("2026-07-04"), 6, 575),
+];
+const HM_RACES = [
+  { raceDate: "2026-06-06", distanceMiles: HM },
+  { raceDate: "2026-08-30", distanceMiles: HM },
+];
+function hmPlan(): RunningPlan {
+  const weeks: PlanWeek[] = [];
+  for (let w = 0; w < 12; w++) {
+    const longMiles = Math.min(8 + w, 13);
+    weeks.push({
+      weekNumber: w + 1,
+      entries: [
+        mkEntry({ weekIndex: w, weekday: 2, distanceMiles: 4, targetPaceSecondsPerMile: 570 }),
+        mkEntry({ weekIndex: w, weekday: 4, distanceMiles: 5, targetPaceSecondsPerMile: 585 }),
+        mkEntry({ weekIndex: w, weekday: 6, distanceMiles: longMiles, targetPaceSecondsPerMile: 630 }),
+      ],
+    });
+  }
+  return mkPlan(weeks, "2026-06-08T00:00:00");
+}
+const HM_TODAY = d("2026-07-06");
+const HM_RACE_DATE = d("2026-08-30");
+const HM_PARAMS = { raceDistanceMiles: HM, races: HM_RACES };
+
+describe("buildAnchoredPredictionProjection", () => {
+  const baseInput = {
+    plan: hmPlan(),
+    historicalRuns: HM_REAL,
+    params: HM_PARAMS,
+    raceDate: HM_RACE_DATE,
+    today: HM_TODAY,
+  };
+  // In production this is exactly predictRaceTime(...).predictedSeconds at now;
+  // reproduce that here so the anchor equals what the live card would show.
+  const LIVE = predictRaceTime(HM_REAL, HM_PARAMS, HM_TODAY).predictedSeconds!;
+
+  it("returns [] when liveBaselineSeconds is null (card has no prediction)", () => {
+    expect(
+      buildAnchoredPredictionProjection({ ...baseInput, liveBaselineSeconds: null }),
+    ).toEqual([]);
+  });
+
+  it("returns [] when today's raw fit is insufficient (regression to empty state)", () => {
+    // Only 2 real runs → predictRaceTime at today can't fit (needs ≥4) even
+    // though later weeks add synthetic volume. rawTodaySeconds null ⇒ [].
+    const thinInput = {
+      ...baseInput,
+      historicalRuns: [
+        mkRun("a", d("2026-06-13"), 4, 560),
+        mkRun("b", d("2026-06-20"), 6, 585),
+      ],
+      liveBaselineSeconds: 7800,
+    };
+    expect(buildAnchoredPredictionProjection(thinInput)).toEqual([]);
+  });
+
+  it("returns [] when the raw signal is empty (no remaining entries)", () => {
+    expect(
+      buildAnchoredPredictionProjection({
+        ...baseInput,
+        today: d("2026-09-15"), // after the race and every entry
+        raceDate: d("2026-09-15"),
+        liveBaselineSeconds: LIVE,
+      }),
+    ).toEqual([]);
+  });
+
+  it("emits the same week labels as the raw projection (future weeks only)", () => {
+    const raw = buildPredictionProjection(baseInput);
+    const anchored = buildAnchoredPredictionProjection({ ...baseInput, liveBaselineSeconds: LIVE });
+    expect(anchored.map((p) => p.weekLabel)).toEqual(raw.map((p) => p.weekLabel));
+    expect(anchored.every((p) => p.isProjected)).toBe(true);
+  });
+
+  it("re-anchors every point to liveBaselineSeconds × (1 + clamp(rawDeltaPct, ±4%))", () => {
+    // Anchor off a DISTINCT baseline (not the raw today value) to prove the
+    // output is scaled by liveBaselineSeconds, not rawTodaySeconds.
+    const DISTINCT = 7000;
+    const raw = buildPredictionProjection(baseInput);
+    const rawToday = predictRaceTime(HM_REAL, HM_PARAMS, HM_TODAY).predictedSeconds!;
+    const anchored = buildAnchoredPredictionProjection({
+      ...baseInput,
+      liveBaselineSeconds: DISTINCT,
+    });
+    for (let i = 0; i < raw.length; i++) {
+      const rawSec = raw[i].predictedSeconds!;
+      const rawDeltaPct = (rawSec - rawToday) / rawToday;
+      const clamped = Math.min(
+        Math.max(rawDeltaPct, -MAX_PROJECTION_ADJUSTMENT_PCT),
+        MAX_PROJECTION_ADJUSTMENT_PCT,
+      );
+      expect(anchored[i].predictedSeconds!).toBeCloseTo(DISTINCT * (1 + clamped), 6);
+    }
+  });
+
+  it("caps a late week whose raw signal drifts past +4% at exactly baseline × 1.04", () => {
+    const raw = buildPredictionProjection(baseInput);
+    const rawToday = predictRaceTime(HM_REAL, HM_PARAMS, HM_TODAY).predictedSeconds!;
+    const anchored = buildAnchoredPredictionProjection({ ...baseInput, liveBaselineSeconds: LIVE });
+
+    const raceWeek = "W12";
+    const rawRace = raw.find((p) => p.weekLabel === raceWeek)!.predictedSeconds!;
+    const rawDelta = (rawRace - rawToday) / rawToday;
+    // Precondition: the bug's magnitude is actually present (raw drifts > 4%).
+    expect(rawDelta).toBeGreaterThan(MAX_PROJECTION_ADJUSTMENT_PCT);
+
+    const anchoredRace = anchored.find((p) => p.weekLabel === raceWeek)!.predictedSeconds!;
+    expect(anchoredRace).toBeCloseTo(LIVE * (1 + MAX_PROJECTION_ADJUSTMENT_PCT), 6);
+    // And the capped value is much tighter than the raw signal would have shown.
+    expect(anchoredRace).toBeLessThan(rawRace);
+  });
+
+  it("passes a small-drift week through proportionally (not clamped)", () => {
+    const raw = buildPredictionProjection(baseInput);
+    const rawToday = predictRaceTime(HM_REAL, HM_PARAMS, HM_TODAY).predictedSeconds!;
+    const anchored = buildAnchoredPredictionProjection({ ...baseInput, liveBaselineSeconds: LIVE });
+
+    // Find an early week whose raw drift is within the cap.
+    const idx = raw.findIndex((p) => {
+      const dr = (p.predictedSeconds! - rawToday) / rawToday;
+      return Math.abs(dr) < MAX_PROJECTION_ADJUSTMENT_PCT;
+    });
+    expect(idx).toBeGreaterThanOrEqual(0); // such a week exists
+
+    const rawSec = raw[idx].predictedSeconds!;
+    const rawDelta = (rawSec - rawToday) / rawToday;
+    const anchoredSec = anchored[idx].predictedSeconds!;
+    // Proportional passthrough — NOT pinned to the ±4% rail.
+    expect(anchoredSec).toBeCloseTo(LIVE * (1 + rawDelta), 6);
+    expect(anchoredSec).not.toBeCloseTo(LIVE * (1 + MAX_PROJECTION_ADJUSTMENT_PCT), 3);
+  });
+
+  it("stays within ±4% of the live baseline at every week", () => {
+    const anchored = buildAnchoredPredictionProjection({ ...baseInput, liveBaselineSeconds: LIVE });
+    for (const p of anchored) {
+      const drift = Math.abs((p.predictedSeconds! - LIVE) / LIVE);
+      expect(drift).toBeLessThanOrEqual(MAX_PROJECTION_ADJUSTMENT_PCT + 1e-9);
+    }
   });
 });
