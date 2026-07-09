@@ -103,6 +103,34 @@ describe("buildPlanAdherence — full span", () => {
   });
 });
 
+describe("buildPlanAdherence — completedRuns requires 'full' quality (85% threshold)", () => {
+  it("a partial-quality match (below 85%) still adds its mileage but is not counted as completed", () => {
+    // W1 planned 5mi; actual run is only 3mi (60%) — matches (day-proximity
+    // gate only) but grades "partial", so it should count toward actualMiles
+    // but NOT toward completedRuns.
+    const shortRun = run("2026-01-19T12:00:00Z", 3, 3 * 600);
+    const r = buildPlanAdherence(makePlan(), [shortRun, W2_RUN], { maxHr: 185 });
+    expect(r.weeks[0].actualMiles).toBeCloseTo(3, 5);
+    expect(r.weeks[0].completedRuns).toBe(0);
+    // W2 (6/6 = 100%) still counts as completed.
+    expect(r.totalCompletedRuns).toBe(1);
+    // actualMiles total is unaffected by the completion grading — still sums
+    // matched + bonus mileage regardless of quality.
+    expect(r.totalActualMiles).toBeCloseTo(9, 5); // 3 + 6
+  });
+
+  it("a run more than 3mi short of planned (previously unmatched entirely) now still contributes to actualMiles as before, via matching rather than the old bonus-run path", () => {
+    // Previously this 4mi-short run would fail to match altogether and instead
+    // be picked up as a "bonus" unmatched run within the week range. Now it
+    // matches directly (partial quality), so actualMiles is unchanged either way.
+    const plan = makePlan();
+    const veryShortRun = run("2026-01-19T12:00:00Z", 1, 1 * 600); // planned 5mi, 20%
+    const r = buildPlanAdherence(plan, [veryShortRun], { maxHr: 185 });
+    expect(r.weeks[0].actualMiles).toBeCloseTo(1, 5);
+    expect(r.weeks[0].completedRuns).toBe(0);
+  });
+});
+
 describe("buildPlanAdherence — throughDate cutoff (Plan Insights parity)", () => {
   it("includes only weeks whose start is on/before throughDate", () => {
     // Cut off mid-plan: only weeks 1 and 2 have started by 2026-01-28.

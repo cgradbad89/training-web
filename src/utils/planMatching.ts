@@ -28,23 +28,17 @@ function workoutDate(w: HealthWorkout): string {
   return w.startDate.toISOString().split("T")[0];
 }
 
-function withinTolerance(e: PlannedRunEntry, w: HealthWorkout): boolean {
-  return (
-    Math.abs(w.distanceMiles - e.distanceMiles) <=
-    Math.max(0.5, e.distanceMiles * 0.3)
-  );
-}
+// A run is "full" completion once its actual mileage reaches 85% of planned;
+// below that it still matches (day proximity is the only matching gate) but
+// is graded "partial".
+const COMPLETION_THRESHOLD_RATIO = 0.85;
 
-// Runs more than 3 miles shorter than planned don't match — prevents a 4-mile
-// actual run from matching an 8-mile planned session.
-const DISTANCE_SHORTFALL_THRESHOLD = 3.0;
-
-function isDistanceAcceptable(
+function meetsCompletionThreshold(
   actualMiles: number,
   plannedMiles: number
 ): boolean {
   if (!plannedMiles || plannedMiles <= 0) return true;
-  return plannedMiles - actualMiles <= DISTANCE_SHORTFALL_THRESHOLD;
+  return actualMiles / plannedMiles >= COMPLETION_THRESHOLD_RATIO;
 }
 
 /** DST-safe calendar day difference using local date components */
@@ -113,7 +107,10 @@ function pickBestCandidate(
 }
 
 /**
- * 4-pass plan vs actual matching with global used-set and tiebreaker rules.
+ * 2-pass plan vs actual matching with global used-set and tiebreaker rules.
+ * Day proximity (same-day, then ±1-day) is the only gate on WHETHER a run
+ * matches an entry; match quality ("full" vs "partial") is then decided
+ * solely by `meetsCompletionThreshold` (actual ≥ 85% of planned).
  * Returns a map: entryId → PlanMatch | null
  */
 export function matchPlanToActual(
@@ -134,61 +131,25 @@ export function matchPlanToActual(
     }
   }
 
-  // Pass 1: exact day, distance within tolerance → "full"
+  // Pass 1: exact day, any distance → quality via completion threshold
   for (const { entry: e, eDate } of allEntries) {
     if (result.has(e.id)) continue;
     for (const w of runs) {
       if (usedGlobal.has(w.workoutId)) continue;
       if (workoutDate(w) !== eDate) continue;
-      if (withinTolerance(e, w) && isDistanceAcceptable(w.distanceMiles, e.distanceMiles)) {
-        result.set(e.id, { activity: w, quality: "full" });
-        usedGlobal.add(w.workoutId);
-        break;
-      }
-    }
-  }
-
-  // Pass 2: ±1 day, distance within tolerance → "full" (with tiebreaker)
-  // Group unmatched entries competing for the same run
-  for (const w of runs) {
-    if (usedGlobal.has(w.workoutId)) continue;
-    const wDate = workoutDate(w);
-
-    const candidates = allEntries
-      .filter(({ entry: e, eDate }) => {
-        if (result.has(e.id)) return false;
-        if (!withinOneDay(wDate, eDate)) return false;
-        if (!withinTolerance(e, w)) return false;
-        if (!isDistanceAcceptable(w.distanceMiles, e.distanceMiles)) return false;
-        return true;
-      })
-      .map(({ entry, eDate }) => ({
-        entry,
-        eDate,
-        diffDays: Math.abs(differenceInCalendarDays(wDate, eDate)),
-      }));
-
-    const best = pickBestCandidate(candidates, wDate, w.distanceMiles);
-    if (best) {
-      result.set(best.entry.id, { activity: w, quality: "full" });
-      usedGlobal.add(w.workoutId);
-    }
-  }
-
-  // Pass 3: exact day, any distance → "partial"
-  for (const { entry: e, eDate } of allEntries) {
-    if (result.has(e.id)) continue;
-    for (const w of runs) {
-      if (usedGlobal.has(w.workoutId)) continue;
-      if (workoutDate(w) !== eDate) continue;
-      if (!isDistanceAcceptable(w.distanceMiles, e.distanceMiles)) continue;
-      result.set(e.id, { activity: w, quality: "partial" });
+      const quality: MatchQuality = meetsCompletionThreshold(
+        w.distanceMiles,
+        e.distanceMiles
+      )
+        ? "full"
+        : "partial";
+      result.set(e.id, { activity: w, quality });
       usedGlobal.add(w.workoutId);
       break;
     }
   }
 
-  // Pass 4: ±1 day, any distance → "partial" (with tiebreaker)
+  // Pass 2: ±1 day, any distance → quality via completion threshold (with tiebreaker)
   for (const w of runs) {
     if (usedGlobal.has(w.workoutId)) continue;
     const wDate = workoutDate(w);
@@ -197,7 +158,6 @@ export function matchPlanToActual(
       .filter(({ entry: e, eDate }) => {
         if (result.has(e.id)) return false;
         if (!withinOneDay(wDate, eDate)) return false;
-        if (!isDistanceAcceptable(w.distanceMiles, e.distanceMiles)) return false;
         return true;
       })
       .map(({ entry, eDate }) => ({
@@ -208,7 +168,13 @@ export function matchPlanToActual(
 
     const best = pickBestCandidate(candidates, wDate, w.distanceMiles);
     if (best) {
-      result.set(best.entry.id, { activity: w, quality: "partial" });
+      const quality: MatchQuality = meetsCompletionThreshold(
+        w.distanceMiles,
+        best.entry.distanceMiles
+      )
+        ? "full"
+        : "partial";
+      result.set(best.entry.id, { activity: w, quality });
       usedGlobal.add(w.workoutId);
     }
   }

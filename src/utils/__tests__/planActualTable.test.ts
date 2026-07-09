@@ -156,6 +156,25 @@ describe("buildActualVsPlannedWeeks — happy path & subtotals", () => {
   });
 });
 
+describe("buildActualVsPlannedWeeks — 85% completion threshold (previously-excluded shortfall runs now appear)", () => {
+  it("a run more than 3mi short of planned (previously excluded from matching entirely) now appears in the table as a 'partial' row", () => {
+    // Fri plans 4mi; a 1mi actual run (a 3mi shortfall) used to fail the old
+    // DISTANCE_SHORTFALL_THRESHOLD gate and never match at all, leaving the row
+    // "missed" with null actuals. It should now match (day-proximity only gate)
+    // and show as "partial" with its real actual distance.
+    const shortFriRun = run({ startISO: "2026-01-23T12:00:00Z", distanceMiles: 1, durationSeconds: 700 });
+    const [w1] = buildActualVsPlannedWeeks(
+      makePlan(),
+      [MON_RUN, WED_RUN, shortFriRun],
+      NOW
+    );
+    const fri = w1.rows[2];
+    expect(fri.status).toBe("partial");
+    expect(fri.plannedDistanceMiles).toBe(4);
+    expect(fri.actualDistanceMiles).toBe(1);
+  });
+});
+
 describe("buildActualVsPlannedWeeks — non-matched row states", () => {
   it("marks a past unmatched planned run as missed with null actuals", () => {
     const [w1] = buildActualVsPlannedWeeks(makePlan(), [MON_RUN, WED_RUN], NOW);

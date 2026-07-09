@@ -87,7 +87,7 @@ export function buildPlanAdherence(
     let completedRuns = 0;
     for (const e of runEntries) {
       const m = matchMap.get(e.id);
-      if (m) completedRuns += 1;
+      if (m && m.quality === "full") completedRuns += 1;
       if (m && !matchedIds.has(m.activity.workoutId)) {
         actualMiles += m.activity.distanceMiles;
         matchedIds.add(m.activity.workoutId);
