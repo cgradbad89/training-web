@@ -6,17 +6,24 @@ import { parsePaceString } from '@/utils/pace'
 
 /**
  * Effort classification tiers, in descending trust:
- *   - RACE     — a real ±1-day/±1-mi race-matched run (×3 weight, 120d memory)
- *   - QUALITY  — a real corroborated fast training effort (×1.75 weight)
- *   - BASELINE — an ordinary real training run (×1 weight)
- *   - PLANNED  — a SYNTHETIC effort derived from a future PlannedRunEntry
- *                (distance + target pace). NOT a real effort — it carries no
- *                HR/GPS/ID and gets NO weight boost (×1, same as BASELINE). Used
- *                only by the plan-completion projection to contribute planned
- *                volume while real quality efforts decay naturally. See
- *                planEntryToSyntheticEffort + buildPredictionProjection.
+ *   - RACE            — a real ±1-day/±1-mi race-matched run (×3 weight, 120d memory)
+ *   - QUALITY         — a real corroborated fast training effort (×1.75 weight)
+ *   - BASELINE        — an ordinary real training run (×1 weight)
+ *   - PLANNED         — a SYNTHETIC effort derived from a future PlannedRunEntry
+ *                       (distance + target pace). NOT a real effort — it carries no
+ *                       HR/GPS/ID and gets NO weight boost (×1, same as BASELINE).
+ *                       Used only by the plan-completion projection to contribute
+ *                       planned volume while real quality efforts decay naturally.
+ *                       See planEntryToSyntheticEffort + buildPredictionProjection.
+ *   - PLANNED_QUALITY — a SYNTHETIC effort (same as PLANNED) whose target pace beats
+ *                       the plan's own easy-pace baseline by ≥PLANNED_QUALITY_PACE_
+ *                       THRESHOLD_SEC_PER_MILE — a scheduled tempo/interval/race-pace
+ *                       session. Weighted like real QUALITY (×1.75) so scheduled
+ *                       quality work isn't invisible to the projection just because
+ *                       `workoutType` isn't populated on live plan entries. See
+ *                       computePlanEasyPaceBaseline.
  */
-export type EffortTier = 'RACE' | 'QUALITY' | 'BASELINE' | 'PLANNED'
+export type EffortTier = 'RACE' | 'QUALITY' | 'BASELINE' | 'PLANNED' | 'PLANNED_QUALITY'
 
 export interface EffortPoint {
   distanceMiles: number
@@ -115,7 +122,7 @@ function treadmillWeight(isTreadmill: boolean): number {
   return isTreadmill ? 0.85 : 1.0
 }
 
-function tierWeight(tier: EffortTier): number {
+export function tierWeight(tier: EffortTier): number {
   switch (tier) {
     case 'RACE':     return 3.0
     case 'QUALITY':  return 1.75
@@ -123,6 +130,9 @@ function tierWeight(tier: EffortTier): number {
     // PLANNED (synthetic future runs) get no boost — planned volume, not a real
     // effort. Same base weight as BASELINE; recency decay still applies.
     case 'PLANNED':  return 1.0
+    // PLANNED_QUALITY — a planned entry detected as tempo/quality by pace (see
+    // computePlanEasyPaceBaseline). Weighted like real QUALITY, per product decision.
+    case 'PLANNED_QUALITY': return 1.75
   }
 }
 
@@ -498,7 +508,9 @@ export function buildQualifyingEfforts(
 
 /** Summarize effort classification — handy for surfacing counts on insights pages. */
 export function summarizeTierCounts(efforts: EffortPoint[]): Record<EffortTier, number> {
-  const counts: Record<EffortTier, number> = { RACE: 0, QUALITY: 0, BASELINE: 0, PLANNED: 0 }
+  const counts: Record<EffortTier, number> = {
+    RACE: 0, QUALITY: 0, BASELINE: 0, PLANNED: 0, PLANNED_QUALITY: 0,
+  }
   for (const e of efforts) counts[e.tier]++
   return counts
 }
@@ -506,13 +518,49 @@ export function summarizeTierCounts(efforts: EffortPoint[]): Record<EffortTier, 
 // ─── Synthetic planned efforts (plan-completion projection) ─────────────────────
 
 /**
- * Convert a future PlannedRunEntry into a synthetic EffortPoint tagged PLANNED.
+ * A planned entry is treated as quality (PLANNED_QUALITY tier, ×1.75 weight) if
+ * its target pace beats the plan's easy-pace baseline (computePlanEasyPaceBaseline)
+ * by at least this many seconds/mile. `workoutType` is undefined on live plan
+ * entries today, so tier assignment must be pace-derived rather than type-derived.
+ *
+ * JUDGMENT CALL, not derived — tune from production QA against real tempo/interval
+ * sessions vs. brisk easy days.
+ */
+export const PLANNED_QUALITY_PACE_THRESHOLD_SEC_PER_MILE = 30
+
+/**
+ * Median target pace (sec/mi) across a plan's ordinary (non-rest, non-longRun)
+ * entries — the baseline a planned entry's pace is compared against to detect
+ * quality work (see PLANNED_QUALITY_PACE_THRESHOLD_SEC_PER_MILE). Long runs are
+ * excluded because they're naturally slower than flat-easy pace and would drag
+ * the baseline upward, suppressing real quality detection.
+ *
+ * Returns null when fewer than 3 entries qualify — too little data to establish
+ * a baseline; callers should fall back to tagging everything PLANNED (current,
+ * regression-safe behavior).
+ */
+export function computePlanEasyPaceBaseline(entries: PlannedRunEntry[]): number | null {
+  const paces = entries
+    .filter(e => e.runType !== 'rest' && e.workoutType !== 'rest' && e.runType !== 'longRun')
+    .map(e =>
+      e.targetPaceSecondsPerMile != null && e.targetPaceSecondsPerMile > 0
+        ? e.targetPaceSecondsPerMile
+        : e.paceTarget
+          ? parsePaceString(e.paceTarget)
+          : null
+    )
+    .filter((p): p is number => p != null && isFinite(p) && p > 0)
+  return paces.length >= 3 ? median(paces) : null
+}
+
+/**
+ * Convert a future PlannedRunEntry into a synthetic EffortPoint tagged PLANNED
+ * or PLANNED_QUALITY.
  *
  * This is NOT a real effort: it carries no workout ID, HR, or GPS route — only
  * the planned distance and target pace shaped into the fit's effort type so the
- * projection can add planned VOLUME without a parallel fit path. It is tagged
- * PLANNED (×1 weight, never QUALITY) so it can never masquerade as a real fast
- * effort, and it bypasses HR-gated best-effort extraction entirely.
+ * projection can add planned VOLUME without a parallel fit path. It bypasses
+ * HR-gated best-effort extraction entirely.
  *
  * Two dates are required — deliberately more than the original 2-arg sketch —
  * because decay must be correct for EACH projection week:
@@ -521,6 +569,12 @@ export function summarizeTierCounts(efforts: EffortPoint[]): Record<EffortTier, 
  *   - `asOf`: the projection week's reference date; `ageDays` (which drives the
  *     5-week half-life recency decay) is measured relative to it.
  *
+ * `planEasyPaceSecPerMile` (from computePlanEasyPaceBaseline, computed ONCE per
+ * plan by the caller — not per-week) determines the tier: an entry whose pace
+ * beats the baseline by ≥PLANNED_QUALITY_PACE_THRESHOLD_SEC_PER_MILE is tagged
+ * PLANNED_QUALITY (×1.75 weight); everything else (including long runs and, when
+ * the baseline is null, every entry) is tagged PLANNED (×1 weight, unchanged).
+ *
  * Returns null for entries that can't become a valid effort: rest days,
  * zero/negative distance, no resolvable target pace, an out-of-range pace, or a
  * performedDate AFTER asOf (a future entry has no bearing on an earlier week).
@@ -528,7 +582,8 @@ export function summarizeTierCounts(efforts: EffortPoint[]): Record<EffortTier, 
 export function planEntryToSyntheticEffort(
   entry: PlannedRunEntry,
   performedDate: Date,
-  asOf: Date
+  asOf: Date,
+  planEasyPaceSecPerMile: number | null
 ): EffortPoint | null {
   if (entry.runType === 'rest' || entry.workoutType === 'rest') return null
 
@@ -551,12 +606,18 @@ export function planEntryToSyntheticEffort(
   const ageDays = (asOf.getTime() - performedDate.getTime()) / 86400000
   if (!isFinite(ageDays) || ageDays < 0) return null
 
+  const tier: EffortTier =
+    planEasyPaceSecPerMile != null &&
+    planEasyPaceSecPerMile - paceSecPerMile >= PLANNED_QUALITY_PACE_THRESHOLD_SEC_PER_MILE
+      ? 'PLANNED_QUALITY'
+      : 'PLANNED'
+
   return {
     distanceMiles: miles,
     timeSeconds: miles * paceSecPerMile,
     ageDays,
     isTreadmill: entry.runType === 'treadmill',
-    tier: 'PLANNED',
+    tier,
   }
 }
 

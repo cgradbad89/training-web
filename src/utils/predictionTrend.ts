@@ -16,7 +16,9 @@
  * via the model's existing 120-day memory + ~5-week half-life decay (they simply
  * decay as the reference date marches toward race day), while the planned runs
  * contribute volume. No new fit formula, clamp, or decay constant — only the
- * PLANNED tier (weight ×1) and predictRaceTime's `extraEfforts` hook are used.
+ * PLANNED tier (weight ×1, or PLANNED_QUALITY ×1.75 for entries whose pace beats
+ * the plan's easy baseline — see computePlanEasyPaceBaseline) and predictRaceTime's
+ * `extraEfforts` hook are used.
  *
  * No storage — everything is recomputed in-memory, same as the historical trend.
  *
@@ -30,7 +32,10 @@
  * bounded ±`MAX_PROJECTION_ADJUSTMENT_PCT` nudge.
  */
 
-import { planEntryToSyntheticEffort } from "@/utils/riegelFit";
+import {
+  planEntryToSyntheticEffort,
+  computePlanEasyPaceBaseline,
+} from "@/utils/riegelFit";
 import {
   predictRaceTime,
   type PredictionRun,
@@ -87,6 +92,12 @@ export function buildPredictionProjection(
   const raceMs = raceDate.getTime();
   const planStart = new Date(plan.startDate);
 
+  // Stable across the whole projection (not recomputed per-week) — derived from
+  // every entry in the plan, elapsed and future alike, already in scope here.
+  const planEasyPaceSecPerMile = computePlanEasyPaceBaseline(
+    plan.weeks.flatMap((w) => w.entries)
+  );
+
   // Planned RUN entries scheduled strictly after today and on/before race day
   // that can actually become a synthetic effort (not rest days / zero-distance /
   // no-pace). These are the only ones that add future volume to the projection.
@@ -97,7 +108,7 @@ export function buildPredictionProjection(
       const date = plannedEntryDate(planStart, entry);
       const ms = date.getTime();
       if (ms <= nowMs || ms > raceMs) continue;
-      if (planEntryToSyntheticEffort(entry, date, date) == null) continue;
+      if (planEntryToSyntheticEffort(entry, date, date, planEasyPaceSecPerMile) == null) continue;
       remaining.push({ entry, date });
     }
   }
@@ -126,7 +137,7 @@ export function buildPredictionProjection(
     // this week, each aged relative to THIS week's asOf (correct decay).
     const extraEfforts = remaining
       .filter((r) => r.date.getTime() <= asOf.getTime())
-      .map((r) => planEntryToSyntheticEffort(r.entry, r.date, asOf))
+      .map((r) => planEntryToSyntheticEffort(r.entry, r.date, asOf, planEasyPaceSecPerMile))
       .filter((e): e is NonNullable<typeof e> => e != null);
 
     const { predictedSeconds } = predictRaceTime(

@@ -1,9 +1,12 @@
 import { describe, it, expect } from "vitest";
 import {
   planEntryToSyntheticEffort,
+  computePlanEasyPaceBaseline,
   fitRiegel,
   predictSeconds,
   buildQualifyingEfforts,
+  tierWeight,
+  PLANNED_QUALITY_PACE_THRESHOLD_SEC_PER_MILE,
 } from "@/utils/riegelFit";
 import {
   predictRaceTime,
@@ -67,11 +70,12 @@ describe("planEntryToSyntheticEffort", () => {
     targetPaceSecondsPerMile: 540,
   });
 
-  it("produces a valid EffortPoint tagged PLANNED (not QUALITY)", () => {
+  it("produces a valid EffortPoint tagged PLANNED (not QUALITY) when baseline is null", () => {
     const eff = planEntryToSyntheticEffort(
       entry,
       d("2026-06-20"),
       d("2026-06-27"),
+      null,
     );
     expect(eff).not.toBeNull();
     expect(eff!.tier).toBe("PLANNED");
@@ -85,8 +89,8 @@ describe("planEntryToSyntheticEffort", () => {
   });
 
   it("ages relative to asOf — same entry, later asOf ⇒ larger ageDays", () => {
-    const near = planEntryToSyntheticEffort(entry, d("2026-06-20"), d("2026-06-27"));
-    const far = planEntryToSyntheticEffort(entry, d("2026-06-20"), d("2026-07-11"));
+    const near = planEntryToSyntheticEffort(entry, d("2026-06-20"), d("2026-06-27"), null);
+    const far = planEntryToSyntheticEffort(entry, d("2026-06-20"), d("2026-07-11"), null);
     expect(near!.ageDays).toBeCloseTo(7, 6);
     expect(far!.ageDays).toBeCloseTo(21, 6);
   });
@@ -99,13 +103,13 @@ describe("planEntryToSyntheticEffort", () => {
       targetPaceSecondsPerMile: undefined,
       paceTarget: "9:00",
     });
-    const eff = planEntryToSyntheticEffort(e, d("2026-06-02"), d("2026-06-09"));
+    const eff = planEntryToSyntheticEffort(e, d("2026-06-02"), d("2026-06-09"), null);
     expect(eff!.timeSeconds).toBe(3 * 540);
   });
 
   it("marks treadmill entries as isTreadmill", () => {
     const e = mkEntry({ weekIndex: 0, weekday: 1, runType: "treadmill" });
-    const eff = planEntryToSyntheticEffort(e, d("2026-06-01"), d("2026-06-08"));
+    const eff = planEntryToSyntheticEffort(e, d("2026-06-01"), d("2026-06-08"), null);
     expect(eff!.isTreadmill).toBe(true);
   });
 
@@ -115,6 +119,7 @@ describe("planEntryToSyntheticEffort", () => {
         mkEntry({ weekIndex: 0, weekday: 7, runType: "rest" }),
         d("2026-06-07"),
         d("2026-06-14"),
+        null,
       ),
     ).toBeNull();
     expect(
@@ -122,6 +127,7 @@ describe("planEntryToSyntheticEffort", () => {
         mkEntry({ weekIndex: 0, weekday: 1, distanceMiles: 0 }),
         d("2026-06-01"),
         d("2026-06-08"),
+        null,
       ),
     ).toBeNull();
     expect(
@@ -134,12 +140,97 @@ describe("planEntryToSyntheticEffort", () => {
         }),
         d("2026-06-01"),
         d("2026-06-08"),
+        null,
       ),
     ).toBeNull();
     // performedDate after asOf → not applicable to that week
     expect(
-      planEntryToSyntheticEffort(entry, d("2026-07-01"), d("2026-06-27")),
+      planEntryToSyntheticEffort(entry, d("2026-07-01"), d("2026-06-27"), null),
     ).toBeNull();
+  });
+
+  // ── PLANNED_QUALITY detection ─────────────────────────────────────────────
+
+  it("tags an entry PLANNED_QUALITY when its pace beats the baseline by ≥30s/mi", () => {
+    const tempo = mkEntry({
+      weekIndex: 1, weekday: 2, distanceMiles: 5, targetPaceSecondsPerMile: 560,
+    });
+    const eff = planEntryToSyntheticEffort(tempo, d("2026-06-20"), d("2026-06-27"), 600);
+    expect(eff!.tier).toBe("PLANNED_QUALITY");
+  });
+
+  it("tags an entry PLANNED_QUALITY at exactly the 30s/mi threshold (inclusive)", () => {
+    const atThreshold = mkEntry({
+      weekIndex: 1, weekday: 2, distanceMiles: 5, targetPaceSecondsPerMile: 570,
+    });
+    const eff = planEntryToSyntheticEffort(atThreshold, d("2026-06-20"), d("2026-06-27"), 600);
+    expect(eff!.tier).toBe("PLANNED_QUALITY");
+  });
+
+  it("keeps an entry PLANNED when within 30s/mi of the baseline (brisk easy day, not tempo)", () => {
+    const brisk = mkEntry({
+      weekIndex: 1, weekday: 2, distanceMiles: 5, targetPaceSecondsPerMile: 580,
+    });
+    const eff = planEntryToSyntheticEffort(brisk, d("2026-06-20"), d("2026-06-27"), 600);
+    expect(eff!.tier).toBe("PLANNED");
+  });
+
+  it("does not misclassify a fast-finish blended long run as quality (12mi, last 3 @ 9:20, blended 10:08)", () => {
+    // Blended pace (608 s/mi) sits only 22s/mi under an easy baseline of 630 —
+    // under the 30s/mi threshold, and the entry is a longRun regardless.
+    const longRun = mkEntry({
+      weekIndex: 3, weekday: 6, distanceMiles: 12, targetPaceSecondsPerMile: 608,
+      runType: "longRun",
+    });
+    const eff = planEntryToSyntheticEffort(longRun, d("2026-06-20"), d("2026-06-27"), 630);
+    expect(eff!.tier).toBe("PLANNED");
+  });
+
+  it("tierWeight('PLANNED_QUALITY') matches real QUALITY (×1.75)", () => {
+    expect(tierWeight("PLANNED_QUALITY")).toBe(1.75);
+    expect(tierWeight("PLANNED_QUALITY")).toBe(tierWeight("QUALITY"));
+  });
+});
+
+// ── computePlanEasyPaceBaseline ─────────────────────────────────────────────
+
+describe("computePlanEasyPaceBaseline", () => {
+  it("computes the median target pace across non-rest, non-longRun entries", () => {
+    const entries = [
+      mkEntry({ weekIndex: 0, weekday: 1, distanceMiles: 4, targetPaceSecondsPerMile: 600 }),
+      mkEntry({ weekIndex: 0, weekday: 3, distanceMiles: 4, targetPaceSecondsPerMile: 605 }),
+      mkEntry({ weekIndex: 0, weekday: 5, distanceMiles: 5, targetPaceSecondsPerMile: 560 }), // tempo
+      mkEntry({ weekIndex: 0, weekday: 7, runType: "rest" }),
+    ];
+    // Pool: [600, 605, 560] → sorted [560, 600, 605] → median 600.
+    expect(computePlanEasyPaceBaseline(entries)).toBe(600);
+  });
+
+  it("excludes longRun entries even when they would shift the median", () => {
+    const entries = [
+      mkEntry({ weekIndex: 0, weekday: 1, distanceMiles: 4, targetPaceSecondsPerMile: 600 }),
+      mkEntry({ weekIndex: 0, weekday: 2, distanceMiles: 4, targetPaceSecondsPerMile: 605 }),
+      mkEntry({ weekIndex: 0, weekday: 3, distanceMiles: 4, targetPaceSecondsPerMile: 615 }),
+      mkEntry({ weekIndex: 0, weekday: 4, distanceMiles: 4, targetPaceSecondsPerMile: 620 }),
+      // Fast-finish blended long run — faster than several easy entries above;
+      // would pull the median toward it (605) if wrongly included.
+      mkEntry({
+        weekIndex: 0, weekday: 6, distanceMiles: 12, targetPaceSecondsPerMile: 560,
+        runType: "longRun",
+      }),
+    ];
+    // Pool excluding the longRun: [600, 605, 615, 620] → median = avg(605, 615) = 610.
+    expect(computePlanEasyPaceBaseline(entries)).toBe(610);
+  });
+
+  it("returns null with fewer than 3 qualifying entries", () => {
+    const entries = [
+      mkEntry({ weekIndex: 0, weekday: 1, distanceMiles: 4, targetPaceSecondsPerMile: 600 }),
+      mkEntry({ weekIndex: 0, weekday: 3, distanceMiles: 4, targetPaceSecondsPerMile: 605 }),
+      mkEntry({ weekIndex: 0, weekday: 6, distanceMiles: 12, targetPaceSecondsPerMile: 640, runType: "longRun" }),
+      mkEntry({ weekIndex: 0, weekday: 7, runType: "rest" }),
+    ];
+    expect(computePlanEasyPaceBaseline(entries)).toBeNull();
   });
 });
 
