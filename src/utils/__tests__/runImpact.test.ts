@@ -9,7 +9,9 @@ import {
   HALF_MARATHON_MILES,
   type PredictionRun,
 } from "@/utils/racePrediction";
+import { buildBestEffortSegments } from "@/utils/bestEffortExtraction";
 import { type HealthWorkout } from "@/types/healthWorkout";
+import { type MileSplit } from "@/utils/mileSplits";
 
 // 5K target: shorter targets only need ≥4 efforts (no HM long-run gate), so
 // the with/without fits are deterministic from small fixtures.
@@ -246,6 +248,51 @@ describe("computeRunImpact", () => {
     expect(impact).not.toBeNull();
     expect(impact.affectsProjection).toBe(false);
     expect(impact.deltaSeconds).toBeNull();
+  });
+
+  it("credits a run's own fast-finish segment even when another run's same-bucket segment is faster (fast-finish top-N ceiling fix)", () => {
+    // Real shape: two 6mi easy-start runs with a 2mi hard finish each, landing
+    // in the same rounded-distance ("2mi") bucket. June 13 is faster; July 7
+    // is the run under test — before the top-N fix its own segment was
+    // silently shut out of the ceiling by June 13's faster one.
+    const finishSplits = (lastTwoPace: number): MileSplit[] => [
+      { mile: 1, segmentMiles: 1, paceSecPerMile: 660, isPartial: false, avgBpm: 140 },
+      { mile: 2, segmentMiles: 1, paceSecPerMile: 660, isPartial: false, avgBpm: 138 },
+      { mile: 3, segmentMiles: 1, paceSecPerMile: 650, isPartial: false, avgBpm: 142 },
+      { mile: 4, segmentMiles: 1, paceSecPerMile: 640, isPartial: false, avgBpm: 148 },
+      { mile: 5, segmentMiles: 1, paceSecPerMile: lastTwoPace, isPartial: false, avgBpm: 156 },
+      { mile: 6, segmentMiles: 1, paceSecPerMile: lastTwoPace, isPartial: false, avgBpm: 161 },
+    ];
+    const june13: HealthWorkout = {
+      ...mkHW("june13", d("2026-06-13"), 6, 600, 150),
+      mileSplits: finishSplits(538),
+    };
+    const july7: HealthWorkout = {
+      ...mkHW("july7", d("2026-07-07"), 6, 600, 150),
+      mileSplits: finishSplits(559),
+    };
+    const asOf = d("2026-07-10");
+    const all = [...easyBase(), june13, july7];
+
+    const withSegs = buildBestEffortSegments(all, asOf, MAX_HR, REST_HR);
+    expect(
+      withSegs.some(
+        (s) => s.sourceWorkoutId === "july7" && s.segmentType === "fast-finish"
+      )
+    ).toBe(true);
+
+    const impact = computeRunImpact(
+      all,
+      "july7",
+      HALF_PARAMS,
+      MAX_HR,
+      REST_HR,
+      asOf
+    )!;
+    expect(impact).not.toBeNull();
+    expect(impact.affectsProjection).toBe(true);
+    expect(impact.deltaSeconds).not.toBeNull();
+    expect(impact.deltaSeconds).not.toBe(0);
   });
 });
 

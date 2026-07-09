@@ -100,6 +100,18 @@ export const HRR_GATE_THRESHOLD = 0.8;
  */
 export const FAST_FINISH_MIN_SEGMENT_MILES = 2;
 /**
+ * Per rounded-distance bucket, how many qualifying fast-finish segments
+ * {@link buildBestEffortSegments} keeps (fastest first) instead of only the
+ * single fastest. A run whose fast finish genuinely clears every gate
+ * shouldn't be shut out of the ceiling just because another run's fast finish
+ * at the same rounded distance happens to be marginally faster — both are
+ * legitimate race-gear evidence and deserve their own weighted point in the
+ * fit. Full-run and fixed-window continuous segments are NOT affected — they
+ * keep {@link selectCeilingEfforts}'s single-winner-per-bucket selection.
+ * JUDGMENT CALL, not derived — tune from production QA.
+ */
+export const FAST_FINISH_CEILING_TOP_N = 3;
+/**
  * Recency window (days) for best-effort CANDIDATES. Best efforts should reflect
  * CURRENT race gear, so extraction is bounded to recent runs (matches the base
  * fit's ordinary `daysBack` and the investigation's fit-eligible window). Without
@@ -412,9 +424,12 @@ export function selectCeilingEfforts(
  * the Run Detail impact tile, so they can never diverge: bound to the recent
  * window ({@link BEST_EFFORT_RECENCY_DAYS}), extract full-run + continuous +
  * fast-finish efforts at the gate, then reduce to the per-distance ceiling —
- * ≥5mi for full-run/fixed-window, ≥{@link FAST_FINISH_MIN_SEGMENT_MILES} for
- * fast-finish. Pure; no Firestore. Callers gate on target distance (half+ only)
- * before invoking.
+ * ≥5mi for full-run/fixed-window (single winner per bucket, via
+ * {@link selectCeilingEfforts}), ≥{@link FAST_FINISH_MIN_SEGMENT_MILES} for
+ * fast-finish (top {@link FAST_FINISH_CEILING_TOP_N} per bucket by pace, so a
+ * genuinely qualifying fast finish isn't shut out by one marginally-faster
+ * run at the same distance). Pure; no Firestore. Callers gate on target
+ * distance (half+ only) before invoking.
  * `asOf` sets the recency cutoff (pass the same reference used for the fit).
  */
 export function buildBestEffortSegments(
@@ -436,23 +451,35 @@ export function buildBestEffortSegments(
   // Two floors, one ceiling: full-run / fixed-window efforts keep the 5-mile
   // floor (short fast efforts steepen the Riegel exponent and bias the half
   // slow); fast-finish segments use their own shorter floor so a genuine 2–3
-  // mile hard finish survives. Merge fastest-per-rounded-distance so a
-  // fast-finish and a full-run at the same distance can't double-count.
+  // mile hard finish survives. Merge into buckets by rounded distance, then
+  // keep only the top FAST_FINISH_CEILING_TOP_N per bucket by pace — top-N,
+  // not winner-take-all, so a fast-finish and a full-run at the same distance
+  // still can't ALL double-count, but multiple runs with genuinely qualifying
+  // same-distance fast finishes aren't shut out by a single winner.
   const strong = selectCeilingEfforts(
     raw.filter((s) => s.segmentType !== "fast-finish"),
     5
   );
-  const fast = selectCeilingEfforts(
-    raw.filter((s) => s.segmentType === "fast-finish"),
-    FAST_FINISH_MIN_SEGMENT_MILES
+  const fastCandidates = raw.filter(
+    (s) =>
+      s.segmentType === "fast-finish" &&
+      s.distanceMiles >= FAST_FINISH_MIN_SEGMENT_MILES
   );
-  const byBucket = new Map<number, BestEffortSegment>();
-  for (const s of [...strong, ...fast]) {
+
+  const byBucket = new Map<number, BestEffortSegment[]>();
+  for (const s of [...strong, ...fastCandidates]) {
     const bucket = Math.round(s.distanceMiles);
-    const cur = byBucket.get(bucket);
-    if (!cur || s.paceSecPerMile < cur.paceSecPerMile) byBucket.set(bucket, s);
+    const arr = byBucket.get(bucket);
+    if (arr) arr.push(s);
+    else byBucket.set(bucket, [s]);
   }
-  return [...byBucket.values()].sort((a, b) => a.distanceMiles - b.distanceMiles);
+
+  const out: BestEffortSegment[] = [];
+  for (const arr of byBucket.values()) {
+    arr.sort((a, b) => a.paceSecPerMile - b.paceSecPerMile);
+    out.push(...arr.slice(0, FAST_FINISH_CEILING_TOP_N));
+  }
+  return out.sort((a, b) => a.distanceMiles - b.distanceMiles);
 }
 
 /**

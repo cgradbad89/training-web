@@ -9,6 +9,7 @@ import {
   MAX_PACE_ADJUSTMENT_PCT,
   HRR_GATE_THRESHOLD,
   FAST_FINISH_MIN_SEGMENT_MILES,
+  FAST_FINISH_CEILING_TOP_N,
   type BestEffortConfig,
 } from "@/utils/bestEffortExtraction";
 import { type HealthWorkout } from "@/types/healthWorkout";
@@ -278,6 +279,66 @@ describe("buildBestEffortSegments — dual floors", () => {
     const ff = segs.find((s) => s.segmentType === "fast-finish");
     expect(ff).toBeTruthy();
     expect(ff!.distanceMiles).toBeCloseTo(2.0, 2);
+  });
+
+  /** A 6mi easy-start run whose last 2 miles are a fast finish at `lastTwoPace`. */
+  function fastFinishRun(id: string, day: string, lastTwoPace: number): HealthWorkout {
+    return run({
+      workoutId: id,
+      startDate: new Date(`${day}T12:00:00Z`),
+      distanceMiles: 6,
+      durationSeconds: 3600,
+      avgHeartRate: 150, // below the full-run gate — only the finish clears it
+      mileSplits: mileSplitsFrom([
+        { pace: 660, bpm: 140 },
+        { pace: 660, bpm: 138 },
+        { pace: 650, bpm: 142 },
+        { pace: 640, bpm: 148 },
+        { pace: lastTwoPace, bpm: 156 },
+        { pace: lastTwoPace, bpm: 161 },
+      ]),
+    });
+  }
+
+  it("keeps the top FAST_FINISH_CEILING_TOP_N (3) fast-finish segments in a 4-way bucket collision, drops the slowest", () => {
+    expect(FAST_FINISH_CEILING_TOP_N).toBe(3);
+    const asOf = new Date("2026-07-10T12:00:00Z");
+    const runs = [
+      fastFinishRun("r1", "2026-06-01", 500), // fastest
+      fastFinishRun("r2", "2026-06-05", 510),
+      fastFinishRun("r3", "2026-06-10", 520),
+      fastFinishRun("r4", "2026-06-15", 530), // slowest — dropped
+    ];
+    const segs = buildBestEffortSegments(runs, asOf, 175, 65);
+    const ff = segs.filter((s) => s.segmentType === "fast-finish");
+    expect(ff.map((s) => s.sourceWorkoutId).sort()).toEqual(["r1", "r2", "r3"]);
+  });
+
+  it("keeps all qualifying fast-finish segments in a bucket with ≤3 (regression-safe, no collision)", () => {
+    const asOf = new Date("2026-07-10T12:00:00Z");
+    const runs = [
+      fastFinishRun("r1", "2026-06-01", 500),
+      fastFinishRun("r2", "2026-06-10", 520),
+    ];
+    const segs = buildBestEffortSegments(runs, asOf, 175, 65);
+    const ff = segs.filter((s) => s.segmentType === "fast-finish");
+    expect(ff.map((s) => s.sourceWorkoutId).sort()).toEqual(["r1", "r2"]);
+  });
+
+  it("the real June 13 / July 7 near-tied pair (2.0045/2.0046mi, 538/559 s/mi) both survive in the 2-mile bucket", () => {
+    const asOf = new Date("2026-07-10T12:00:00Z");
+    // Jun 13 (DF0C6EEF...) — bucket-fastest at ~538 s/mi.
+    const june13 = fastFinishRun("DF0C6EEF", "2026-06-13", 538);
+    // Jul 7 (E218377E...) — ~559 s/mi, slower but fully clears every gate.
+    const july7 = fastFinishRun("E218377E", "2026-07-07", 559);
+    const segs = buildBestEffortSegments([june13, july7], asOf, 175, 65);
+    const ff = segs.filter((s) => s.segmentType === "fast-finish");
+    expect(ff.map((s) => s.sourceWorkoutId).sort()).toEqual([
+      "DF0C6EEF",
+      "E218377E",
+    ]);
+    // Both land in the same rounded-distance bucket — the actual collision.
+    expect(ff.every((s) => Math.round(s.distanceMiles) === 2)).toBe(true);
   });
 });
 
