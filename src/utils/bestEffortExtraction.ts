@@ -512,7 +512,6 @@ export function bestEffortsToEffortPoints(
       isTreadmill: false,
       tier,
       weightMultiplier,
-      isFastFinish: s.segmentType === "fast-finish",
     };
   });
 }

@@ -23,7 +23,6 @@ import {
 } from "@/utils/riegelFit";
 import {
   bestEffortsToEffortPoints,
-  FAST_FINISH_MIN_SEGMENT_MILES,
   type BestEffortSegment,
 } from "@/utils/bestEffortExtraction";
 import { parseLocalDate } from "@/utils/dates";
@@ -109,27 +108,10 @@ export function predictRaceTime(
     ...(extraEfforts ?? []),
   ];
 
-  // fastFinishMinMiles is passed to BOTH branches so a fast-finish segment
-  // always only needs its own FAST_FINISH_MIN_SEGMENT_MILES floor to enter the
-  // fit, regardless of the target-distance minMilesForFit — every other effort
-  // type (base runs, race anchors, full-run/continuous-segment best efforts)
-  // is unaffected, since only isFastFinish-tagged points use this floor.
   const fit =
     raceDistanceMiles >= HALF_MARATHON_MILES
-      ? fitRiegel(
-          efforts,
-          raceDistanceMiles,
-          3.0,
-          { min: 1.04, max: 1.1 },
-          FAST_FINISH_MIN_SEGMENT_MILES
-        )
-      : fitRiegel(
-          efforts,
-          raceDistanceMiles,
-          0,
-          { min: 0.9, max: 1.3 },
-          FAST_FINISH_MIN_SEGMENT_MILES
-        );
+      ? fitRiegel(efforts, raceDistanceMiles, 3.0, { min: 1.04, max: 1.1 })
+      : fitRiegel(efforts, raceDistanceMiles, 0, { min: 0.9, max: 1.3 });
 
   return {
     fit,

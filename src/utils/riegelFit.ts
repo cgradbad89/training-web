@@ -36,13 +36,6 @@ export interface EffortPoint {
    *  best-effort segments enough weight to act as the fit's primary signal while
    *  the ordinary training runs remain corroboration. See bestEffortExtraction.ts. */
   weightMultiplier?: number
-  /** True for a `fast-finish` best-effort segment (see bestEffortExtraction.ts).
-   *  `tier` alone can't distinguish it — every best-effort type is tagged the
-   *  same generic QUALITY tier. Lets `fitRiegel`'s `fastFinishMinMiles` param
-   *  apply its own (shorter) regression-entry floor to JUST this effort,
-   *  instead of the target-distance `minMilesForFit` every other effort type
-   *  (base runs, race anchors, full-run/continuous-segment best efforts) uses. */
-  isFastFinish?: boolean
 }
 
 export interface RiegelFit {
@@ -213,22 +206,9 @@ export function fitRiegel(
   efforts: EffortPoint[],
   targetMiles: number,
   minMilesForFit = 0,
-  clampK?: { min: number; max: number },
-  /**
-   * Regression-entry floor applied to `isFastFinish` efforts INSTEAD of
-   * `minMilesForFit` — undefined (default) leaves fast-finish efforts subject
-   * to the same `minMilesForFit` as everything else, so existing callers that
-   * don't pass this are byte-for-byte unchanged. Every other effort type
-   * (base/BASELINE, race anchors, full-run/continuous-segment best efforts)
-   * always uses `minMilesForFit`, regardless of this param.
-   */
-  fastFinishMinMiles?: number
+  clampK?: { min: number; max: number }
 ): RiegelFit | null {
-  const filtered = efforts.filter(e =>
-    e.isFastFinish && fastFinishMinMiles != null
-      ? e.distanceMiles >= fastFinishMinMiles
-      : e.distanceMiles >= minMilesForFit
-  )
+  const filtered = efforts.filter(e => e.distanceMiles >= minMilesForFit)
   if (filtered.length < 4) return null
 
   // For half/marathon: require 2+ medium-long runs in last 35 days AND longest ≥ 6

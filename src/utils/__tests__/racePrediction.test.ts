@@ -7,17 +7,13 @@ import {
 import {
   predictRaceTime,
   buildPredictionTrend,
-  HALF_MARATHON_MILES,
   type PredictionRun,
 } from "@/utils/racePrediction";
-import { FAST_FINISH_MIN_SEGMENT_MILES, type BestEffortSegment } from "@/utils/bestEffortExtraction";
 import { type RunningPlan } from "@/types/plan";
 
 // 5K target keeps the fixtures simple: shorter targets only need ≥4 efforts
 // (no half-marathon long-run gate), so fits are easy to make deterministic.
 const FIVE_K = 3.10686;
-const TEN_K = 10.0;
-const MARATHON = 26.219;
 
 function mkRun(
   id: string,
@@ -124,109 +120,6 @@ describe("predictRaceTime", () => {
     expect(early).not.toBeNull();
     expect(later).not.toBeNull();
     expect(early!).toBeGreaterThan(later!); // earlier = slower
-  });
-});
-
-// ─── fastFinishMinMiles wiring (fast-finish bypass of minMilesForFit) ─────────
-//
-// Half-marathon-gate-satisfying base: 4 BASELINE runs ≥4mi with a recent ≥6mi
-// run within 35d, so the half+ "2 medium-long + longest≥6" gate passes without
-// a RACE anchor — mirrors riegelFit.test.ts's halfGateBase, as PredictionRuns.
-describe("predictRaceTime — fastFinishMinMiles wiring", () => {
-  const HALF_ASOF = d("2026-06-01");
-  const HALF_FIXTURE: PredictionRun[] = [
-    mkRun("h1", d("2026-05-27"), 6, 570),
-    mkRun("h2", d("2026-05-22"), 5, 580),
-    mkRun("h3", d("2026-05-17"), 4, 590),
-    mkRun("h4", d("2026-05-12"), 8, 600),
-  ];
-
-  function ffSegment(overrides: Partial<BestEffortSegment> = {}): BestEffortSegment {
-    return {
-      sourceWorkoutId: "ff1",
-      date: "2026-05-30",
-      distanceMiles: FAST_FINISH_MIN_SEGMENT_MILES, // 2.0
-      paceSecPerMile: 559,
-      avgHrrPercent: 0.852,
-      segmentType: "fast-finish",
-      ...overrides,
-    };
-  }
-
-  it("a fast-finish segment now genuinely reaches and moves the half-marathon fit (previously entirely inert)", () => {
-    const params = { raceDistanceMiles: HALF_MARATHON_MILES, races: [] };
-    const without = predictRaceTime(HALF_FIXTURE, params, HALF_ASOF);
-    const withSeg = predictRaceTime(
-      HALF_FIXTURE,
-      { ...params, bestEffortSegments: [ffSegment()] },
-      HALF_ASOF,
-    );
-    expect(without.fit).not.toBeNull();
-    expect(withSeg.fit).not.toBeNull();
-    expect(withSeg.fit!.n).toBe(without.fit!.n + 1); // the 2mi segment survived
-    expect(withSeg.fit!.minMiles).toBe(2);
-    expect(withSeg.predictedSeconds).not.toBeNull();
-    expect(withSeg.predictedSeconds).not.toBe(without.predictedSeconds); // genuinely moved the fit
-  });
-
-  it("a fast-finish segment for a marathon target also reaches the fit (long branch, same minMilesForFit=3.0 as half)", () => {
-    const params = { raceDistanceMiles: MARATHON, races: [] };
-    const without = predictRaceTime(HALF_FIXTURE, params, HALF_ASOF);
-    const withSeg = predictRaceTime(
-      HALF_FIXTURE,
-      { ...params, bestEffortSegments: [ffSegment()] },
-      HALF_ASOF,
-    );
-    expect(without.fit).not.toBeNull();
-    expect(withSeg.fit!.n).toBe(without.fit!.n + 1);
-    expect(withSeg.fit!.minMiles).toBe(2);
-  });
-
-  it("a full-run best-effort segment (non-fast-finish) is still excluded under 3mi for half+ targets — regression, unaffected by this change", () => {
-    const shortFullRun: BestEffortSegment = {
-      sourceWorkoutId: "fr1",
-      date: "2026-05-30",
-      distanceMiles: 2.5, // < minMilesForFit(3.0), NOT fast-finish
-      paceSecPerMile: 560,
-      avgHrrPercent: 0.85,
-      segmentType: "full-run",
-    };
-    const params = { raceDistanceMiles: HALF_MARATHON_MILES, races: [] };
-    const without = predictRaceTime(HALF_FIXTURE, params, HALF_ASOF);
-    const withSeg = predictRaceTime(
-      HALF_FIXTURE,
-      { ...params, bestEffortSegments: [shortFullRun] },
-      HALF_ASOF,
-    );
-    expect(withSeg.fit!.n).toBe(without.fit!.n); // still excluded, n unchanged
-  });
-
-  it("5K target predictions are unaffected — exact reproduction of the raw pipeline with no fast-finish segments", () => {
-    const efforts = buildQualifyingEfforts(FIXTURE, { daysBack: 56, races: [], asOf: ASOF });
-    const expectedFit = fitRiegel(efforts, FIVE_K, 0, { min: 0.9, max: 1.3 }); // pre-fix 4-arg call
-    const got = predictRaceTime(FIXTURE, { raceDistanceMiles: FIVE_K, races: [] }, ASOF);
-    expect(got.fit).toEqual(expectedFit);
-  });
-
-  it("10K target predictions are unaffected — exact reproduction of the raw pipeline with no fast-finish segments", () => {
-    const efforts = buildQualifyingEfforts(FIXTURE, { daysBack: 56, races: [], asOf: ASOF });
-    const expectedFit = fitRiegel(efforts, TEN_K, 0, { min: 0.9, max: 1.3 });
-    const got = predictRaceTime(FIXTURE, { raceDistanceMiles: TEN_K, races: [] }, ASOF);
-    expect(got.fit).toEqual(expectedFit);
-  });
-
-  it("half-marathon target predictions are unaffected when no fast-finish segments are present — exact reproduction", () => {
-    const efforts = buildQualifyingEfforts(HALF_FIXTURE, { daysBack: 56, races: [], asOf: HALF_ASOF });
-    const expectedFit = fitRiegel(efforts, HALF_MARATHON_MILES, 3.0, { min: 1.04, max: 1.1 });
-    const got = predictRaceTime(HALF_FIXTURE, { raceDistanceMiles: HALF_MARATHON_MILES, races: [] }, HALF_ASOF);
-    expect(got.fit).toEqual(expectedFit);
-  });
-
-  it("marathon target predictions are unaffected when no fast-finish segments are present — exact reproduction", () => {
-    const efforts = buildQualifyingEfforts(HALF_FIXTURE, { daysBack: 56, races: [], asOf: HALF_ASOF });
-    const expectedFit = fitRiegel(efforts, MARATHON, 3.0, { min: 1.04, max: 1.1 });
-    const got = predictRaceTime(HALF_FIXTURE, { raceDistanceMiles: MARATHON, races: [] }, HALF_ASOF);
-    expect(got.fit).toEqual(expectedFit);
   });
 });
 
