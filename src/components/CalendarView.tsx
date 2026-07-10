@@ -10,7 +10,7 @@ import {
   type PlannedRunEntry,
 } from "@/types/plan";
 import type { HealthWorkout } from "@/types/healthWorkout";
-import { matchPlanToActual, type PlanMatch } from "@/utils/planMatching";
+import { type RunEntryStatus } from "@/utils/planMatching";
 import { buildCalendarEvents, type CalendarEvent } from "@/utils/planCalendar";
 import { weekStart } from "@/utils/dates";
 import { WeekCalendar, EventPill } from "@/components/WeekCalendar";
@@ -136,24 +136,11 @@ export function CalendarView({ plans, actualRuns = [] }: CalendarViewProps) {
   const [selectedSession, setSelectedSession] = useState<{
     entry: PlannedRunEntry;
     matchedRun: HealthWorkout | null;
+    status: RunEntryStatus;
     date: Date;
   } | null>(null);
 
   const events = useMemo(() => buildCalendarEvents(plans, actualRuns), [plans, actualRuns]);
-
-  // Per-running-plan match maps (entryId → matched run), reusing the canonical
-  // matcher over the already-loaded workouts — no new Firestore reads. Keyed by
-  // planId so a clicked running pill resolves to the same match the pill's
-  // ✓ "completed" state was derived from.
-  const runningMatchMaps = useMemo(() => {
-    const maps = new Map<string, Map<string, PlanMatch | null>>();
-    for (const plan of plans) {
-      if (plan.status === "active" && isRunningPlan(plan)) {
-        maps.set(plan.id, matchPlanToActual(plan, actualRuns));
-      }
-    }
-    return maps;
-  }, [plans, actualRuns]);
 
   const hasActivePlans = plans.some((p) => p.status === "active");
 
@@ -187,16 +174,20 @@ export function CalendarView({ plans, actualRuns = [] }: CalendarViewProps) {
       return;
     }
     // Running pills open the planned-vs-actual modal. Resolve the planned entry
-    // and its matched run from already-loaded data (no new Firestore fetch).
+    // from already-loaded data; the matched activity + status come straight off
+    // the event (computed once in buildCalendarEvents) — no new Firestore fetch.
     const plan = plans.find((p) => p.id === event.planId);
     if (!plan || !isRunningPlan(plan)) return;
     const entry = plan.weeks
       .flatMap((w) => w.entries)
       .find((e) => e.id === event.entryId);
     if (!entry) return;
-    const matchedRun =
-      runningMatchMaps.get(event.planId)?.get(entry.id)?.activity ?? null;
-    setSelectedSession({ entry, matchedRun, date: event.date });
+    setSelectedSession({
+      entry,
+      matchedRun: event.activity ?? null,
+      status: event.status ?? "upcoming",
+      date: event.date,
+    });
   }
 
   if (!hasActivePlans) {
@@ -270,6 +261,7 @@ export function CalendarView({ plans, actualRuns = [] }: CalendarViewProps) {
         onClose={() => setSelectedSession(null)}
         plannedEntry={selectedSession.entry}
         matchedRun={selectedSession.matchedRun}
+        status={selectedSession.status}
         sessionDate={selectedSession.date}
       />
     )}

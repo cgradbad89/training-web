@@ -17,6 +17,7 @@ import { type HealthWorkout } from "@/types/healthWorkout";
 import { fetchRoutePoints, type RoutePoint } from "@/services/routes";
 import { computeMileSplits, type MileSplit } from "@/utils/mileSplits";
 import { formatPace, formatDuration } from "@/utils/pace";
+import { type RunEntryStatus } from "@/utils/planMatching";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -27,9 +28,21 @@ interface RunActivityModalProps {
   plannedEntry: PlannedRunEntry;
   /** Actual matched run, if any. Absent/null ⇒ the session is still upcoming. */
   matchedRun?: HealthWorkout | null;
+  /** Four-state completion status (met/partial/missed/upcoming) — drives the header badge. */
+  status: RunEntryStatus;
   /** Calendar date of this planned session. */
   sessionDate: Date;
 }
+
+const STATUS_BADGE: Record<RunEntryStatus, { label: string; className: string }> = {
+  met: { label: "Completed", className: "bg-success/15 text-success" },
+  partial: { label: "Incomplete", className: "bg-warning/15 text-warning" },
+  missed: { label: "Missed", className: "bg-danger/15 text-danger" },
+  upcoming: {
+    label: "Upcoming",
+    className: "bg-surface text-textSecondary border border-border",
+  },
+};
 
 // ─── Label helpers ──────────────────────────────────────────────────────────
 
@@ -102,6 +115,7 @@ export function RunActivityModal({
   onClose,
   plannedEntry,
   matchedRun,
+  status,
   sessionDate,
 }: RunActivityModalProps): React.JSX.Element | null {
   const { user } = useAuth();
@@ -240,15 +254,11 @@ export function RunActivityModal({
               >
                 {typeLabel}
               </h2>
-              {hasMatch ? (
-                <span className="text-[10px] bg-success/15 text-success px-2 py-0.5 rounded-full font-semibold">
-                  Completed
-                </span>
-              ) : (
-                <span className="text-[10px] bg-surface text-textSecondary border border-border px-2 py-0.5 rounded-full font-semibold">
-                  Upcoming
-                </span>
-              )}
+              <span
+                className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${STATUS_BADGE[status].className}`}
+              >
+                {STATUS_BADGE[status].label}
+              </span>
             </div>
             <p className="text-xs text-textSecondary mt-0.5">{dateLabel}</p>
           </div>

@@ -14,9 +14,10 @@ import {
   buildCalendarEvents,
   type CalendarEvent,
 } from "@/utils/planCalendar";
-import { matchPlanToActual } from "@/utils/planMatching";
 import { weekStart as getWeekStart } from "@/utils/dates";
+import { type RunEntryStatus } from "@/utils/planMatching";
 import { RunActivityModal } from "@/components/runs/RunActivityModal";
+import { RunStatusIcon } from "@/components/RunStatusIcon";
 
 // ─── Color helpers ────────────────────────────────────────────────────────────
 
@@ -70,14 +71,24 @@ export function EventPill({
   event: CalendarEvent;
   onClick: () => void;
 }) {
+  // Running events carry a four-state `status` (met/partial/missed/upcoming)
+  // computed via statusForRunEntry. Workout events have no mileage-matched
+  // status concept — they keep the original checkmark + dimming treatment
+  // driven by their stored `completed` boolean.
   return (
     <div
       onClick={onClick}
-      className={`rounded px-1.5 py-0.5 text-xs cursor-pointer truncate leading-tight ${eventPillClass(event)} ${event.completed ? "opacity-60" : ""}`}
+      className={`rounded px-1.5 py-0.5 text-xs cursor-pointer truncate leading-tight flex items-center gap-1 ${eventPillClass(event)} ${event.status == null && event.completed ? "opacity-60" : ""}`}
     >
-      {event.completed && "✓ "}
-      {event.label}
-      {event.distanceMiles != null && ` · ${event.distanceMiles.toFixed(1)} mi`}
+      {event.status != null ? (
+        <RunStatusIcon status={event.status} size={12} />
+      ) : (
+        event.completed && "✓ "
+      )}
+      <span className="truncate">
+        {event.label}
+        {event.distanceMiles != null && ` · ${event.distanceMiles.toFixed(1)} mi`}
+      </span>
     </div>
   );
 }
@@ -123,6 +134,7 @@ export function WeekCalendar({
   const [selectedMatchedRun, setSelectedMatchedRun] =
     useState<HealthWorkout | null>(null);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+  const [selectedStatus, setSelectedStatus] = useState<RunEntryStatus>("upcoming");
 
   const monday = useMemo(
     () => weekStart ?? getWeekStart(new Date()),
@@ -152,9 +164,10 @@ export function WeekCalendar({
       return;
     }
     // Running event → open the planned-vs-actual RunActivityModal in place of
-    // the old router.push("/plans"). The full PlannedRunEntry + matched run are
-    // looked up from the already-loaded plans/actualRuns props (no new fetch);
-    // bail quietly if either can't be resolved.
+    // the old router.push("/plans"). The full PlannedRunEntry is looked up from
+    // the already-loaded plans prop; the matched activity + status come
+    // straight off the event (computed once in buildCalendarEvents) — no
+    // second matchPlanToActual call needed.
     const plan = plans.find((p) => p.id === event.planId);
     if (!plan || !isRunningPlan(plan)) return;
     let entry: PlannedRunEntry | undefined;
@@ -163,10 +176,9 @@ export function WeekCalendar({
       if (entry) break;
     }
     if (!entry) return;
-    const matchedRun =
-      matchPlanToActual(plan, actualRuns).get(entry.id)?.activity ?? null;
     setSelectedEntry(entry);
-    setSelectedMatchedRun(matchedRun);
+    setSelectedMatchedRun(event.activity ?? null);
+    setSelectedStatus(event.status ?? "upcoming");
     setSelectedDate(event.date);
     setModalOpen(true);
   }
@@ -222,6 +234,7 @@ export function WeekCalendar({
         onClose={() => setModalOpen(false)}
         plannedEntry={selectedEntry}
         matchedRun={selectedMatchedRun}
+        status={selectedStatus}
         sessionDate={selectedDate}
       />
     )}

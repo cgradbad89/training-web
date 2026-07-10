@@ -643,6 +643,7 @@ function PlanProgressCard({ activePlan, workouts, weekStart, weekEnd }: PlanProg
   const [selectedSession, setSelectedSession] = useState<{
     entry: PlannedRunEntry;
     matchedRun: HealthWorkout | null;
+    status: RunStatus;
     date: Date;
   } | null>(null);
 
@@ -734,6 +735,7 @@ function PlanProgressCard({ activePlan, workouts, weekStart, weekEnd }: PlanProg
               setSelectedSession({
                 entry,
                 matchedRun: matchMap.get(entry.id)?.activity ?? null,
+                status,
                 date,
               });
             };
@@ -782,6 +784,7 @@ function PlanProgressCard({ activePlan, workouts, weekStart, weekEnd }: PlanProg
         onClose={() => setSelectedSession(null)}
         plannedEntry={selectedSession.entry}
         matchedRun={selectedSession.matchedRun}
+        status={selectedSession.status}
         sessionDate={selectedSession.date}
       />
     )}

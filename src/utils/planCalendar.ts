@@ -1,5 +1,9 @@
 import type { RunningPlan, WorkoutPlan, WorkoutCategory } from "@/types/plan";
-import { matchPlanToActual } from "@/utils/planMatching";
+import {
+  matchPlanToActual,
+  statusForRunEntry,
+  type RunEntryStatus,
+} from "@/utils/planMatching";
 import type { HealthWorkout } from "@/types/healthWorkout";
 
 export interface CalendarEvent {
@@ -22,8 +26,20 @@ export interface CalendarEvent {
   label: string;
   distanceMiles?: number;
   category?: WorkoutCategory;
+  /** @deprecated Kept for backward compat (true on ANY match, any quality).
+   *  Running events should prefer `status`; workout events have no `status`
+   *  (their completion isn't mileage-matched) and still rely on this field. */
   completed: boolean;
   isRestDay: boolean;
+  /**
+   * Four-state completion status, present ONLY for running events (mirrors
+   * `statusForRunEntry`). Workout events have no mileage-based match concept
+   * (completion is the entry's own stored `completed` boolean) and leave
+   * this undefined.
+   */
+  status?: RunEntryStatus;
+  /** The matched actual run for a running event, if any (undefined for workout events). */
+  activity?: HealthWorkout | null;
 }
 
 const RUN_TYPE_LABELS: Record<string, string> = {
@@ -91,6 +107,7 @@ export function buildCalendarEvents(
           const label =
             entry.description ??
             (entry.runType ? (RUN_TYPE_LABELS[entry.runType] ?? entry.runType) : "Run");
+          const match = matchMap.get(entry.id) ?? null;
           events.push({
             date: sessionDate(plan.startDate, entry.weekIndex, dayIndex),
             entryId: entry.id,
@@ -103,8 +120,10 @@ export function buildCalendarEvents(
             sessionIndex,
             label,
             distanceMiles: entry.distanceMiles,
-            completed: matchMap.get(entry.id) != null,
+            completed: match != null,
             isRestDay: false,
+            status: statusForRunEntry(plan, entry, matchMap),
+            activity: match?.activity ?? null,
           });
         }
       }
