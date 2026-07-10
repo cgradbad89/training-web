@@ -365,5 +365,41 @@ describe("bestEffortsToEffortPoints", () => {
     // timeSeconds reflects the PROJECTED pace (576/mi × 5mi), not the raw 600.
     expect(p.timeSeconds).toBeCloseTo(576 * 5, 0);
     expect(p.ageDays).toBeCloseTo(10, 0);
+    // full-run is NOT a fast-finish segment.
+    expect(p.isFastFinish).toBe(false);
+  });
+
+  it("tags isFastFinish=true only for fast-finish segments, false for full-run/continuous-segment", () => {
+    const now = new Date("2026-06-20T12:00:00Z");
+    const points = bestEffortsToEffortPoints(
+      [
+        {
+          sourceWorkoutId: "w1",
+          date: "2026-06-10",
+          distanceMiles: 6,
+          paceSecPerMile: 580,
+          avgHrrPercent: 0.85,
+          segmentType: "full-run",
+        },
+        {
+          sourceWorkoutId: "w2",
+          date: "2026-06-10",
+          distanceMiles: 5,
+          paceSecPerMile: 590,
+          avgHrrPercent: 0.85,
+          segmentType: "continuous-segment",
+        },
+        {
+          sourceWorkoutId: "w3",
+          date: "2026-06-10",
+          distanceMiles: 2,
+          paceSecPerMile: 559,
+          avgHrrPercent: 0.85,
+          segmentType: "fast-finish",
+        },
+      ],
+      now
+    );
+    expect(points.map((p) => p.isFastFinish)).toEqual([false, false, true]);
   });
 });
