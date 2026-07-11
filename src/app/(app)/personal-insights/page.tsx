@@ -1,17 +1,8 @@
 "use client";
 
 import React, { useState, useEffect, useMemo } from "react";
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  CartesianGrid,
-  ResponsiveContainer,
-  Legend,
-  ReferenceLine,
-} from "recharts";
+import dynamic from "next/dynamic";
+import { ChartSkeleton } from "@/components/ui/ChartSkeleton";
 import {
   ChevronLeft,
   ChevronRight,
@@ -25,12 +16,10 @@ import {
 import { useRouter } from "next/navigation";
 
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
-import { PaceByDistanceSection } from "./PaceByDistanceSection";
 // Best Efforts hidden per product decision (restore with the render block below).
 // import { BestEffortsSection } from "./BestEffortsSection";
 import { type PaceRangeRun } from "@/lib/paceRangeTrend";
 import { MetricBadge } from "@/components/ui/MetricBadge";
-import { WorkoutTrendsSection } from "@/components/WorkoutTrendsSection";
 import { useAuth } from "@/hooks/useAuth";
 import { useAppData } from "@/contexts/AppDataContext";
 import {
@@ -74,7 +63,6 @@ import {
   type HRZoneNumber,
 } from "@/utils/trainingLoad";
 import { InfoTooltip } from "@/components/ui/InfoTooltip";
-import { WeeklyLoadTile } from "@/components/charts/WeeklyLoadTile";
 import {
   buildWeeklyLoadModel,
   type WeeklyLoadModel,
@@ -151,6 +139,39 @@ import {
   where,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+
+// Recharts-backed sections/charts are lazy-loaded (client-only) so this
+// chart-heavy route ships less JS on initial load. Each renders a ChartSkeleton
+// placeholder while its chunk streams in. The three "…Chart" wrappers are the
+// page's own inline charts extracted verbatim (props/behavior/colors unchanged);
+// the section components are lazy-imported at their existing call sites.
+const PaceByDistanceSection = dynamic(
+  () => import("./PaceByDistanceSection").then((m) => m.PaceByDistanceSection),
+  { ssr: false, loading: () => <ChartSkeleton height={400} /> },
+);
+const WorkoutTrendsSection = dynamic(
+  () =>
+    import("@/components/WorkoutTrendsSection").then(
+      (m) => m.WorkoutTrendsSection,
+    ),
+  { ssr: false, loading: () => <ChartSkeleton height={300} /> },
+);
+const WeeklyLoadTile = dynamic(
+  () => import("@/components/charts/WeeklyLoadTile").then((m) => m.WeeklyLoadTile),
+  { ssr: false, loading: () => <ChartSkeleton height={400} /> },
+);
+const FitnessCurveChart = dynamic(
+  () => import("./FitnessCurveChart").then((m) => m.FitnessCurveChart),
+  { ssr: false, loading: () => <ChartSkeleton height={220} /> },
+);
+const Vo2TrendChart = dynamic(
+  () => import("./Vo2TrendChart").then((m) => m.Vo2TrendChart),
+  { ssr: false, loading: () => <ChartSkeleton height={160} /> },
+);
+const PaceTrendChart = dynamic(
+  () => import("./PaceTrendChart").then((m) => m.PaceTrendChart),
+  { ssr: false, loading: () => <ChartSkeleton height={220} /> },
+);
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -295,14 +316,6 @@ function signedRound(n: number): string {
   // Use a real minus sign for negative for typographic consistency.
   if (r < 0) return `−${Math.abs(r)}`;
   return "0";
-}
-
-function shortDateLabel(iso: string): string {
-  const [y, m, d] = iso.split("-").map((p) => parseInt(p, 10));
-  return new Date(y, m - 1, d).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-  });
 }
 
 // Zone palette — extends the TrainingLoadBadge low/moderate/hard/very-hard
@@ -745,94 +758,7 @@ function TrainingLoadSection({
           gap is your form.
         </p>
         {hasLoadData ? (
-          <ResponsiveContainer width="100%" height={220}>
-            <LineChart
-              data={chartData}
-              margin={{ top: 4, right: 8, bottom: 0, left: 8 }}
-            >
-              <CartesianGrid
-                strokeDasharray="3 3"
-                vertical={false}
-                stroke="var(--color-border)"
-              />
-              <XAxis
-                dataKey="date"
-                tick={{ fontSize: 10 }}
-                axisLine={false}
-                tickLine={false}
-                interval={6}
-                tickFormatter={(v: string) => shortDateLabel(v)}
-              />
-              <YAxis
-                domain={[0, "dataMax + 10"]}
-                tick={{ fontSize: 10 }}
-                axisLine={false}
-                tickLine={false}
-                width={40}
-              />
-              <Tooltip
-                labelFormatter={(l) => shortDateLabel(String(l))}
-                formatter={(value, name) => {
-                  const label =
-                    name === "ctl"
-                      ? "Fitness (CTL)"
-                      : name === "atl"
-                        ? "Fatigue (ATL)"
-                        : "Form (TSB)";
-                  const num = Number(value);
-                  const display =
-                    name === "tsb" ? signedRound(num) : String(Math.round(num));
-                  return [display, label];
-                }}
-                contentStyle={{
-                  fontSize: 12,
-                  backgroundColor: "var(--color-chart-tooltip-bg)",
-                  border: "1px solid var(--color-border)",
-                  borderRadius: "0.375rem",
-                  color: "var(--color-textPrimary)",
-                }}
-                labelStyle={{ color: "var(--color-textSecondary)" }}
-                itemStyle={{ color: "var(--color-textPrimary)" }}
-              />
-              <Legend
-                wrapperStyle={{ fontSize: 11 }}
-                formatter={(value) =>
-                  value === "ctl"
-                    ? "Fitness (CTL)"
-                    : value === "atl"
-                      ? "Fatigue (ATL)"
-                      : value
-                }
-              />
-              <Line
-                type="monotone"
-                dataKey="ctl"
-                stroke="var(--color-chart-primary)"
-                strokeWidth={2}
-                dot={false}
-                name="ctl"
-              />
-              <Line
-                type="monotone"
-                dataKey="atl"
-                stroke="var(--color-chart-orange)"
-                strokeWidth={2}
-                dot={false}
-                name="atl"
-              />
-              {/* TSB is computed but rendered only in tooltip — wired via an
-                  invisible line so Recharts includes it in payload. */}
-              <Line
-                type="monotone"
-                dataKey="tsb"
-                stroke="transparent"
-                strokeWidth={0}
-                dot={false}
-                legendType="none"
-                name="tsb"
-              />
-            </LineChart>
-          </ResponsiveContainer>
+          <FitnessCurveChart data={chartData} />
         ) : (
           <p className="text-sm text-textSecondary text-center py-6">
             Not enough HR-bearing activity yet to plot fitness and fatigue.
@@ -1072,58 +998,7 @@ function CardioFitnessCard({
             No recent Cardio Fitness data — Apple Watch generates readings after outdoor workouts.
           </p>
         ) : (
-        <ResponsiveContainer width="100%" height={160}>
-          <LineChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: 8 }}>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-border)" />
-            <XAxis
-              dataKey="date"
-              tick={{ fontSize: 10 }}
-              axisLine={false}
-              tickLine={false}
-              interval="preserveStartEnd"
-              minTickGap={32}
-            />
-            <YAxis
-              domain={[(min: number) => Math.floor(min - 2), (max: number) => Math.ceil(max + 2)]}
-              tick={{ fontSize: 10 }}
-              axisLine={false}
-              tickLine={false}
-              width={36}
-            />
-            <Tooltip
-              formatter={(v) => [`${Number(v).toFixed(1)} ml/kg·min`, 'VO₂ max']}
-              contentStyle={{
-                fontSize: 12,
-                backgroundColor: 'var(--color-chart-tooltip-bg)',
-                border: '1px solid var(--color-border)',
-                borderRadius: '0.375rem',
-                color: 'var(--color-textPrimary)',
-              }}
-              labelStyle={{ color: 'var(--color-textSecondary)' }}
-              itemStyle={{ color: 'var(--color-textPrimary)' }}
-            />
-            <ReferenceLine
-              y={41.0}
-              stroke="#639922"
-              strokeDasharray="4 4"
-              strokeOpacity={0.5}
-              label={{
-                value: 'avg',
-                position: 'right',
-                fill: '#639922',
-                fontSize: 10,
-              }}
-            />
-            <Line
-              type="monotone"
-              dataKey="value"
-              stroke="var(--color-chart-primary)"
-              strokeWidth={2}
-              dot={{ r: 3 }}
-              name="value"
-            />
-          </LineChart>
-        </ResponsiveContainer>
+          <Vo2TrendChart data={chartData} />
         )}
         <div className="flex items-center justify-center gap-4 mt-2 text-[11px] text-textSecondary">
           <span className="inline-flex items-center gap-1.5">
@@ -1909,67 +1784,7 @@ export default function PersonalInsightsPage() {
 
       {hasPaceTrend ? (
         <Card>
-          <ResponsiveContainer width="100%" height={220}>
-            <LineChart data={paceTrendData} margin={{ top: 4, right: 8, bottom: 0, left: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-border)" />
-              <XAxis dataKey="label" tick={{ fontSize: 10 }} axisLine={false} tickLine={false} />
-              <YAxis
-                domain={["dataMin - 30", "dataMax + 30"]}
-                reversed
-                tick={{ fontSize: 10 }}
-                axisLine={false}
-                tickLine={false}
-                tickFormatter={(v: number) => formatPaceLabel(v)}
-                width={50}
-              />
-              <Tooltip
-                formatter={(v) => [formatPaceLabel(Number(v)) + " /mi"]}
-                labelFormatter={(l) => `Week of ${l}`}
-                contentStyle={{
-                  fontSize: 12,
-                  backgroundColor: 'var(--color-chart-tooltip-bg)',
-                  border: '1px solid var(--color-border)',
-                  borderRadius: '0.375rem',
-                  color: 'var(--color-textPrimary)',
-                }}
-                labelStyle={{ color: 'var(--color-textSecondary)' }}
-                itemStyle={{ color: 'var(--color-textPrimary)' }}
-              />
-              <Legend
-                wrapperStyle={{ fontSize: 11 }}
-                formatter={(value) =>
-                  value === "short" ? "Short (1-3 mi)" : value === "medium" ? "Medium (3-6 mi)" : "Long (6+ mi)"
-                }
-              />
-              <Line
-                type="monotone"
-                dataKey="short"
-                stroke="var(--color-chart-orange)"
-                strokeWidth={2}
-                dot={{ r: 3 }}
-                connectNulls
-                name="short"
-              />
-              <Line
-                type="monotone"
-                dataKey="medium"
-                stroke="var(--color-chart-primary)"
-                strokeWidth={2}
-                dot={{ r: 3 }}
-                connectNulls
-                name="medium"
-              />
-              <Line
-                type="monotone"
-                dataKey="long"
-                stroke="var(--color-chart-success)"
-                strokeWidth={2}
-                dot={{ r: 3 }}
-                connectNulls
-                name="long"
-              />
-            </LineChart>
-          </ResponsiveContainer>
+          <PaceTrendChart data={paceTrendData} />
           <p className="text-xs text-textSecondary mt-3 text-center">
             Lower on chart = faster pace. Gaps indicate no runs in that bucket for the week.
           </p>

@@ -34,11 +34,29 @@ import { type UserSettings } from "@/types/userSettings";
 
 import { CreatedRouteCanvas } from "@/components/CreatedRouteCanvas";
 import { CreatedRouteDetailModal } from "@/components/CreatedRouteDetailModal";
-import { RouteTrendSparkline } from "@/components/routes/RouteTrendSparkline";
-import { RouteTrendDrawer } from "@/components/routes/RouteTrendDrawer";
+import { ChartSkeleton } from "@/components/ui/ChartSkeleton";
 
 const RunMap = dynamic(() => import("@/components/RunMap"), { ssr: false });
 const RouteDrawModal = dynamic(() => import("@/components/RouteDrawModal"), { ssr: false });
+
+// Recharts-backed route trend views are lazy-loaded (client-only) so the routes
+// route ships less JS up front. The inline sparkline uses a short ChartSkeleton
+// placeholder; the on-demand trend drawer is a modal, so it loads with no
+// placeholder (nothing should occupy page flow before it opens).
+const RouteTrendSparkline = dynamic(
+  () =>
+    import("@/components/routes/RouteTrendSparkline").then(
+      (m) => m.RouteTrendSparkline,
+    ),
+  { ssr: false, loading: () => <ChartSkeleton height={48} /> },
+);
+const RouteTrendDrawer = dynamic(
+  () =>
+    import("@/components/routes/RouteTrendDrawer").then(
+      (m) => m.RouteTrendDrawer,
+    ),
+  { ssr: false },
+);
 
 // ─── Distance Filter ─────────────────────────────────────────────────────────
 

@@ -14,15 +14,7 @@
  */
 
 import { useState } from "react";
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  CartesianGrid,
-  ResponsiveContainer,
-} from "recharts";
+import dynamic from "next/dynamic";
 import { ChevronDown, ChevronRight } from "lucide-react";
 
 import {
@@ -33,11 +25,35 @@ import {
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { buildPlanAdherence } from "@/utils/planAdherence";
 import { buildWorkoutPlanSummary } from "@/utils/workoutPlanSummary";
-import { PlanAdherenceChart } from "@/components/charts/PlanAdherenceChart";
-import { WorkoutSessionsChart } from "@/components/charts/WorkoutSessionsChart";
+import { ChartSkeleton } from "@/components/ui/ChartSkeleton";
 import { formatCompletedAt } from "@/utils/planFormat";
 import { formatPace } from "@/utils/pace";
 import { DEFAULT_MAX_HR } from "@/utils/trainingLoad";
+
+// The three Recharts charts in this (completed-plan-only) summary are lazy-
+// loaded client-side, so Recharts stays out of the plan-detail initial bundle
+// and only loads when a completed plan's summary is expanded. Each chart is
+// wrapped separately so one doesn't block the others; a ChartSkeleton holds
+// its space while the chunk streams in.
+const PlanAdherenceChart = dynamic(
+  () =>
+    import("@/components/charts/PlanAdherenceChart").then(
+      (m) => m.PlanAdherenceChart,
+    ),
+  { ssr: false, loading: () => <ChartSkeleton height={300} /> },
+);
+const WorkoutSessionsChart = dynamic(
+  () =>
+    import("@/components/charts/WorkoutSessionsChart").then(
+      (m) => m.WorkoutSessionsChart,
+    ),
+  { ssr: false, loading: () => <ChartSkeleton height={300} /> },
+);
+const PlanPaceChart = dynamic(
+  () =>
+    import("@/components/charts/PlanPaceChart").then((m) => m.PlanPaceChart),
+  { ssr: false, loading: () => <ChartSkeleton height={300} /> },
+);
 
 // ─── Stat tile ────────────────────────────────────────────────────────────────
 
@@ -57,68 +73,6 @@ function StatTile({
       </p>
       <p className="text-2xl font-bold text-textPrimary tabular-nums">{value}</p>
       {sub && <p className="text-xs text-textSecondary mt-1">{sub}</p>}
-    </div>
-  );
-}
-
-// ─── Per-week pace line ─────────────────────────────────────────────────────────
-
-function PlanPaceChart({
-  data,
-}: {
-  data: { label: string; pace: number | null }[];
-}) {
-  const hasPace = data.some((d) => d.pace != null);
-  if (!hasPace) return null;
-
-  return (
-    <div className="bg-card rounded-2xl shadow-sm border border-border p-5">
-      <h2 className="text-sm font-semibold uppercase tracking-widest text-textSecondary mb-4">
-        Weekly Avg Pace
-      </h2>
-      <ResponsiveContainer width="100%" height={200}>
-        <LineChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-border)" />
-          <XAxis
-            dataKey="label"
-            tick={{ fontSize: 10 }}
-            axisLine={false}
-            tickLine={false}
-          />
-          <YAxis
-            tick={{ fontSize: 10 }}
-            axisLine={false}
-            tickLine={false}
-            width={44}
-            reversed
-            domain={["dataMin - 15", "dataMax + 15"]}
-            tickFormatter={(v) => formatPace(Number(v))}
-          />
-          <Tooltip
-            formatter={(v) => [`${formatPace(Number(v))} /mi`, "Avg pace"]}
-            contentStyle={{
-              fontSize: 12,
-              backgroundColor: "var(--color-chart-tooltip-bg)",
-              border: "1px solid var(--color-border)",
-              borderRadius: "0.375rem",
-              color: "var(--color-textPrimary)",
-            }}
-            labelStyle={{ color: "var(--color-textSecondary)" }}
-            itemStyle={{ color: "var(--color-textPrimary)" }}
-          />
-          <Line
-            type="monotone"
-            dataKey="pace"
-            stroke="var(--color-chart-primary)"
-            strokeWidth={2}
-            dot={{ r: 2 }}
-            connectNulls
-          />
-        </LineChart>
-      </ResponsiveContainer>
-      <p className="text-xs text-textSecondary mt-3">
-        Lower is faster · runs only.
-      </p>
     </div>
   );
 }

@@ -7,8 +7,7 @@ import { ArrowLeft, Pencil, RotateCcw } from "lucide-react";
 
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { MileSplitsTable } from "@/components/MileSplitsTable";
-import { MileSplitCharts } from "@/components/MileSplitCharts";
-import { RunOverlayChart } from "@/components/RunOverlayChart";
+import { ChartSkeleton } from "@/components/ui/ChartSkeleton";
 import { ZoneBreakdown } from "@/components/ZoneBreakdown";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { StatBlock } from "@/components/ui/StatBlock";
@@ -98,6 +97,18 @@ import { db } from "@/lib/firebase";
 import { fetchWeatherForRun } from "@/lib/weather";
 
 const RunMap = dynamic(() => import("@/components/RunMap"), { ssr: false });
+
+// Recharts-backed charts are lazy-loaded (client-only) so the run-detail route
+// ships less JS up front; a ChartSkeleton holds each chart's space while the
+// chunk streams in. Props/behavior/colors unchanged.
+const MileSplitCharts = dynamic(
+  () => import("@/components/MileSplitCharts").then((m) => m.MileSplitCharts),
+  { ssr: false, loading: () => <ChartSkeleton height={300} /> },
+);
+const RunOverlayChart = dynamic(
+  () => import("@/components/RunOverlayChart").then((m) => m.RunOverlayChart),
+  { ssr: false, loading: () => <ChartSkeleton height={320} /> },
+);
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 

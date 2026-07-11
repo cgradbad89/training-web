@@ -12,19 +12,8 @@ import {
   type HealthMetric,
   type HourlyHeartRate,
 } from "@/services/healthMetrics";
-import {
-  LineChart,
-  Line,
-  BarChart,
-  Bar,
-  Cell,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  CartesianGrid,
-  ReferenceLine,
-} from "recharts";
+import dynamic from "next/dynamic";
+import { ChartSkeleton } from "@/components/ui/ChartSkeleton";
 import {
   Heart,
   Moon,
@@ -74,6 +63,24 @@ import {
   evaluateBMIGoal,
   type GoalStatus,
 } from "@/utils/goalEvaluation";
+
+// Recharts-backed charts are lazy-loaded (client-only) so this chart-heavy
+// route ships less JS on initial load; a ChartSkeleton holds each chart's space
+// while its chunk streams in. TrendChart is the page's own generic trend chart
+// extracted verbatim (same props/behavior/colors); the sleep and hourly-HR
+// charts are likewise extracted and lazy-imported.
+const TrendChart = dynamic(
+  () => import("./HealthTrendChart").then((m) => m.HealthTrendChart),
+  { ssr: false, loading: () => <ChartSkeleton height={112} /> },
+);
+const SleepByDowChart = dynamic(
+  () => import("./SleepByDowChart").then((m) => m.SleepByDowChart),
+  { ssr: false, loading: () => <ChartSkeleton height={180} /> },
+);
+const HourlyHRChart = dynamic(
+  () => import("./HourlyHRChart").then((m) => m.HourlyHRChart),
+  { ssr: false, loading: () => <ChartSkeleton height={220} /> },
+);
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -411,152 +418,7 @@ function KpiCard({
   );
 }
 
-// ── Trend Chart ───────────────────────────────────────────────────────────────
-
-function TrendChart({
-  data,
-  label,
-  color,
-  formatter,
-  refValue,
-  refLabel,
-  type = "line",
-  yDomain,
-  yTickFormatter,
-}: {
-  data: { date: string; value: number | undefined }[];
-  label: string;
-  color: string;
-  formatter?: (v: number) => string;
-  refValue?: number;
-  refLabel?: string;
-  type?: "line" | "bar";
-  yDomain?: [number, number];
-  yTickFormatter?: (v: number) => string;
-}) {
-  const filtered = data.filter(
-    (d) => d.value !== undefined && d.value > 0
-  );
-  if (filtered.length < 2) {
-    return (
-      <div className="h-28 flex items-center justify-center">
-        <p className="text-xs text-textSecondary">Not enough data</p>
-      </div>
-    );
-  }
-
-  const fmt = formatter ?? ((v: number) => String(v));
-  const yFmt = yTickFormatter ?? fmt;
-  const chartMargin = { top: 4, right: 8, bottom: 0, left: 8 };
-
-  if (type === "bar") {
-    return (
-      <ResponsiveContainer width="100%" height={112}>
-        <BarChart data={filtered} margin={chartMargin}>
-          <CartesianGrid strokeDasharray="3 3" stroke="var(--color-chart-grid)" />
-          <XAxis
-            dataKey="date"
-            tick={{ fontSize: 9, fill: 'var(--color-chart-axis)' }}
-            tickFormatter={formatDate}
-            interval="preserveStartEnd"
-            axisLine={false}
-            tickLine={false}
-          />
-          <YAxis
-            tick={{ fontSize: 9, fill: 'var(--color-chart-axis)' }}
-            tickFormatter={yFmt}
-            axisLine={false}
-            tickLine={false}
-            width={52}
-            domain={yDomain}
-          />
-          <Tooltip
-            formatter={(v) => [fmt(Number(v)), label]}
-            labelFormatter={(v) => formatDate(String(v))}
-            contentStyle={{
-              fontSize: 11,
-              borderRadius: 8,
-              backgroundColor: 'var(--color-chart-tooltip-bg)',
-              border: '1px solid var(--color-border)',
-              color: 'var(--color-textPrimary)',
-            }}
-            labelStyle={{ color: 'var(--color-textSecondary)' }}
-            itemStyle={{ color: 'var(--color-textPrimary)' }}
-          />
-          {refValue && (
-            <ReferenceLine
-              y={refValue}
-              stroke={color}
-              strokeDasharray="4 2"
-              strokeOpacity={0.5}
-              label={{ value: refLabel, fontSize: 9, fill: color }}
-            />
-          )}
-          <Bar
-            dataKey="value"
-            fill={color}
-            radius={[3, 3, 0, 0]}
-            fillOpacity={0.85}
-          />
-        </BarChart>
-      </ResponsiveContainer>
-    );
-  }
-
-  return (
-    <ResponsiveContainer width="100%" height={112}>
-      <LineChart data={filtered} margin={chartMargin}>
-        <CartesianGrid strokeDasharray="3 3" stroke="var(--color-chart-grid)" />
-        <XAxis
-          dataKey="date"
-          tick={{ fontSize: 9, fill: 'var(--color-chart-axis)' }}
-          tickFormatter={formatDate}
-          interval="preserveStartEnd"
-          axisLine={false}
-          tickLine={false}
-        />
-        <YAxis
-          tick={{ fontSize: 9, fill: 'var(--color-chart-axis)' }}
-          tickFormatter={fmt}
-          axisLine={false}
-          tickLine={false}
-          width={52}
-          domain={yDomain}
-        />
-        <Tooltip
-          formatter={(v) => [fmt(Number(v)), label]}
-          labelFormatter={(v) => formatDate(String(v))}
-          contentStyle={{
-            fontSize: 11,
-            borderRadius: 8,
-            backgroundColor: 'var(--color-chart-tooltip-bg)',
-            border: '1px solid var(--color-border)',
-            color: 'var(--color-textPrimary)',
-          }}
-          labelStyle={{ color: 'var(--color-textSecondary)' }}
-          itemStyle={{ color: 'var(--color-textPrimary)' }}
-        />
-        {refValue && (
-          <ReferenceLine
-            y={refValue}
-            stroke={color}
-            strokeDasharray="4 2"
-            strokeOpacity={0.5}
-            label={{ value: refLabel, fontSize: 9, fill: color }}
-          />
-        )}
-        <Line
-          type="monotone"
-          dataKey="value"
-          stroke={color}
-          strokeWidth={2}
-          dot={false}
-          activeDot={{ r: 4 }}
-        />
-      </LineChart>
-    </ResponsiveContainer>
-  );
-}
+// TrendChart moved to ./HealthTrendChart and lazy-imported above (as TrendChart).
 
 // ── Section wrapper ───────────────────────────────────────────────────────────
 
@@ -1209,57 +1071,14 @@ function SleepAnalytics({
             <p className="text-xs text-textSecondary">Not enough sleep data yet</p>
           </div>
         ) : (
-          <ResponsiveContainer width="100%" height={180}>
-            <BarChart
-              data={perDay.map((d) => ({ day: d.day, avg: d.avgHours ?? 0 }))}
-              margin={{ top: 4, right: 8, bottom: 0, left: 8 }}
-            >
-              <CartesianGrid
-                strokeDasharray="3 3"
-                vertical={false}
-                stroke="var(--color-chart-grid)"
-              />
-              <XAxis
-                dataKey="day"
-                tick={{ fontSize: 10, fill: "var(--color-chart-axis)" }}
-                axisLine={false}
-                tickLine={false}
-              />
-              <YAxis
-                domain={
-                  tightDomain(perDay.map((d) => d.avgHours)) ?? ["auto", "auto"]
-                }
-                tick={{ fontSize: 10, fill: "var(--color-chart-axis)" }}
-                axisLine={false}
-                tickLine={false}
-                width={28}
-                tickFormatter={(v: number) => `${v}h`}
-              />
-              <Tooltip
-                formatter={(v, _name, { payload }) => {
-                  const dayLabel =
-                    payload && typeof payload === "object" && "day" in payload
-                      ? (payload as { day: string }).day
-                      : "";
-                  return [`${Number(v).toFixed(1)} hrs avg on ${dayLabel}`, "Sleep"];
-                }}
-                contentStyle={{
-                  fontSize: 11,
-                  borderRadius: 8,
-                  backgroundColor: "var(--color-chart-tooltip-bg)",
-                  border: "1px solid var(--color-border)",
-                  color: "var(--color-textPrimary)",
-                }}
-                labelStyle={{ color: "var(--color-textSecondary)" }}
-                itemStyle={{ color: "var(--color-textPrimary)" }}
-              />
-              <Bar dataKey="avg" radius={[4, 4, 0, 0]}>
-                {perDay.map((d, i) => (
-                  <Cell key={i} fill={statusChartColor(statusFor(d.avgHours))} />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+          <SleepByDowChart
+            data={perDay.map((d) => ({
+              day: d.day,
+              avg: d.avgHours ?? 0,
+              fill: statusChartColor(statusFor(d.avgHours)),
+            }))}
+            domain={tightDomain(perDay.map((d) => d.avgHours)) ?? ["auto", "auto"]}
+          />
         )}
       </ChartCard>
     </>
@@ -2380,47 +2199,10 @@ export default function HealthPage() {
                       </p>
                     </div>
                   ) : (
-                    <ResponsiveContainer width="100%" height={220}>
-                      <LineChart data={hourlyHRChartData} margin={{ top: 4, right: 8, bottom: 0, left: 8 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="var(--color-chart-grid)" />
-                        <XAxis
-                          dataKey="label"
-                          tick={{ fontSize: 9, fill: "var(--color-chart-axis)" }}
-                          interval={2}
-                          axisLine={false}
-                          tickLine={false}
-                        />
-                        <YAxis
-                          tick={{ fontSize: 9, fill: "var(--color-chart-axis)" }}
-                          tickFormatter={(v: number) => `${Math.round(v)}`}
-                          axisLine={false}
-                          tickLine={false}
-                          width={45}
-                          domain={hourlyHRDomain}
-                        />
-                        <Tooltip
-                          formatter={(v) => [`${Math.round(Number(v))} bpm`, "Heart Rate"]}
-                          labelFormatter={(label) => `at ${String(label)}`}
-                          contentStyle={{
-                            fontSize: 11,
-                            borderRadius: 8,
-                            backgroundColor: "var(--color-chart-tooltip-bg)",
-                            border: "1px solid var(--color-border)",
-                            color: "var(--color-textPrimary)",
-                          }}
-                          labelStyle={{ color: "var(--color-textSecondary)" }}
-                          itemStyle={{ color: "var(--color-textPrimary)" }}
-                        />
-                        <Line
-                          type="monotone"
-                          dataKey="bpm"
-                          stroke={getColor("hr")}
-                          strokeWidth={2}
-                          dot={false}
-                          activeDot={{ r: 4 }}
-                        />
-                      </LineChart>
-                    </ResponsiveContainer>
+                    <HourlyHRChart
+                      data={hourlyHRChartData}
+                      domain={hourlyHRDomain}
+                    />
                   )}
                 </div>
               </div>

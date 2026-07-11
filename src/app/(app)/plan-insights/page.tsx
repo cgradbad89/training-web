@@ -42,12 +42,34 @@ import {
   RUN_TYPE_LABELS,
   type DeltaTone,
 } from "@/utils/planActualTable";
-import {
-  PlanAdherenceChart,
-  type WeekAdherenceData,
-} from "@/components/charts/PlanAdherenceChart";
-import { PlanRunLoadChart } from "@/components/charts/PlanRunLoadChart";
-import { PredictionTrendChart } from "@/components/charts/PredictionTrendChart";
+import dynamic from "next/dynamic";
+import { ChartSkeleton } from "@/components/ui/ChartSkeleton";
+import { type WeekAdherenceData } from "@/components/charts/PlanAdherenceChart";
+
+// Recharts-backed charts are lazy-loaded (client-only) so the plan-insights
+// route ships less JS on initial load; a ChartSkeleton holds each chart's
+// space while the chunk streams in. Behavior/props/colors unchanged.
+const PlanAdherenceChart = dynamic(
+  () =>
+    import("@/components/charts/PlanAdherenceChart").then(
+      (m) => m.PlanAdherenceChart,
+    ),
+  { ssr: false, loading: () => <ChartSkeleton height={300} /> },
+);
+const PlanRunLoadChart = dynamic(
+  () =>
+    import("@/components/charts/PlanRunLoadChart").then(
+      (m) => m.PlanRunLoadChart,
+    ),
+  { ssr: false, loading: () => <ChartSkeleton height={300} /> },
+);
+const PredictionTrendChart = dynamic(
+  () =>
+    import("@/components/charts/PredictionTrendChart").then(
+      (m) => m.PredictionTrendChart,
+    ),
+  { ssr: false, loading: () => <ChartSkeleton height={300} /> },
+);
 import { predictRaceTime, buildPredictionTrend } from "@/utils/racePrediction";
 import { buildAnchoredPredictionProjection } from "@/utils/predictionTrend";
 import { buildBestEffortSegments } from "@/utils/bestEffortExtraction";

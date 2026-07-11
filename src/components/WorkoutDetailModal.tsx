@@ -20,7 +20,15 @@ import {
 import { TrainingLoadBadge } from "@/components/ui/TrainingLoadBadge";
 import { resolveDisplayLoad } from "@/utils/trainingLoad";
 import { fetchHRStream, type HRStreamSample } from "@/services/hrStream";
-import WorkoutHRChart from "@/components/WorkoutHRChart";
+import dynamic from "next/dynamic";
+import { ChartSkeleton } from "@/components/ui/ChartSkeleton";
+
+// Lazy-load the Recharts HR chart (client-only) so opening the workout modal
+// doesn't pull Recharts into the initial bundle of routes that render it.
+const WorkoutHRChart = dynamic(() => import("@/components/WorkoutHRChart"), {
+  ssr: false,
+  loading: () => <ChartSkeleton height={300} />,
+});
 
 interface WorkoutDetailModalProps {
   workout: HealthWorkout;
