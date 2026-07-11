@@ -29,13 +29,22 @@ type ChartRow = PredictionTrendPoint & { projectedSeconds: number | null };
  * completed as written (blended: recent real efforts keep informing the fit via
  * decay while planned runs add volume). Empty projection ⇒ chart renders exactly
  * as it does today (solid line + goal line only).
+ *
+ * The optional `consistencyCreditPct` (0–2, a magnitude — the projection is
+ * already reduced by this amount before it reaches this component) is always
+ * disclosed in the caption whenever a projection is shown, INCLUDING when it
+ * is currently 0% — "not a silent adjustment" means disclosing the mechanism
+ * exists even when it isn't currently doing anything, not hiding it until it
+ * does. Omit the prop entirely only when the caller has no projection at all.
  */
 export function PredictionTrendChart({
   data,
   projection = [],
+  consistencyCreditPct,
 }: {
   data: PredictionTrendPoint[];
   projection?: PredictionProjectionPoint[];
+  consistencyCreditPct?: number;
 }) {
   const predicted = data.filter(
     (d): d is PredictionTrendPoint & { predictedSeconds: number } =>
@@ -77,7 +86,11 @@ export function PredictionTrendChart({
           <>
             {" "}
             <span className="text-textSecondary">
-              Dashed = projected finish if you complete the plan as written.
+              Dashed = projected finish if you complete the plan as written,
+              including up to a 2% credit for consistent training
+              {consistencyCreditPct != null &&
+                ` (currently ${consistencyCreditPct.toFixed(1)}% applied)`}
+              .
             </span>
           </>
         )}

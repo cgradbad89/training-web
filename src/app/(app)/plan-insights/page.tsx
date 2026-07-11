@@ -60,6 +60,18 @@ import { buildAnchoredPredictionProjection } from "@/utils/predictionTrend";
 import { buildBestEffortSegments } from "@/utils/bestEffortExtraction";
 import { hydrateFastFinishSplits } from "@/services/fastFinishSplits";
 import { type UserSettings } from "@/types/userSettings";
+import { CTL_IMPACT_SEED_DAYS } from "@/utils/runImpact";
+import {
+  buildDailyLoadMap,
+  buildLoadEwmaSeries,
+  valueNWeeksAgo,
+  trendVsPast,
+} from "@/utils/trainingLoadSeries";
+import {
+  computeConsistencyScore,
+  computeConsistencyAdjustmentPct,
+  applyConsistencyAdjustment,
+} from "@/utils/planConsistency";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -486,6 +498,61 @@ export default function PlanInsightsPage() {
       avgWeeklyRunLoad,
     };
   }, [adherence, activePlan]);
+
+  // CTL ramp-trend health for the plan-completion projection's consistency
+  // credit (see src/utils/planConsistency.ts). Reuses the SAME 42d/7d EWMA
+  // machinery and 4-week lookback Personal Insights already uses for its own
+  // CTL trend arrows, seeded the same way computeRunImpact's computeCtlImpact
+  // does (CTL_IMPACT_SEED_DAYS=180) — no new fitness model. `workouts` (not
+  // `runs`) matches buildDailyLoadMap's convention of counting both run and
+  // non-run load into totalLoad.
+  const ctlTrend = useMemo(() => {
+    if (workouts.length === 0) return null;
+    const today = new Date();
+    const todayLocal = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const earliestMs = workouts.reduce(
+      (min, w) => Math.min(min, w.startDate.getTime()),
+      Infinity
+    );
+    const seedFromWindow = new Date(todayLocal);
+    seedFromWindow.setDate(todayLocal.getDate() - (CTL_IMPACT_SEED_DAYS - 1));
+    const earliest = new Date(earliestMs);
+    const seedStart =
+      isFinite(earliestMs) && earliest > seedFromWindow
+        ? new Date(earliest.getFullYear(), earliest.getMonth(), earliest.getDate())
+        : seedFromWindow;
+    const dailyMap = buildDailyLoadMap(workouts, maxHr, restingHr);
+    const series = buildLoadEwmaSeries(dailyMap, seedStart, todayLocal);
+    const last = series[series.length - 1];
+    const ctl4wAgo = valueNWeeksAgo(series, 4, "ctl");
+    return last && ctl4wAgo != null ? trendVsPast(last.ctl, ctl4wAgo) : null;
+  }, [workouts, maxHr, restingHr]);
+
+  // Consistency credit — a SEPARATE, bounded (±2%) post-hoc adjustment on top
+  // of the anchored projection, computed ONCE (today) and applied uniformly
+  // to every future week. Never folded into the Riegel fit itself. See
+  // src/utils/planConsistency.ts for the full blend/bound rationale.
+  const consistencyScore = useMemo(() => {
+    if (!planStats) return 0;
+    return computeConsistencyScore({
+      weeksHitTarget: planStats.weeksHit,
+      weeksWithPlan: planStats.weeksWithPlan,
+      ctlTrend,
+    });
+  }, [planStats, ctlTrend]);
+
+  const consistencyAdjustmentPct = useMemo(
+    () => computeConsistencyAdjustmentPct(consistencyScore),
+    [consistencyScore]
+  );
+
+  // The chart-consumed projection — the anchored series with the consistency
+  // credit applied as a pure wrapping step. buildAnchoredPredictionProjection
+  // itself (predictionProjection above) is never modified.
+  const finalPredictionProjection = useMemo(
+    () => applyConsistencyAdjustment(predictionProjection, consistencyAdjustmentPct),
+    [predictionProjection, consistencyAdjustmentPct]
+  );
 
   // Current week in plan
   const currentPlanWeek = useMemo(() => {
@@ -1052,7 +1119,11 @@ export default function PlanInsightsPage() {
               Only present with a linked plan + race distance; the chart itself
               shows a "not enough data yet" state until ≥2 weeks can predict. */}
           {predictionTrend.length > 0 && (
-            <PredictionTrendChart data={predictionTrend} projection={predictionProjection} />
+            <PredictionTrendChart
+              data={predictionTrend}
+              projection={finalPredictionProjection}
+              consistencyCreditPct={Math.abs(consistencyAdjustmentPct) * 100}
+            />
           )}
         </>
       )}
