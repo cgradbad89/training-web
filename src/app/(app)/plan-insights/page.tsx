@@ -8,16 +8,11 @@ import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { MetricBadge } from "@/components/ui/MetricBadge";
 import { useAuth } from "@/hooks/useAuth";
-import { fetchHealthWorkouts } from "@/services/healthWorkouts";
-import { fetchPlans } from "@/services/plans";
-import { fetchRaces } from "@/services/races";
-import { fetchUserSettings } from "@/services/userSettings";
-import { fetchAllOverrides } from "@/services/workoutOverrides";
+import { useAppData } from "@/contexts/AppDataContext";
 import { applyOverride } from "@/types/workoutOverride";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { type RunningPlan, type PlanRunType, isRunningPlan } from "@/types/plan";
 import {
-  type Race,
   RACE_DISTANCE_MILES,
   RACE_DISTANCE_LABELS,
   HALF_MARATHON_MILES,
@@ -26,8 +21,6 @@ import { formatPace, formatMiles } from "@/utils/pace";
 import {
   resolveDisplayLoad,
   MIN_RUN_MILES_FOR_AVG,
-  resolveMaxHr,
-  resolveRestingHr,
 } from "@/utils/trainingLoad";
 import {
   weekStart as getWeekStart,
@@ -59,7 +52,6 @@ import { predictRaceTime, buildPredictionTrend } from "@/utils/racePrediction";
 import { buildAnchoredPredictionProjection } from "@/utils/predictionTrend";
 import { buildBestEffortSegments } from "@/utils/bestEffortExtraction";
 import { hydrateFastFinishSplits } from "@/services/fastFinishSplits";
-import { type UserSettings } from "@/types/userSettings";
 import { CTL_IMPACT_SEED_DAYS } from "@/utils/runImpact";
 import {
   buildDailyLoadMap,
@@ -197,47 +189,33 @@ export default function PlanInsightsPage() {
     router.push(`/coach?q=${encodeURIComponent(question)}`);
   }
 
-  const [workouts, setWorkouts] = useState<HealthWorkout[]>([]);
-  const [plans, setPlans] = useState<RunningPlan[]>([]);
-  const [races, setRaces] = useState<Race[]>([]);
-  const [userSettings, setUserSettings] = useState<UserSettings | null>();
-  const [loading, setLoading] = useState(true);
-  const maxHr = resolveMaxHr(userSettings);
-  const restingHr = resolveRestingHr(userSettings);
+  // Shared cross-page data now comes from AppDataContext instead of a per-page
+  // Promise.all fetch.
+  const {
+    workouts: rawWorkouts,
+    overrides,
+    plans: allPlans,
+    races,
+    maxHr,
+    restingHr,
+    workoutsLoading,
+  } = useAppData();
+
+  // Apply overrides and drop excluded workouts — same processing the old
+  // per-page fetch did inline before setting local state.
+  const workouts = useMemo(
+    () =>
+      rawWorkouts
+        .map((w) => applyOverride(w, overrides[w.workoutId] ?? null))
+        .filter((w) => !overrides[w.workoutId]?.isExcluded),
+    [rawWorkouts, overrides]
+  );
+  const plans = useMemo(() => allPlans.filter(isRunningPlan), [allPlans]);
+  const loading = workoutsLoading;
   // Runs with fast-finish `mileSplits` hydrated (route-derived pace + per-mile
   // HR), for the HR-gated best-effort pipeline. Null until the async hydration
   // resolves; the segments fall back to the full-run-only path meanwhile.
   const [hydratedRuns, setHydratedRuns] = useState<HealthWorkout[] | null>(null);
-
-  useEffect(() => {
-    if (!uid) return;
-    fetchUserSettings(uid)
-      .then(setUserSettings)
-      .catch((err) => console.error("[fetchUserSettings]", err));
-  }, [uid]);
-
-  useEffect(() => {
-    if (!uid) return;
-
-    setLoading(true);
-    Promise.all([
-      fetchHealthWorkouts(uid, { limitCount: 500 }),
-      fetchAllOverrides(uid),
-      fetchPlans(uid),
-      fetchRaces(uid),
-    ])
-      .then(([wkts, overrides, plansList, racesList]) => {
-        // Apply overrides and filter excluded
-        const processed = wkts
-          .map((w) => applyOverride(w, overrides[w.workoutId] ?? null))
-          .filter((w) => !overrides[w.workoutId]?.isExcluded);
-        setWorkouts(processed);
-        setPlans(plansList.filter(isRunningPlan));
-        setRaces(racesList);
-      })
-      .catch(console.error)
-      .finally(() => setLoading(false));
-  }, [uid]);
 
   // ── Race-driven page state ─────────────────────────────────────────────────
   // Plan Insights is keyed off a user-selected race. By default we pick the

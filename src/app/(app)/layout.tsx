@@ -11,6 +11,7 @@ import AutoMatchRunner from "@/components/AutoMatchRunner";
 import PRComputerRunner from "@/components/PRComputerRunner";
 import { MobileTabBar } from "@/components/layout/MobileTabBar";
 import { NAV_ITEMS } from "@/components/layout/navItems";
+import { AppDataProvider } from "@/contexts/AppDataContext";
 
 function SideNav() {
   const pathname = usePathname();
@@ -41,9 +42,10 @@ function SideNav() {
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <AuthGuard>
-      <AutoMatchRunner />
-      <PRComputerRunner />
-      <GoogleMapsProvider>
+      <AppDataProvider>
+        <AutoMatchRunner />
+        <PRComputerRunner />
+        <GoogleMapsProvider>
         <div className="flex flex-col min-h-screen">
           <HubBanner />
           <div className="flex flex-1 overflow-hidden">
@@ -60,7 +62,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           </div>
           <MobileTabBar />
         </div>
-      </GoogleMapsProvider>
+        </GoogleMapsProvider>
+      </AppDataProvider>
     </AuthGuard>
   );
 }

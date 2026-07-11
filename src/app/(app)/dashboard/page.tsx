@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -24,10 +24,8 @@ import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { WeekCalendar } from "@/components/WeekCalendar";
 import { useAuth } from "@/hooks/useAuth";
-import { onHealthWorkoutsSnapshot } from "@/services/healthWorkouts";
+import { useAppData } from "@/contexts/AppDataContext";
 import { prefetchRoutes } from "@/utils/routeCache";
-import { fetchPlans } from "@/services/plans";
-import { fetchUserSettings } from "@/services/userSettings";
 import {
   fetchHealthMetricsRange,
   type HealthMetric,
@@ -57,8 +55,6 @@ import {
   resolveDisplayLoad,
   MIN_RUN_MILES_FOR_AVG,
   MIN_WORKOUT_SECONDS_FOR_AVG,
-  resolveMaxHr,
-  resolveRestingHr,
 } from "@/utils/trainingLoad";
 import {
   buildDailyLoadMap,
@@ -77,9 +73,6 @@ import {
   isSameWeek,
 } from "@/utils/dates";
 import { type HealthWorkout } from "@/types/healthWorkout";
-import { type UserSettings } from "@/types/userSettings";
-import { type WorkoutOverride } from "@/types/workoutOverride";
-import { fetchAllOverrides } from "@/services/workoutOverrides";
 import { WorkoutDetailModal } from "@/components/WorkoutDetailModal";
 import { RunActivityModal } from "@/components/runs/RunActivityModal";
 import {
@@ -1650,55 +1643,51 @@ export default function DashboardPage() {
   );
   const selectedWeekEnd = getWeekEnd(selectedWeekStart);
 
-  const [workouts, setWorkouts] = useState<HealthWorkout[]>([]);
-  const [activePlan, setActivePlan] = useState<RunningPlan | null>(null);
-  const [activeWorkoutPlan, setActiveWorkoutPlan] = useState<WorkoutPlan | null>(
-    null
-  );
+  // Shared cross-page data (workouts / plans / overrides / HR anchors) now
+  // comes from AppDataContext. Workouts use the same live listener dashboard
+  // ran locally before, so real-time iOS-sync updates are preserved.
+  const {
+    workouts,
+    overrides,
+    plans,
+    maxHr,
+    restingHr,
+    workoutsLoading,
+    plansLoading,
+    settingsLoading,
+    patchOverrides,
+  } = useAppData();
+
   const [weekMetrics, setWeekMetrics] = useState<HealthMetric[]>([]);
   const [todayMetric, setTodayMetric] = useState<HealthMetric | null>(null);
   const [ringGoals, setRingGoals] = useState<HealthGoalDoc[]>([]);
   const router = useRouter();
-  const [userSettings, setUserSettings] = useState<UserSettings | null>();
-  const [loading, setLoading] = useState(true);
+
+  const loading = workoutsLoading;
   // Per-source "fetch resolved" flags for the Week Score gate. `loading` only
   // tracks the workouts snapshot; plans + settings load independently, so the
   // card must wait for these too (else an unloaded plan flashes a false
-  // perfect score via the zero-denominator → 100% rule). Set on BOTH success
-  // and error so a failed fetch still resolves the gate (never stuck loading).
-  const [plansLoaded, setPlansLoaded] = useState(false);
-  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  // perfect score via the zero-denominator → 100% rule). Now derived from the
+  // shared context's loading flags.
+  const plansLoaded = !plansLoading;
+  const settingsLoaded = !settingsLoading;
+
+  // Active running / workout plan for the selected week's cards — derived from
+  // the shared plans list (previously set inside a local fetchPlans effect).
+  const activePlan = useMemo<RunningPlan | null>(
+    () => plans.filter(isRunningPlan).find((p) => p.status === "active") ?? null,
+    [plans]
+  );
+  const activeWorkoutPlan = useMemo<WorkoutPlan | null>(
+    () => plans.filter(isWorkoutPlan).find((p) => p.status === "active") ?? null,
+    [plans]
+  );
 
   // Workout detail modal state — matches the workouts-page pattern so the
   // "This Week's Workouts" tile can pop the same modal on row click.
   const [selectedWorkout, setSelectedWorkout] = useState<HealthWorkout | null>(
     null
   );
-  const [overrides, setOverrides] = useState<Record<string, WorkoutOverride>>(
-    {}
-  );
-  const overridesRef = useRef<Record<string, WorkoutOverride>>({});
-
-  useEffect(() => {
-    if (!uid) return;
-    fetchUserSettings(uid)
-      .then(setUserSettings)
-      .catch((err) => console.error("[fetchUserSettings]", err))
-      .finally(() => setSettingsLoaded(true));
-  }, [uid]);
-
-  const maxHr = resolveMaxHr(userSettings);
-  const restingHr = resolveRestingHr(userSettings);
-
-  useEffect(() => {
-    if (!uid) return;
-    fetchAllOverrides(uid)
-      .then((o) => {
-        overridesRef.current = o;
-        setOverrides(o);
-      })
-      .catch((err) => console.error("[fetchAllOverrides]", err));
-  }, [uid]);
 
   useEffect(() => {
     document.body.style.overflow = selectedWorkout ? "hidden" : "";
@@ -1706,6 +1695,27 @@ export default function DashboardPage() {
       document.body.style.overflow = "";
     };
   }, [selectedWorkout]);
+
+  // Background prefetch — most recent 20 runs with routes. Previously ran
+  // inside the local workouts listener callback; now keyed off the shared
+  // workouts array.
+  useEffect(() => {
+    if (!uid || workouts.length === 0) return;
+    const timer = setTimeout(() => {
+      const recentWithRoutes = workouts
+        .filter((a) => a.isRunLike && a.hasRoute)
+        .sort(
+          (a, b) =>
+            new Date(b.startDate).getTime() - new Date(a.startDate).getTime()
+        )
+        .slice(0, 20)
+        .map((a) => a.workoutId);
+      if (recentWithRoutes.length > 0) {
+        prefetchRoutes(uid, recentWithRoutes).catch(() => {});
+      }
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [uid, workouts]);
 
   // One-time fetch for today's healthMetrics doc — powers the hero tile's
   // "Today" mode independently of week navigation, so toggling to Today always
@@ -1742,23 +1752,6 @@ export default function DashboardPage() {
     [router]
   );
 
-  // One-time fetch for plans (user-managed data, not iOS-synced).
-  // Race data was previously fetched here for the now-removed RaceGoalCard.
-  useEffect(() => {
-    if (!uid) return;
-    fetchPlans(uid)
-      .then((plans) => {
-        const runningPlans = plans.filter(isRunningPlan);
-        setActivePlan(runningPlans.find((p) => p.status === "active") ?? null);
-        const workoutPlansList = plans.filter(isWorkoutPlan);
-        setActiveWorkoutPlan(
-          workoutPlansList.find((p) => p.status === "active") ?? null
-        );
-      })
-      .catch(console.error)
-      .finally(() => setPlansLoaded(true));
-  }, [uid]);
-
   // Fetch healthMetrics for the selected week's date range. Re-runs whenever
   // the user navigates to a different week. One-time getDocs per range —
   // no live snapshot, since this row is summary data.
@@ -1779,40 +1772,6 @@ export default function DashboardPage() {
       cancelled = true;
     };
   }, [uid, selectedWeekStart, selectedWeekEnd]);
-
-  // Real-time listener for healthWorkouts — updates when iOS syncs
-  useEffect(() => {
-    if (!uid) return;
-    setLoading(true);
-
-    const unsubscribe = onHealthWorkoutsSnapshot(
-      uid,
-      { limitCount: 200 },
-      (wkts) => {
-        setWorkouts(wkts);
-        setLoading(false);
-
-        // Background prefetch — most recent 20 runs with routes
-        setTimeout(() => {
-          const recentWithRoutes = wkts
-            .filter((a) => a.isRunLike && a.hasRoute)
-            .sort(
-              (a, b) =>
-                new Date(b.startDate).getTime() -
-                new Date(a.startDate).getTime()
-            )
-            .slice(0, 20)
-            .map((a) => a.workoutId);
-          if (recentWithRoutes.length > 0 && uid) {
-            prefetchRoutes(uid, recentWithRoutes).catch(() => {});
-          }
-        }, 1000);
-      },
-      () => setLoading(false)
-    );
-
-    return () => unsubscribe();
-  }, [uid]);
 
   const plannedMiles = useMemo(() => {
     if (!activePlan) return 0;
@@ -2115,7 +2074,7 @@ export default function DashboardPage() {
           restingHr={restingHr}
           onClose={() => setSelectedWorkout(null)}
           onExcludeChange={(workoutId, excluded) => {
-            setOverrides((prev) => ({
+            patchOverrides((prev) => ({
               ...prev,
               [workoutId]: {
                 ...prev[workoutId],

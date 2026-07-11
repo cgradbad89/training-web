@@ -32,21 +32,17 @@ import { type PaceRangeRun } from "@/lib/paceRangeTrend";
 import { MetricBadge } from "@/components/ui/MetricBadge";
 import { WorkoutTrendsSection } from "@/components/WorkoutTrendsSection";
 import { useAuth } from "@/hooks/useAuth";
-import { fetchHealthWorkouts } from "@/services/healthWorkouts";
-import { fetchRaces } from "@/services/races";
-import { fetchPlans } from "@/services/plans";
-import { type RunningPlan } from "@/types/plan";
+import { useAppData } from "@/contexts/AppDataContext";
 import {
   buildRunTitleMap,
   findActiveRunningPlan,
   type RunTitleContext,
 } from "@/utils/runPlanTitle";
 import { fetchRoutePoints, type RoutePoint } from "@/services/routes";
-import { fetchAllOverrides } from "@/services/workoutOverrides";
-import { fetchUserSettings } from "@/services/userSettings";
 import { applyOverride } from "@/types/workoutOverride";
+import { vo2HistoryCutoffISO } from "@/utils/vo2History";
 import { type HealthWorkout } from "@/types/healthWorkout";
-import { type Race, RACE_DISTANCE_MILES } from "@/types/race";
+import { RACE_DISTANCE_MILES } from "@/types/race";
 import { formatPace, formatPaceLabel } from "@/utils/pace";
 import { weekStart as getWeekStart } from "@/utils/dates";
 import {
@@ -75,8 +71,6 @@ import {
   HR_ZONES,
   MIN_RUN_MILES_FOR_AVG,
   MIN_WORKOUT_SECONDS_FOR_AVG,
-  resolveMaxHr,
-  resolveRestingHr,
   type HRZoneNumber,
 } from "@/utils/trainingLoad";
 import { InfoTooltip } from "@/components/ui/InfoTooltip";
@@ -85,7 +79,6 @@ import {
   buildWeeklyLoadModel,
   type WeeklyLoadModel,
 } from "@/utils/weeklyLoad";
-import { type UserSettings } from "@/types/userSettings";
 
 // ─── Training Load KPI tooltip copy ───────────────────────────────────────────
 // Single source of truth so the four KPI cards and any future surfaces stay
@@ -1164,11 +1157,32 @@ export default function PersonalInsightsPage() {
     router.push(`/coach?q=${encodeURIComponent(question)}`);
   }
 
-  const [workouts, setWorkouts] = useState<HealthWorkout[]>([]);
-  const [activeRunningPlan, setActiveRunningPlan] = useState<RunningPlan | null>(null);
-  const [races, setRaces] = useState<Race[]>([]);
-  const [userSettings, setUserSettings] = useState<UserSettings | null>();
-  const [loading, setLoading] = useState(true);
+  // Shared cross-page data (workouts / plans / races / overrides / HR anchors)
+  // now comes from AppDataContext instead of a per-page Promise.all fetch.
+  const {
+    workouts: rawWorkouts,
+    overrides,
+    races,
+    plans,
+    maxHr,
+    restingHr,
+    workoutsLoading,
+  } = useAppData();
+
+  // Apply overrides and drop excluded workouts — same processing the old
+  // per-page fetch did inline before setting local state.
+  const workouts = useMemo(
+    () =>
+      rawWorkouts
+        .map((w) => applyOverride(w, overrides[w.workoutId] ?? null))
+        .filter((w) => !overrides[w.workoutId]?.isExcluded),
+    [rawWorkouts, overrides]
+  );
+  const activeRunningPlan = useMemo(
+    () => findActiveRunningPlan(plans),
+    [plans]
+  );
+  const loading = workoutsLoading;
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
   // Fastest 1-mile segment from GPS route points, keyed by year
   const [fastestMileByYear, setFastestMileByYear] = useState<
@@ -1187,37 +1201,6 @@ export default function PersonalInsightsPage() {
   // Cardio Fitness (VO₂ max) — sparse healthMetrics field, populated by iOS sync.
   const [vo2History, setVo2History] = useState<Vo2Entry[]>([]);
   const [vo2Loading, setVo2Loading] = useState(true);
-  const maxHr = resolveMaxHr(userSettings);
-  const restingHr = resolveRestingHr(userSettings);
-
-  useEffect(() => {
-    if (!uid) return;
-    fetchUserSettings(uid)
-      .then(setUserSettings)
-      .catch((err) => console.error("[fetchUserSettings]", err));
-  }, [uid]);
-
-  useEffect(() => {
-    if (!uid) return;
-
-    setLoading(true);
-    Promise.all([
-      fetchHealthWorkouts(uid, { limitCount: 500 }),
-      fetchAllOverrides(uid),
-      fetchRaces(uid),
-      fetchPlans(uid),
-    ])
-      .then(([wkts, overrides, racesData, plansData]) => {
-        const processed = wkts
-          .map((w) => applyOverride(w, overrides[w.workoutId] ?? null))
-          .filter((w) => !overrides[w.workoutId]?.isExcluded);
-        setWorkouts(processed);
-        setRaces(racesData);
-        setActiveRunningPlan(findActiveRunningPlan(plansData));
-      })
-      .catch(console.error)
-      .finally(() => setLoading(false));
-  }, [uid]);
 
   // Cardio Fitness (VO₂ max) — one-shot fetch of all healthMetrics docs with
   // a `vo2_max` reading, ascending by date. Apple Watch only writes this on
@@ -1226,11 +1209,18 @@ export default function PersonalInsightsPage() {
     if (!uid) return;
     let cancelled = false;
     setVo2Loading(true);
+    // Bound the read to the last VO2_HISTORY_DAYS so this query doesn't grow
+    // unbounded as healthMetrics accumulate. `date` is the single inequality
+    // field (with a matching orderBy) — the same shape as fetchHealthMetrics*,
+    // needing only Firestore's automatic single-field index. The `vo2_max > 0`
+    // condition remains a client-side filter below (`e.value > 0`), so no
+    // two-field composite index is required.
+    const cutoffStr = vo2HistoryCutoffISO(new Date());
     getDocs(
       query(
         collection(db, `users/${uid}/healthMetrics`),
-        where('vo2_max', '>', 0),
-        orderBy('vo2_max'),
+        where('date', '>=', cutoffStr),
+        orderBy('date'),
       ),
     )
       .then((snap) => {

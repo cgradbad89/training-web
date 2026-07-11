@@ -8,8 +8,8 @@ import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useAuth } from "@/hooks/useAuth";
+import { useAppData } from "@/contexts/AppDataContext";
 import { useUnsavedChanges } from "@/hooks/useUnsavedChanges";
-import { fetchHealthWorkouts } from "@/services/healthWorkouts";
 import {
   fetchShoes,
   createShoe,
@@ -21,7 +21,6 @@ import {
 import { formatPace } from "@/utils/pace";
 import { resolveActivityTitle } from "@/utils/resolveActivityTitle";
 import { buildRunTitleMap, findActiveRunningPlan } from "@/utils/runPlanTitle";
-import { fetchPlans } from "@/services/plans";
 import { type RunningPlan } from "@/types/plan";
 import { formatShortDate, formatMonthYear } from "@/utils/dates";
 import { projectShoeReplacement } from "@/utils/shoeProjection";
@@ -1150,11 +1149,19 @@ export default function ShoesPage() {
   const { user } = useAuth();
   const uid = user?.uid ?? null;
 
+  // Workouts + plans now come from the shared AppDataContext (live listener);
+  // shoes and manual assignments remain a shoes-page-local fetch.
+  const { workouts: activities, plans, workoutsLoading } = useAppData();
   const [shoes, setShoes] = useState<RunningShoe[]>([]);
-  const [activities, setActivities] = useState<HealthWorkout[]>([]);
   const [assignments, setAssignments] = useState<Record<string, string | null>>({});
-  const [activeRunningPlan, setActiveRunningPlan] = useState<RunningPlan | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Manual assignments exactly as fetched (pre-merge with auto-assignments).
+  const [rawAssignments, setRawAssignments] = useState<Record<string, string | null>>({});
+  const activeRunningPlan = useMemo(
+    () => findActiveRunningPlan(plans),
+    [plans]
+  );
+  const [shoesLoading, setShoesLoading] = useState(true);
+  const loading = shoesLoading || workoutsLoading;
 
   // Modal state
   const [editingShoe, setEditingShoe] = useState<RunningShoe | null | "new">(null);
@@ -1184,30 +1191,35 @@ export default function ShoesPage() {
   const [savingAuto, setSavingAuto] = useState(false);
   const [autoSaveMsg, setAutoSaveMsg] = useState<"success" | "error" | null>(null);
 
-  const loadAll = useCallback(async () => {
+  const loadShoesAndAssignments = useCallback(async () => {
     if (!uid) return;
-    const [fetchedShoes, fetchedActs, fetchedAssign, fetchedPlans] = await Promise.all([
+    const [fetchedShoes, fetchedAssign] = await Promise.all([
       fetchShoes(uid),
-      fetchHealthWorkouts(uid, { limitCount: 500 }),
       fetchManualShoeAssignmentsMap(uid),
-      fetchPlans(uid),
     ]);
     setShoes(fetchedShoes);
-    setActivities(fetchedActs);
-    setActiveRunningPlan(findActiveRunningPlan(fetchedPlans));
-    // Compute auto-assignments
-    const autoAssigned = evaluateAutoAssignRules(fetchedActs, fetchedShoes, fetchedAssign);
-    setAutoAssignedMap(autoAssigned);
-    setAutoAssignedCount(Object.keys(autoAssigned).length);
-    // Merge: manual assignments take precedence
-    setAssignments({ ...autoAssigned, ...fetchedAssign });
+    setRawAssignments(fetchedAssign);
   }, [uid]);
 
   useEffect(() => {
     if (!uid) return;
-    setLoading(true);
-    loadAll().catch(console.error).finally(() => setLoading(false));
-  }, [uid, loadAll]);
+    setShoesLoading(true);
+    loadShoesAndAssignments()
+      .catch(console.error)
+      .finally(() => setShoesLoading(false));
+  }, [uid, loadShoesAndAssignments]);
+
+  // Recompute auto-assignments whenever the run list, shoes, or manual
+  // assignments change. Previously computed inline in loadAll; now reactive
+  // because workouts arrive from the shared live listener rather than a
+  // one-shot fetch on this page.
+  useEffect(() => {
+    const autoAssigned = evaluateAutoAssignRules(activities, shoes, rawAssignments);
+    setAutoAssignedMap(autoAssigned);
+    setAutoAssignedCount(Object.keys(autoAssigned).length);
+    // Merge: manual assignments take precedence over auto-assignments.
+    setAssignments({ ...autoAssigned, ...rawAssignments });
+  }, [activities, shoes, rawAssignments]);
 
   const activeShoes = shoes.filter((s) => !s.isRetired);
   const retiredShoes = shoes.filter((s) => s.isRetired);
@@ -1234,7 +1246,7 @@ export default function ShoesPage() {
     }
 
     setEditingShoe(null);
-    await loadAll();
+    await loadShoesAndAssignments();
   }
 
   // ── Shoe delete handler ──────────────────────────────────────────────────
@@ -1252,7 +1264,7 @@ export default function ShoesPage() {
     await deleteShoe(uid, shoe.id);
     setDeleteConfirm(null);
     setEditingShoe(null);
-    await loadAll();
+    await loadShoesAndAssignments();
   }
 
   // ── Rule save handler ────────────────────────────────────────────────────
@@ -1269,7 +1281,7 @@ export default function ShoesPage() {
 
     await updateShoe(uid, shoe.id, { autoAssignRules: updated });
     setEditingRule(null);
-    await loadAll();
+    await loadShoesAndAssignments();
   }
 
   // ── Rule toggle ───────────────────────────────────────────────────────────
@@ -1279,7 +1291,7 @@ export default function ShoesPage() {
       r.id === rule.id ? { ...r, isEnabled: !r.isEnabled } : r
     );
     await updateShoe(uid, shoe.id, { autoAssignRules: updated });
-    await loadAll();
+    await loadShoesAndAssignments();
   }
 
   // ── Rule delete ───────────────────────────────────────────────────────────
@@ -1288,7 +1300,7 @@ export default function ShoesPage() {
     const updated = (shoe.autoAssignRules ?? []).filter((r) => r.id !== rule.id);
     await updateShoe(uid, shoe.id, { autoAssignRules: updated });
     setDeleteRuleConfirm(null);
-    await loadAll();
+    await loadShoesAndAssignments();
   }
 
   if (loading) {

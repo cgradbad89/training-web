@@ -15,20 +15,17 @@ import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { MiniCalendar, toLocalIsoDateForCalendar } from "@/components/MiniCalendar";
 import { useAuth } from "@/hooks/useAuth";
-import { onHealthWorkoutsSnapshot } from "@/services/healthWorkouts";
+import { useAppData } from "@/contexts/AppDataContext";
 import { useEnrichTrainingLoads } from "@/hooks/useEnrichTrainingLoads";
 import {
   fetchShoes,
   fetchManualShoeAssignmentsMap,
   saveManualAssignments,
 } from "@/services/shoes";
-import { fetchUserSettings } from "@/services/userSettings";
 
 import {
   resolveDisplayLoad,
   MIN_RUN_MILES_FOR_AVG,
-  resolveMaxHr,
-  resolveRestingHr,
 } from "@/utils/trainingLoad";
 import { formatPace, formatDuration, formatMiles } from "@/utils/pace";
 import { resolveActivityTitle } from "@/utils/resolveActivityTitle";
@@ -37,7 +34,6 @@ import {
   findActiveRunningPlan,
   type RunTitleContext,
 } from "@/utils/runPlanTitle";
-import { fetchPlans } from "@/services/plans";
 import { type RunningPlan } from "@/types/plan";
 import { weekStart as getWeekStart } from "@/utils/dates";
 import {
@@ -47,13 +43,12 @@ import {
   type RunTag,
 } from "@/utils/activityTypes";
 import { type HealthWorkout } from "@/types/healthWorkout";
-import { type UserSettings } from "@/types/userSettings";
 import { type RunningShoe } from "@/types/shoe";
 import { evaluateAutoAssignRules } from "@/utils/shoeAutoAssign";
 import { prefetchRoutes } from "@/utils/routeCache";
-import { fetchAllOverrides, excludeWorkout } from "@/services/workoutOverrides";
+import { excludeWorkout } from "@/services/workoutOverrides";
 import { ExcludedItemsModal } from "@/components/ExcludedItemsModal";
-import { type WorkoutOverride, applyOverride } from "@/types/workoutOverride";
+import { applyOverride } from "@/types/workoutOverride";
 import {
   detectDuplicatePairs,
   type DuplicatePair,
@@ -725,14 +720,34 @@ export default function RunsPage() {
   const { user } = useAuth();
   const uid = user?.uid ?? null;
 
-  const [allRuns, setAllRuns] = useState<HealthWorkout[]>([]);
+  // Shared cross-page data from AppDataContext. Workouts keep the same live
+  // listener (limit 500) runs used locally before; overrides, plans, and HR
+  // anchors are now shared rather than independently re-fetched here.
+  const {
+    workouts,
+    overrides,
+    plans,
+    userSettings,
+    maxHr,
+    restingHr,
+    workoutsLoading,
+    patchOverrides,
+  } = useAppData();
+
+  const allRuns = useMemo(() => workouts.filter((w) => w.isRunLike), [workouts]);
+  const activeRunningPlan = useMemo<RunningPlan | null>(
+    () => findActiveRunningPlan(plans),
+    [plans]
+  );
+
   const [shoes, setShoes] = useState<RunningShoe[]>([]);
+  // Merged auto + manual shoe assignments (manual wins).
   const [manualAssignments, setManualAssignments] = useState<Record<string, string | null>>({});
-  const [overrides, setOverrides] = useState<Record<string, WorkoutOverride>>({});
-  const [userSettings, setUserSettings] = useState<UserSettings | null>();
-  const [activeRunningPlan, setActiveRunningPlan] = useState<RunningPlan | null>(null);
+  // Manual assignments exactly as fetched (pre-merge), for auto-assign recompute.
+  const [rawAssignments, setRawAssignments] = useState<Record<string, string | null>>({});
   const [showExcluded, setShowExcluded] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [shoesLoading, setShoesLoading] = useState(true);
+  const loading = shoesLoading || workoutsLoading;
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
 
   const currentYear = new Date().getFullYear();
@@ -759,31 +774,12 @@ export default function RunsPage() {
 
   const weekRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
-  useEffect(() => {
-    if (!uid) return;
-    fetchUserSettings(uid)
-      .then(setUserSettings)
-      .catch((err) => console.error("[fetchUserSettings]", err));
-  }, [uid]);
-
-  // Active running plan — feeds the priority-1 plan label into run titles.
-  // One fetch per surface; matching is memoized below (never per row).
-  useEffect(() => {
-    if (!uid) return;
-    fetchPlans(uid)
-      .then((plans) => setActiveRunningPlan(findActiveRunningPlan(plans)))
-      .catch((err) => console.error("[fetchPlans]", err));
-  }, [uid]);
-
   // workoutId → matched plan-entry title context. Inverts matchPlanToActual
   // once over the loaded run set; rows do an O(1) lookup.
   const runTitleMap = useMemo(
     () => buildRunTitleMap(activeRunningPlan, allRuns),
     [activeRunningPlan, allRuns]
   );
-
-  const maxHr = resolveMaxHr(userSettings);
-  const restingHr = resolveRestingHr(userSettings);
 
   // Auto-store Training Load V2 for the runs this page loads (the Workouts page
   // covers non-runs). Stores a missing load / upgrades an avg-HR value once a
@@ -800,87 +796,53 @@ export default function RunsPage() {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  // Refs to hold latest shoes/assignments for use inside the snapshot callback
-  // without re-subscribing the listener every time shoes/assignments change.
-  const shoesRef = useRef<RunningShoe[]>([]);
-  const assignmentsRef = useRef<Record<string, string | null>>({});
-
-  // Fetch shoes, assignments, and overrides BEFORE starting the snapshot listener.
-  // This prevents the race condition where the snapshot fires before shoe data is
-  // loaded, causing "Unassigned" on first render.
+  // Fetch shoes + manual assignments locally (not part of the shared context).
   useEffect(() => {
     if (!uid) return;
-    setLoading(true);
-
-    let unsubscribe: (() => void) | null = null;
+    setShoesLoading(true);
     let cancelled = false;
-
-    Promise.all([
-      fetchShoes(uid),
-      fetchManualShoeAssignmentsMap(uid),
-      fetchAllOverrides(uid),
-    ])
-      .then(([fetchedShoes, assignments, fetchedOverrides]) => {
+    Promise.all([fetchShoes(uid), fetchManualShoeAssignmentsMap(uid)])
+      .then(([fetchedShoes, assignments]) => {
         if (cancelled) return;
-
-        // Populate refs so snapshot callback always sees current data
-        shoesRef.current = fetchedShoes;
-        assignmentsRef.current = assignments;
-
-        // Also set state for UI that renders shoe data independently
         setShoes(fetchedShoes);
-        setOverrides(fetchedOverrides);
-
-        // NOW start the snapshot listener — guaranteed to see shoe data
-        unsubscribe = onHealthWorkoutsSnapshot(
-          uid,
-          { limitCount: 500 },
-          (wkts) => {
-            if (cancelled) return;
-            const runs = wkts.filter((w) => w.isRunLike);
-            setAllRuns(runs);
-
-            // Recompute auto-assignments whenever the run list changes
-            const autoAssigned = evaluateAutoAssignRules(
-              runs,
-              shoesRef.current,
-              assignmentsRef.current
-            );
-            setManualAssignments({ ...autoAssigned, ...assignmentsRef.current });
-
-            setLoading(false);
-
-            // Background prefetch — most recent 20 runs with routes
-            setTimeout(() => {
-              const recentWithRoutes = runs
-                .filter((a) => a.hasRoute)
-                .sort(
-                  (a, b) =>
-                    new Date(b.startDate).getTime() -
-                    new Date(a.startDate).getTime()
-                )
-                .slice(0, 20)
-                .map((a) => a.workoutId);
-              if (recentWithRoutes.length > 0 && uid) {
-                prefetchRoutes(uid, recentWithRoutes).catch(() => {});
-              }
-            }, 500);
-          },
-          () => {
-            if (!cancelled) setLoading(false);
-          }
-        );
+        setRawAssignments(assignments);
       })
-      .catch((err) => {
-        console.error(err);
-        if (!cancelled) setLoading(false);
+      .catch((err) => console.error(err))
+      .finally(() => {
+        if (!cancelled) setShoesLoading(false);
       });
-
     return () => {
       cancelled = true;
-      unsubscribe?.();
     };
   }, [uid]);
+
+  // Recompute auto-assignments whenever the run list, shoes, or manual
+  // assignments change. Previously computed inside the local workouts listener
+  // callback; now reactive to the shared workouts array (manual wins on merge).
+  useEffect(() => {
+    const autoAssigned = evaluateAutoAssignRules(allRuns, shoes, rawAssignments);
+    setManualAssignments({ ...autoAssigned, ...rawAssignments });
+  }, [allRuns, shoes, rawAssignments]);
+
+  // Background prefetch — most recent 20 runs with routes. Previously ran inside
+  // the local listener callback; now keyed off the shared runs array.
+  useEffect(() => {
+    if (!uid || allRuns.length === 0) return;
+    const timer = setTimeout(() => {
+      const recentWithRoutes = allRuns
+        .filter((a) => a.hasRoute)
+        .sort(
+          (a, b) =>
+            new Date(b.startDate).getTime() - new Date(a.startDate).getTime()
+        )
+        .slice(0, 20)
+        .map((a) => a.workoutId);
+      if (recentWithRoutes.length > 0) {
+        prefetchRoutes(uid, recentWithRoutes).catch(() => {});
+      }
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [uid, allRuns]);
 
   const activeShoes = useMemo(
     () => shoes.filter((s) => !s.isRetired),
@@ -1227,7 +1189,7 @@ export default function RunsPage() {
                 onExclude={async () => {
                   if (!uid) return;
                   await excludeWorkout(uid, pair.otfWorkoutId);
-                  setOverrides((prev) => ({
+                  patchOverrides((prev) => ({
                     ...prev,
                     [pair.otfWorkoutId]: {
                       ...prev[pair.otfWorkoutId],
@@ -1345,7 +1307,7 @@ export default function RunsPage() {
           excludedItems={excludedRuns}
           userId={uid}
           onRestored={(workoutId) => {
-            setOverrides((prev) => {
+            patchOverrides((prev) => {
               const updated = { ...prev };
               delete updated[workoutId];
               return updated;
