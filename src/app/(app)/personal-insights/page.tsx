@@ -1531,7 +1531,13 @@ export default function PersonalInsightsPage() {
           )
         : seedFromSeedWindow;
 
-    const dailyMap = buildDailyLoadMap(workouts, maxHr);
+    // Only bucket workouts the EWMA walk will actually read (startDate >=
+    // seedStart). buildLoadEwmaSeries walks from seedStart's local day forward,
+    // so entries older than seedStart are never read — bucketing them is wasted
+    // work. seedStart is 00:00 local of its day, so this boundary matches the
+    // walk exactly and leaves CTL/ATL/TSB output unchanged.
+    const seedableWorkouts = workouts.filter((w) => w.startDate >= seedStart);
+    const dailyMap = buildDailyLoadMap(seedableWorkouts, maxHr);
     const fullSeries = buildLoadEwmaSeries(dailyMap, seedStart, today);
 
     // Slice for display
