@@ -12,6 +12,7 @@ import {
   BotMessageSquare,
   Activity,
   Heart,
+  CloudSun,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 
@@ -171,6 +172,10 @@ const Vo2TrendChart = dynamic(
 const PaceTrendChart = dynamic(
   () => import("./PaceTrendChart").then((m) => m.PaceTrendChart),
   { ssr: false, loading: () => <ChartSkeleton height={220} /> },
+);
+const WeatherImpactSection = dynamic(
+  () => import("./WeatherImpactSection").then((m) => m.WeatherImpactSection),
+  { ssr: false, loading: () => <ChartSkeleton height={340} /> },
 );
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -1799,6 +1804,11 @@ export default function PersonalInsightsPage() {
 
       {/* ── Pace by Distance (mileage-range trend) ──────── */}
       <PaceByDistanceSection runs={paceRangeRuns} />
+
+      {/* ── Weather impact (pace & HR vs. temperature) ──── */}
+      <SectionHeader icon={CloudSun} title="Weather Impact" />
+
+      <WeatherImpactSection workouts={workouts} />
 
       {/* ── Personal Records by Year ─────────────────────── */}
       <SectionHeader icon={Trophy} title="Personal Records by Year" />
