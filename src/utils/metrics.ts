@@ -33,9 +33,10 @@ const DRIFT_THRESHOLDS: Record<DistanceBucket, { good: number; ok: number }> = {
 };
 
 export function driftLevel(drift: number, bucket: DistanceBucket): DriftLevel {
+  const absDrift = Math.abs(drift);
   const t = DRIFT_THRESHOLDS[bucket];
-  if (drift <= t.good) return "good";
-  if (drift <= t.ok) return "ok";
+  if (absDrift <= t.good) return "good";
+  if (absDrift <= t.ok) return "ok";
   return "high";
 }
 

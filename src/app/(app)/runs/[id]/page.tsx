@@ -12,6 +12,7 @@ import { ZoneBreakdown } from "@/components/ZoneBreakdown";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { StatBlock } from "@/components/ui/StatBlock";
 import { MetricBadge } from "@/components/ui/MetricBadge";
+import { InfoTooltip } from "@/components/ui/InfoTooltip";
 import { TrainingLoadBadge } from "@/components/ui/TrainingLoadBadge";
 import { WeatherTile } from "@/components/runs/WeatherTile";
 import { RoutePerformanceSection } from "@/components/runs/RoutePerformanceSection";
@@ -992,8 +993,26 @@ export default function RunDetailPage() {
             />
           </div>
           <div className="flex flex-col gap-0.5">
-            <span className="text-xs text-textSecondary uppercase tracking-wide">
+            <span className="text-xs text-textSecondary uppercase tracking-wide flex items-center">
               HR Drift
+              <InfoTooltip
+                ariaLabel="About HR Drift"
+                content={
+                  <div className="flex flex-col gap-1.5">
+                    <p>
+                      <strong>HR Drift</strong> measures the percentage change in heart rate between the first and second halves of your run.
+                    </p>
+                    <p>
+                      Thresholds are mileage-dependent and evaluate absolute drift:
+                    </p>
+                    <ul className="list-disc pl-3.5 space-y-0.5 mt-0.5">
+                      <li><strong>1–3 mi:</strong> Good ≤5%, OK ≤10%</li>
+                      <li><strong>3–6 mi:</strong> Good ≤7%, OK ≤12%</li>
+                      <li><strong>6+ mi:</strong> Good ≤10%, OK ≤15%</li>
+                    </ul>
+                  </div>
+                }
+              />
             </span>
             <MetricBadge
               label="Drift"
