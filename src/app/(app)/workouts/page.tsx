@@ -15,8 +15,8 @@ import {
   type LucideProps,
 } from "lucide-react";
 
-import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { WorkoutsSkeleton } from "./WorkoutsSkeleton";
 import { useAuth } from "@/hooks/useAuth";
 import { useEnrichTrainingLoads } from "@/hooks/useEnrichTrainingLoads";
 import { onHealthWorkoutsSnapshot } from "@/services/healthWorkouts";
@@ -773,11 +773,7 @@ export default function WorkoutsPage() {
   }, []);
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <LoadingSpinner size="lg" />
-      </div>
-    );
+    return <WorkoutsSkeleton />;
   }
 
   const activeTabLabel = TABS.find((t) => t.key === activeTab)?.label ?? "All";

@@ -5,8 +5,8 @@ import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { ChevronDown, ChevronUp, Map as MapIcon, Plus, Trash2 } from "lucide-react";
 
-import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { RoutesSkeleton } from "./RoutesSkeleton";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { StaticRouteMap } from "@/components/StaticRouteMap";
 import { useAuth } from "@/hooks/useAuth";
@@ -571,11 +571,7 @@ export default function RoutesPage() {
   );
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <LoadingSpinner size="lg" />
-      </div>
-    );
+    return <RoutesSkeleton />;
   }
 
   if (runs.length === 0) {

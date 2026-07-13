@@ -14,6 +14,7 @@ import {
 } from "@/services/healthMetrics";
 import dynamic from "next/dynamic";
 import { ChartSkeleton } from "@/components/ui/ChartSkeleton";
+import { HealthSkeleton } from "./HealthSkeleton";
 import {
   Heart,
   Moon,
@@ -1849,11 +1850,7 @@ export default function HealthPage() {
     : null;
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
+    return <HealthSkeleton />;
   }
 
   if (error) {

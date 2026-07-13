@@ -72,7 +72,7 @@ describe("navItems", () => {
     expect(PRIMARY_MOBILE_ITEMS.map((i) => i.href)).toEqual(PRIMARY_MOBILE_HREFS);
   });
 
-  it("primary-4 are exactly This Week, Runs, Workouts, Personal Insights (in order)", () => {
+  it("primary-4 are exactly Weekly Dashboard, Runs, Workouts, Personal Insights (in order)", () => {
     expect(PRIMARY_MOBILE_HREFS).toEqual([
       "/dashboard",
       "/runs",
@@ -80,7 +80,7 @@ describe("navItems", () => {
       "/personal-insights",
     ]);
     expect(PRIMARY_MOBILE_ITEMS.map((i) => i.label)).toEqual([
-      "This Week",
+      "Weekly Dashboard",
       "Runs",
       "Workouts",
       "Personal Insights",

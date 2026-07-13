@@ -11,8 +11,8 @@ import { useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight, AlertTriangle, EyeOff, Download } from "lucide-react";
 
 import { TrainingLoadBadge } from "@/components/ui/TrainingLoadBadge";
-import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { RunsSkeleton } from "./RunsSkeleton";
 import { MiniCalendar, toLocalIsoDateForCalendar } from "@/components/MiniCalendar";
 import { useAuth } from "@/hooks/useAuth";
 import { useAppData } from "@/contexts/AppDataContext";
@@ -1037,11 +1037,7 @@ export default function RunsPage() {
   }, [displayedRuns]);
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <LoadingSpinner size="lg" />
-      </div>
-    );
+    return <RunsSkeleton />;
   }
 
   const totalWindowMiles = displayedRuns.reduce((s, r) => s + r.distanceMiles, 0);

@@ -4,8 +4,8 @@ import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { Pencil, Trash2, Plus, X, Footprints } from "lucide-react";
 
 import { PageHeader } from "@/components/layout/PageHeader";
-import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { ShoesSkeleton } from "./ShoesSkeleton";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useAuth } from "@/hooks/useAuth";
 import { useAppData } from "@/contexts/AppDataContext";
@@ -1304,11 +1304,7 @@ export default function ShoesPage() {
   }
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <LoadingSpinner size="lg" />
-      </div>
-    );
+    return <ShoesSkeleton />;
   }
 
   return (
