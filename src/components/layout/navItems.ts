@@ -25,7 +25,7 @@ export type NavItem = {
 // tab bar and its "More" sheet DERIVE their items from this same array (by
 // href), so the two navigation surfaces can never drift in label/icon/href.
 export const NAV_ITEMS: NavItem[] = [
-  { href: "/dashboard",          label: "This Week",          icon: LayoutDashboard },
+  { href: "/dashboard",          label: "Weekly Dashboard",   icon: LayoutDashboard },
   { href: "/plan-insights",      label: "Plan Insights",      icon: BarChart2 },
   { href: "/personal-insights",  label: "Personal Insights",  icon: TrendingUp },
   { href: "/health",             label: "Health",             icon: Heart },
@@ -45,7 +45,7 @@ export const NAV_ITEMS: NavItem[] = [
 // ordered list of hrefs. Labels + icons are always pulled from NAV_ITEMS above,
 // so changing a label/icon there updates both the sidebar and the tab bar.
 export const PRIMARY_MOBILE_HREFS: string[] = [
-  "/dashboard",          // This Week
+  "/dashboard",          // Weekly Dashboard
   "/runs",               // Runs
   "/workouts",           // Workouts
   "/personal-insights",  // Personal Insights

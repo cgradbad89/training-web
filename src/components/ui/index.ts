@@ -4,3 +4,4 @@ export * from "./ActivityCard";
 export * from "./LoadingSpinner";
 export * from "./EmptyState";
 export * from "./ChartSkeleton";
+export * from "./Skeleton";

@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 
-import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
+import { PersonalInsightsSkeleton } from "./PersonalInsightsSkeleton";
 // Best Efforts hidden per product decision (restore with the render block below).
 // import { BestEffortsSection } from "./BestEffortsSection";
 import { type PaceRangeRun } from "@/lib/paceRangeTrend";
@@ -1675,11 +1675,7 @@ export default function PersonalInsightsPage() {
   );
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <LoadingSpinner size="lg" />
-      </div>
-    );
+    return <PersonalInsightsSkeleton />;
   }
 
   const predictions = [

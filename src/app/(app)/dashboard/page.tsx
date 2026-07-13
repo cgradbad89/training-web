@@ -20,7 +20,7 @@ import {
 import { WeekNavigator } from "@/components/layout/WeekNavigator";
 import { MetricBadge } from "@/components/ui/MetricBadge";
 import { TrainingLoadBadge } from "@/components/ui/TrainingLoadBadge";
-import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
+import { DashboardSkeleton } from "./DashboardSkeleton";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { WeekCalendar } from "@/components/WeekCalendar";
 import { useAuth } from "@/hooks/useAuth";
@@ -1943,17 +1943,32 @@ export default function DashboardPage() {
   // ─── KPI data ────────────────────────────────────────────────────────────────
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <LoadingSpinner size="lg" />
-      </div>
-    );
+    return <DashboardSkeleton />;
+  }
+
+  // Calculate dynamic page title based on selected week
+  let pageTitle = "This Week";
+  const msPerWeek = 7 * 24 * 60 * 60 * 1000;
+  const currentWeekStart = getWeekStart(new Date());
+  // Use Math.round to safely calculate week difference despite DST shifts
+  const weekDiff = Math.round((selectedWeekStart.getTime() - currentWeekStart.getTime()) / msPerWeek);
+  
+  if (weekDiff === 0) {
+    pageTitle = "This Week";
+  } else if (weekDiff === -1) {
+    pageTitle = "Last Week";
+  } else if (weekDiff === 1) {
+    pageTitle = "Next Week";
+  } else {
+    const endOfWeek = getWeekEnd(selectedWeekStart);
+    const formatStr = (d: Date) => `${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}`;
+    pageTitle = `${formatStr(selectedWeekStart)} - ${formatStr(endOfWeek)}`;
   }
 
   return (
     <div className="flex flex-col gap-5 p-6 lg:p-6 p-4 max-w-5xl mx-auto">
       {/* Page title */}
-      <h1 className="text-2xl font-bold text-textPrimary">This Week</h1>
+      <h1 className="text-2xl font-bold text-textPrimary">{pageTitle}</h1>
 
       {/* Row 1: Week Navigator — allow past & future navigation; "Today" pill
           auto-appears when not on the current week. */}

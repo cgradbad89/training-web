@@ -4,7 +4,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Target, TrendingUp, Calendar, AlertTriangle, Shield, Layers, BotMessageSquare, Table2, ChevronDown, ChevronRight } from "lucide-react";
 import { useRouter } from "next/navigation";
 
-import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
+import { PlanInsightsSkeleton } from "./PlanInsightsSkeleton";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { MetricBadge } from "@/components/ui/MetricBadge";
 import { useAuth } from "@/hooks/useAuth";
@@ -897,11 +897,7 @@ export default function PlanInsightsPage() {
   );
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <LoadingSpinner size="lg" />
-      </div>
-    );
+    return <PlanInsightsSkeleton />;
   }
 
   const raceDistanceLabel = activeRace
