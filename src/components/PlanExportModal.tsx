@@ -68,7 +68,7 @@ export function PlanExportModal({
     if (!selectedPlan) return;
 
     if (exportFormat === "calendar") {
-      if (isWorkout) return; // Guard
+      if (!isRunningPlan(selectedPlan)) return; // Guard and type narrow
       const ics = generateIcs({
         plan: selectedPlan,
         defaultTime: defaultTime || undefined,
