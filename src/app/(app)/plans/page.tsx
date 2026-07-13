@@ -876,6 +876,7 @@ export default function PlansPage() {
             onCopyPlan={handleCopyWorkoutPlan}
             saving={saving}
             linkedRaceDate={selectedRaceDate}
+            onExport={() => setShowExportModal(true)}
           />
         )}
 
@@ -1181,7 +1182,7 @@ export default function PlansPage() {
       <PlanExportModal
         open={showExportModal}
         onClose={() => setShowExportModal(false)}
-        runningPlans={runningPlans}
+        allPlans={plans}
         initialPlanId={selectedPlanId ?? undefined}
       />
 

@@ -31,6 +31,7 @@ import {
   X,
   Check,
   Copy,
+  CalendarPlus,
 } from "lucide-react";
 import { useUnsavedChanges } from "@/hooks/useUnsavedChanges";
 
@@ -697,6 +698,7 @@ interface CrossTrainingPlanDetailProps {
   saving: boolean;
   /** Linked race date (ISO) for the in-place editor's race-alignment note. */
   linkedRaceDate?: string;
+  onExport: () => void;
 }
 
 export function CrossTrainingPlanDetail({
@@ -709,6 +711,7 @@ export function CrossTrainingPlanDetail({
   onCopyPlan,
   saving,
   linkedRaceDate,
+  onExport,
 }: CrossTrainingPlanDetailProps) {
   const [isEditMode, setIsEditMode] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -990,6 +993,17 @@ export function CrossTrainingPlanDetail({
             className="text-sm px-3 py-1.5 rounded-lg border border-border text-textSecondary hover:text-textPrimary hover:bg-surface"
           >
             {isEditMode ? "Done" : "Edit"}
+          </button>
+          {/* Export to modal (CSV / Calendar iOS) */}
+          <button
+            onClick={onExport}
+            title="Export plan"
+            className={`${
+              isEditMode ? "hidden lg:flex" : "flex"
+            } items-center gap-1 text-sm px-2.5 py-1.5 rounded-lg border border-border text-textSecondary hover:text-textPrimary hover:bg-surface disabled:opacity-50`}
+          >
+            <CalendarPlus className="w-3.5 h-3.5" />
+            Export
           </button>
           {/* Copy plan button */}
           <button
