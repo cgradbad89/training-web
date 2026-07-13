@@ -11,6 +11,7 @@ import {
   AlertTriangle,
   ChevronLeft,
   ChevronRight,
+  Download,
   type LucideProps,
 } from "lucide-react";
 
@@ -34,6 +35,7 @@ import { weekStart } from "@/utils/dates";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { WorkoutDetailModal } from "@/components/WorkoutDetailModal";
 import { MiniCalendar, toLocalIsoDateForCalendar } from "@/components/MiniCalendar";
+import { ExportModal } from "@/components/ExportModal";
 import { TrainingLoadBadge } from "@/components/ui/TrainingLoadBadge";
 import {
   resolveDisplayLoad,
@@ -603,6 +605,7 @@ export default function WorkoutsPage() {
   const [loading, setLoading] = useState(true);
   const [selectedWorkout, setSelectedWorkout] = useState<HealthWorkout | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>("all");
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [dismissedPairKeys, setDismissedPairKeys] = useState<Set<string>>(
     new Set()
   );
@@ -825,6 +828,15 @@ export default function WorkoutsPage() {
             lockedMonth={null}
           />
         </div>
+
+        {/* Export Button */}
+        <button
+          onClick={() => setIsExportModalOpen(true)}
+          className="w-full flex items-center justify-center gap-2 py-2.5 bg-surface border border-border text-textPrimary text-sm font-semibold rounded-xl hover:bg-surface/80 transition-colors"
+        >
+          <Download className="w-4 h-4 text-textSecondary" />
+          Export Workouts
+        </button>
       </aside>
 
       {/* ── Right Main Area ──────────────────────────────────── */}
@@ -971,6 +983,16 @@ export default function WorkoutsPage() {
           }}
         />
       )}
+
+      <ExportModal
+        isOpen={isExportModalOpen}
+        onClose={() => setIsExportModalOpen(false)}
+        type="workouts"
+        data={allWorkouts}
+        uid={uid}
+        maxHr={maxHr}
+        restingHr={restingHr}
+      />
     </div>
   );
 }

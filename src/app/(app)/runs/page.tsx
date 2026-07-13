@@ -8,7 +8,7 @@ import React, {
   useCallback,
 } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight, AlertTriangle, EyeOff } from "lucide-react";
+import { ChevronLeft, ChevronRight, AlertTriangle, EyeOff, Download } from "lucide-react";
 
 import { TrainingLoadBadge } from "@/components/ui/TrainingLoadBadge";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
@@ -48,6 +48,7 @@ import { evaluateAutoAssignRules } from "@/utils/shoeAutoAssign";
 import { prefetchRoutes } from "@/utils/routeCache";
 import { excludeWorkout } from "@/services/workoutOverrides";
 import { ExcludedItemsModal } from "@/components/ExcludedItemsModal";
+import { ExportModal } from "@/components/ExportModal";
 import { applyOverride } from "@/types/workoutOverride";
 import {
   detectDuplicatePairs,
@@ -749,6 +750,7 @@ export default function RunsPage() {
   const [shoesLoading, setShoesLoading] = useState(true);
   const loading = shoesLoading || workoutsLoading;
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
 
   const currentYear = new Date().getFullYear();
   const [selectedYear, setSelectedYear] = useState<number>(currentYear);
@@ -1158,6 +1160,15 @@ export default function RunsPage() {
             lockedMonth={selectedMonth}
           />
         </div>
+
+        {/* Export Button */}
+        <button
+          onClick={() => setIsExportModalOpen(true)}
+          className="w-full flex items-center justify-center gap-2 py-2.5 bg-surface border border-border text-textPrimary text-sm font-semibold rounded-xl hover:bg-surface/80 transition-colors"
+        >
+          <Download className="w-4 h-4 text-textSecondary" />
+          Export Runs
+        </button>
       </aside>
 
       {/* ── Right Main Area ──────────────────────────────────── */}
@@ -1315,6 +1326,16 @@ export default function RunsPage() {
           }}
         />
       )}
+
+      <ExportModal
+        isOpen={isExportModalOpen}
+        onClose={() => setIsExportModalOpen(false)}
+        type="runs"
+        data={allRuns}
+        uid={uid}
+        maxHr={maxHr}
+        restingHr={restingHr}
+      />
     </div>
   );
 }
