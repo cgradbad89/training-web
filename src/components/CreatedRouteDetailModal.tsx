@@ -4,7 +4,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pencil, X } from "lucide-react";
 import type { CreatedRoute, CreatedRouteWaypoint } from "@/types/createdRoute";
 import { GoogleMap, Polyline, Marker } from "@react-google-maps/api";
-import { useGoogleMaps } from "@/components/GoogleMapsProvider";
+import {
+  GoogleMapsProvider,
+  useGoogleMaps,
+} from "@/components/GoogleMapsProvider";
 import { useAuth } from "@/hooks/useAuth";
 import { updateCreatedRoute } from "@/services/createdRoutes";
 import { haversineMeters } from "@/utils/routeCache";
@@ -107,7 +110,19 @@ async function fetchAndSaveSnappedPath(
   return { snappedPath, distanceMiles, failures };
 }
 
-export function CreatedRouteDetailModal({
+// Wrapper mounts the Maps SDK loader locally, so the script only loads when the
+// detail modal actually opens — not on every (app) page. The inner component
+// consumes the context the provider supplies (a component can't both render a
+// provider and read its context at the same level).
+export function CreatedRouteDetailModal(props: Props) {
+  return (
+    <GoogleMapsProvider>
+      <CreatedRouteDetailModalInner {...props} />
+    </GoogleMapsProvider>
+  );
+}
+
+function CreatedRouteDetailModalInner({
   route,
   onClose,
   onRouteUpdated,

@@ -4,7 +4,10 @@ import React, { useCallback, useMemo } from "react";
 import { GoogleMap, Polyline, Marker } from "@react-google-maps/api";
 
 import { type RoutePoint } from "@/services/routes";
-import { useGoogleMaps } from "@/components/GoogleMapsProvider";
+import {
+  GoogleMapsProvider,
+  useGoogleMaps,
+} from "@/components/GoogleMapsProvider";
 import { DARK_MAP_STYLES } from "@/utils/mapStyles";
 
 interface RunMapProps {
@@ -12,7 +15,19 @@ interface RunMapProps {
   className?: string;
 }
 
-export default function RunMap({ points, className = "" }: RunMapProps) {
+// Wrapper mounts the Maps SDK loader locally, so the script only loads when a
+// map component actually renders — not on every (app) page. The inner
+// component consumes the context the provider supplies (a component can't both
+// render a provider and read its context at the same level).
+export default function RunMap(props: RunMapProps) {
+  return (
+    <GoogleMapsProvider>
+      <RunMapInner {...props} />
+    </GoogleMapsProvider>
+  );
+}
+
+function RunMapInner({ points, className = "" }: RunMapProps) {
   const { isLoaded, loadError } = useGoogleMaps();
 
   const path = useMemo(

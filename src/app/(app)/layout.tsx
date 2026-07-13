@@ -6,7 +6,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { AuthGuard } from "@/components/layout/AuthGuard";
 import { HubBanner } from "@/components/layout/HubBanner";
-import { GoogleMapsProvider } from "@/components/GoogleMapsProvider";
 import AutoMatchRunner from "@/components/AutoMatchRunner";
 import PRComputerRunner from "@/components/PRComputerRunner";
 import { MobileTabBar } from "@/components/layout/MobileTabBar";
@@ -45,7 +44,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       <AppDataProvider>
         <AutoMatchRunner />
         <PRComputerRunner />
-        <GoogleMapsProvider>
         <div className="flex flex-col min-h-screen">
           <HubBanner />
           <div className="flex flex-1 overflow-hidden">
@@ -62,7 +60,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           </div>
           <MobileTabBar />
         </div>
-        </GoogleMapsProvider>
       </AppDataProvider>
     </AuthGuard>
   );

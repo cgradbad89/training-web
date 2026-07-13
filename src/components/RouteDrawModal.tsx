@@ -4,7 +4,10 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { GoogleMap, Marker, Polyline, Autocomplete } from "@react-google-maps/api";
 import { Undo2, Trash2, X, Pencil, Hand } from "lucide-react";
 import { haversineMeters } from "@/utils/routeCache";
-import { useGoogleMaps } from "@/components/GoogleMapsProvider";
+import {
+  GoogleMapsProvider,
+  useGoogleMaps,
+} from "@/components/GoogleMapsProvider";
 import { DARK_MAP_STYLES } from "@/utils/mapStyles";
 import type { CreatedRouteWaypoint } from "@/types/createdRoute";
 
@@ -61,7 +64,19 @@ async function fetchRoutedPath(
   }
 }
 
-export default function RouteDrawModal({
+// Wrapper mounts the Maps SDK loader locally, so the script only loads when
+// the draw modal actually opens — not on every (app) page. The inner component
+// consumes the context the provider supplies (a component can't both render a
+// provider and read its context at the same level).
+export default function RouteDrawModal(props: RouteDrawModalProps) {
+  return (
+    <GoogleMapsProvider>
+      <RouteDrawModalInner {...props} />
+    </GoogleMapsProvider>
+  );
+}
+
+function RouteDrawModalInner({
   onSave,
   onClose,
   initial,
