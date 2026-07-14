@@ -41,3 +41,6 @@ yarn-error.log*
 next-env.d.ts
 .claude/worktrees/
 training-non-running-plans-review.md
+
+# repomix tool-output dumps (accidentally committed via `git add -A` in 47593d5)
+repomix-output*.xml
