@@ -120,30 +120,6 @@ export function onHealthMetricsSnapshot(
   );
 }
 
-/**
- * Real-time listener for all-time healthMetrics.
- */
-export function onAllHealthMetricsSnapshot(
-  uid: string,
-  onData: (metrics: HealthMetric[]) => void,
-  onError?: (error: Error) => void
-): Unsubscribe {
-  const q = query(
-    collection(db, `users/${uid}/healthMetrics`),
-    orderBy("date", "asc")
-  );
-
-  return onSnapshot(
-    q,
-    (snap) => {
-      onData(snap.docs.map((d) => d.data() as HealthMetric));
-    },
-    (err) => {
-      console.error("[onAllHealthMetricsSnapshot] listener error:", err);
-      onError?.(err);
-    }
-  );
-}
 
 // ── Hourly Heart Rate ────────────────────────────────────────────────────────
 

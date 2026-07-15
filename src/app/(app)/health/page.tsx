@@ -4,7 +4,7 @@ import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import {
   onHealthMetricsSnapshot,
-  onAllHealthMetricsSnapshot,
+  fetchAllHealthMetrics,
   fetchHealthMetricsRange,
   fetchHourlyHeartRate,
   fetchHealthGoals,
@@ -760,9 +760,9 @@ function filterMetricsByRange(
 function sourceForRange(
   range: TimeRange,
   metrics90: HealthMetric[],
-  allMetrics: HealthMetric[]
+  ytdMetrics: HealthMetric[]
 ): HealthMetric[] {
-  if (range === "ytd" || range === "all") return allMetrics;
+  if (range === "ytd" || range === "all") return ytdMetrics;
   return metrics90;
 }
 
@@ -1121,7 +1121,8 @@ export default function HealthPage() {
   const userId = user?.uid ?? "";
 
   const [metrics90, setMetrics90] = useState<HealthMetric[]>([]);
-  const [allMetrics, setAllMetrics] = useState<HealthMetric[]>([]);
+  const [ytdMetrics, setYtdMetrics] = useState<HealthMetric[]>([]);
+  const [ytdFetched, setYtdFetched] = useState(false);
   const [hourlyHR, setHourlyHR] = useState<HourlyHeartRate | null>(null);
   const [hourlyHRLoading, setHourlyHRLoading] = useState(true);
   const [loading, setLoading] = useState(true);
@@ -1367,16 +1368,20 @@ export default function HealthPage() {
     return () => unsub();
   }, [userId]);
 
-  // Real-time listener for all-time health metrics (for trend charts)
+  const needsYtd =
+    globalRange === "ytd" ||
+    globalRange === "all" ||
+    ringTimeframe === "ytd" ||
+    Object.values(chartRanges).some((r) => r === "ytd" || r === "all");
+
+  // Lazy-load all-time metrics for YTD/All charts
   useEffect(() => {
-    if (!userId) return;
-    const unsub = onAllHealthMetricsSnapshot(
-      userId,
-      (all) => setAllMetrics(all),
-      (err) => console.error("All-time health metrics error:", err)
-    );
-    return () => unsub();
-  }, [userId]);
+    if (!userId || !needsYtd || ytdFetched) return;
+    setYtdFetched(true);
+    fetchAllHealthMetrics(userId)
+      .then((data) => setYtdMetrics(data))
+      .catch((err) => console.error("YTD health metrics error:", err));
+  }, [userId, needsYtd, ytdFetched, chartRanges]);
 
   // One-time fetch for hourly heart rate averages
   useEffect(() => {
@@ -1475,11 +1480,11 @@ export default function HealthPage() {
   // Docs inside the ring range. The 90-day listener covers Today/7D/30D;
   // YTD reads from the all-time listener that already powers trend charts.
   const tfDocs = useMemo(() => {
-    const src = ringTimeframe === "ytd" ? allMetrics : metrics90;
+    const src = ringTimeframe === "ytd" ? ytdMetrics : metrics90;
     return src.filter(
       (m) => m.date >= ringRange.start && m.date <= ringRange.end
     );
-  }, [ringTimeframe, ringRange, metrics90, allMetrics]);
+  }, [ringTimeframe, ringRange, metrics90, ytdMetrics]);
 
   // Period daily average over the ring range (existing avg logic,
   // parameterized by range instead of fixed 7/30-day windows).
@@ -1616,13 +1621,13 @@ export default function HealthPage() {
       range: TimeRange;
     } => {
       const range = rangeFor(key);
-      const src = sourceForRange(range, metrics90, allMetrics);
+      const src = sourceForRange(range, metrics90, ytdMetrics);
       const filtered = filterMetricsByRange(src, range);
       const data = filtered.map((m) => ({ date: m.date, value: accessor(m) }));
       const domain = tightDomain(data.map((d) => d.value));
       return { data, domain, range };
     },
-    [rangeFor, metrics90, allMetrics]
+    [rangeFor, metrics90, ytdMetrics]
   );
 
   // Chart slices — one per selectable KPI. Sleep analytics uses the sleep
@@ -1644,19 +1649,19 @@ export default function HealthPage() {
   const sleepAnalyticsMetrics = useMemo(() => {
     const range = rangeFor("sleep_total_hours");
     return filterMetricsByRange(
-      sourceForRange(range, metrics90, allMetrics),
+      sourceForRange(range, metrics90, ytdMetrics),
       range
     );
-  }, [rangeFor, metrics90, allMetrics]);
+  }, [rangeFor, metrics90, ytdMetrics]);
 
   // Sleep summary tile has its own independent range override.
   const sleepSummaryMetrics = useMemo(() => {
     const range = rangeFor("sleep_summary");
     return filterMetricsByRange(
-      sourceForRange(range, metrics90, allMetrics),
+      sourceForRange(range, metrics90, ytdMetrics),
       range
     );
-  }, [rangeFor, metrics90, allMetrics]);
+  }, [rangeFor, metrics90, ytdMetrics]);
 
   // Hourly HR chart data
   const hourlyHRChartData = useMemo(() => {
