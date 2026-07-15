@@ -1,0 +1,9 @@
+// LOCAL EMULATOR ONLY — NOT the production ruleset, NEVER deployed, NEVER touches the console-managed rules.
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}

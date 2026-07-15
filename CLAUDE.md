@@ -16,6 +16,13 @@
 - Requires a one-time `firebase login` (the CLI is a global tool, not an app dependency).
 - Editing `firestore.rules` does nothing until deployed. Deploys are manual and only happen when a task explicitly authorizes them.
 
+## Local Development
+
+- Local dev uses the Firebase Local Emulator Suite by default to save quota.
+- Run `npm run dev:emulators` in one terminal, and `npm run dev` in another.
+- To bypass the emulator and connect local dev to production Firestore, set `NEXT_PUBLIC_USE_PROD_FIRESTORE=true` in `.env.local`.
+- Production builds (`NODE_ENV !== 'development'`) always use real Firestore, regardless of env vars. This is enforced in code, not just by convention.
+
 ## PRD Maintenance
 
 After every session, update `PRD.md` if any of the following changed:

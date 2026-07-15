@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:emulators": "firebase emulators:start --only firestore,auth",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
@@ -30,6 +31,7 @@
     "@vitest/ui": "^4.1.2",
     "eslint": "^9",
     "eslint-config-next": "16.2.1",
+    "firebase-tools": "^15.23.0",
     "happy-dom": "^20.8.9",
     "tailwindcss": "^4",
     "typescript": "^5",

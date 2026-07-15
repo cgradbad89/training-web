@@ -355,3 +355,12 @@ Dismissed duplicate workout pairs. Prevents re-surfacing the same duplicate warn
 | HealthKit iOS sync | Syncs Apple Watch workouts, health metrics, GPS routes to Firestore | iOS repo: `cgradbad89/MEA.git` — do not modify from this repo |
 | Hub App | Sibling app nav links in HubBanner top bar | `NEXT_PUBLIC_HUB_URL` |
 | Open-Meteo | Historical weather for runs (archive API) — fetched client-side, hour-matched to the run start, cached on `healthWorkouts.weather` | none (free, no API key) |
+
+---
+
+## Section 9 — Local Development
+
+- Local dev uses the Firebase Local Emulator Suite by default to save quota.
+- Run `npm run dev:emulators` in one terminal, and `npm run dev` in another.
+- To bypass the emulator and connect local dev to production Firestore, set `NEXT_PUBLIC_USE_PROD_FIRESTORE=true` in `.env.local`.
+- Production builds (`NODE_ENV !== 'development'`) always use real Firestore, regardless of env vars. This is enforced in code, not just by convention.
