@@ -364,3 +364,4 @@ Dismissed duplicate workout pairs. Prevents re-surfacing the same duplicate warn
 - Run `npm run dev:emulators` in one terminal, and `npm run dev` in another.
 - To bypass the emulator and connect local dev to production Firestore, set `NEXT_PUBLIC_USE_PROD_FIRESTORE=true` in `.env.local`.
 - Production builds (`NODE_ENV !== 'development'`) always use real Firestore, regardless of env vars. This is enforced in code, not just by convention.
+- To refresh emulator data from production: `npm run snapshot:export` (reads prod, ~few seconds), then with emulators running, `npm run snapshot:import` (writes to emulator only, safe).
