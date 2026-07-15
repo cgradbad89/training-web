@@ -25,7 +25,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { WeekCalendar } from "@/components/WeekCalendar";
 import { useAuth } from "@/hooks/useAuth";
 import { useAppData } from "@/contexts/AppDataContext";
-import { prefetchRoutes } from "@/utils/routeCache";
+
 import {
   fetchHealthMetricsRange,
   type HealthMetric,
@@ -1696,26 +1696,7 @@ export default function DashboardPage() {
     };
   }, [selectedWorkout]);
 
-  // Background prefetch — most recent 20 runs with routes. Previously ran
-  // inside the local workouts listener callback; now keyed off the shared
-  // workouts array.
-  useEffect(() => {
-    if (!uid || workouts.length === 0) return;
-    const timer = setTimeout(() => {
-      const recentWithRoutes = workouts
-        .filter((a) => a.isRunLike && a.hasRoute)
-        .sort(
-          (a, b) =>
-            new Date(b.startDate).getTime() - new Date(a.startDate).getTime()
-        )
-        .slice(0, 20)
-        .map((a) => a.workoutId);
-      if (recentWithRoutes.length > 0) {
-        prefetchRoutes(uid, recentWithRoutes).catch(() => {});
-      }
-    }, 1000);
-    return () => clearTimeout(timer);
-  }, [uid, workouts]);
+
 
   // One-time fetch for today's healthMetrics doc — powers the hero tile's
   // "Today" mode independently of week navigation, so toggling to Today always

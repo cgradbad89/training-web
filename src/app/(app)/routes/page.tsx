@@ -11,7 +11,8 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { StaticRouteMap } from "@/components/StaticRouteMap";
 import { useAuth } from "@/hooks/useAuth";
 import { fetchHealthWorkouts } from "@/services/healthWorkouts";
-import { fetchRoutePoints, type RoutePoint } from "@/services/routes";
+import { type RoutePoint } from "@/services/routes";
+import { getRoutePoints } from "@/utils/routeCache";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { type CreatedRoute } from "@/types/createdRoute";
 import {
@@ -267,7 +268,7 @@ function RouteDetailModal({ cluster, uid, onClose, onUseAsTemplate }: RouteDetai
 
   useEffect(() => {
     let cancelled = false;
-    fetchRoutePoints(uid, run.workoutId)
+    getRoutePoints(uid, run.workoutId)
       .then((pts) => { if (!cancelled) setRoutePoints(pts); })
       .catch(() => {})
       .finally(() => { if (!cancelled) setRouteLoading(false); });

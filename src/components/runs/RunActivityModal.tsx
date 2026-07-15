@@ -14,7 +14,8 @@ import { db } from "@/lib/firebase";
 import { useAuth } from "@/hooks/useAuth";
 import { type PlannedRunEntry } from "@/types/plan";
 import { type HealthWorkout } from "@/types/healthWorkout";
-import { fetchRoutePoints, type RoutePoint } from "@/services/routes";
+import { type RoutePoint } from "@/services/routes";
+import { getRoutePoints } from "@/utils/routeCache";
 import { computeMileSplits, type MileSplit } from "@/utils/mileSplits";
 import { formatPace, formatDuration } from "@/utils/pace";
 import { type RunEntryStatus } from "@/utils/planMatching";
@@ -177,7 +178,7 @@ export function RunActivityModal({
     setRoutePoints([]);
     setPerMileHR({});
 
-    fetchRoutePoints(uid, workoutId)
+    getRoutePoints(uid, workoutId)
       .then((points) => {
         if (cancelled) return;
         setRoutePoints(points);

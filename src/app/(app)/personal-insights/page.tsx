@@ -28,7 +28,8 @@ import {
   findActiveRunningPlan,
   type RunTitleContext,
 } from "@/utils/runPlanTitle";
-import { fetchRoutePoints, type RoutePoint } from "@/services/routes";
+import { type RoutePoint } from "@/services/routes";
+import { getRoutePoints } from "@/utils/routeCache";
 import { applyOverride } from "@/types/workoutOverride";
 import { vo2HistoryCutoffISO } from "@/utils/vo2History";
 import { type HealthWorkout } from "@/types/healthWorkout";
@@ -1160,7 +1161,7 @@ export default function PersonalInsightsPage() {
     Promise.all(
       yearRunsWithRoute.map(async (run) => {
         try {
-          const points = await fetchRoutePoints(uid, run.workoutId);
+          const points = await getRoutePoints(uid, run.workoutId);
           const secs = fastestMileSegment(points);
           return secs != null ? { seconds: secs, date: run.startDate } : null;
         } catch {

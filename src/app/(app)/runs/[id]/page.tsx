@@ -25,7 +25,8 @@ import {
   fetchHealthWorkouts,
   saveWeatherForWorkout,
 } from "@/services/healthWorkouts";
-import { fetchRoutePoints, type RoutePoint } from "@/services/routes";
+import { type RoutePoint } from "@/services/routes";
+import { getRoutePoints } from "@/utils/routeCache";
 import { hydrateFastFinishSplits } from "@/services/fastFinishSplits";
 import { fetchUserSettings } from "@/services/userSettings";
 import { fetchRaces } from "@/services/races";
@@ -283,7 +284,7 @@ export default function RunDetailPage() {
         // route availability is derived from the DATA: a read of >= 2 points
         // means "routed" for all downstream rendering. A genuinely route-less
         // workout (Pilates/strength) reads 0 points and is unchanged.
-        fetchRoutePoints(uid, workoutId)
+        getRoutePoints(uid, workoutId)
           .then((points) => {
             setRoutePoints(points);
 
