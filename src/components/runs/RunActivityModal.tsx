@@ -16,6 +16,7 @@ import { type PlannedRunEntry } from "@/types/plan";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { type RoutePoint } from "@/services/routes";
 import { getRoutePoints } from "@/utils/routeCache";
+import { getMileSplits } from "@/utils/mileSplitsCache";
 import { computeMileSplits, type MileSplit } from "@/utils/mileSplits";
 import { formatPace, formatDuration } from "@/utils/pace";
 import { type RunEntryStatus } from "@/utils/planMatching";
@@ -186,20 +187,11 @@ export function RunActivityModal({
         // Per-mile HR from the iOS-synced mileSplits subcollection. Same path
         // and guards (avgBpm && sampleCount >= 2) the run detail page uses.
         if (points.length >= 2) {
-          return getDocs(
-            query(
-              collection(
-                db,
-                `users/${uid}/healthWorkouts/${workoutId}/mileSplits`
-              ),
-              orderBy("mile", "asc")
-            )
-          ).then((snap) => {
+          return getMileSplits(uid, workoutId).then((splits) => {
             if (cancelled) return;
             const hrMap: Record<number, number> = {};
-            snap.docs.forEach((doc) => {
-              const data = doc.data();
-              if (data.avgBpm && data.sampleCount >= 2) {
+            splits.forEach((data) => {
+              if (data.avgBpm && (data.sampleCount as number) >= 2) {
                 hrMap[data.mile as number] = data.avgBpm as number;
               }
             });

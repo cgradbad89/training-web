@@ -96,6 +96,7 @@ import {
   orderBy,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { getMileSplits } from "@/utils/mileSplitsCache";
 import { fetchWeatherForRun } from "@/lib/weather";
 
 const RunMap = dynamic(() => import("@/components/RunMap"), { ssr: false });
@@ -324,17 +325,11 @@ export default function RunDetailPage() {
               // Gated on the SAME data signal (>= 2 route points) so it runs for
               // a falsely-flagged run and is skipped for genuinely route-less
               // workouts.
-              getDocs(
-                query(
-                  collection(db, `users/${uid}/healthWorkouts/${workoutId}/mileSplits`),
-                  orderBy("mile", "asc")
-                )
-              )
-                .then((snap) => {
+              getMileSplits(uid, workoutId)
+                .then((splits) => {
                   const hrMap: Record<number, number> = {};
-                  snap.docs.forEach((doc) => {
-                    const data = doc.data();
-                    if (data.avgBpm && data.sampleCount >= 2) {
+                  splits.forEach((data) => {
+                    if (data.avgBpm && (data.sampleCount as number) >= 2) {
                       hrMap[data.mile as number] = data.avgBpm as number;
                     }
                   });

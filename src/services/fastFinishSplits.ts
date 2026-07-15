@@ -19,6 +19,7 @@
 import { collection, getDocs, orderBy, query } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { getRoutePoints } from "@/utils/routeCache";
+import { getMileSplits } from "@/utils/mileSplitsCache";
 import { computeMileSplits, type MileSplit } from "@/utils/mileSplits";
 import {
   BEST_EFFORT_RECENCY_DAYS,
@@ -41,16 +42,10 @@ async function fetchMileSplitHR(
   uid: string,
   workoutId: string
 ): Promise<MileSplitHR[]> {
-  const snap = await getDocs(
-    query(
-      collection(db, `users/${uid}/healthWorkouts/${workoutId}/mileSplits`),
-      orderBy("mile", "asc")
-    )
-  );
+  const splits = await getMileSplits(uid, workoutId);
   const out: MileSplitHR[] = [];
-  snap.docs.forEach((d) => {
-    const data = d.data();
-    if (data.avgBpm && data.sampleCount >= 2) {
+  splits.forEach((data) => {
+    if (data.avgBpm && (data.sampleCount as number) >= 2) {
       out.push({ mile: data.mile as number, avgBpm: data.avgBpm as number });
     }
   });

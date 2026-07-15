@@ -30,6 +30,7 @@ import {
 } from "@/utils/runPlanTitle";
 import { type RoutePoint } from "@/services/routes";
 import { getRoutePoints } from "@/utils/routeCache";
+import { getMileSplits } from "@/utils/mileSplitsCache";
 import { applyOverride } from "@/types/workoutOverride";
 import { vo2HistoryCutoffISO } from "@/utils/vo2History";
 import { type HealthWorkout } from "@/types/healthWorkout";
@@ -1217,59 +1218,60 @@ export default function PersonalInsightsPage() {
       };
     }
 
-    Promise.all(
-      candidateRuns.map(async (run) => {
-        try {
-          // Mirror src/app/(app)/runs/[id]/page.tsx pattern verbatim:
-          //   path users/{uid}/healthWorkouts/{id}/mileSplits, ordered by mile.
-          const snap = await getDocs(
-            query(
-              collection(
-                db,
-                `users/${uid}/healthWorkouts/${run.workoutId}/mileSplits`
-              ),
-              orderBy("mile", "asc")
-            )
-          );
+    const fetchAllRuns = async () => {
+      const perRun = [];
+      const batchSize = 10;
+      for (let i = 0; i < candidateRuns.length; i += batchSize) {
+        if (cancelled) return perRun;
+        const batch = candidateRuns.slice(i, i + batchSize);
+        const results = await Promise.all(
+          batch.map(async (run) => {
+            try {
+              const splits = await getMileSplits(uid, run.workoutId);
 
-          const totalMi = run.distanceMiles;
-          const fullMiles = Math.floor(totalMi);
-          const partial = totalMi - fullMiles; // 0 when run is whole-mile
+              const totalMi = run.distanceMiles;
+              const fullMiles = Math.floor(totalMi);
+              const partial = totalMi - fullMiles; // 0 when run is whole-mile
 
-          const miles: Array<{ mile: number; bpm: number; distance: number }> =
-            [];
-          snap.docs.forEach((doc) => {
-            const data = doc.data() as Record<string, unknown>;
-            const mile = typeof data.mile === "number" ? data.mile : null;
-            const avgBpm =
-              typeof data.avgBpm === "number" ? data.avgBpm : null;
-            const sampleCount =
-              typeof data.sampleCount === "number" ? data.sampleCount : 0;
-            if (mile == null || avgBpm == null) return;
-            // Guards: matches run-detail page + per-prompt 40–220 bpm sanity.
-            if (sampleCount < 2) return;
-            if (avgBpm < 40 || avgBpm > 220) return;
+              const miles: Array<{ mile: number; bpm: number; distance: number }> =
+                [];
+              splits.forEach((data) => {
+                const mile = typeof data.mile === "number" ? data.mile : null;
+                const avgBpm =
+                  typeof data.avgBpm === "number" ? data.avgBpm : null;
+                const sampleCount =
+                  typeof data.sampleCount === "number" ? data.sampleCount : 0;
+                if (mile == null || avgBpm == null) return;
+                // Guards: matches run-detail page + per-prompt 40–220 bpm sanity.
+                if (sampleCount < 2) return;
+                if (avgBpm < 40 || avgBpm > 220) return;
 
-            // Per-mile distance: each whole-mile bucket = 1.0; final partial
-            // mile (1-indexed = fullMiles + 1) uses the residual.
-            let distance: number;
-            if (mile <= fullMiles) {
-              distance = 1.0;
-            } else if (mile === fullMiles + 1 && partial > 0) {
-              distance = partial;
-            } else {
-              // Defensive: out-of-range mile index — skip rather than assume.
-              return;
+                // Per-mile distance: each whole-mile bucket = 1.0; final partial
+                // mile (1-indexed = fullMiles + 1) uses the residual.
+                let distance: number;
+                if (mile <= fullMiles) {
+                  distance = 1.0;
+                } else if (mile === fullMiles + 1 && partial > 0) {
+                  distance = partial;
+                } else {
+                  // Defensive: out-of-range mile index — skip rather than assume.
+                  return;
+                }
+                miles.push({ mile, bpm: avgBpm, distance });
+              });
+
+              return miles;
+            } catch {
+              return [];
             }
-            miles.push({ mile, bpm: avgBpm, distance });
-          });
+          })
+        );
+        perRun.push(...results);
+      }
+      return perRun;
+    };
 
-          return miles;
-        } catch {
-          return [];
-        }
-      })
-    ).then((perRun) => {
+    fetchAllRuns().then((perRun) => {
       if (cancelled) return;
 
       const zoneMiles: Record<HRZoneNumber, number> = {
