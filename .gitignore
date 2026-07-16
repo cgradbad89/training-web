@@ -46,3 +46,4 @@ training-non-running-plans-review.md
 repomix-output*.xml
 
 scripts/snapshots/
+*.log
