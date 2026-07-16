@@ -26,3 +26,22 @@ export function vo2HistoryCutoffISO(now: Date, days: number = VO2_HISTORY_DAYS):
   cutoff.setDate(cutoff.getDate() - days);
   return cutoff.toISOString().split("T")[0];
 }
+
+export interface Vo2Entry {
+  date: string;
+  value: number;
+}
+
+export function buildVo2History(
+  rawDocs: { id: string; data: { date?: string; vo2_max?: number } }[]
+): Vo2Entry[] {
+  return rawDocs
+    .map((d) => {
+      const date = d.data.date ?? d.id;
+      const value = typeof d.data.vo2_max === "number" ? d.data.vo2_max : 0;
+      return { date, value };
+    })
+    .filter((e) => e.value > 0 && typeof e.date === "string")
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+

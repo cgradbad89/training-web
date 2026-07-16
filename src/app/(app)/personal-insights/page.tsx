@@ -70,6 +70,11 @@ import {
   buildWeeklyLoadModel,
   type WeeklyLoadModel,
 } from "@/utils/weeklyLoad";
+import { buildPersonalRecordsByYear } from "@/utils/personalRecords";
+import { buildPaceTrendsByDistanceBucket } from "@/utils/paceTrends";
+import { buildHrZoneDistribution } from "@/utils/hrZoneDistribution";
+import { fastestMileSegment, findBestFastestMileAcrossRuns } from "@/utils/fastestMileSegment";
+import { buildVo2History, type Vo2Entry } from "@/utils/vo2History";
 
 // ─── Training Load KPI tooltip copy ───────────────────────────────────────────
 // Single source of truth so the four KPI cards and any future surfaces stay
@@ -219,71 +224,7 @@ function formatTotalTime(totalSeconds: number): string {
 
 // ─── Fastest Mile Segment ────────────────────────────────────────────────────
 
-const EARTH_RADIUS_MI = 3958.8;
-function toRad(deg: number): number {
-  return (deg * Math.PI) / 180;
-}
-function haversineMi(lat1: number, lng1: number, lat2: number, lng2: number): number {
-  const dLat = toRad(lat2 - lat1);
-  const dLng = toRad(lng2 - lng1);
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
-  return 2 * EARTH_RADIUS_MI * Math.asin(Math.sqrt(a));
-}
 
-/** Sliding window: find the fastest 1-mile segment in a route. Returns seconds or null. */
-function fastestMileSegment(points: RoutePoint[]): number | null {
-  if (points.length < 2) return null;
-
-  // Build arrays of cumulative distance (miles) and timestamps (ms)
-  const timestamps: number[] = [];
-  const cumDist: number[] = [0];
-  for (let i = 0; i < points.length; i++) {
-    const ts = new Date(points[i].timestamp).getTime();
-    if (isNaN(ts)) return null;
-    timestamps.push(ts);
-    if (i > 0) {
-      cumDist.push(
-        cumDist[i - 1] +
-          haversineMi(points[i - 1].lat, points[i - 1].lng, points[i].lat, points[i].lng)
-      );
-    }
-  }
-
-  const totalDist = cumDist[cumDist.length - 1];
-  if (totalDist < 1.0) return null; // route shorter than 1 mile
-
-  let bestSeconds: number | null = null;
-  let left = 0;
-
-  for (let right = 1; right < points.length; right++) {
-    while (cumDist[right] - cumDist[left] >= 1.0) {
-      // Distance from left to right >= 1 mile — find exact 1-mile crossing
-      const distFromLeft = cumDist[right] - cumDist[left];
-      const segDist = cumDist[right] - cumDist[right - 1];
-      const overshoot = distFromLeft - 1.0;
-
-      // Interpolate timestamp at the 1-mile mark between right-1 and right
-      let crossingMs: number;
-      if (segDist > 0) {
-        const fraction = 1.0 - overshoot / segDist;
-        crossingMs =
-          timestamps[right - 1] + fraction * (timestamps[right] - timestamps[right - 1]);
-      } else {
-        crossingMs = timestamps[right];
-      }
-
-      const elapsed = (crossingMs - timestamps[left]) / 1000;
-      if (elapsed > 0 && (bestSeconds === null || elapsed < bestSeconds)) {
-        bestSeconds = elapsed;
-      }
-      left++;
-    }
-  }
-
-  return bestSeconds;
-}
 
 // ─── Training Load Section ───────────────────────────────────────────────────
 
@@ -865,10 +806,7 @@ function TrainingLoadSection({
 
 // ─── Cardio Fitness (VO₂ max) Card ───────────────────────────────────────────
 
-interface Vo2Entry {
-  date: string;
-  value: number;
-}
+
 
 function formatVo2DateShort(iso: string): string {
   // iso comes as YYYY-MM-DD from healthMetrics doc id/date field — parse as
@@ -1107,15 +1045,12 @@ export default function PersonalInsightsPage() {
     )
       .then((snap) => {
         if (cancelled) return;
-        const entries: Vo2Entry[] = snap.docs
-          .map((d) => {
-            const data = d.data() as { date?: string; vo2_max?: number };
-            const date = data.date ?? d.id;
-            const value = typeof data.vo2_max === 'number' ? data.vo2_max : 0;
-            return { date, value };
-          })
-          .filter((e) => e.value > 0 && typeof e.date === 'string')
-          .sort((a, b) => a.date.localeCompare(b.date));
+        const entries: Vo2Entry[] = buildVo2History(
+          snap.docs.map((d) => ({
+            id: d.id,
+            data: d.data() as { date?: string; vo2_max?: number },
+          }))
+        );
         setVo2History(entries);
       })
       .catch((err) => {
@@ -1170,12 +1105,7 @@ export default function PersonalInsightsPage() {
         }
       })
     ).then((results) => {
-      const valid = results.filter(
-        (r): r is { seconds: number; date: Date } => r != null && r.seconds > 180 && r.seconds < 1200
-      );
-      const best = valid.length > 0
-        ? valid.reduce((a, b) => (a.seconds < b.seconds ? a : b))
-        : null;
+      const best = findBestFastestMileAcrossRuns(results);
       setFastestMileByYear((prev) => ({ ...prev, [selectedYear]: best }));
     });
   }, [uid, runs, selectedYear, fastestMileByYear]);
@@ -1274,25 +1204,7 @@ export default function PersonalInsightsPage() {
     fetchAllRuns().then((perRun) => {
       if (cancelled) return;
 
-      const zoneMiles: Record<HRZoneNumber, number> = {
-        1: 0,
-        2: 0,
-        3: 0,
-        4: 0,
-        5: 0,
-      };
-      let totalMiles = 0;
-      let runsCounted = 0;
-      for (const miles of perRun) {
-        if (miles.length === 0) continue;
-        runsCounted += 1;
-        for (const m of miles) {
-          const z = classifyHrZone(m.bpm, maxHr);
-          zoneMiles[z] += m.distance;
-          totalMiles += m.distance;
-        }
-      }
-      setIntensityData({ zoneMiles, totalMiles, runsCounted });
+      setIntensityData(buildHrZoneDistribution(perRun, maxHr));
       setIntensityLoading(false);
     });
 
@@ -1384,115 +1296,39 @@ export default function PersonalInsightsPage() {
 
   // ── Personal Records by Year ────────────────────────────────────────────────
 
-  const prBuckets = [
-    { label: "1–3 mi", filter: (m: number) => m >= 1.0 && m < 3.0 },
-    { label: "3–6 mi", filter: (m: number) => m >= 3.0 && m < 6.0 },
-    { label: "6–7 mi", filter: (m: number) => m >= 6.0 && m < 7.0 },
-    { label: "7–10 mi", filter: (m: number) => m >= 7.0 && m < 10.0 },
-    { label: "10+ mi", filter: (m: number) => m >= 10.0 },
-  ];
-
-  // Specific run distance PRs — ordered shortest to longest
-  const specificDistances = [
-    { label: "5K", targetMiles: 3.107, tolerance: 0.3 },
-    { label: "5 Miles", targetMiles: 5.0, tolerance: 0.5 },
-    { label: "10K", targetMiles: 6.214, tolerance: 0.5 },
-    { label: "15K", targetMiles: 9.321, tolerance: 0.75 },
-    { label: "10 Miles", targetMiles: 10.0, tolerance: 0.75 },
-    { label: "Half Marathon", targetMiles: 13.109, tolerance: 1.0 },
-  ];
-
   const yearRuns = useMemo(
     () => runs.filter((r) => r.startDate.getFullYear() === selectedYear),
     [runs, selectedYear]
   );
 
-  const prs = useMemo(
-    () =>
-      prBuckets.map((bucket) => {
-        const qualifying = yearRuns
-          .filter((r) => r.distanceMiles > 0 && bucket.filter(r.distanceMiles))
-          .map((r) => {
-            const pace = r.durationSeconds / r.distanceMiles;
-            return { pace, miles: r.distanceMiles, date: r.startDate };
-          })
-          .filter((r) => isFinite(r.pace) && r.pace > 180 && r.pace < 1200);
-
-        if (qualifying.length === 0) return null;
-        return qualifying.reduce((best, cur) => (cur.pace < best.pace ? cur : best));
-      }),
-    [yearRuns]
+  const { prs, specificPrs } = useMemo(
+    () => buildPersonalRecordsByYear(runs, selectedYear),
+    [runs, selectedYear]
   );
 
-  // Specific run distance PRs (fastest avg pace for qualifying runs)
-  const specificPrs = useMemo(
-    () =>
-      specificDistances.map((dist) => {
-        const candidates = yearRuns
-          .filter(
-            (r) =>
-              r.distanceMiles >= dist.targetMiles - dist.tolerance &&
-              r.distanceMiles <= dist.targetMiles + dist.tolerance &&
-              r.durationSeconds > 0
-          )
-          .map((r) => ({
-            pace: r.durationSeconds / r.distanceMiles,
-            totalSeconds: r.durationSeconds,
-            miles: r.distanceMiles,
-            date: r.startDate,
-          }))
-          .filter((r) => isFinite(r.pace) && r.pace > 180 && r.pace < 1200);
+  const prBuckets = [
+    { label: "1–3 mi" },
+    { label: "3–6 mi" },
+    { label: "6–7 mi" },
+    { label: "7–10 mi" },
+    { label: "10+ mi" },
+  ];
 
-        if (candidates.length === 0) return null;
-        return candidates.reduce((best, cur) =>
-          cur.pace < best.pace ? cur : best
-        );
-      }),
-    [yearRuns]
-  );
+  const specificDistances = [
+    { label: "5K" },
+    { label: "5 Miles" },
+    { label: "10K" },
+    { label: "15K" },
+    { label: "10 Miles" },
+    { label: "Half Marathon" },
+  ];
 
   // ── Pace Trends (last 8 weeks) ─────────────────────────────────────────────
 
-  const paceTrendData = useMemo(() => {
-    const nowDate = new Date();
-    const currentMonday = getWeekStart(nowDate);
-
-    return Array.from({ length: 8 }, (_, i) => {
-      const weekDate = new Date(currentMonday);
-      weekDate.setDate(weekDate.getDate() - (7 - i) * 7);
-      const weekEndDate = new Date(weekDate);
-      weekEndDate.setDate(weekDate.getDate() + 6);
-      weekEndDate.setHours(23, 59, 59, 999);
-
-      const weekRuns = runs.filter((r) => r.startDate >= weekDate && r.startDate <= weekEndDate);
-
-      function avgPace(bucket: HealthWorkout[]): number | null {
-        let totalSec = 0,
-          totalMi = 0;
-        bucket.forEach((r) => {
-          if (r.distanceMiles <= 0) return;
-          const sec = r.durationSeconds / r.distanceMiles;
-          if (!isFinite(sec) || sec <= 0) return;
-          totalSec += sec * r.distanceMiles;
-          totalMi += r.distanceMiles;
-        });
-        return totalMi > 0 ? totalSec / totalMi : null;
-      }
-
-      const short = weekRuns.filter((r) => r.distanceMiles >= 1 && r.distanceMiles < 3);
-      const medium = weekRuns.filter((r) => r.distanceMiles >= 3 && r.distanceMiles < 6);
-      const long = weekRuns.filter((r) => r.distanceMiles >= 6);
-
-      const label = weekDate.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-
-      return {
-        label,
-        short: avgPace(short),
-        medium: avgPace(medium),
-        long: avgPace(long),
-      };
-    });
-  }, [runs]);
+  const paceTrendData = useMemo(
+    () => buildPaceTrendsByDistanceBucket(runs, 8),
+    [runs]
+  );
 
   const hasPaceTrend = paceTrendData.some((w) => w.short || w.medium || w.long);
 
