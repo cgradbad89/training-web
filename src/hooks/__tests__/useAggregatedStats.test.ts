@@ -53,8 +53,11 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
       computationVersion: AGGREGATED_STATS_VERSION,
       latestWorkoutId: "workout1",
       racePredictions: { t5k: 1200 }, // mock data
+      // Revival normalizes these two; include them so equality holds.
+      fastestMileSegment: null,
+      personalRecordsByYear: { prs: [], specificPrs: [] },
     };
-    
+
     vi.mocked(firestore.getDoc).mockResolvedValue({
       exists: () => true,
       data: () => cachedDoc,
@@ -66,6 +69,46 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
 
     expect(result).toEqual(cachedDoc);
     expect(firestore.getDocs).not.toHaveBeenCalled(); // no heavy fetches
+  });
+
+  it("revives string dates to Date instances on the cache-hit path (regression)", async () => {
+    // Shaped like real Firestore output: dates round-tripped to ISO strings.
+    const cachedDoc = {
+      computationVersion: AGGREGATED_STATS_VERSION,
+      latestWorkoutId: "workout1",
+      racePredictions: { t5k: 1200 },
+      fastestMileSegment: { seconds: 360, date: "2024-01-07T10:00:00.000Z" },
+      personalRecordsByYear: {
+        prs: [{ pace: 480, miles: 2, date: "2024-01-05T10:00:00.000Z" }, null],
+        specificPrs: [
+          {
+            pace: 420,
+            miles: 3.1,
+            totalSeconds: 1302,
+            date: "2024-01-06T10:00:00.000Z",
+          },
+          null,
+        ],
+      },
+    };
+
+    vi.mocked(firestore.getDoc).mockResolvedValue({
+      exists: () => true,
+      data: () => cachedDoc,
+    } as any);
+
+    const result = await fetchAndComputeAggregatedStats(
+      mockUid, mockWorkouts, maxHr, restingHr, races, latestWorkoutId
+    );
+
+    expect(result.fastestMileSegment!.date instanceof Date).toBe(true);
+    expect(result.personalRecordsByYear.prs[0]!.date instanceof Date).toBe(true);
+    expect(
+      result.personalRecordsByYear.specificPrs[0]!.date instanceof Date
+    ).toBe(true);
+    // Null entries survive without throwing or fabricating a date.
+    expect(result.personalRecordsByYear.prs[1]).toBeNull();
+    expect(firestore.getDocs).not.toHaveBeenCalled();
   });
 
   it("computes fresh data if cache is missing", async () => {

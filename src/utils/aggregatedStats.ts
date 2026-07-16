@@ -34,6 +34,40 @@ export interface AggregatedStatsDoc {
   fastestMileSegment: ReturnType<typeof findBestFastestMileAcrossRuns>;
 }
 
+/**
+ * Normalize a cached AggregatedStatsDoc read back from Firestore.
+ *
+ * The write path serializes via JSON.parse(JSON.stringify(...)), which turns
+ * every `Date` into an ISO string. On a cache-hit read those `date` leaves come
+ * back as strings even though the TS type says `Date`, so callers that do
+ * `.toLocaleDateString()` crash. This revives the three Date-typed leaves
+ * (fastestMileSegment.date, personalRecordsByYear.prs[*].date,
+ * personalRecordsByYear.specificPrs[*].date) back into real Date instances.
+ *
+ * Returns a new object; does not mutate `cached`. Null-safe at every level.
+ */
+export function reviveAggregatedStatsDates(
+  cached: AggregatedStatsDoc
+): AggregatedStatsDoc {
+  const { fastestMileSegment, personalRecordsByYear } = cached;
+
+  return {
+    ...cached,
+    fastestMileSegment: fastestMileSegment
+      ? { ...fastestMileSegment, date: new Date(fastestMileSegment.date) }
+      : fastestMileSegment,
+    personalRecordsByYear: {
+      ...personalRecordsByYear,
+      prs: (personalRecordsByYear?.prs ?? []).map((pr) =>
+        pr ? { ...pr, date: new Date(pr.date) } : pr
+      ),
+      specificPrs: (personalRecordsByYear?.specificPrs ?? []).map((pr) =>
+        pr ? { ...pr, date: new Date(pr.date) } : pr
+      ),
+    },
+  };
+}
+
 export function isAggregatedStatsStale(
   cached: AggregatedStatsDoc | null,
   latestWorkoutId: string

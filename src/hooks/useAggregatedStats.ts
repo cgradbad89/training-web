@@ -6,6 +6,7 @@ import {
   type AggregatedStatsDoc,
   buildAggregatedStats,
   isAggregatedStatsStale,
+  reviveAggregatedStatsDates,
 } from "@/utils/aggregatedStats";
 import { getRoutePoints } from "@/utils/routeCache";
 import { getMileSplits } from "@/utils/mileSplitsCache";
@@ -33,7 +34,7 @@ export async function fetchAndComputeAggregatedStats(
   const statsRef = doc(db, `users/${uid}/insights/aggregatedStats`);
   const statsSnap = await getDoc(statsRef);
   const cached = statsSnap.exists()
-    ? (statsSnap.data() as AggregatedStatsDoc)
+    ? reviveAggregatedStatsDates(statsSnap.data() as AggregatedStatsDoc)
     : null;
 
   if (!isAggregatedStatsStale(cached, latestWorkoutId)) {
