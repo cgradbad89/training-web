@@ -48,6 +48,7 @@ describe("aggregatedStats", () => {
         maxHr: 185,
         restingHr: 50,
         now: new Date("2024-01-01T12:00:00Z"),
+        races: [],
       });
 
       expect(result.computationVersion).toBe(AGGREGATED_STATS_VERSION);
@@ -84,6 +85,7 @@ describe("aggregatedStats", () => {
         maxHr: 185,
         restingHr: 50,
         now,
+        races: [{ raceDate: "2024-01-10T10:00:00Z", distanceMiles: 13.1 }],
       });
 
       expect(result.latestWorkoutId).toBe("workout1");

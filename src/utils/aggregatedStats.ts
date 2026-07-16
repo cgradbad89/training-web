@@ -52,6 +52,7 @@ export interface BuildAggregatedStatsInputs {
   maxHr: number;
   restingHr: number;
   now: Date;
+  races: { raceDate: Date | string; distanceMiles: number }[];
 }
 
 export function buildAggregatedStats(
@@ -65,6 +66,7 @@ export function buildAggregatedStats(
     maxHr,
     restingHr,
     now,
+    races,
   } = inputs;
 
   const computedAt = now.toISOString();
@@ -140,9 +142,8 @@ export function buildAggregatedStats(
     sourceName: r.sourceName,
   }));
 
-  // GAP: `races` is not provided in BuildAggregatedStatsInputs. 
-  // We pass undefined/empty to `buildQualifyingEfforts` per instructions not to invent a workaround.
-  const efforts = buildQualifyingEfforts(runInputs, 56, { races: [] });
+  // Pass races to buildQualifyingEfforts
+  const efforts = buildQualifyingEfforts(runInputs, 56, { races });
   
   const fit5k = fitRiegel(efforts, 3.1069, 0, { min: 0.9, max: 1.3 });
   const fitTen = fitRiegel(efforts, 10.0, 3.0, { min: 1.04, max: 1.10 });
