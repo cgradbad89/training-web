@@ -14,9 +14,10 @@ import {
   Heart,
   CloudSun,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams, usePathname } from "next/navigation";
 
 import { PersonalInsightsSkeleton } from "./PersonalInsightsSkeleton";
+import { InsightsTabsBar, type InsightsTab } from "./InsightsTabsBar";
 // Best Efforts hidden per product decision (restore with the render block below).
 // import { BestEffortsSection } from "./BestEffortsSection";
 import { type PaceRangeRun } from "@/lib/paceRangeTrend";
@@ -973,6 +974,29 @@ export default function PersonalInsightsPage() {
   const { user } = useAuth();
   const uid = user?.uid ?? null;
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  // ── Tab state (URL-synced) ────────────────────────────────────────────────
+  // Read the initial tab from ?tab=; anything missing/invalid falls back to
+  // "fitness" WITHOUT rewriting the URL. The URL is only written when the user
+  // actively clicks a tab (see selectTab). Declared with the other page-level
+  // hooks — above the loading early-return — to keep all hooks unconditional
+  // (React #310 guard).
+  const tabParam = searchParams.get("tab");
+  const initialTab: InsightsTab =
+    tabParam === "fitness" ||
+    tabParam === "performance" ||
+    tabParam === "workouts"
+      ? tabParam
+      : "fitness";
+  const [activeTab, setActiveTab] = useState<InsightsTab>(initialTab);
+
+  function selectTab(tab: InsightsTab) {
+    setActiveTab(tab);
+    // Shallow URL update — no navigation, no reload, no scroll jump.
+    router.replace(`${pathname}?tab=${tab}`, { scroll: false });
+  }
 
   function askCoach(question: string) {
     router.push(`/coach?q=${encodeURIComponent(question)}`);
@@ -1355,23 +1379,33 @@ export default function PersonalInsightsPage() {
         </button>
       </div>
 
-      {/* ── Cardio Fitness (VO₂ max) ─────────────────────── */}
-      <SectionHeader icon={Heart} title="Cardio Fitness (VO₂ max)" />
+      <InsightsTabsBar value={activeTab} onChange={selectTab} />
 
-      <CardioFitnessCard history={vo2History} loading={vo2Loading} />
+      {/* ── Fitness & Load ───────────────────────────────── */}
+      {activeTab === "fitness" && (
+        <>
+          {/* ── Cardio Fitness (VO₂ max) ─────────────────────── */}
+          <SectionHeader icon={Heart} title="Cardio Fitness (VO₂ max)" />
 
-      {/* ── Training Load ─────────────────────────────────── */}
-      <SectionHeader icon={Activity} title="Training Load" />
+          <CardioFitnessCard history={vo2History} loading={vo2Loading} />
 
-      <TrainingLoadSection
-        data={trainingLoadData}
-        weeklyLoad={weeklyLoadModel}
-        runTitleMap={runTitleMap}
-        intensity={intensityData}
-        intensityLoading={intensityLoading}
-        maxHr={maxHr}
-      />
+          {/* ── Training Load ─────────────────────────────────── */}
+          <SectionHeader icon={Activity} title="Training Load" />
 
+          <TrainingLoadSection
+            data={trainingLoadData}
+            weeklyLoad={weeklyLoadModel}
+            runTitleMap={runTitleMap}
+            intensity={intensityData}
+            intensityLoading={intensityLoading}
+            maxHr={maxHr}
+          />
+        </>
+      )}
+
+      {/* ── Race Readiness ───────────────────────────────── */}
+      {activeTab === "performance" && (
+        <>
       {/* ── Predicted Race Times ─────────────────────────── */}
       <SectionHeader icon={Timer} title="Predicted Race Times" />
 
@@ -1607,9 +1641,13 @@ export default function PersonalInsightsPage() {
           Ask about my PRs and trends
         </button>
       </Card>
+        </>
+      )}
 
-      {/* ── Workout Trends (Phase 3) ────────────────────── */}
-      {uid && <WorkoutTrendsSection uid={uid} workouts={workouts} />}
+      {/* ── Workout Trends ───────────────────────────────── */}
+      {activeTab === "workouts" && uid && (
+        <WorkoutTrendsSection uid={uid} workouts={workouts} />
+      )}
     </div>
   );
 }
