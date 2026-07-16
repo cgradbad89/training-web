@@ -35,6 +35,7 @@ import { applyOverride } from "@/types/workoutOverride";
 import { vo2HistoryCutoffISO } from "@/utils/vo2History";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { RACE_DISTANCE_MILES } from "@/types/race";
+import { useAggregatedStats } from "@/hooks/useAggregatedStats";
 import { formatPace, formatPaceLabel } from "@/utils/pace";
 import { weekStart as getWeekStart } from "@/utils/dates";
 import {
@@ -1002,67 +1003,38 @@ export default function PersonalInsightsPage() {
     () => findActiveRunningPlan(plans),
     [plans]
   );
-  const loading = workoutsLoading;
-  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
-  // Fastest 1-mile segment from GPS route points, keyed by year
-  const [fastestMileByYear, setFastestMileByYear] = useState<
-    Record<number, { seconds: number; date: Date } | null>
-  >({});
+  const raceInputs = useMemo(
+    () =>
+      races
+        .map((r) => {
+          const distance = r.raceDistance === "custom"
+            ? (r.customDistanceMiles ?? 0)
+            : (RACE_DISTANCE_MILES[r.raceDistance] ?? 0);
+          return { raceDate: r.raceDate, distanceMiles: distance };
+        })
+        .filter((r) => r.distanceMiles > 0),
+    [races]
+  );
+  const stats = useAggregatedStats(uid, workouts, maxHr, restingHr, raceInputs);
+  const loading = workoutsLoading || stats.loading;
+  
+  const selectedYear = new Date().getFullYear();
 
-  // Running Intensity by HR Zone — share of miles per zone, distance-weighted.
-  // Populated by a one-shot mileSplits fetch on mount (see useEffect below).
-  const [intensityData, setIntensityData] = useState<{
-    zoneMiles: Record<HRZoneNumber, number>;
-    totalMiles: number;
-    runsCounted: number;
-  } | null>(null);
-  const [intensityLoading, setIntensityLoading] = useState(true);
+  const {
+    vo2History: fetchedVo2 = [],
+    hrZoneDistribution,
+    personalRecordsByYear,
+    paceTrends = [],
+    fastestMileSegment,
+  } = stats.data ?? {};
 
-  // Cardio Fitness (VO₂ max) — sparse healthMetrics field, populated by iOS sync.
-  const [vo2History, setVo2History] = useState<Vo2Entry[]>([]);
-  const [vo2Loading, setVo2Loading] = useState(true);
+  const intensityData = hrZoneDistribution ?? null;
+  const intensityLoading = false;
+  
+  const vo2History = fetchedVo2;
+  const vo2Loading = false;
+  const fastestMileByYear: Record<number, any> = { [selectedYear]: fastestMileSegment ?? null };
 
-  // Cardio Fitness (VO₂ max) — one-shot fetch of all healthMetrics docs with
-  // a `vo2_max` reading, ascending by date. Apple Watch only writes this on
-  // days it generated a Cardio Fitness estimate, so the collection is sparse.
-  useEffect(() => {
-    if (!uid) return;
-    let cancelled = false;
-    setVo2Loading(true);
-    // Bound the read to the last VO2_HISTORY_DAYS so this query doesn't grow
-    // unbounded as healthMetrics accumulate. `date` is the single inequality
-    // field (with a matching orderBy) — the same shape as fetchHealthMetrics*,
-    // needing only Firestore's automatic single-field index. The `vo2_max > 0`
-    // condition remains a client-side filter below (`e.value > 0`), so no
-    // two-field composite index is required.
-    const cutoffStr = vo2HistoryCutoffISO(new Date());
-    getDocs(
-      query(
-        collection(db, `users/${uid}/healthMetrics`),
-        where('date', '>=', cutoffStr),
-        orderBy('date'),
-      ),
-    )
-      .then((snap) => {
-        if (cancelled) return;
-        const entries: Vo2Entry[] = buildVo2History(
-          snap.docs.map((d) => ({
-            id: d.id,
-            data: d.data() as { date?: string; vo2_max?: number },
-          }))
-        );
-        setVo2History(entries);
-      })
-      .catch((err) => {
-        console.error('Failed to load VO2 max history', err);
-      })
-      .finally(() => {
-        if (!cancelled) setVo2Loading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [uid]);
 
   const runs = useMemo(() => workouts.filter((w) => w.isRunLike), [workouts]);
 
@@ -1079,148 +1051,7 @@ export default function PersonalInsightsPage() {
     [runs]
   );
 
-  // Compute fastest 1-mile GPS segment for the selected year
-  useEffect(() => {
-    if (!uid || runs.length === 0) return;
-    if (fastestMileByYear[selectedYear] !== undefined) return; // already computed
 
-    const yearRunsWithRoute = runs
-      .filter((r) => r.startDate.getFullYear() === selectedYear && r.hasRoute && r.distanceMiles >= 1.0)
-      .sort((a, b) => b.startDate.getTime() - a.startDate.getTime())
-      .slice(0, 50); // cap for performance
-
-    if (yearRunsWithRoute.length === 0) {
-      setFastestMileByYear((prev) => ({ ...prev, [selectedYear]: null }));
-      return;
-    }
-
-    Promise.all(
-      yearRunsWithRoute.map(async (run) => {
-        try {
-          const points = await getRoutePoints(uid, run.workoutId);
-          const secs = fastestMileSegment(points);
-          return secs != null ? { seconds: secs, date: run.startDate } : null;
-        } catch {
-          return null;
-        }
-      })
-    ).then((results) => {
-      const best = findBestFastestMileAcrossRuns(results);
-      setFastestMileByYear((prev) => ({ ...prev, [selectedYear]: best }));
-    });
-  }, [uid, runs, selectedYear, fastestMileByYear]);
-
-  // Running Intensity by HR Zone — fetch per-mile HR from mileSplits
-  // subcollection for the last 8 weeks of GPS runs (capped at 40 runs).
-  useEffect(() => {
-    if (!uid) return;
-    if (runs.length === 0) {
-      setIntensityLoading(false);
-      return;
-    }
-    let cancelled = false;
-    setIntensityLoading(true);
-
-    const eightWeeksAgo = new Date();
-    eightWeeksAgo.setDate(eightWeeksAgo.getDate() - 8 * 7);
-
-    const candidateRuns = runs
-      .filter(
-        (r) =>
-          r.hasRoute &&
-          r.startDate >= eightWeeksAgo &&
-          r.distanceMiles > 0
-      )
-      .sort((a, b) => b.startDate.getTime() - a.startDate.getTime())
-      .slice(0, 40);
-
-    if (candidateRuns.length === 0) {
-      if (!cancelled) {
-        setIntensityData({
-          zoneMiles: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
-          totalMiles: 0,
-          runsCounted: 0,
-        });
-        setIntensityLoading(false);
-      }
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    const fetchAllRuns = async () => {
-      const perRun = [];
-      const batchSize = 10;
-      for (let i = 0; i < candidateRuns.length; i += batchSize) {
-        if (cancelled) return perRun;
-        const batch = candidateRuns.slice(i, i + batchSize);
-        const results = await Promise.all(
-          batch.map(async (run) => {
-            try {
-              const splits = await getMileSplits(uid, run.workoutId);
-
-              const totalMi = run.distanceMiles;
-              const fullMiles = Math.floor(totalMi);
-              const partial = totalMi - fullMiles; // 0 when run is whole-mile
-
-              const miles: Array<{ mile: number; bpm: number; distance: number }> =
-                [];
-              splits.forEach((data) => {
-                const mile = typeof data.mile === "number" ? data.mile : null;
-                const avgBpm =
-                  typeof data.avgBpm === "number" ? data.avgBpm : null;
-                const sampleCount =
-                  typeof data.sampleCount === "number" ? data.sampleCount : 0;
-                if (mile == null || avgBpm == null) return;
-                // Guards: matches run-detail page + per-prompt 40–220 bpm sanity.
-                if (sampleCount < 2) return;
-                if (avgBpm < 40 || avgBpm > 220) return;
-
-                // Per-mile distance: each whole-mile bucket = 1.0; final partial
-                // mile (1-indexed = fullMiles + 1) uses the residual.
-                let distance: number;
-                if (mile <= fullMiles) {
-                  distance = 1.0;
-                } else if (mile === fullMiles + 1 && partial > 0) {
-                  distance = partial;
-                } else {
-                  // Defensive: out-of-range mile index — skip rather than assume.
-                  return;
-                }
-                miles.push({ mile, bpm: avgBpm, distance });
-              });
-
-              return miles;
-            } catch {
-              return [];
-            }
-          })
-        );
-        perRun.push(...results);
-      }
-      return perRun;
-    };
-
-    fetchAllRuns().then((perRun) => {
-      if (cancelled) return;
-
-      setIntensityData(buildHrZoneDistribution(perRun, maxHr));
-      setIntensityLoading(false);
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [uid, runs, maxHr]);
-
-  // ── Available years ─────────────────────────────────────────────────────────
-
-  const availableYears = useMemo(() => {
-    const years = new Set<number>();
-    runs.forEach((r) => years.add(r.startDate.getFullYear()));
-    years.add(new Date().getFullYear());
-    return Array.from(years).sort((a, b) => b - a);
-  }, [runs]);
 
   // ── Riegel Predictions ──────────────────────────────────────────────────────
 
@@ -1237,18 +1068,6 @@ export default function PersonalInsightsPage() {
     [runs]
   );
 
-  const raceInputs = useMemo(
-    () =>
-      races
-        .map((r) => {
-          const distance = r.raceDistance === "custom"
-            ? (r.customDistanceMiles ?? 0)
-            : (RACE_DISTANCE_MILES[r.raceDistance] ?? 0);
-          return { raceDate: r.raceDate, distanceMiles: distance };
-        })
-        .filter((r) => r.distanceMiles > 0),
-    [races]
-  );
 
   const fit5k = useMemo(() => {
     const efforts = buildQualifyingEfforts(runInputs, 56, { races: raceInputs });
@@ -1301,10 +1120,7 @@ export default function PersonalInsightsPage() {
     [runs, selectedYear]
   );
 
-  const { prs, specificPrs } = useMemo(
-    () => buildPersonalRecordsByYear(runs, selectedYear),
-    [runs, selectedYear]
-  );
+  const { prs = [], specificPrs = [] } = personalRecordsByYear ?? {};
 
   const prBuckets = [
     { label: "1–3 mi" },
@@ -1325,10 +1141,7 @@ export default function PersonalInsightsPage() {
 
   // ── Pace Trends (last 8 weeks) ─────────────────────────────────────────────
 
-  const paceTrendData = useMemo(
-    () => buildPaceTrendsByDistanceBucket(runs, 8),
-    [runs]
-  );
+  const paceTrendData = paceTrends;
 
   const hasPaceTrend = paceTrendData.some((w) => w.short || w.medium || w.long);
 
@@ -1655,25 +1468,11 @@ export default function PersonalInsightsPage() {
       <SectionHeader icon={Trophy} title="Personal Records by Year" />
 
       <Card>
-        {/* Year selector */}
+        {/* Year selector (cached to current year) */}
         <div className="flex items-center justify-center gap-4 mb-5">
-          <button
-            onClick={() => setSelectedYear((y) => y - 1)}
-            disabled={!availableYears.includes(selectedYear - 1)}
-            className="p-1 rounded-lg hover:bg-surface disabled:opacity-30 transition-colors"
-          >
-            <ChevronLeft size={20} className="text-textSecondary" />
-          </button>
           <span className="text-lg font-bold text-textPrimary tabular-nums w-16 text-center">
             {selectedYear}
           </span>
-          <button
-            onClick={() => setSelectedYear((y) => y + 1)}
-            disabled={selectedYear >= new Date().getFullYear()}
-            className="p-1 rounded-lg hover:bg-surface disabled:opacity-30 transition-colors"
-          >
-            <ChevronRight size={20} className="text-textSecondary" />
-          </button>
         </div>
 
         {/* Unified PR table with two sections */}
