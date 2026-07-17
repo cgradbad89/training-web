@@ -2,8 +2,9 @@
 
 import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { useAuth } from "@/hooks/useAuth";
+import { useRefetchOnFocus } from "@/hooks/useRefetchOnFocus";
 import {
-  onHealthMetricsSnapshot,
+  fetchHealthMetrics,
   fetchAllHealthMetrics,
   fetchHealthMetricsRange,
   fetchHourlyHeartRate,
@@ -759,11 +760,11 @@ function filterMetricsByRange(
 /** Pick the right source array for a given range — avoids pulling large data unnecessarily. */
 function sourceForRange(
   range: TimeRange,
-  metrics90: HealthMetric[],
+  metrics: HealthMetric[],
   ytdMetrics: HealthMetric[]
 ): HealthMetric[] {
   if (range === "ytd" || range === "all") return ytdMetrics;
-  return metrics90;
+  return metrics;
 }
 
 /**
@@ -1120,12 +1121,12 @@ export default function HealthPage() {
   const { user } = useAuth();
   const userId = user?.uid ?? "";
 
-  const [metrics90, setMetrics90] = useState<HealthMetric[]>([]);
+  const [metrics, setMetrics] = useState<HealthMetric[]>([]);
   const [ytdMetrics, setYtdMetrics] = useState<HealthMetric[]>([]);
   const [ytdFetched, setYtdFetched] = useState(false);
   const [hourlyHR, setHourlyHR] = useState<HourlyHeartRate | null>(null);
   const [hourlyHRLoading, setHourlyHRLoading] = useState(true);
-  const [loading, setLoading] = useState(true);
+  const [metricsLoading, setMetricsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [goals, setGoals] = useState<HealthGoals | null>(null);
   const [goalsModalOpen, setGoalsModalOpen] = useState(false);
@@ -1228,7 +1229,7 @@ export default function HealthPage() {
   // The RingCalendar reports its visible range; we fetch whole months that
   // haven't been fetched yet (one getDocs per month, matching the existing
   // range-fetch pattern) and cache them so flipping views/months back never
-  // refetches. metrics90's live docs are overlaid so recent days stay fresh.
+  // refetches. metrics's live docs are overlaid so recent days stay fresh.
   const [calendarMetrics, setCalendarMetrics] = useState<
     Map<string, HealthMetric>
   >(new Map());
@@ -1288,9 +1289,9 @@ export default function HealthPage() {
   // Cached months + live last-90-days docs (live wins for overlapping dates).
   const calendarMetricsLive = useMemo(() => {
     const merged = new Map(calendarMetrics);
-    for (const m of metrics90) merged.set(m.date, m);
+    for (const m of metrics) merged.set(m.date, m);
     return merged;
-  }, [calendarMetrics, metrics90]);
+  }, [calendarMetrics, metrics]);
 
   // Ring / KPI-card click → Trends tab, with the metric's chart selected
   // and scrolled into view once it has rendered.
@@ -1349,24 +1350,25 @@ export default function HealthPage() {
     setChartRanges((prev) => ({ ...prev, [key]: range }));
   }, []);
 
-  // Real-time listener for last-90-days health metrics
-  useEffect(() => {
+  // One-time fetch for last-90-days health metrics
+  const refreshMetrics = useCallback(async () => {
     if (!userId) return;
-    setLoading(true);
-    const unsub = onHealthMetricsSnapshot(
-      userId,
-      90,
-      (m90) => {
-        setMetrics90(m90);
-        setLoading(false);
-      },
-      (err) => {
-        setError(err.message);
-        setLoading(false);
-      }
-    );
-    return () => unsub();
+    setMetricsLoading(true);
+    try {
+      const data = await fetchHealthMetrics(userId, 90);
+      setMetrics(data);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setMetricsLoading(false);
+    }
   }, [userId]);
+
+  useEffect(() => {
+    void refreshMetrics();
+  }, [refreshMetrics]);
+
+  useRefetchOnFocus(refreshMetrics);
 
   const needsYtd =
     globalRange === "ytd" ||
@@ -1399,13 +1401,13 @@ export default function HealthPage() {
 
   // Stats for the selected day. The 90-day listener covers the 30-day-back
   // navigation cap, so we filter from cached data — no extra query needed.
-  const today = metrics90.find((m) => m.date === anchorDate) ?? null;
+  const today = metrics.find((m) => m.date === anchorDate) ?? null;
   const windowStart7 = shiftISODate(anchorDate, -6);
   const windowStart30 = shiftISODate(anchorDate, -29);
-  const last7 = metrics90.filter(
+  const last7 = metrics.filter(
     (m) => m.date >= windowStart7 && m.date <= anchorDate
   );
-  const last30 = metrics90.filter(
+  const last30 = metrics.filter(
     (m) => m.date >= windowStart30 && m.date <= anchorDate
   );
 
@@ -1424,8 +1426,8 @@ export default function HealthPage() {
     isValid: (v: unknown) => v is T
   ): { value: T; fromDate: string } | null {
     if (!isViewingToday) return null;
-    // metrics90 is descending by date — first match before anchorDate wins.
-    for (const m of metrics90) {
+    // metrics is descending by date — first match before anchorDate wins.
+    for (const m of metrics) {
       if (m.date >= anchorDate) continue;
       const v = m[field];
       if (isValid(v)) return { value: v, fromDate: m.date };
@@ -1480,11 +1482,11 @@ export default function HealthPage() {
   // Docs inside the ring range. The 90-day listener covers Today/7D/30D;
   // YTD reads from the all-time listener that already powers trend charts.
   const tfDocs = useMemo(() => {
-    const src = ringTimeframe === "ytd" ? ytdMetrics : metrics90;
+    const src = ringTimeframe === "ytd" ? ytdMetrics : metrics;
     return src.filter(
       (m) => m.date >= ringRange.start && m.date <= ringRange.end
     );
-  }, [ringTimeframe, ringRange, metrics90, ytdMetrics]);
+  }, [ringTimeframe, ringRange, metrics, ytdMetrics]);
 
   // Period daily average over the ring range (existing avg logic,
   // parameterized by range instead of fixed 7/30-day windows).
@@ -1600,7 +1602,7 @@ export default function HealthPage() {
   );
 
   // Chart data — last 90 days ascending
-  const chartData = useMemo(() => [...metrics90].reverse(), [metrics90]);
+  const chartData = useMemo(() => [...metrics].reverse(), [metrics]);
 
   function toChartSeries(key: keyof HealthMetric) {
     return chartData.map((m) => ({
@@ -1621,13 +1623,13 @@ export default function HealthPage() {
       range: TimeRange;
     } => {
       const range = rangeFor(key);
-      const src = sourceForRange(range, metrics90, ytdMetrics);
+      const src = sourceForRange(range, metrics, ytdMetrics);
       const filtered = filterMetricsByRange(src, range);
       const data = filtered.map((m) => ({ date: m.date, value: accessor(m) }));
       const domain = tightDomain(data.map((d) => d.value));
       return { data, domain, range };
     },
-    [rangeFor, metrics90, ytdMetrics]
+    [rangeFor, metrics, ytdMetrics]
   );
 
   // Chart slices — one per selectable KPI. Sleep analytics uses the sleep
@@ -1649,19 +1651,19 @@ export default function HealthPage() {
   const sleepAnalyticsMetrics = useMemo(() => {
     const range = rangeFor("sleep_total_hours");
     return filterMetricsByRange(
-      sourceForRange(range, metrics90, ytdMetrics),
+      sourceForRange(range, metrics, ytdMetrics),
       range
     );
-  }, [rangeFor, metrics90, ytdMetrics]);
+  }, [rangeFor, metrics, ytdMetrics]);
 
   // Sleep summary tile has its own independent range override.
   const sleepSummaryMetrics = useMemo(() => {
     const range = rangeFor("sleep_summary");
     return filterMetricsByRange(
-      sourceForRange(range, metrics90, ytdMetrics),
+      sourceForRange(range, metrics, ytdMetrics),
       range
     );
-  }, [rangeFor, metrics90, ytdMetrics]);
+  }, [rangeFor, metrics, ytdMetrics]);
 
   // Hourly HR chart data
   const hourlyHRChartData = useMemo(() => {
@@ -1854,7 +1856,7 @@ export default function HealthPage() {
       })
     : null;
 
-  if (loading) {
+  if (metricsLoading) {
     return <HealthSkeleton />;
   }
 
@@ -1868,7 +1870,7 @@ export default function HealthPage() {
     );
   }
 
-  if (!today && metrics90.length === 0) {
+  if (!today && metrics.length === 0) {
     return (
       <div className="p-8 text-center">
         <Heart className="w-12 h-12 text-textSecondary mx-auto mb-3" />
@@ -1897,6 +1899,16 @@ export default function HealthPage() {
           )}
         </div>
         <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => void refreshMetrics()}
+            disabled={metricsLoading}
+            aria-label="Refresh metrics"
+            title="Refresh metrics"
+            className="flex items-center justify-center w-8 h-8 rounded-lg hover:bg-surface text-textSecondary hover:text-textPrimary transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={`w-4 h-4 ${metricsLoading ? "animate-spin" : ""}`} />
+          </button>
           {activeTab === "today" && selectedDate && (() => {
             const todayStr = todayISO();
             const minDate = shiftISODate(todayStr, -30);
