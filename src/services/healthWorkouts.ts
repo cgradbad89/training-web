@@ -40,6 +40,7 @@ import {
   where,
   orderBy,
   limit,
+  writeBatch,
   type QueryConstraint,
   type Unsubscribe,
 } from "firebase/firestore";
@@ -63,6 +64,15 @@ import {
 } from "@/utils/trainingLoad";
 import { fetchRoutePoints, type RoutePoint } from "@/services/routes";
 import { fetchHRStream } from "@/services/hrStream";
+import {
+  parseOverlayChartCache,
+  type OverlayChartCache,
+} from "@/utils/overlayChartCache";
+import {
+  deriveRouteClusterId,
+  isNolocClusterId,
+} from "@/utils/routeClusterId";
+import { getRouteStartPoint } from "@/utils/routeCache";
 
 function stripUndefined<T extends object>(obj: T): T {
   return JSON.parse(JSON.stringify(obj)) as T;
@@ -195,6 +205,11 @@ function docToHealthWorkout(
         ? (data.trainingLoadBasisComplete as boolean)
         : undefined,
     weather: parseWeather(data.weather),
+    routeClusterId:
+      typeof data.routeClusterId === "string" && data.routeClusterId.length > 0
+        ? data.routeClusterId
+        : undefined,
+    overlayChartCache: parseOverlayChartCache(data.overlayChartCache),
   };
 }
 
@@ -555,6 +570,105 @@ export async function enrichTrainingLoads(
     if (result) enriched++;
   }
   return enriched;
+}
+
+/**
+ * All workouts sharing a deterministic route-cluster ID. Single-field equality
+ * query (automatic index — no composite index needed); callers sort in memory.
+ * This is the narrow replacement for the Route Performance all-workouts scan:
+ * it reads only the cluster's docs (typically a handful) and is always
+ * accurate because membership is derived per-run at write time, never cached
+ * as an aggregate.
+ */
+export async function fetchWorkoutsByRouteCluster(
+  uid: string,
+  routeClusterId: string
+): Promise<HealthWorkout[]> {
+  const q = query(
+    collection(db, "users", uid, "healthWorkouts"),
+    where("routeClusterId", "==", routeClusterId)
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) =>
+    docToHealthWorkout(d.id, d.data() as Record<string, unknown>)
+  );
+}
+
+/** Merge-write the deterministic cluster ID (same pattern as best efforts). */
+export async function saveRouteClusterId(
+  uid: string,
+  workoutId: string,
+  routeClusterId: string
+): Promise<void> {
+  const ref = doc(db, "users", uid, "healthWorkouts", workoutId);
+  await setDoc(ref, { routeClusterId }, { merge: true });
+}
+
+/** Merge-write the decimated overlay chart series onto the workout doc. */
+export async function saveOverlayChartCache(
+  uid: string,
+  workoutId: string,
+  cache: OverlayChartCache
+): Promise<void> {
+  const ref = doc(db, "users", uid, "healthWorkouts", workoutId);
+  await setDoc(ref, stripUndefined({ overlayChartCache: cache }), {
+    merge: true,
+  });
+}
+
+/**
+ * Lazily assign `routeClusterId` to the run-like, routed workouts in `workouts`
+ * that are still missing it. One-time cost per run: a 1-doc start-point read
+ * (module-cached via getRouteStartPoint — the SAME read the old geographic
+ * clustering paid on EVERY page view) plus a batched merge write. Idempotent;
+ * once every run has an ID this is a pure in-memory filter with zero reads.
+ * Returns the number of workouts written.
+ */
+export async function backfillRouteClusterIds(
+  uid: string,
+  workouts: HealthWorkout[]
+): Promise<number> {
+  // A noloc ID on a routed run means the start point wasn't resolvable when
+  // the ID was written — re-derive so it self-heals to a geographic ID.
+  const missing = workouts.filter(
+    (w) =>
+      w.isRunLike &&
+      w.hasRoute &&
+      (w.routeClusterId === undefined || isNolocClusterId(w.routeClusterId))
+  );
+  if (missing.length === 0) return 0;
+
+  // Resolve start points with bounded concurrency (mirrors clusterRoutesGeographic).
+  const ids = new Map<string, string>();
+  for (let i = 0; i < missing.length; i += 10) {
+    const batch = missing.slice(i, i + 10);
+    await Promise.all(
+      batch.map(async (w) => {
+        const start = await getRouteStartPoint(uid, w.workoutId);
+        // A null start is indistinguishable from a transient read failure —
+        // never persist a distance-only ID for a routed run; retry next view.
+        if (!start) return;
+        const id = deriveRouteClusterId(w.distanceMiles, start);
+        if (id !== w.routeClusterId) ids.set(w.workoutId, id);
+      })
+    );
+  }
+
+  // Batched merge writes (Firestore caps a WriteBatch at 500 ops).
+  const entries = [...ids.entries()];
+  for (let i = 0; i < entries.length; i += 400) {
+    const batch = writeBatch(db);
+    for (const [workoutId, routeClusterId] of entries.slice(i, i + 400)) {
+      batch.set(
+        doc(db, "users", uid, "healthWorkouts", workoutId),
+        { routeClusterId },
+        { merge: true }
+      );
+    }
+    await batch.commit();
+  }
+
+  return entries.length;
 }
 
 export async function backfillBestEfforts(uid: string): Promise<{

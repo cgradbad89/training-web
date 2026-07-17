@@ -2,6 +2,12 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "emulators",
+      "runtimeExecutable": "firebase",
+      "runtimeArgs": ["emulators:start", "--only", "firestore,auth"],
+      "port": 8080
+    },
+    {
       "name": "dev",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],

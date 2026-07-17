@@ -13,6 +13,7 @@ import {
 } from "recharts";
 import { type RoutePoint } from "@/services/routes";
 import { type GapPoint } from "@/utils/gradeAdjustedPace";
+import { type OverlayChartCache } from "@/utils/overlayChartCache";
 import { formatPace, mpsToSecPerMile } from "@/utils/pace";
 import { computePaceAxisDomain, nullifyOutliers } from "@/utils/paceAxisDomain";
 import { rollingAverage, SMOOTH_WINDOW_SEC } from "@/utils/smoothSeries";
@@ -77,6 +78,11 @@ interface OverlayDatum {
 interface RunOverlayChartProps {
   points: RoutePoint[];
   perPointGap: GapPoint[];
+  /** Persisted decimated series (workout.overlayChartCache). Used as the data
+   *  source only while raw points are unavailable (e.g. the route
+   *  subcollection is still loading) — raw points stay authoritative because
+   *  the GAP overlay needs the per-point grade series. */
+  cache?: OverlayChartCache;
 }
 
 function OverlayTooltip({
@@ -109,7 +115,11 @@ function OverlayTooltip({
   );
 }
 
-export function RunOverlayChart({ points, perPointGap }: RunOverlayChartProps) {
+export function RunOverlayChart({
+  points,
+  perPointGap,
+  cache,
+}: RunOverlayChartProps) {
   // Series visibility toggles — both default OFF, so the chart opens showing
   // only Pace + Elevation (both always-on). In-memory ONLY: this resets to
   // both-off on every remount / page load and is never persisted (no Firestore,
@@ -134,6 +144,27 @@ export function RunOverlayChart({ points, perPointGap }: RunOverlayChartProps) {
     hasHR: boolean;
   }>(() => {
     if (points.length < 2) {
+      // No raw points (yet) — render the persisted decimated series. GAP is
+      // not part of the cache (it needs the per-point grade series), so the
+      // gap channel stays empty until raw points arrive.
+      if (cache) {
+        const data: OverlayDatum[] = cache.distancesMiles.map((dist, i) => ({
+          distanceMiles: dist,
+          timeSec: 0,
+          elevationFt: cache.elevationFt[i],
+          pace: cache.paceSecPerMile[i],
+          gap: null,
+          hr: cache.heartRateBpm[i],
+        }));
+        const cachedPaceVals = cache.paceSecPerMile.filter(
+          (v): v is number => v != null
+        );
+        return {
+          displayData: data,
+          paceDomain: computePaceAxisDomain(cachedPaceVals),
+          hasHR: data.filter((d) => d.hr != null).length >= 2,
+        };
+      }
       return {
         displayData: [],
         paceDomain: computePaceAxisDomain([]),
@@ -229,7 +260,9 @@ export function RunOverlayChart({ points, perPointGap }: RunOverlayChartProps) {
 
     const hrCount = sampled.filter((d) => d.hr != null).length;
     return { displayData: sampled, paceDomain: domain, hasHR: hrCount >= 2 };
-  }, [points, perPointGap]);
+  }, [points, perPointGap, cache]);
+
+  const hasGap = displayData.some((d) => d.gap != null);
 
   if (displayData.length < 2) return null;
 
@@ -250,7 +283,8 @@ export function RunOverlayChart({ points, perPointGap }: RunOverlayChartProps) {
           <SeriesToggle
             label="GAP"
             color="var(--color-chart-warning)"
-            active={showGap}
+            active={hasGap && showGap}
+            disabled={!hasGap}
             onClick={() => setShowGap((v) => !v)}
           />
           <SeriesToggle
@@ -336,7 +370,7 @@ export function RunOverlayChart({ points, perPointGap }: RunOverlayChartProps) {
             connectNulls={false}
             isAnimationActive={false}
           />
-          {showGap && (
+          {hasGap && showGap && (
             <Line
               yAxisId="pace"
               type="monotone"
@@ -365,7 +399,7 @@ export function RunOverlayChart({ points, perPointGap }: RunOverlayChartProps) {
       </ResponsiveContainer>
       <div className="flex flex-wrap gap-4 mt-3 text-xs text-textSecondary">
         <LegendDot color="var(--color-chart-pace)" label="Pace" />
-        {showGap && (
+        {hasGap && showGap && (
           <LegendDot color="var(--color-chart-warning)" label="GAP" dashed />
         )}
         {hasHR && showHr && (

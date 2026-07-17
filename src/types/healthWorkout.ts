@@ -1,6 +1,7 @@
 import { type BestEffortsMap } from "@/utils/bestEfforts";
 import { type WeatherSnapshot } from "@/types/weather";
 import { type MileSplit } from "@/utils/mileSplits";
+import { type OverlayChartCache } from "@/utils/overlayChartCache";
 
 /**
  * HealthWorkout — mirrors the Firestore document stored at
@@ -64,6 +65,14 @@ export interface HealthWorkout {
    *  and persisted by the web app. Absent on iOS-synced docs until backfilled
    *  (null/undefined = not yet fetched or no GPS). */
   weather?: WeatherSnapshot | null;
+  /** Deterministic route-cluster ID (see src/utils/routeClusterId.ts). Written
+   *  lazily by the web app (run-detail view / backfill); absent until then.
+   *  Drives the narrow Route Performance query. */
+  routeClusterId?: string;
+  /** Decimated pace/HR/elevation series for the overlay chart, computed once
+   *  from the route subcollection and cached here by the web app. Absent until
+   *  the run's detail page has been viewed. */
+  overlayChartCache?: OverlayChartCache;
   /** TRANSIENT (never persisted to Firestore): per-mile splits hydrated from the
    *  GPS `route` subcollection (pace) merged with the `mileSplits` subcollection
    *  (per-mile avgBpm). Attached at the wiring layer for HR-gated best-effort

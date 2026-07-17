@@ -1,5 +1,13 @@
-import { collection, query, orderBy, getDocs } from "firebase/firestore";
+import {
+  collection,
+  query,
+  orderBy,
+  getDocs,
+  doc,
+  writeBatch,
+} from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { type MileSplitCacheWrite } from "@/utils/mileSplitDocs";
 
 export interface MileSplitDoc {
   id: string;
@@ -49,4 +57,41 @@ export async function getMileSplits(
 
   inFlight.set(cacheKey, promise);
   return promise;
+}
+
+/**
+ * Persist computed per-mile distance/pace onto the mileSplits subcollection
+ * (merge writes — iOS's avgBpm/sampleCount fields are never touched), then
+ * refresh the module cache so subsequent reads in this session see the
+ * cached splits without a refetch.
+ */
+export async function saveMileSplitCache(
+  uid: string,
+  workoutId: string,
+  writes: MileSplitCacheWrite[]
+): Promise<void> {
+  if (writes.length === 0) return;
+  const base = `users/${uid}/healthWorkouts/${workoutId}/mileSplits`;
+
+  const batch = writeBatch(db);
+  for (const w of writes) {
+    batch.set(doc(db, base, w.docId), w.data, { merge: true });
+  }
+  await batch.commit();
+
+  // Merge into the in-memory cache (matching by doc id; add new docs).
+  const cacheKey = `${uid}/${workoutId}`;
+  const existing = cache.get(cacheKey);
+  if (existing) {
+    const byId = new Map(existing.map((d) => [d.id, d]));
+    for (const w of writes) {
+      byId.set(w.docId, { ...(byId.get(w.docId) ?? { id: w.docId }), ...w.data });
+    }
+    cache.set(
+      cacheKey,
+      [...byId.values()].sort(
+        (a, b) => ((a.mile as number) ?? 0) - ((b.mile as number) ?? 0)
+      )
+    );
+  }
 }

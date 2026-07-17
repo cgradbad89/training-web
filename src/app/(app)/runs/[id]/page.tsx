@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { ArrowLeft, Pencil, RotateCcw } from "lucide-react";
@@ -20,9 +20,13 @@ import { RunImpactSection } from "@/components/runs/RunImpactSection";
 import { useAuth } from "@/hooks/useAuth";
 import { useUnsavedChanges } from "@/hooks/useUnsavedChanges";
 import {
+  backfillRouteClusterIds,
   computeAndStoreBestEfforts,
   fetchHealthWorkout,
   fetchHealthWorkouts,
+  fetchWorkoutsByRouteCluster,
+  saveOverlayChartCache,
+  saveRouteClusterId,
   saveWeatherForWorkout,
 } from "@/services/healthWorkouts";
 import { type RoutePoint } from "@/services/routes";
@@ -74,10 +78,14 @@ import {
   resolveDisplayLoad,
 } from "@/utils/trainingLoad";
 import {
-  clusterRoutesGeographic,
-  findClusterForRun,
-  type RouteCluster,
-} from "@/utils/routeClustering";
+  deriveRouteClusterId,
+  isNolocClusterId,
+} from "@/utils/routeClusterId";
+import { computeOverlayChartCache } from "@/utils/overlayChartCache";
+import {
+  splitsFromCachedDocs,
+  mileSplitCacheWrites,
+} from "@/utils/mileSplitDocs";
 import {
   computeRoutePerformance,
   toMatchedRunSummaries,
@@ -96,7 +104,11 @@ import {
   orderBy,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { getMileSplits } from "@/utils/mileSplitsCache";
+import {
+  getMileSplits,
+  saveMileSplitCache,
+  type MileSplitDoc,
+} from "@/utils/mileSplitsCache";
 import { fetchWeatherForRun } from "@/lib/weather";
 
 const RunMap = dynamic(() => import("@/components/RunMap"), { ssr: false });
@@ -150,6 +162,18 @@ export default function RunDetailPage() {
   );
   const [override, setOverride] = useState<WorkoutOverride | null>(null);
   const [perMileHR, setPerMileHR] = useState<Record<number, number>>({});
+  // Raw mileSplits subcollection docs (null until read) and the splits rebuilt
+  // from them when the cache is complete (null = cache miss → compute from
+  // route points and write back). basisMiles records the authoritative
+  // distance the cached splits were computed against, so an in-session
+  // distance edit falls back to a fresh computation.
+  const [mileSplitDocs, setMileSplitDocs] = useState<MileSplitDoc[] | null>(
+    null
+  );
+  const [cachedSplits, setCachedSplits] = useState<{
+    splits: MileSplit[];
+    basisMiles: number;
+  } | null>(null);
   const [userSettings, setUserSettings] = useState<UserSettings | null>();
   const [loading, setLoading] = useState(true);
   const [routeLoading, setRouteLoading] = useState(true);
@@ -165,7 +189,12 @@ export default function RunDetailPage() {
     WorkoutOverride
   > | null>(null);
   const [races, setRaces] = useState<Race[]>([]);
-  const [clusters, setClusters] = useState<RouteCluster[] | null>(null);
+  // Route Performance data source: the runs sharing this run's deterministic
+  // routeClusterId (narrow where-query — replaces the geographic clustering
+  // over the all-workouts scan). clusterBackfillDone gates the query so the
+  // one-time lazy ID backfill lands before membership is read.
+  const [clusterRuns, setClusterRuns] = useState<HealthWorkout[] | null>(null);
+  const [clusterBackfillDone, setClusterBackfillDone] = useState(false);
   // Insights run set with fast-finish `mileSplits` hydrated (route-derived pace +
   // per-mile HR). Null until the async hydration resolves; the impact tile falls
   // back to the full-run-only prediction meanwhile.
@@ -198,6 +227,18 @@ export default function RunDetailPage() {
   const displayWorkoutForSplits = workout ? applyOverride(workout, override) : null;
   const mileSplits = useMemo<MileSplit[]>(
     () => {
+      // Cached path: splits persisted on the mileSplits subcollection are used
+      // verbatim when their distance basis still matches (an in-session
+      // distance edit invalidates them and falls through to the fresh
+      // computation below).
+      if (
+        cachedSplits &&
+        displayWorkoutForSplits &&
+        Math.abs(cachedSplits.basisMiles - displayWorkoutForSplits.distanceMiles) <=
+          0.005
+      ) {
+        return cachedSplits.splits;
+      }
       if (routePoints.length < 2 || !displayWorkoutForSplits) return [];
       const computed = computeMileSplits(
         routePoints,
@@ -210,7 +251,7 @@ export default function RunDetailPage() {
         avgBpm: perMileHR[split.mile] ?? undefined,
       }));
     },
-    [routePoints, displayWorkoutForSplits, perMileHR]
+    [cachedSplits, routePoints, displayWorkoutForSplits, perMileHR]
   );
 
   // Compute grade-adjusted pace once from the already-fetched route points.
@@ -321,12 +362,70 @@ export default function RunDetailPage() {
                   .catch(console.error);
               }
 
-              // Fetch per-mile HR from the iOS-synced mileSplits subcollection.
-              // Gated on the SAME data signal (>= 2 route points) so it runs for
-              // a falsely-flagged run and is skipped for genuinely route-less
-              // workouts.
+              // Same lazy hook: assign the deterministic route-cluster ID the
+              // first time a run without one is viewed. Uses the RAW stored
+              // distance (clustering has always operated on raw docs). A
+              // lingering noloc ID is re-derived now that points exist.
+              if (
+                w &&
+                w.isRunLike &&
+                (w.routeClusterId === undefined ||
+                  isNolocClusterId(w.routeClusterId))
+              ) {
+                const clusterId = deriveRouteClusterId(w.distanceMiles, {
+                  lat: points[0].lat,
+                  lng: points[0].lng,
+                });
+                if (clusterId !== w.routeClusterId) {
+                  saveRouteClusterId(uid, workoutId, clusterId)
+                    .then(() => {
+                      setWorkout((current) =>
+                        current
+                          ? { ...current, routeClusterId: clusterId }
+                          : current
+                      );
+                    })
+                    .catch(console.error);
+                }
+              }
+
+              // Same lazy hook: persist the decimated overlay-chart series.
+              // Skipped while the route is still partially syncing; recomputed
+              // when a later resync changed the point count.
+              if (
+                w &&
+                w.routeComplete !== false &&
+                (w.overlayChartCache === undefined ||
+                  w.overlayChartCache.sourcePointCount !== points.length)
+              ) {
+                const chartCache = computeOverlayChartCache(points);
+                if (chartCache) {
+                  saveOverlayChartCache(uid, workoutId, chartCache)
+                    .then(() => {
+                      setWorkout((current) =>
+                        current
+                          ? { ...current, overlayChartCache: chartCache }
+                          : current
+                      );
+                    })
+                    .catch(console.error);
+                }
+              }
+
+              // Fetch per-mile data from the mileSplits subcollection. Gated on
+              // the SAME data signal (>= 2 route points) so it runs for a
+              // falsely-flagged run and is skipped for genuinely route-less
+              // workouts. When the docs already carry cached distance/pace for
+              // every mile (and their basis matches the current authoritative
+              // distance), the splits are used verbatim; otherwise only the
+              // iOS per-mile HR is extracted and the splits are recomputed
+              // from the route (and written back by the cache effect below).
               getMileSplits(uid, workoutId)
                 .then((splits) => {
+                  setMileSplitDocs(splits);
+                  // Per-mile HR is always extracted so the recompute path
+                  // (e.g. after an in-session distance edit invalidates the
+                  // cached splits) still merges HR into fresh splits.
                   const hrMap: Record<number, number> = {};
                   splits.forEach((data) => {
                     if (data.avgBpm && (data.sampleCount as number) >= 2) {
@@ -334,6 +433,16 @@ export default function RunDetailPage() {
                     }
                   });
                   setPerMileHR(hrMap);
+
+                  const authoritativeMiles =
+                    o?.distanceMilesOverride ?? w?.distanceMiles ?? 0;
+                  const cached = splitsFromCachedDocs(splits, authoritativeMiles);
+                  if (cached) {
+                    setCachedSplits({
+                      splits: cached,
+                      basisMiles: authoritativeMiles,
+                    });
+                  }
                 })
                 .catch(console.error);
             }
@@ -361,6 +470,18 @@ export default function RunDetailPage() {
         setAllWorkoutsRaw(all);
         setAllOverrides(overrides);
         setRaces(fetchedRaces);
+
+        // One-time lazy migration: assign routeClusterId to any run-like,
+        // routed workout still missing it (start-point read + merge write per
+        // missing run — the SAME per-run start-point read the old geographic
+        // clustering paid on every view). Once all runs carry the field this
+        // resolves with zero reads/writes. Gates the narrow cluster query so
+        // first-view membership is complete.
+        backfillRouteClusterIds(uid, all)
+          .catch(console.error)
+          .then(() => {
+            if (!cancelled) setClusterBackfillDone(true);
+          });
       })
       .catch(console.error);
     return () => {
@@ -368,28 +489,24 @@ export default function RunDetailPage() {
     };
   }, [uid]);
 
-  // Cluster input — EXACTLY the Routes page's filter (isRunLike && hasRoute on
-  // raw docs), so the run detail's "matched runs" agree with the Routes page.
-  const clusterInput = useMemo(
-    () =>
-      allWorkoutsRaw
-        ? allWorkoutsRaw.filter((w) => w.isRunLike && w.hasRoute)
-        : null,
-    [allWorkoutsRaw]
-  );
-
+  // Route Performance membership — one narrow equality query on the current
+  // run's deterministic routeClusterId (typically a handful of docs) instead
+  // of geographic clustering over the all-workouts scan. Always accurate: the
+  // ranking is recomputed from the queried docs on every view; nothing about
+  // the aggregate is cached.
+  const currentClusterId = workout?.routeClusterId ?? null;
   useEffect(() => {
-    if (!uid || !clusterInput || clusterInput.length === 0) return;
+    if (!uid || !currentClusterId || !clusterBackfillDone) return;
     let cancelled = false;
-    clusterRoutesGeographic(clusterInput, uid)
-      .then((result) => {
-        if (!cancelled) setClusters(result);
+    fetchWorkoutsByRouteCluster(uid, currentClusterId)
+      .then((runs) => {
+        if (!cancelled) setClusterRuns(runs);
       })
       .catch(console.error);
     return () => {
       cancelled = true;
     };
-  }, [uid, clusterInput]);
+  }, [uid, currentClusterId, clusterBackfillDone]);
 
   // Insights run set — overrides applied, excluded filtered (the same shaping
   // Personal/Plan Insights use), so the prediction here matches those pages.
@@ -423,27 +540,63 @@ export default function RunDetailPage() {
     };
   }, [uid, workoutsForInsights, resolvedMaxHR, resolvedRestingHR]);
 
-  const currentCluster = useMemo(
-    () => (clusters ? findClusterForRun(clusters, workoutId) : null),
-    [clusters, workoutId]
-  );
-
   const matchedSummaries = useMemo(
     () =>
-      currentCluster
-        ? toMatchedRunSummaries(
-            currentCluster.allRuns,
-            resolvedMaxHR,
-            resolvedRestingHR
-          )
+      clusterRuns
+        ? toMatchedRunSummaries(clusterRuns, resolvedMaxHR, resolvedRestingHR)
         : [],
-    [currentCluster, resolvedMaxHR, resolvedRestingHR]
+    [clusterRuns, resolvedMaxHR, resolvedRestingHR]
   );
 
   const routePerformance = useMemo(
     () => computeRoutePerformance(workoutId, matchedSummaries),
     [workoutId, matchedSummaries]
   );
+
+  // The route's nominal distance = the fastest matched run's distance (the
+  // same "representative run" rule clusterRoutesGeographic used).
+  const routeDistanceMiles = useMemo(() => {
+    if (!clusterRuns || clusterRuns.length === 0) return null;
+    const rep = [...clusterRuns].sort(
+      (a, b) => (a.avgPaceSecPerMile ?? 999) - (b.avgPaceSecPerMile ?? 999)
+    )[0];
+    return rep.distanceMiles ?? 0;
+  }, [clusterRuns]);
+
+  // Write freshly computed mile splits back to the mileSplits subcollection
+  // (once per workout+distance basis) so the next view reads them instead of
+  // recomputing from the full route. Skipped when the splits came from the
+  // cache, while the route is still partially syncing, or before the
+  // subcollection docs are known (their IDs are the merge targets).
+  const wroteMileCacheFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!uid || !workout || !displayWorkoutForSplits) return;
+    if (workout.routeComplete === false) return;
+    if (mileSplitDocs === null || mileSplits.length === 0) return;
+    const basisMiles = displayWorkoutForSplits.distanceMiles;
+    if (
+      cachedSplits &&
+      Math.abs(cachedSplits.basisMiles - basisMiles) <= 0.005
+    ) {
+      return; // rendered from cache — nothing new to persist
+    }
+    const writeKey = `${workoutId}:${basisMiles}`;
+    if (wroteMileCacheFor.current === writeKey) return;
+    wroteMileCacheFor.current = writeKey;
+    saveMileSplitCache(
+      uid,
+      workoutId,
+      mileSplitCacheWrites(mileSplits, mileSplitDocs, basisMiles)
+    ).catch(console.error);
+  }, [
+    uid,
+    workoutId,
+    workout,
+    displayWorkoutForSplits,
+    cachedSplits,
+    mileSplitDocs,
+    mileSplits,
+  ]);
 
   // Active goal race + its distance/inputs (same mapping Plan Insights uses).
   const activeRace = useMemo(
@@ -1083,12 +1236,12 @@ export default function RunDetailPage() {
       )}
 
       {/* ── Route Performance (renders only when matched to a ≥2-run group) ─ */}
-      {routePerformance && currentCluster && (
+      {routePerformance && routeDistanceMiles != null && (
         <RoutePerformanceSection
           performance={routePerformance}
           matchedRuns={matchedSummaries}
           currentRunId={workoutId}
-          routeDistanceMiles={currentCluster.distanceMiles}
+          routeDistanceMiles={routeDistanceMiles}
         />
       )}
 
@@ -1152,10 +1305,18 @@ export default function RunDetailPage() {
         hasRoute={effectiveHasRoute}
       />
 
-      {/* ── Overlaid Analysis Chart (elevation + pace + GAP + HR) ─ */}
-      {effectiveHasRoute && routePoints.length > 1 && (
-        <RunOverlayChart points={routePoints} perPointGap={runGap.perPointGap} />
-      )}
+      {/* ── Overlaid Analysis Chart (elevation + pace + GAP + HR) ─
+          Renders from the persisted decimated cache while the route
+          subcollection is still loading; switches to the raw points (with the
+          GAP overlay) once they arrive. */}
+      {effectiveHasRoute &&
+        (routePoints.length > 1 || displayWorkout.overlayChartCache) && (
+          <RunOverlayChart
+            points={routePoints}
+            perPointGap={runGap.perPointGap}
+            cache={displayWorkout.overlayChartCache}
+          />
+        )}
 
       {/* ── Heart Rate Zone Breakdown ──────────────────────── */}
       {effectiveHasRoute && routePoints.length > 1 && (
