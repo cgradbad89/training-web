@@ -84,6 +84,12 @@ function RunMapInner({ points, simplifiedPath, className = "" }: RunMapProps) {
     <div className={`w-full h-64 sm:h-96 ${className}`}>
       <GoogleMap
         mapContainerStyle={{ width: "100%", height: "100%" }}
+        // The Google Maps runtime needs an initial center + zoom to instantiate
+        // a visible map; omitting them leaves the container blank even though
+        // TypeScript marks both optional. onLoad's fitBounds() reframes to the
+        // route once the map exists, so the zoom here is only a seed value.
+        center={start}
+        zoom={13}
         onLoad={onLoad}
         options={{
           scrollwheel: false,
