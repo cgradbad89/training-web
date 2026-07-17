@@ -15,6 +15,7 @@ import {
   XCircle,
   Circle,
   ChevronDown,
+  RefreshCw,
 } from "lucide-react";
 
 import { WeekNavigator } from "@/components/layout/WeekNavigator";
@@ -1643,9 +1644,11 @@ export default function DashboardPage() {
   );
   const selectedWeekEnd = getWeekEnd(selectedWeekStart);
 
-  // Shared cross-page data (workouts / plans / overrides / HR anchors) now
-  // comes from AppDataContext. Workouts use the same live listener dashboard
-  // ran locally before, so real-time iOS-sync updates are preserved.
+  // Shared cross-page data (workouts / plans / overrides / HR anchors) comes
+  // from AppDataContext. As of 2026-07-17, workouts are fetched once on mount
+  // (not a live listener) and refreshed on tab focus (30s floor) plus the
+  // manual refresh button below — a deliberate trade-off since this is
+  // historical data, not an in-progress live activity. See AppDataContext.tsx.
   const {
     workouts,
     overrides,
@@ -1656,12 +1659,23 @@ export default function DashboardPage() {
     plansLoading,
     settingsLoading,
     patchOverrides,
+    refreshWorkouts,
   } = useAppData();
 
   const [weekMetrics, setWeekMetrics] = useState<HealthMetric[]>([]);
   const [todayMetric, setTodayMetric] = useState<HealthMetric | null>(null);
   const [ringGoals, setRingGoals] = useState<HealthGoalDoc[]>([]);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const router = useRouter();
+
+  const handleManualRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      await refreshWorkouts();
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [refreshWorkouts]);
 
   const loading = workoutsLoading;
   // Per-source "fetch resolved" flags for the Week Score gate. `loading` only
@@ -1949,7 +1963,20 @@ export default function DashboardPage() {
   return (
     <div className="flex flex-col gap-5 p-6 lg:p-6 p-4 max-w-5xl mx-auto">
       {/* Page title */}
-      <h1 className="text-2xl font-bold text-textPrimary">{pageTitle}</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-textPrimary">{pageTitle}</h1>
+        <button
+          onClick={handleManualRefresh}
+          disabled={isRefreshing}
+          className="p-2 rounded-xl hover:bg-surface text-textSecondary
+                     transition-colors disabled:opacity-50"
+          title="Refresh workouts"
+        >
+          <RefreshCw
+            className={`w-4 h-4 ${isRefreshing ? "animate-spin" : ""}`}
+          />
+        </button>
+      </div>
 
       {/* Row 1: Week Navigator — allow past & future navigation; "Today" pill
           auto-appears when not on the current week. */}

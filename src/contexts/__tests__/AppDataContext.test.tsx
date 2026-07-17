@@ -10,10 +10,10 @@ import {
 // React 19 requires this flag for act() to flush effects/microtasks in tests.
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-// Shared handles the mocked service modules write to, so tests can drive the
-// live listener callback and swap fetch results.
+// Shared handles the mocked service modules write to, so tests can drive
+// fetch results and inspect what each mock was called with.
 const h = vi.hoisted(() => ({
-  snapshotCb: { current: null as null | ((w: unknown[]) => void) },
+  fetchHealthWorkouts: vi.fn(),
   fetchPlans: vi.fn(),
   fetchRaces: vi.fn(),
   fetchAllOverrides: vi.fn(),
@@ -24,16 +24,7 @@ vi.mock("@/hooks/useAuth", () => ({
   useAuth: () => ({ user: { uid: "u1" }, loading: false }),
 }));
 vi.mock("@/services/healthWorkouts", () => ({
-  onHealthWorkoutsSnapshot: (
-    _uid: string,
-    _opts: unknown,
-    onData: (w: unknown[]) => void
-  ) => {
-    h.snapshotCb.current = onData;
-    return () => {
-      h.snapshotCb.current = null;
-    };
-  },
+  fetchHealthWorkouts: h.fetchHealthWorkouts,
 }));
 vi.mock("@/services/plans", () => ({ fetchPlans: h.fetchPlans }));
 vi.mock("@/services/races", () => ({ fetchRaces: h.fetchRaces }));
@@ -73,7 +64,7 @@ async function mount() {
 
 beforeEach(() => {
   latest = null;
-  h.snapshotCb.current = null;
+  h.fetchHealthWorkouts.mockReset().mockResolvedValue([]);
   h.fetchPlans.mockResolvedValue([]);
   h.fetchRaces.mockResolvedValue([]);
   h.fetchAllOverrides.mockResolvedValue({});
@@ -88,33 +79,44 @@ afterEach(() => {
 });
 
 describe("AppDataProvider", () => {
-  it("keeps workoutsLoading true until the live listener fires", async () => {
+  it("fetches workouts once on mount via getDocs, not a live listener", async () => {
+    h.fetchHealthWorkouts.mockResolvedValue([{ workoutId: "w1" }]);
     await mount();
-    // Fetches have resolved, but the snapshot callback hasn't been invoked.
-    expect(latest?.workoutsLoading).toBe(true);
-    expect(latest?.workouts).toEqual([]);
 
-    await act(async () => {
-      h.snapshotCb.current?.([{ workoutId: "w1", isRunLike: true }]);
-    });
     expect(latest?.workoutsLoading).toBe(false);
-    expect(latest?.workouts).toHaveLength(1);
+    expect(
+      latest?.workouts.map((w) => (w as { workoutId: string }).workoutId)
+    ).toEqual(["w1"]);
+    // Exactly one fetch on mount — no onSnapshot subscription exists to fire
+    // additional callbacks.
+    expect(h.fetchHealthWorkouts).toHaveBeenCalledTimes(1);
   });
 
-  it("populates workouts from the live listener and reflects later updates", async () => {
+  it("fetches workouts with the shared 1000 limit", async () => {
     await mount();
-    await act(async () => {
-      h.snapshotCb.current?.([{ workoutId: "w1" }]);
+    expect(h.fetchHealthWorkouts).toHaveBeenCalledWith("u1", {
+      limitCount: 1000,
     });
-    expect(latest?.workouts.map((w) => (w as { workoutId: string }).workoutId)).toEqual(["w1"]);
+  });
 
-    // A second snapshot (iOS sync) replaces the array.
+  it("refreshWorkouts re-fetches and replaces the workouts array", async () => {
+    h.fetchHealthWorkouts.mockResolvedValue([{ workoutId: "w1" }]);
+    await mount();
+    expect(
+      latest?.workouts.map((w) => (w as { workoutId: string }).workoutId)
+    ).toEqual(["w1"]);
+
+    h.fetchHealthWorkouts.mockResolvedValue([
+      { workoutId: "w1" },
+      { workoutId: "w2" },
+    ]);
     await act(async () => {
-      h.snapshotCb.current?.([{ workoutId: "w1" }, { workoutId: "w2" }]);
+      await latest?.refreshWorkouts();
     });
     expect(
       latest?.workouts.map((w) => (w as { workoutId: string }).workoutId)
     ).toEqual(["w1", "w2"]);
+    expect(h.fetchHealthWorkouts).toHaveBeenCalledTimes(2);
   });
 
   it("loads plans, races, overrides, and settings on mount", async () => {

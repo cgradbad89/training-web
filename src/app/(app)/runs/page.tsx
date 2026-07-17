@@ -8,7 +8,7 @@ import React, {
   useCallback,
 } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight, AlertTriangle, EyeOff, Download } from "lucide-react";
+import { ChevronLeft, ChevronRight, AlertTriangle, EyeOff, Download, RefreshCw } from "lucide-react";
 
 import { TrainingLoadBadge } from "@/components/ui/TrainingLoadBadge";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -721,9 +721,10 @@ export default function RunsPage() {
   const { user } = useAuth();
   const uid = user?.uid ?? null;
 
-  // Shared cross-page data from AppDataContext. Workouts keep the same live
-  // listener (limit 500) runs used locally before; overrides, plans, and HR
-  // anchors are now shared rather than independently re-fetched here.
+  // Shared cross-page data from AppDataContext. As of 2026-07-17, workouts
+  // are fetched once on mount (not a live listener) and refreshed on tab
+  // focus (30s floor) plus the manual refresh button below; overrides,
+  // plans, and HR anchors are shared the same way. See AppDataContext.tsx.
   const {
     workouts,
     overrides,
@@ -733,6 +734,7 @@ export default function RunsPage() {
     restingHr,
     workoutsLoading,
     patchOverrides,
+    refreshWorkouts,
   } = useAppData();
 
   const allRuns = useMemo(() => workouts.filter((w) => w.isRunLike), [workouts]);
@@ -740,6 +742,16 @@ export default function RunsPage() {
     () => findActiveRunningPlan(plans),
     [plans]
   );
+
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const handleManualRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      await refreshWorkouts();
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [refreshWorkouts]);
 
   const [shoes, setShoes] = useState<RunningShoe[]>([]);
   // Merged auto + manual shoe assignments (manual wins).
@@ -1058,6 +1070,21 @@ export default function RunsPage() {
     <div className="flex flex-col lg:flex-row gap-6 p-4 lg:p-6 min-h-full max-w-5xl mx-auto">
       {/* ── Left Sidebar ────────────────────────────────────── */}
       <aside className="w-full lg:w-64 shrink-0 flex flex-col gap-5">
+        <div className="flex items-center justify-between">
+          <h1 className="text-lg font-bold text-textPrimary">Runs</h1>
+          <button
+            onClick={handleManualRefresh}
+            disabled={isRefreshing}
+            className="p-2 rounded-xl hover:bg-surface text-textSecondary
+                       transition-colors disabled:opacity-50"
+            title="Refresh runs"
+          >
+            <RefreshCw
+              className={`w-4 h-4 ${isRefreshing ? "animate-spin" : ""}`}
+            />
+          </button>
+        </div>
+
         {/* Year + Month selector */}
         <div className="bg-card rounded-2xl border border-border p-4 flex flex-col gap-4">
           <p className="text-xs font-semibold uppercase tracking-widest text-textSecondary">

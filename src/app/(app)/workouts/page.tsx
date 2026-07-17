@@ -12,14 +12,15 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
+  RefreshCw,
   type LucideProps,
 } from "lucide-react";
 
 import { EmptyState } from "@/components/ui/EmptyState";
 import { WorkoutsSkeleton } from "./WorkoutsSkeleton";
 import { useAuth } from "@/hooks/useAuth";
+import { useAppData } from "@/contexts/AppDataContext";
 import { useEnrichTrainingLoads } from "@/hooks/useEnrichTrainingLoads";
-import { onHealthWorkoutsSnapshot } from "@/services/healthWorkouts";
 import { fetchUserSettings } from "@/services/userSettings";
 import { fetchAllOverrides, excludeWorkout } from "@/services/workoutOverrides";
 import { detectDuplicatePairs, type DuplicatePair } from "@/utils/duplicateDetection";
@@ -598,20 +599,40 @@ export default function WorkoutsPage() {
   const { user } = useAuth();
   const uid = user?.uid ?? null;
 
-  const [allWorkouts, setAllWorkouts] = useState<HealthWorkout[]>([]);
+  // Shared workouts array from AppDataContext (one-time fetch + focus
+  // refresh). isRunLike===false filtering used to happen server-side (a
+  // dedicated onSnapshot query); it's now a client-side derivation.
+  const {
+    workouts: contextWorkouts,
+    workoutsLoading,
+    refreshWorkouts,
+  } = useAppData();
   const [overrides, setOverrides] = useState<Record<string, WorkoutOverride>>({});
-  const [excludedWorkouts, setExcludedWorkouts] = useState<HealthWorkout[]>([]);
   const [userSettings, setUserSettings] = useState<UserSettings | null>();
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [selectedWorkout, setSelectedWorkout] = useState<HealthWorkout | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>("all");
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [dismissedPairKeys, setDismissedPairKeys] = useState<Set<string>>(
     new Set()
   );
-  // Ref so the onSnapshot callback always reads the latest dismissed set
-  // without needing to recreate the listener.
+  // Ref so the dismiss handler always reads the latest dismissed set.
   const dismissedRef = useRef<Set<string>>(new Set());
+
+  const nonRunWorkouts = useMemo(
+    () => contextWorkouts.filter((w) => !w.isRunLike),
+    [contextWorkouts]
+  );
+  const allWorkouts = useMemo(
+    () => nonRunWorkouts.filter((w) => !overrides[w.workoutId]?.isExcluded),
+    [nonRunWorkouts, overrides]
+  );
+  const excludedWorkouts = useMemo(
+    () =>
+      nonRunWorkouts.filter((w) => overrides[w.workoutId]?.isExcluded === true),
+    [nonRunWorkouts, overrides]
+  );
 
   const duplicatePairs = useMemo(
     () => detectDuplicatePairs(allWorkouts),
@@ -646,17 +667,12 @@ export default function WorkoutsPage() {
       .catch((err) => console.error("[fetchUserSettings]", err));
   }, [uid]);
 
-  // Ref for overrides so the onSnapshot callback always reads the latest
-  const overridesRef = useRef<Record<string, WorkoutOverride>>({});
-
-  // Combined effect: fetch overrides + dismissed pairs FIRST, then start
-  // the onSnapshot listener. This eliminates the race condition where the
-  // snapshot fires before overrides/dismissed data is ready.
+  // Fetch overrides + dismissed pairs. allWorkouts/excludedWorkouts derive
+  // from the shared contextWorkouts array above, so no listener is needed
+  // here — once these resolve, the useMemo split above picks them up.
   useEffect(() => {
     if (!uid) return;
     setLoading(true);
-
-    let unsubscribe: (() => void) | null = null;
     let cancelled = false;
 
     Promise.all([
@@ -665,31 +681,10 @@ export default function WorkoutsPage() {
     ])
       .then(([fetchedOverrides, fetchedDismissed]) => {
         if (cancelled) return;
-
-        // Populate refs + state with the fetched data
-        overridesRef.current = fetchedOverrides;
         setOverrides(fetchedOverrides);
         dismissedRef.current = fetchedDismissed;
         setDismissedPairKeys(fetchedDismissed);
-
-        // NOW start the real-time listener — overrides and dismissed
-        // data is guaranteed ready before the first snapshot callback.
-        unsubscribe = onHealthWorkoutsSnapshot(
-          uid,
-          { limitCount: 500, isRunLike: false },
-          (nonRuns) => {
-            if (cancelled) return;
-            const o = overridesRef.current;
-            setAllWorkouts(nonRuns.filter((w) => !o[w.workoutId]?.isExcluded));
-            setExcludedWorkouts(
-              nonRuns.filter((w) => o[w.workoutId]?.isExcluded === true)
-            );
-            setLoading(false);
-          },
-          () => {
-            if (!cancelled) setLoading(false);
-          }
-        );
+        setLoading(false);
       })
       .catch((err) => {
         console.error("[Workouts] init fetch failed:", err);
@@ -698,13 +693,22 @@ export default function WorkoutsPage() {
 
     return () => {
       cancelled = true;
-      unsubscribe?.();
     };
   }, [uid]);
 
+  const handleManualRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      await refreshWorkouts();
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [refreshWorkouts]);
+
   // Auto-store Training Load V2 for the non-run workouts this page loads (the
   // Runs page covers runs). Stores a missing load / upgrades an avg-HR value once
-  // a stream arrives. Runs after paint; writes flow back through the snapshot above.
+  // a stream arrives. Runs after paint; writes flow back on the next refetch
+  // (focus refresh or manual refresh) rather than a live listener.
   useEnrichTrainingLoads(uid, allWorkouts, userSettings);
 
   const availableYears = useMemo(() => {
@@ -772,7 +776,7 @@ export default function WorkoutsPage() {
     });
   }, []);
 
-  if (loading) {
+  if (loading || workoutsLoading) {
     return <WorkoutsSkeleton />;
   }
 
@@ -782,6 +786,21 @@ export default function WorkoutsPage() {
     <div className="flex flex-col lg:flex-row gap-6 p-4 lg:p-6 min-h-full">
       {/* ── Left Sidebar ────────────────────────────────────── */}
       <aside className="w-full lg:w-64 shrink-0 flex flex-col gap-5">
+        <div className="flex items-center justify-between">
+          <h1 className="text-lg font-bold text-textPrimary">Workouts</h1>
+          <button
+            onClick={handleManualRefresh}
+            disabled={isRefreshing}
+            className="p-2 rounded-xl hover:bg-surface text-textSecondary
+                       transition-colors disabled:opacity-50"
+            title="Refresh workouts"
+          >
+            <RefreshCw
+              className={`w-4 h-4 ${isRefreshing ? "animate-spin" : ""}`}
+            />
+          </button>
+        </div>
+
         {/* Filters card — Year navigator + category tabs. Same shell as
             the runs-page filters card so the two pages read consistently. */}
         <div className="bg-card rounded-2xl border border-border p-4 flex flex-col gap-4">
@@ -859,18 +878,12 @@ export default function WorkoutsPage() {
                     runTypeOverride: null,
                     updatedAt: new Date().toISOString(),
                   };
-                  // Update both state and ref so the snapshot callback stays in sync
-                  overridesRef.current = {
-                    ...overridesRef.current,
-                    [pair.otfWorkoutId]: newOverride,
-                  };
+                  // allWorkouts is derived from overrides, so updating the
+                  // override map alone moves the workout to excluded.
                   setOverrides((prev) => ({
                     ...prev,
                     [pair.otfWorkoutId]: newOverride,
                   }));
-                  setAllWorkouts((prev) =>
-                    prev.filter((w) => w.workoutId !== pair.otfWorkoutId)
-                  );
                 }}
                 onDismiss={() => {
                   const key = dismissedPairKey(
@@ -952,29 +965,9 @@ export default function WorkoutsPage() {
                 updatedAt: new Date().toISOString(),
               },
             }));
-            // Move the workout between the active and excluded lists so the
-            // currently-active tab updates without a refresh. Both directions
-            // are handled here now that the standalone ExcludedItemsModal is
-            // gone — restoration happens via clicking an excluded row.
-            if (excluded) {
-              setAllWorkouts((prev) =>
-                prev.filter((w) => w.workoutId !== workoutId)
-              );
-              setExcludedWorkouts((prev) =>
-                prev.some((w) => w.workoutId === workoutId)
-                  ? prev
-                  : [...prev, selectedWorkout]
-              );
-            } else {
-              setExcludedWorkouts((prev) =>
-                prev.filter((w) => w.workoutId !== workoutId)
-              );
-              setAllWorkouts((prev) =>
-                prev.some((w) => w.workoutId === workoutId)
-                  ? prev
-                  : [...prev, selectedWorkout]
-              );
-            }
+            // allWorkouts/excludedWorkouts are derived from overrides above,
+            // so the setOverrides call alone moves the workout between the
+            // active and excluded lists — no separate list state to sync.
             setSelectedWorkout(null);
           }}
         />

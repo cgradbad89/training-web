@@ -12,9 +12,12 @@
  * mounted once at the (app) route-group layout.
  *
  * Design constraints (do not regress):
- *  - Workouts use the LIVE onHealthWorkoutsSnapshot listener (limit 500) so
- *    dashboard/runs keep real-time updates when iOS syncs. One-shot consumers
- *    (personal-insights, plan-insights, shoes) simply read the same array.
+ *  - Workouts are fetched ONCE per mount (getDocs, limit 1000) rather than via
+ *    a live onSnapshot listener — historical data doesn't need continuous
+ *    push. Freshness comes from useRefetchOnFocus (tab-focus refetch, 30s
+ *    floor) plus each consumer's own manual refresh control. Every consumer
+ *    (dashboard, runs, personal-insights, plan-insights, shoes, workouts)
+ *    reads the same array.
  *  - Overrides are exposed as the raw Record keyed by workoutId (matching how
  *    every page consumes them: `overrides[workout.workoutId]`). Pages apply
  *    overrides themselves via applyOverride — the context does not pre-apply.
@@ -33,7 +36,8 @@ import React, {
   useState,
 } from "react";
 import { useAuth } from "@/hooks/useAuth";
-import { onHealthWorkoutsSnapshot } from "@/services/healthWorkouts";
+import { fetchHealthWorkouts } from "@/services/healthWorkouts";
+import { useRefetchOnFocus } from "@/hooks/useRefetchOnFocus";
 import { fetchPlans } from "@/services/plans";
 import { fetchRaces } from "@/services/races";
 import { fetchAllOverrides } from "@/services/workoutOverrides";
@@ -45,15 +49,17 @@ import { type Race } from "@/types/race";
 import { type WorkoutOverride } from "@/types/workoutOverride";
 import { type UserSettings } from "@/types/userSettings";
 
-/** Shared workouts read limit. Matches the previous highest per-page limit
- *  (runs/shoes/plan-insights/personal-insights used 500; dashboard used 200 —
- *  now unified to 500, giving dashboard strictly more history for its rolling
- *  CTL/ATL seed, never less). */
-export const APP_DATA_WORKOUTS_LIMIT = 500;
+/** Shared workouts read limit. Raised from 500 to 1000 when workouts/page.tsx
+ *  moved from its own server-filtered (isRunLike==false, limit 500) query to
+ *  filtering this shared array client-side — without the higher cap, a
+ *  heavy-run user's non-run history could fall outside the shared top-N
+ *  window that used to be reserved for non-runs alone. */
+export const APP_DATA_WORKOUTS_LIMIT = 1000;
 
 export interface AppDataContextValue {
   workouts: HealthWorkout[];
   workoutsLoading: boolean;
+  refreshWorkouts: () => Promise<void>;
   plans: Plan[];
   plansLoading: boolean;
   races: Race[];
@@ -93,29 +99,33 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
   const [userSettings, setUserSettings] = useState<UserSettings | null>(null);
   const [settingsLoading, setSettingsLoading] = useState(true);
 
-  // Live workouts listener — the single shared workouts source. Serves both
-  // real-time consumers (dashboard, runs) and one-shot consumers.
-  useEffect(() => {
+  // One-time workouts fetch — the single shared workouts source for every
+  // consumer (dashboard, runs, personal-insights, plan-insights, shoes,
+  // workouts). Freshness comes from useRefetchOnFocus below plus each
+  // consumer's manual refresh control, not a live subscription.
+  const refreshWorkouts = useCallback(async () => {
     if (!uid) {
       setWorkouts([]);
       setWorkoutsLoading(false);
       return;
     }
     setWorkoutsLoading(true);
-    const unsubscribe = onHealthWorkoutsSnapshot(
-      uid,
-      { limitCount: APP_DATA_WORKOUTS_LIMIT },
-      (wkts) => {
-        setWorkouts(wkts);
-        setWorkoutsLoading(false);
-      },
-      (err) => {
-        console.error("[AppData] workouts listener", err);
-        setWorkoutsLoading(false);
-      }
-    );
-    return () => unsubscribe();
+    try {
+      setWorkouts(
+        await fetchHealthWorkouts(uid, { limitCount: APP_DATA_WORKOUTS_LIMIT })
+      );
+    } catch (err) {
+      console.error("[AppData] fetchHealthWorkouts", err);
+    } finally {
+      setWorkoutsLoading(false);
+    }
   }, [uid]);
+
+  useEffect(() => {
+    void refreshWorkouts();
+  }, [refreshWorkouts]);
+
+  useRefetchOnFocus(refreshWorkouts);
 
   const refreshPlans = useCallback(async () => {
     if (!uid) {
@@ -210,6 +220,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     () => ({
       workouts,
       workoutsLoading,
+      refreshWorkouts,
       plans,
       plansLoading,
       races,
@@ -228,6 +239,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     [
       workouts,
       workoutsLoading,
+      refreshWorkouts,
       plans,
       plansLoading,
       races,
