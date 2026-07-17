@@ -223,6 +223,19 @@ function docToHealthWorkout(
       Number.isFinite(data.gapSecPerMile)
         ? (data.gapSecPerMile as number)
         : undefined,
+    // Preserve the tri-state: a finite number, an explicit null (real geometry
+    // with no derivable net rise), or undefined (never cached). Only undefined
+    // leaves the run-detail cache incomplete (route re-read to backfill).
+    gapNetRiseM:
+      typeof data.gapNetRiseM === "number" && Number.isFinite(data.gapNetRiseM)
+        ? (data.gapNetRiseM as number)
+        : data.gapNetRiseM === null
+          ? null
+          : undefined,
+    gapAggregateGradeFlat:
+      typeof data.gapAggregateGradeFlat === "boolean"
+        ? (data.gapAggregateGradeFlat as boolean)
+        : undefined,
     zoneBreakdown: parseZoneBreakdown(data.zoneBreakdown),
     simplifiedPath: parseSimplifiedPath(data.simplifiedPath),
   };
@@ -637,6 +650,11 @@ export async function saveOverlayChartCache(
 export interface RunDetailCacheWrites {
   overlayChartCache?: OverlayChartCache;
   gapSecPerMile?: number;
+  /** RunGap.netRiseM cached alongside gapSecPerMile. `null` is a valid value to
+   *  persist (stripUndefined keeps null, drops only undefined). */
+  gapNetRiseM?: number | null;
+  /** RunGap.aggregateGradeFlat cached alongside gapSecPerMile. */
+  gapAggregateGradeFlat?: boolean;
   zoneBreakdown?: ZoneBreakdownCache;
   simplifiedPath?: SimplifiedPathPoint[];
 }

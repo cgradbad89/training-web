@@ -30,13 +30,21 @@ function zones(maxHr = MAX_HR, threshold: number | null = THRESHOLD): ZoneBreakd
   };
 }
 
-// A fully-cached workout (all five artifacts present & fresh).
+// A fully-cached workout (all artifacts present & fresh, incl. the two GAP-KPI
+// sublabel signals gapNetRiseM + gapAggregateGradeFlat).
 function complete(): Pick<
   HealthWorkout,
-  "gapSecPerMile" | "zoneBreakdown" | "simplifiedPath" | "overlayChartCache"
+  | "gapSecPerMile"
+  | "gapNetRiseM"
+  | "gapAggregateGradeFlat"
+  | "zoneBreakdown"
+  | "simplifiedPath"
+  | "overlayChartCache"
 > {
   return {
     gapSecPerMile: 490,
+    gapNetRiseM: -12.4,
+    gapAggregateGradeFlat: false,
     zoneBreakdown: zones(),
     simplifiedPath: [
       { lat: 40, lng: -105 },
@@ -57,6 +65,43 @@ describe("routeCachesComplete", () => {
     expect(
       routeCachesComplete({ ...complete(), gapSecPerMile: undefined }, OPTS)
     ).toBe(false);
+  });
+
+  it("is false when the GAP net-rise sublabel field is missing", () => {
+    expect(
+      routeCachesComplete({ ...complete(), gapNetRiseM: undefined }, OPTS)
+    ).toBe(false);
+  });
+
+  it("is false when the GAP flat-flag sublabel field is missing", () => {
+    expect(
+      routeCachesComplete(
+        { ...complete(), gapAggregateGradeFlat: undefined },
+        OPTS
+      )
+    ).toBe(false);
+  });
+
+  it("treats a gapSecPerMile-only doc (old shape, no sublabel fields) as incomplete", () => {
+    // A run cached by the previous build wrote gapSecPerMile but neither
+    // sublabel field — it must re-read the route ONCE to backfill them.
+    expect(
+      routeCachesComplete(
+        {
+          ...complete(),
+          gapNetRiseM: undefined,
+          gapAggregateGradeFlat: undefined,
+        },
+        OPTS
+      )
+    ).toBe(false);
+  });
+
+  it("treats a null gapNetRiseM as present (real geometry, no derivable net rise)", () => {
+    // null is a valid cached value — the gate must NOT force a re-read for it.
+    expect(
+      routeCachesComplete({ ...complete(), gapNetRiseM: null }, OPTS)
+    ).toBe(true);
   });
 
   it("is false when the zone breakdown is missing", () => {

@@ -11,6 +11,10 @@
  * Fields checked (all must be present & fresh to skip the route read):
  *  - simplifiedPath          (map)                        — Phase 4
  *  - gapSecPerMile           (GAP KPI)                    — Phase 1
+ *    PLUS gapNetRiseM + gapAggregateGradeFlat, the GAP KPI "flat" sublabel and
+ *    the Total Ascent "Net ±X ft" sublabel signals. A doc carrying only
+ *    gapSecPerMile (cached by a build before these two were added) is treated
+ *    as INCOMPLETE so the next view re-reads the route ONCE to backfill them.
  *  - zoneBreakdown           (HR + pace zones)            — Phase 2
  *  - overlayChartCache       WITH a gapSecPerMile array   — Phase 3
  *    aligned to distancesMiles (a cache written by a build before GAP was
@@ -43,7 +47,12 @@ export interface RouteCacheGateOptions {
 export function routeCachesComplete(
   w: Pick<
     HealthWorkout,
-    "gapSecPerMile" | "zoneBreakdown" | "simplifiedPath" | "overlayChartCache"
+    | "gapSecPerMile"
+    | "gapNetRiseM"
+    | "gapAggregateGradeFlat"
+    | "zoneBreakdown"
+    | "simplifiedPath"
+    | "overlayChartCache"
   >,
   opts: RouteCacheGateOptions
 ): boolean {
@@ -60,7 +69,14 @@ export function routeCachesComplete(
     zone.maxHr === opts.maxHr &&
     zone.thresholdPaceSecPerMile === opts.thresholdPace;
 
-  const gapKpiOk = w.gapSecPerMile !== undefined;
+  // All three GAP-KPI fields must be present: gapSecPerMile (the value) plus the
+  // two sublabel signals. undefined on either sublabel field = a legacy
+  // gapSecPerMile-only doc → incomplete → one backfilling route read. A null
+  // gapNetRiseM counts as present (real geometry, no derivable net rise).
+  const gapKpiOk =
+    w.gapSecPerMile !== undefined &&
+    w.gapNetRiseM !== undefined &&
+    w.gapAggregateGradeFlat !== undefined;
 
   const pathOk =
     w.simplifiedPath !== undefined && w.simplifiedPath.length >= 2;

@@ -80,6 +80,18 @@ export interface HealthWorkout {
    *  No basis field, so it is only used/written when there is no distance or
    *  duration override (an override recomputes GAP live from the route). */
   gapSecPerMile?: number;
+  /** Run NET elevation change (metres, end − start) from the SAME GAP
+   *  computation that produced gapSecPerMile — RunGap.netRiseM. Drives the Total
+   *  Ascent "Net ±X ft" sublabel on the cache-hit (route-skip) path. Written
+   *  alongside gapSecPerMile; `null` is a valid cached value (real geometry with
+   *  no derivable net, e.g. all-stopped), distinct from `undefined` (never
+   *  cached → gate treats the doc as incomplete). */
+  gapNetRiseM?: number | null;
+  /** RunGap.aggregateGradeFlat from the same GAP computation: true when the run
+   *  HAS elevation geometry but the aggregate grade resolved to flat, so the GAP
+   *  KPI is labelled "flat" on the cache-hit path. Written alongside
+   *  gapSecPerMile; absent (undefined) on legacy gapSecPerMile-only docs. */
+  gapAggregateGradeFlat?: boolean;
   /** Cached HR + pace zone breakdown, tagged with the maxHR / threshold pace it
    *  was computed against (stale when the current settings differ). Absent until
    *  the run's detail page has been viewed. */

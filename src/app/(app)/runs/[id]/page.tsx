@@ -306,11 +306,16 @@ export default function RunDetailPage() {
     return runGap.perMileGapSecPerMile;
   }, [mileSplitDocs, displayWorkoutForSplits, runGap]);
 
-  // NET elevation (ft) for the elevation KPI's secondary line. Sourced from the
-  // GAP computation so Total (cumulative ascent) and Net stay consistent.
-  // Negative = net descent. Hidden when unavailable (no NaN).
-  const netRiseFt =
-    runGap.netRiseM != null ? Math.round(runGap.netRiseM * 3.28084) : null;
+  // NET elevation (ft) for the elevation KPI's secondary line. Prefer the live
+  // GAP computation (Total cumulative ascent and Net stay consistent); on the
+  // route-skip (cache-hit) path runGap has no geometry, so fall back to the
+  // cached gapNetRiseM persisted alongside the GAP KPI. Negative = net descent.
+  // Hidden when unavailable (no NaN).
+  const netRiseM =
+    runGap.netRiseM != null
+      ? runGap.netRiseM
+      : displayWorkoutForSplits?.gapNetRiseM ?? null;
+  const netRiseFt = netRiseM != null ? Math.round(netRiseM * 3.28084) : null;
   const netElevationLabel =
     netRiseFt != null
       ? `Net ${netRiseFt > 0 ? "+" : netRiseFt < 0 ? "−" : ""}${Math.abs(
@@ -522,14 +527,25 @@ export default function RunDetailPage() {
             if (chartCache) updates.overlayChartCache = chartCache;
           }
 
-          // KPI GAP: cache only when there is no basis override (needsRoute is
-          // already true in that case, so this branch never runs then anyway).
+          // KPI GAP: cache the value AND its two sublabel signals (net rise +
+          // flat flag) together, so a legacy gapSecPerMile-only doc self-heals
+          // the missing sublabels on this one route read. Cache only when there
+          // is no basis override (needsRoute is already true in that case, so
+          // this branch never runs then anyway). gapNetRiseM may be null — a
+          // valid cached value (stripUndefined keeps null), distinct from the
+          // "never cached" undefined the gate treats as incomplete.
+          const gapKpiCacheMissing =
+            w.gapSecPerMile === undefined ||
+            w.gapNetRiseM === undefined ||
+            w.gapAggregateGradeFlat === undefined;
           if (
-            w.gapSecPerMile === undefined &&
+            gapKpiCacheMissing &&
             !basisOverride &&
             rawGap.runGapSecPerMile > 0
           ) {
             updates.gapSecPerMile = rawGap.runGapSecPerMile;
+            updates.gapNetRiseM = rawGap.netRiseM;
+            updates.gapAggregateGradeFlat = rawGap.aggregateGradeFlat;
           }
 
           const zb = w.zoneBreakdown;
@@ -1225,19 +1241,25 @@ export default function RunDetailPage() {
             // override falls back to the live route computation. Dead-band/flat
             // runs show the actual pace labelled "flat"; "\u2014" is reserved for
             // runs with no route/elevation data at all. On the route-skip path
-            // the cache has no netRise/flat signal, so a cached GAP renders as a
-            // plain value (no "flat" sublabel).
-            const gapDisplay =
+            // the cached gapAggregateGradeFlat flag drives the "flat" sublabel,
+            // mirroring selectGapDisplay on the live-compute path.
+            const useCachedGap =
               override?.distanceMilesOverride == null &&
               override?.durationSecondsOverride == null &&
               displayWorkout.gapSecPerMile != null &&
               displayWorkout.gapSecPerMile > 0 &&
-              runGap.runGapSecPerMile <= 0
+              runGap.runGapSecPerMile <= 0;
+            const gapDisplay = useCachedGap
+              ? displayWorkout.gapAggregateGradeFlat
                 ? {
-                    mode: "value" as const,
-                    paceSecPerMile: displayWorkout.gapSecPerMile,
+                    mode: "flat" as const,
+                    paceSecPerMile: displayWorkout.gapSecPerMile!,
                   }
-                : selectGapDisplay(runGap);
+                : {
+                    mode: "value" as const,
+                    paceSecPerMile: displayWorkout.gapSecPerMile!,
+                  }
+              : selectGapDisplay(runGap);
             return (
               <StatBlock
                 label="GAP"
