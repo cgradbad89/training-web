@@ -34,7 +34,7 @@ vi.mock("@/services/healthWorkouts", () => ({
   backfillRouteClusterIds: vi.fn().mockResolvedValue(undefined),
   computeAndStoreBestEfforts: vi.fn().mockResolvedValue(undefined),
   saveRouteClusterId: vi.fn().mockResolvedValue(undefined),
-  saveOverlayChartCache: vi.fn().mockResolvedValue(undefined),
+  saveRunDetailCaches: vi.fn().mockResolvedValue(undefined),
   saveWeatherForWorkout: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("@/services/shoes", () => ({
@@ -96,7 +96,7 @@ describe("RunDetailPage Execution Structure", () => {
     container.remove();
   });
 
-  it("invokes getRoutePoints and getMileSplits immediately without waiting for core fetches", async () => {
+  it("fetches core data on mount, then reads mileSplits + the route once core resolves (route now gated)", async () => {
     let resolveWorkout: (val: any) => void;
     const workoutPromise = new Promise((res) => { resolveWorkout = res; });
     (fetchHealthWorkout as any).mockReturnValue(workoutPromise);
@@ -109,16 +109,29 @@ describe("RunDetailPage Execution Structure", () => {
       root.render(<RunDetailPage />);
     });
 
-    // On mount, the component should immediately call all 3 concurrently
+    // Core is fetched on mount, but the mileSplits + route reads are now
+    // sequenced AFTER core resolves (the route read is gated on cache state).
     expect(fetchHealthWorkout).toHaveBeenCalledWith("u1", "workout_123");
-    expect(getRoutePoints).toHaveBeenCalledWith("u1", "workout_123");
-    expect(getMileSplits).toHaveBeenCalledWith("u1", "workout_123");
+    expect(getMileSplits).not.toHaveBeenCalled();
+    expect(getRoutePoints).not.toHaveBeenCalled();
 
-    // Clean up pending promise to avoid leaks
     await act(async () => {
-      resolveWorkout!({ workoutId: "workout_123", startDate: "2024-01-01T10:00:00Z" });
+      resolveWorkout!({
+        workoutId: "workout_123",
+        startDate: "2024-01-01T10:00:00Z",
+        distanceMiles: 3,
+        durationSeconds: 1800,
+        isRunLike: true,
+      });
+      await Promise.resolve();
+      await Promise.resolve();
       await Promise.resolve();
     });
+
+    // After core resolves: mileSplits is read, and because this uncached routed
+    // run has no route-derived caches yet, the full route IS read.
+    expect(getMileSplits).toHaveBeenCalledWith("u1", "workout_123");
+    expect(getRoutePoints).toHaveBeenCalledWith("u1", "workout_123");
   });
 
   it("handles a routeless workout gracefully (empty splits) and does not fetch weather", async () => {
@@ -150,16 +163,20 @@ describe("RunDetailPage Execution Structure", () => {
     expect(container.textContent).toContain("3.00");
   });
 
-  it("only fetches weather after BOTH workout and route are resolved", async () => {
-    let resolveWorkout: (val: any) => void;
+  it("fetches weather only after the (gated) route read resolves", async () => {
     let resolveRoute: (val: any) => void;
-    
-    const workoutPromise = new Promise((res) => { resolveWorkout = res; });
     const routePromise = new Promise((res) => { resolveRoute = res; });
 
-    (fetchHealthWorkout as any).mockReturnValue(workoutPromise);
-    (getRoutePoints as any).mockReturnValue(routePromise);
+    (fetchHealthWorkout as any).mockResolvedValue({
+      workoutId: "workout_123",
+      startDate: "2024-01-01T10:00:00Z",
+      distanceMiles: 3,
+      durationSeconds: 1800,
+      isRunLike: true,
+      weather: null,
+    });
     (getMileSplits as any).mockResolvedValue([]);
+    (getRoutePoints as any).mockReturnValue(routePromise);
     (fetchWeatherForRun as any).mockResolvedValue({ tempF: 60 });
 
     act(() => {
@@ -167,29 +184,23 @@ describe("RunDetailPage Execution Structure", () => {
       root.render(<RunDetailPage />);
     });
 
-    // Neither resolved yet
-    expect(fetchWeatherForRun).not.toHaveBeenCalled();
-
-    // Resolve workout only
+    // Core + mileSplits resolve and the uncached run triggers the route read,
+    // but weather waits until the route itself resolves.
     await act(async () => {
-      resolveWorkout!({
-        workoutId: "workout_123",
-        startDate: "2024-01-01T10:00:00Z",
-        weather: null,
-      });
+      await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();
     });
+    expect(getRoutePoints).toHaveBeenCalledWith("u1", "workout_123");
     expect(fetchWeatherForRun).not.toHaveBeenCalled();
 
-    // Resolve route
+    // Resolve the route
     await act(async () => {
       resolveRoute!([{ lat: 40, lng: -74 }]);
       await Promise.resolve();
       await Promise.resolve();
     });
 
-    // Now it should fetch
     expect(fetchWeatherForRun).toHaveBeenCalledWith(40, -74, "2024-01-01T10:00:00Z");
   });
 });

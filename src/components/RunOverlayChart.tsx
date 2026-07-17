@@ -144,21 +144,25 @@ export function RunOverlayChart({
     hasHR: boolean;
   }>(() => {
     if (points.length < 2) {
-      // No raw points (yet) — render the persisted decimated series. GAP is
-      // not part of the cache (it needs the per-point grade series), so the
-      // gap channel stays empty until raw points arrive.
+      // No raw points (yet) — render the persisted decimated series. The GAP
+      // channel is served from the cache too when it carries an aligned
+      // gapSecPerMile array (absent/short on caches written before GAP was
+      // cached → gap stays null until raw points arrive).
       if (cache) {
+        const gapAligned =
+          cache.gapSecPerMile.length === cache.distancesMiles.length;
         const data: OverlayDatum[] = cache.distancesMiles.map((dist, i) => ({
           distanceMiles: dist,
           timeSec: 0,
           elevationFt: cache.elevationFt[i],
           pace: cache.paceSecPerMile[i],
-          gap: null,
+          gap: gapAligned ? cache.gapSecPerMile[i] : null,
           hr: cache.heartRateBpm[i],
         }));
-        const cachedPaceVals = cache.paceSecPerMile.filter(
-          (v): v is number => v != null
-        );
+        const cachedPaceVals = [
+          ...cache.paceSecPerMile,
+          ...(gapAligned ? cache.gapSecPerMile : []),
+        ].filter((v): v is number => v != null);
         return {
           displayData: data,
           paceDomain: computePaceAxisDomain(cachedPaceVals),

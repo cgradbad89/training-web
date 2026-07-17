@@ -69,6 +69,14 @@ import {
   type OverlayChartCache,
 } from "@/utils/overlayChartCache";
 import {
+  parseZoneBreakdown,
+  type ZoneBreakdownCache,
+} from "@/utils/zoneBreakdown";
+import {
+  parseSimplifiedPath,
+  type SimplifiedPathPoint,
+} from "@/utils/simplifyPolyline";
+import {
   deriveRouteClusterId,
   isNolocClusterId,
 } from "@/utils/routeClusterId";
@@ -210,6 +218,13 @@ function docToHealthWorkout(
         ? data.routeClusterId
         : undefined,
     overlayChartCache: parseOverlayChartCache(data.overlayChartCache),
+    gapSecPerMile:
+      typeof data.gapSecPerMile === "number" &&
+      Number.isFinite(data.gapSecPerMile)
+        ? (data.gapSecPerMile as number)
+        : undefined,
+    zoneBreakdown: parseZoneBreakdown(data.zoneBreakdown),
+    simplifiedPath: parseSimplifiedPath(data.simplifiedPath),
   };
 }
 
@@ -614,6 +629,33 @@ export async function saveOverlayChartCache(
   await setDoc(ref, stripUndefined({ overlayChartCache: cache }), {
     merge: true,
   });
+}
+
+/** The route-derived caches the run-detail page computes lazily on a cache
+ *  miss and merge-writes back in ONE pass. Every field is optional — only the
+ *  pieces actually missing are supplied. */
+export interface RunDetailCacheWrites {
+  overlayChartCache?: OverlayChartCache;
+  gapSecPerMile?: number;
+  zoneBreakdown?: ZoneBreakdownCache;
+  simplifiedPath?: SimplifiedPathPoint[];
+}
+
+/**
+ * Merge-write whichever route-derived caches were missing onto the workout doc
+ * in a single owner write (same pattern as saveOverlayChartCache, so no new
+ * Firestore rule). stripUndefined drops the absent fields; a caller passing an
+ * empty object writes nothing.
+ */
+export async function saveRunDetailCaches(
+  uid: string,
+  workoutId: string,
+  writes: RunDetailCacheWrites
+): Promise<void> {
+  const payload = stripUndefined(writes);
+  if (Object.keys(payload).length === 0) return;
+  const ref = doc(db, "users", uid, "healthWorkouts", workoutId);
+  await setDoc(ref, payload, { merge: true });
 }
 
 /**

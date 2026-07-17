@@ -8,10 +8,15 @@ import {
   GoogleMapsProvider,
   useGoogleMaps,
 } from "@/components/GoogleMapsProvider";
+import { type SimplifiedPathPoint } from "@/utils/simplifyPolyline";
 import { DARK_MAP_STYLES } from "@/utils/mapStyles";
 
 interface RunMapProps {
   points: RoutePoint[];
+  /** Cached Douglas–Peucker simplified path. When present (>= 2 points) it is
+   *  the polyline data source, so the map renders without the full route read;
+   *  otherwise the raw `points` are used. Rendering is otherwise identical. */
+  simplifiedPath?: SimplifiedPathPoint[];
   className?: string;
 }
 
@@ -27,12 +32,15 @@ export default function RunMap(props: RunMapProps) {
   );
 }
 
-function RunMapInner({ points, className = "" }: RunMapProps) {
+function RunMapInner({ points, simplifiedPath, className = "" }: RunMapProps) {
   const { isLoaded, loadError } = useGoogleMaps();
 
   const path = useMemo(
-    () => points.map((p) => ({ lat: p.lat, lng: p.lng })),
-    [points]
+    () =>
+      simplifiedPath && simplifiedPath.length >= 2
+        ? simplifiedPath.map((p) => ({ lat: p.lat, lng: p.lng }))
+        : points.map((p) => ({ lat: p.lat, lng: p.lng })),
+    [points, simplifiedPath]
   );
 
   const start = path[0];
@@ -68,7 +76,7 @@ function RunMapInner({ points, className = "" }: RunMapProps) {
     );
   }
 
-  if (points.length === 0) {
+  if (path.length === 0) {
     return <div className={`w-full h-64 sm:h-96 ${className}`} />;
   }
 

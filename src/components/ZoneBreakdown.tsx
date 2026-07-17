@@ -5,13 +5,16 @@ import Link from "next/link";
 import { InfoTooltip } from "@/components/ui/InfoTooltip";
 import { type RoutePoint } from "@/services/routes";
 import {
-  computeHRZones,
-  computePaceZones,
   paceZoneRanges,
   type PaceZoneRange,
   type ZoneBucket,
 } from "@/utils/zones";
-import { formatDuration, formatPace, mpsToSecPerMile } from "@/utils/pace";
+import {
+  computeHrZonesFromPoints,
+  computePaceZonesFromPoints,
+  type ZoneBreakdownCache,
+} from "@/utils/zoneBreakdown";
+import { formatDuration, formatPace } from "@/utils/pace";
 
 // Zone palette (token-based; fastest/easiest → green, hardest/slowest → red).
 const ZONE_COLORS = [
@@ -26,6 +29,10 @@ interface ZoneBreakdownProps {
   points: RoutePoint[];
   maxHR: number;
   thresholdPaceSecPerMile?: number | null;
+  /** Cached zone breakdown. When present and its basis (maxHR / threshold pace)
+   *  still matches, its buckets are used verbatim so the component renders
+   *  without route points; otherwise the zones are computed from `points`. */
+  cache?: ZoneBreakdownCache;
 }
 
 function formatPaceRange(range: PaceZoneRange): string {
@@ -47,40 +54,23 @@ export function ZoneBreakdown({
   points,
   maxHR,
   thresholdPaceSecPerMile,
+  cache,
 }: ZoneBreakdownProps) {
+  // Prefer the cached buckets when their basis still matches the current
+  // settings (so the component needs no route points); otherwise compute from
+  // `points` via the SAME pure functions the cache was built with.
   const hrZones = useMemo(() => {
-    const hrSamples: { bpm: number; seconds: number }[] = [];
-
-    for (let i = 0; i < points.length - 1; i++) {
-      const t0 = new Date(points[i].timestamp).getTime();
-      const t1 = new Date(points[i + 1].timestamp).getTime();
-      const dt = (t1 - t0) / 1000;
-      if (!isFinite(dt) || dt <= 0) continue;
-
-      if (points[i].hr != null) {
-        hrSamples.push({ bpm: points[i].hr as number, seconds: dt });
-      }
-    }
-
-    return computeHRZones(hrSamples, maxHR);
-  }, [points, maxHR]);
+    if (cache && cache.maxHr === maxHR) return cache.hrZones;
+    return computeHrZonesFromPoints(points, maxHR);
+  }, [cache, points, maxHR]);
 
   const paceZones = useMemo(() => {
-    if (!thresholdPaceSecPerMile || thresholdPaceSecPerMile <= 0) return [];
-
-    const perPointPaceSecPerMile = points.map((point) =>
-      point.speed != null ? mpsToSecPerMile(point.speed) : null
-    );
-    const perPointTimestampsSec = points.map(
-      (point) => new Date(point.timestamp).getTime() / 1000
-    );
-
-    return computePaceZones(
-      perPointPaceSecPerMile,
-      perPointTimestampsSec,
-      thresholdPaceSecPerMile
-    );
-  }, [points, thresholdPaceSecPerMile]);
+    const threshold = thresholdPaceSecPerMile ?? null;
+    if (cache && cache.thresholdPaceSecPerMile === threshold) {
+      return cache.paceZones;
+    }
+    return computePaceZonesFromPoints(points, threshold);
+  }, [cache, points, thresholdPaceSecPerMile]);
 
   const hasThresholdPace =
     thresholdPaceSecPerMile != null &&

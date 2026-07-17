@@ -29,6 +29,7 @@ interface MergedMileRow {
   mile: number;
   distanceMiles?: number;
   paceSecPerMile?: number;
+  gapSecPerMile?: number;
   isPartial?: boolean;
   basisTotalMiles?: number;
   avgBpm?: number;
@@ -48,9 +49,11 @@ function mergeByMile(docs: MileSplitDoc[]): Map<number, MergedMileRow> {
 
     const dist = asFiniteNumber(d.distanceMiles);
     const pace = asFiniteNumber(d.paceSecPerMile);
+    const gap = asFiniteNumber(d.gapSecPerMile);
     const basis = asFiniteNumber(d.basisTotalMiles);
     if (dist != null) row.distanceMiles = dist;
     if (pace != null) row.paceSecPerMile = pace;
+    if (gap != null) row.gapSecPerMile = gap;
     if (basis != null) row.basisTotalMiles = basis;
     if (typeof d.isPartial === "boolean") row.isPartial = d.isPartial;
 
@@ -113,12 +116,53 @@ export function splitsFromCachedDocs(
   return splits;
 }
 
+/**
+ * Per-mile grade-adjusted pace (sec/mi), index = mile-1, from the cached
+ * subcollection docs — the companion to {@link splitsFromCachedDocs} for the
+ * Mile Splits table's GAP column and the run-detail route-fetch gate.
+ *
+ * Returns null (cache miss → caller computes from raw route points and writes
+ * back) unless EVERY mile 1..N present in the docs carries a finite
+ * gapSecPerMile AND the cached basis total matches `currentTotalMiles` (so an
+ * edited distance override forces a recompute). A gap of exactly 0 (an all-
+ * stopped mile) counts as cached and renders "—" downstream.
+ */
+export function cachedGapPerMile(
+  docs: MileSplitDoc[],
+  currentTotalMiles: number
+): number[] | null {
+  const byMile = mergeByMile(docs);
+  if (byMile.size === 0) return null;
+
+  const maxMile = Math.max(...byMile.keys());
+  const gaps: number[] = [];
+  for (let mile = 1; mile <= maxMile; mile++) {
+    const row = byMile.get(mile);
+    if (
+      !row ||
+      row.gapSecPerMile == null ||
+      row.gapSecPerMile < 0 ||
+      row.basisTotalMiles == null
+    ) {
+      return null; // not (fully) cached — fall back to raw computation
+    }
+    if (
+      Math.abs(row.basisTotalMiles - currentTotalMiles) > TOTAL_MILES_EPSILON
+    ) {
+      return null; // stale basis (e.g. distance override changed)
+    }
+    gaps.push(row.gapSecPerMile);
+  }
+  return gaps;
+}
+
 export interface MileSplitCacheWrite {
   docId: string;
   data: {
     mile: number;
     distanceMiles: number;
     paceSecPerMile: number;
+    gapSecPerMile: number;
     isPartial: boolean;
     basisTotalMiles: number;
   };
@@ -130,9 +174,15 @@ export interface MileSplitCacheWrite {
  * (merge write preserves avgBpm/sampleCount); a mile with no doc gets a
  * deterministic `mile_<n>` ID. Returns [] when there is nothing valid to
  * write (empty splits — never persists an empty marker).
+ *
+ * `gapPerMile` (index = mile-1, from computeRunGap.perMileGapSecPerMile) is
+ * persisted alongside distance/pace under the SAME basisTotalMiles, so a
+ * distance override invalidates the cached GAP in lockstep with pace. A mile
+ * with no gap entry (or a non-finite one) is written as 0 → renders "—".
  */
 export function mileSplitCacheWrites(
   splits: MileSplit[],
+  gapPerMile: number[],
   existingDocs: MileSplitDoc[],
   authoritativeTotalMiles: number
 ): MileSplitCacheWrite[] {
@@ -153,14 +203,18 @@ export function mileSplitCacheWrites(
         Number.isFinite(s.segmentMiles) &&
         s.segmentMiles > 0
     )
-    .map((s) => ({
-      docId: docIdByMile.get(s.mile) ?? `mile_${s.mile}`,
-      data: {
-        mile: s.mile,
-        distanceMiles: s.segmentMiles,
-        paceSecPerMile: s.paceSecPerMile,
-        isPartial: s.isPartial,
-        basisTotalMiles: authoritativeTotalMiles,
-      },
-    }));
+    .map((s) => {
+      const g = gapPerMile[s.mile - 1];
+      return {
+        docId: docIdByMile.get(s.mile) ?? `mile_${s.mile}`,
+        data: {
+          mile: s.mile,
+          distanceMiles: s.segmentMiles,
+          paceSecPerMile: s.paceSecPerMile,
+          gapSecPerMile: Number.isFinite(g) && g >= 0 ? g : 0,
+          isPartial: s.isPartial,
+          basisTotalMiles: authoritativeTotalMiles,
+        },
+      };
+    });
 }

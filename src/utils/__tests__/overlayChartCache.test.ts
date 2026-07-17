@@ -3,6 +3,7 @@ import {
   computeOverlayChartCache,
   evenSampleIndices,
   parseOverlayChartCache,
+  gapByPointFromPerPoint,
   OVERLAY_CACHE_TARGET_POINTS,
 } from "@/utils/overlayChartCache";
 import { type RoutePoint } from "@/services/routes";
@@ -86,7 +87,7 @@ describe("computeOverlayChartCache", () => {
   });
 
   it("records the computedAt clock it was given", () => {
-    const cache = computeOverlayChartCache(makePoints(10), 200, 1234567);
+    const cache = computeOverlayChartCache(makePoints(10), [], 200, 1234567);
     expect(cache!.computedAt).toBe(1234567);
   });
 });
@@ -112,5 +113,89 @@ describe("parseOverlayChartCache", () => {
     expect(
       parseOverlayChartCache({ ...cache, computedAt: "yesterday" })
     ).toBeUndefined();
+  });
+
+  it("tolerates a legacy cache with no gapSecPerMile (defaults to [])", () => {
+    const cache = computeOverlayChartCache(makePoints(300))!;
+    const legacy = JSON.parse(JSON.stringify(cache)) as Record<string, unknown>;
+    delete legacy.gapSecPerMile; // a doc written before GAP was cached
+    const parsed = parseOverlayChartCache(legacy);
+    expect(parsed).toBeDefined();
+    expect(parsed!.gapSecPerMile).toEqual([]);
+  });
+
+  it("drops a length-mismatched gapSecPerMile to [] (treated as incomplete)", () => {
+    const cache = computeOverlayChartCache(makePoints(300))!;
+    const parsed = parseOverlayChartCache({
+      ...JSON.parse(JSON.stringify(cache)),
+      gapSecPerMile: [1, 2, 3], // shorter than distancesMiles
+    });
+    expect(parsed!.gapSecPerMile).toEqual([]);
+  });
+});
+
+describe("gapByPointFromPerPoint", () => {
+  it("maps perPointGap[k] onto point k+1, with index 0 null", () => {
+    const perPointGap = [
+      { gradeAdjPaceSecPerMile: 510 },
+      { gradeAdjPaceSecPerMile: null },
+      { gradeAdjPaceSecPerMile: 505 },
+    ];
+    expect(gapByPointFromPerPoint(perPointGap, 4)).toEqual([
+      null,
+      510,
+      null,
+      505,
+    ]);
+  });
+
+  it("returns [] when the shapes don't line up", () => {
+    expect(gapByPointFromPerPoint([], 4)).toEqual([]);
+    expect(gapByPointFromPerPoint([{ gradeAdjPaceSecPerMile: 1 }], 1)).toEqual(
+      []
+    );
+  });
+});
+
+describe("computeOverlayChartCache GAP channel (compute full-res, THEN decimate)", () => {
+  it("stores an empty gapSecPerMile when no GAP series is supplied", () => {
+    const cache = computeOverlayChartCache(makePoints(300))!;
+    expect(cache.gapSecPerMile).toEqual([]);
+  });
+
+  it("decimates the GAP series to the target length (aligned to the others)", () => {
+    const n = 2400;
+    // Point-aligned GAP: index 0 null, constant 500 thereafter.
+    const gapByPoint = Array.from<unknown, number | null>({ length: n }, (_, i) =>
+      i === 0 ? null : 500
+    );
+    const cache = computeOverlayChartCache(makePoints(n), gapByPoint)!;
+    expect(cache.gapSecPerMile).toHaveLength(OVERLAY_CACHE_TARGET_POINTS);
+    expect(cache.gapSecPerMile.length).toBe(cache.distancesMiles.length);
+    // A constant GAP survives smoothing as (near-)constant.
+    const vals = cache.gapSecPerMile.filter((v): v is number => v != null);
+    expect(vals.length).toBeGreaterThan(0);
+    for (const v of vals) expect(Math.abs(v - 500)).toBeLessThan(1);
+  });
+
+  it("smooths the FULL-resolution GAP series BEFORE decimating (not after)", () => {
+    // 1 Hz GAP alternating 500/600. A ~35s moving average over the FULL array
+    // collapses it to ~550 everywhere, so every decimated sample reads ~550.
+    // If the raw series were decimated FIRST (stride 12, even → same parity),
+    // the samples would be a pure 500 or 600, never ~550 — so a value strictly
+    // between the two proves smoothing ran on the full array first.
+    const n = 2400;
+    // ~550 sec/mi pace so the domain spans the 500–600 GAP band (no nulling).
+    const points = makePoints(n, () => ({ speed: 1609.344 / 550 }));
+    const gapByPoint = Array.from<unknown, number | null>({ length: n }, (_, i) =>
+      i === 0 ? null : i % 2 === 0 ? 500 : 600
+    );
+    const cache = computeOverlayChartCache(points, gapByPoint)!;
+    const vals = cache.gapSecPerMile.filter((v): v is number => v != null);
+    expect(vals.length).toBeGreaterThan(10);
+    for (const v of vals) {
+      expect(v).toBeGreaterThan(510);
+      expect(v).toBeLessThan(590);
+    }
   });
 });

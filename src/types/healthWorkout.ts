@@ -2,6 +2,8 @@ import { type BestEffortsMap } from "@/utils/bestEfforts";
 import { type WeatherSnapshot } from "@/types/weather";
 import { type MileSplit } from "@/utils/mileSplits";
 import { type OverlayChartCache } from "@/utils/overlayChartCache";
+import { type ZoneBreakdownCache } from "@/utils/zoneBreakdown";
+import { type SimplifiedPathPoint } from "@/utils/simplifyPolyline";
 
 /**
  * HealthWorkout — mirrors the Firestore document stored at
@@ -73,6 +75,19 @@ export interface HealthWorkout {
    *  from the route subcollection and cached here by the web app. Absent until
    *  the run's detail page has been viewed. */
   overlayChartCache?: OverlayChartCache;
+  /** Run-level grade-adjusted pace (sec/mi) — the GAP KPI value. Cached from the
+   *  full route on first detail view; lets the KPI render without a route read.
+   *  No basis field, so it is only used/written when there is no distance or
+   *  duration override (an override recomputes GAP live from the route). */
+  gapSecPerMile?: number;
+  /** Cached HR + pace zone breakdown, tagged with the maxHR / threshold pace it
+   *  was computed against (stale when the current settings differ). Absent until
+   *  the run's detail page has been viewed. */
+  zoneBreakdown?: ZoneBreakdownCache;
+  /** Douglas–Peucker simplified map path, computed once from the full route so
+   *  the map renders without a route read. Absent until the detail page has been
+   *  viewed. */
+  simplifiedPath?: SimplifiedPathPoint[];
   /** TRANSIENT (never persisted to Firestore): per-mile splits hydrated from the
    *  GPS `route` subcollection (pace) merged with the `mileSplits` subcollection
    *  (per-mile avgBpm). Attached at the wiring layer for HR-gated best-effort

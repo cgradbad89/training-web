@@ -25,9 +25,10 @@ import {
   fetchHealthWorkout,
   fetchHealthWorkouts,
   fetchWorkoutsByRouteCluster,
-  saveOverlayChartCache,
   saveRouteClusterId,
+  saveRunDetailCaches,
   saveWeatherForWorkout,
+  type RunDetailCacheWrites,
 } from "@/services/healthWorkouts";
 import { type RoutePoint } from "@/services/routes";
 import { getRoutePoints } from "@/utils/routeCache";
@@ -81,11 +82,18 @@ import {
   deriveRouteClusterId,
   isNolocClusterId,
 } from "@/utils/routeClusterId";
-import { computeOverlayChartCache } from "@/utils/overlayChartCache";
+import {
+  computeOverlayChartCache,
+  gapByPointFromPerPoint,
+} from "@/utils/overlayChartCache";
 import {
   splitsFromCachedDocs,
+  cachedGapPerMile,
   mileSplitCacheWrites,
 } from "@/utils/mileSplitDocs";
+import { simplifyPolyline } from "@/utils/simplifyPolyline";
+import { computeZoneBreakdown } from "@/utils/zoneBreakdown";
+import { routeCachesComplete } from "@/utils/runDetailCacheGate";
 import {
   computeRoutePerformance,
   toMatchedRunSummaries,
@@ -126,6 +134,13 @@ const RunOverlayChart = dynamic(
 );
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/**
+ * Douglas–Peucker tolerance (metres) for the cached map path. 3 m keeps every
+ * turn visually intact while collapsing dense straight-line runs of GPS points.
+ * TUNABLE — product owner may adjust after a visual review of routed runs.
+ */
+const SIMPLIFY_TOLERANCE_METERS = 3;
 
 function getDriftBadgeLevel(
   workout: HealthWorkout
@@ -277,6 +292,20 @@ export default function RunDetailPage() {
     [routePoints, displayWorkoutForSplits]
   );
 
+  // Per-mile GAP for the Mile Splits table: the cached subcollection column
+  // (index = mile-1) when every mile has it and its basis still matches,
+  // otherwise the freshly computed series. Kept before any early return.
+  const gapPerMile = useMemo<number[]>(() => {
+    if (mileSplitDocs && displayWorkoutForSplits) {
+      const cached = cachedGapPerMile(
+        mileSplitDocs,
+        displayWorkoutForSplits.distanceMiles
+      );
+      if (cached) return cached;
+    }
+    return runGap.perMileGapSecPerMile;
+  }, [mileSplitDocs, displayWorkoutForSplits, runGap]);
+
   // NET elevation (ft) for the elevation KPI's secondary line. Sourced from the
   // GAP computation so Total (cumulative ascent) and Net stay consistent.
   // Negative = net descent. Hidden when unavailable (no NaN).
@@ -306,66 +335,50 @@ export default function RunDetailPage() {
     setLoading(true);
     setRouteLoading(true);
 
-    const corePromise = Promise.all([
-      fetchHealthWorkout(uid, workoutId),
-      fetchShoes(uid),
-      fetchManualShoeAssignmentsMap(uid),
-      fetchOverride(uid, workoutId),
-      fetchUserSettings(uid),
-    ])
-      .then(([w, s, a, o, settings]) => {
-        if (cancelled) return { w, s, a, o, settings };
+    void (async () => {
+      // ── Wave 1: core doc + shoe/override/settings, and the mileSplits
+      //    subcollection. All cheap (a single doc get + a small subcollection);
+      //    none is the big `route` read. These decide whether the route read is
+      //    needed at all, so they run first.
+      let core: {
+        w: HealthWorkout | null;
+        o: WorkoutOverride | null;
+        settings: UserSettings | null | undefined;
+      } | null = null;
+      try {
+        const [w, s, a, o, settings] = await Promise.all([
+          fetchHealthWorkout(uid, workoutId),
+          fetchShoes(uid),
+          fetchManualShoeAssignmentsMap(uid),
+          fetchOverride(uid, workoutId),
+          fetchUserSettings(uid),
+        ]);
+        if (cancelled) return;
         setWorkout(w);
         setShoes(s);
         setAssignments(a);
         setOverride(o);
         setUserSettings(settings);
-        return { w, s, a, o, settings };
-      })
-      .catch((err) => {
+        core = { w, o, settings };
+      } catch (err) {
         console.error(err);
-        return null;
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) setLoading(false);
-      });
-
-    // Always attempt the route read, regardless of the parent `hasRoute`
-    // flag. The iOS headless sync can write a populated `route`
-    // subcollection but leave `hasRoute: false` if a short background wake
-    // is suspended before the trailing flag write. Trusting the flag alone
-    // would suppress map/splits/HR for runs whose data actually exists, so
-    // route availability is derived from the DATA: a read of >= 2 points
-    // means "routed" for all downstream rendering. A genuinely route-less
-    // workout (Pilates/strength) reads 0 points and is unchanged.
-    const routePromise = getRoutePoints(uid, workoutId)
-      .then((points) => {
-        if (cancelled) return points;
-        setRoutePoints(points);
-        return points;
-      })
-      .catch((err) => {
-        console.error(err);
-        return null;
-      })
-      .finally(() => {
+      }
+      if (cancelled) return;
+      if (!core || !core.w) {
         if (!cancelled) setRouteLoading(false);
-      });
+        return;
+      }
+      const { w, o, settings } = core;
 
-    // Fetch per-mile data from the mileSplits subcollection. Now hoisted to
-    // Wave 1 and runs unconditionally for all workouts. For routeless
-    // workouts, the subcollection is simply empty and returns `[]` safely.
-    // When the docs already carry cached distance/pace for every mile (and
-    // their basis matches the current authoritative distance), the splits are
-    // used verbatim; otherwise only the iOS per-mile HR is extracted and the
-    // splits are recomputed from the route (and written back by cache effect).
-    const splitsPromise = getMileSplits(uid, workoutId)
-      .then((splits) => {
-        if (cancelled) return splits;
+      // mileSplits subcollection (per-mile HR + the web app's cached
+      // distance/pace/GAP). For routeless workouts this is empty and safe.
+      let splits: MileSplitDoc[] | null = null;
+      try {
+        splits = await getMileSplits(uid, workoutId);
+        if (cancelled) return;
         setMileSplitDocs(splits);
-        // Per-mile HR is always extracted so the recompute path (e.g. after
-        // an in-session distance edit invalidates the cached splits) still
-        // merges HR into fresh splits.
         const hrMap: Record<number, number> = {};
         splits.forEach((data) => {
           if (data.avgBpm && (data.sampleCount as number) >= 2) {
@@ -373,128 +386,186 @@ export default function RunDetailPage() {
           }
         });
         setPerMileHR(hrMap);
-        return splits;
-      })
-      .catch((err) => {
+      } catch (err) {
         console.error(err);
-        return null;
-      });
+      }
 
-    // Wave 2: Logics that depend on both the core workout data and route points.
-    Promise.all([corePromise, routePromise])
-      .then(([coreRes, points]) => {
-        if (cancelled || !coreRes || !points) return;
-        const { w } = coreRes;
+      const authoritativeMiles =
+        o?.distanceMilesOverride ?? w.distanceMiles ?? 0;
+      const maxHr = resolveMaxHr(settings);
+      const thresholdPace = settings?.thresholdPaceSecPerMile ?? null;
+      // A distance/duration override changes GAP + the mile basis; the KPI GAP
+      // cache carries no basis, so any such override forces a live recompute
+      // from the route regardless of what is cached.
+      const basisOverride =
+        o?.distanceMilesOverride != null || o?.durationSecondsOverride != null;
+      const splitsHaveGap =
+        splits != null && cachedGapPerMile(splits, authoritativeMiles) != null;
 
-        // Weather backfill: a run with GPS but no stored weather yet gets
-        // its start-point/time conditions fetched from Open-Meteo and
-        // persisted. Already-stored weather is reused (no fetch). Failures
-        // are swallowed — the tile simply doesn't render.
-        if (w && w.weather == null && points.length > 0) {
-          fetchWeatherForRun(points[0].lat, points[0].lng, w.startDate)
-            .then((weather) => {
-              if (cancelled || !weather) return;
-              setWorkout((current) =>
-                current ? { ...current, weather } : current
-              );
-              saveWeatherForWorkout(uid, workoutId, weather).catch(
-                console.error
-              );
+      // ── Route-fetch gate. Skip the big `route` read only when every
+      //    route-derived cache the page renders is present & fresh AND there is
+      //    no basis override. Otherwise fetch once and back-fill the gaps.
+      const needsRoute =
+        basisOverride || !routeCachesComplete(w, { maxHr, thresholdPace, splitsHaveGap });
+
+      if (!needsRoute) {
+        if (splits) {
+          const cached = splitsFromCachedDocs(splits, authoritativeMiles);
+          if (cached) {
+            setCachedSplits({ splits: cached, basisMiles: authoritativeMiles });
+          }
+        }
+        // Fully cached — render map/GAP/zones/splits from the doc; no route read.
+        if (!cancelled) {
+          setRoutePoints([]);
+          setRouteLoading(false);
+        }
+        return;
+      }
+
+      // ── Cache miss: read the route once, render live, and back-fill.
+      let points: RoutePoint[] | null = null;
+      try {
+        points = await getRoutePoints(uid, workoutId);
+        if (cancelled) return;
+        setRoutePoints(points);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        if (!cancelled) setRouteLoading(false);
+      }
+      if (cancelled || !points) return;
+
+      // Cached splits validation (distance/pace/HR) — unchanged.
+      if (splits && isRoutePresent(points.length)) {
+        const cached = splitsFromCachedDocs(splits, authoritativeMiles);
+        if (cached) {
+          setCachedSplits({ splits: cached, basisMiles: authoritativeMiles });
+        }
+      }
+
+      // Weather backfill: a GPS run with no stored weather gets its start
+      // conditions fetched and persisted. Failures are swallowed.
+      if (w.weather == null && points.length > 0) {
+        fetchWeatherForRun(points[0].lat, points[0].lng, w.startDate)
+          .then((weather) => {
+            if (cancelled || !weather) return;
+            setWorkout((current) =>
+              current ? { ...current, weather } : current
+            );
+            saveWeatherForWorkout(uid, workoutId, weather).catch(console.error);
+          })
+          .catch(console.error);
+      }
+
+      if (isRoutePresent(points.length)) {
+        // Natural new-run hook: best efforts computed here (route already read).
+        if (w.bestEfforts === undefined) {
+          computeAndStoreBestEfforts(uid, workoutId, points)
+            .then((bestEfforts) => {
+              if (!cancelled) {
+                setWorkout((current) =>
+                  current ? { ...current, bestEfforts } : current
+                );
+              }
             })
             .catch(console.error);
         }
 
-        if (isRoutePresent(points.length)) {
-          // Natural new-run hook: the detail page already reads route
-          // points for maps/splits/GAP, so computing missing best efforts
-          // here avoids adding heavy route reads to the runs list hot path.
-          if (w && w.bestEfforts === undefined) {
-            computeAndStoreBestEfforts(uid, workoutId, points)
-              .then((bestEfforts) => {
+        // Deterministic route-cluster ID (raw distance; noloc re-derived).
+        if (
+          w.isRunLike &&
+          (w.routeClusterId === undefined || isNolocClusterId(w.routeClusterId))
+        ) {
+          const clusterId = deriveRouteClusterId(w.distanceMiles, {
+            lat: points[0].lat,
+            lng: points[0].lng,
+          });
+          if (clusterId !== w.routeClusterId) {
+            saveRouteClusterId(uid, workoutId, clusterId)
+              .then(() => {
                 if (!cancelled) {
                   setWorkout((current) =>
-                    current ? { ...current, bestEfforts } : current
+                    current ? { ...current, routeClusterId: clusterId } : current
                   );
                 }
               })
               .catch(console.error);
           }
+        }
 
-          // Same lazy hook: assign the deterministic route-cluster ID the
-          // first time a run without one is viewed. Uses the RAW stored
-          // distance (clustering has always operated on raw docs). A
-          // lingering noloc ID is re-derived now that points exist.
-          if (
-            w &&
-            w.isRunLike &&
-            (w.routeClusterId === undefined ||
-              isNolocClusterId(w.routeClusterId))
-          ) {
-            const clusterId = deriveRouteClusterId(w.distanceMiles, {
-              lat: points[0].lat,
-              lng: points[0].lng,
-            });
-            if (clusterId !== w.routeClusterId) {
-              saveRouteClusterId(uid, workoutId, clusterId)
-                .then(() => {
-                  if (!cancelled) {
-                    setWorkout((current) =>
-                      current
-                        ? { ...current, routeClusterId: clusterId }
-                        : current
-                    );
-                  }
-                })
-                .catch(console.error);
-            }
+        // ── Route-derived caches computed from the SAME route read and merge-
+        //    written back in one pass. GAP is computed once (from RAW workout
+        //    values) and reused for the KPI, the overlay per-point series, and
+        //    (via the mile-split cache effect) the per-mile column. Skipped for
+        //    a still-syncing partial route (routeComplete === false).
+        if (w.routeComplete !== false) {
+          const rawGap = computeRunGap(
+            points,
+            w.distanceMiles,
+            w.durationSeconds,
+            w.avgPaceSecPerMile
+          );
+          const updates: RunDetailCacheWrites = {};
+
+          const overlay = w.overlayChartCache;
+          const overlayStale =
+            overlay === undefined ||
+            overlay.sourcePointCount !== points.length ||
+            overlay.gapSecPerMile.length !== overlay.distancesMiles.length;
+          if (overlayStale) {
+            const gapByPoint = gapByPointFromPerPoint(
+              rawGap.perPointGap,
+              points.length
+            );
+            const chartCache = computeOverlayChartCache(points, gapByPoint);
+            if (chartCache) updates.overlayChartCache = chartCache;
           }
 
-          // Same lazy hook: persist the decimated overlay-chart series.
-          // Skipped while the route is still partially syncing; recomputed
-          // when a later resync changed the point count.
+          // KPI GAP: cache only when there is no basis override (needsRoute is
+          // already true in that case, so this branch never runs then anyway).
           if (
-            w &&
-            w.routeComplete !== false &&
-            (w.overlayChartCache === undefined ||
-              w.overlayChartCache.sourcePointCount !== points.length)
+            w.gapSecPerMile === undefined &&
+            !basisOverride &&
+            rawGap.runGapSecPerMile > 0
           ) {
-            const chartCache = computeOverlayChartCache(points);
-            if (chartCache) {
-              saveOverlayChartCache(uid, workoutId, chartCache)
-                .then(() => {
-                  if (!cancelled) {
-                    setWorkout((current) =>
-                      current
-                        ? { ...current, overlayChartCache: chartCache }
-                        : current
-                    );
-                  }
-                })
-                .catch(console.error);
-            }
+            updates.gapSecPerMile = rawGap.runGapSecPerMile;
+          }
+
+          const zb = w.zoneBreakdown;
+          const zoneStale =
+            zb === undefined ||
+            zb.maxHr !== maxHr ||
+            zb.thresholdPaceSecPerMile !== thresholdPace;
+          if (zoneStale) {
+            updates.zoneBreakdown = computeZoneBreakdown(
+              points,
+              maxHr,
+              thresholdPace
+            );
+          }
+
+          if (w.simplifiedPath === undefined) {
+            updates.simplifiedPath = simplifyPolyline(
+              points,
+              SIMPLIFY_TOLERANCE_METERS
+            );
+          }
+
+          if (Object.keys(updates).length > 0) {
+            saveRunDetailCaches(uid, workoutId, updates)
+              .then(() => {
+                if (!cancelled) {
+                  setWorkout((current) =>
+                    current ? { ...current, ...updates } : current
+                  );
+                }
+              })
+              .catch(console.error);
           }
         }
-      })
-      .catch(console.error);
-
-    // Wave 2: Cached splits validation depends on core data, route presence, and the splits docs.
-    Promise.all([corePromise, routePromise, splitsPromise])
-      .then(([coreRes, points, splits]) => {
-        if (cancelled || !coreRes || !points || !splits) return;
-        const { w, o } = coreRes;
-
-        if (isRoutePresent(points.length)) {
-          const authoritativeMiles = o?.distanceMilesOverride ?? w?.distanceMiles ?? 0;
-          const cached = splitsFromCachedDocs(splits, authoritativeMiles);
-          if (cached) {
-            setCachedSplits({
-              splits: cached,
-              basisMiles: authoritativeMiles,
-            });
-          }
-        }
-      })
-      .catch(console.error);
+      }
+    })();
 
     return () => {
       cancelled = true;
@@ -610,30 +681,36 @@ export default function RunDetailPage() {
     return rep.distanceMiles ?? 0;
   }, [clusterRuns]);
 
-  // Write freshly computed mile splits back to the mileSplits subcollection
-  // (once per workout+distance basis) so the next view reads them instead of
-  // recomputing from the full route. Skipped when the splits came from the
-  // cache, while the route is still partially syncing, or before the
-  // subcollection docs are known (their IDs are the merge targets).
+  // Write freshly computed mile splits (distance/pace/GAP) back to the
+  // mileSplits subcollection (once per workout+distance basis) so the next view
+  // reads them instead of recomputing from the full route. Skipped only when
+  // BOTH the splits AND the per-mile GAP are already cached at the current
+  // basis, while the route is still partially syncing, or before the
+  // subcollection docs are known (their IDs are the merge targets). When only
+  // the GAP is missing (a run cached by an earlier build), the write still
+  // fires — but not until the route points are present so a real GAP series is
+  // available (never persist an all-zero GAP).
   const wroteMileCacheFor = useRef<string | null>(null);
   useEffect(() => {
     if (!uid || !workout || !displayWorkoutForSplits) return;
     if (workout.routeComplete === false) return;
     if (mileSplitDocs === null || mileSplits.length === 0) return;
     const basisMiles = displayWorkoutForSplits.distanceMiles;
-    if (
-      cachedSplits &&
-      Math.abs(cachedSplits.basisMiles - basisMiles) <= 0.005
-    ) {
-      return; // rendered from cache — nothing new to persist
+    const splitsCached =
+      cachedSplits && Math.abs(cachedSplits.basisMiles - basisMiles) <= 0.005;
+    const gapCached = cachedGapPerMile(mileSplitDocs, basisMiles) != null;
+    if (splitsCached && gapCached) {
+      return; // fully cached — nothing new to persist
     }
+    // Need a real GAP series to persist when it isn't cached yet.
+    if (!gapCached && routePoints.length < 2) return;
     const writeKey = `${workoutId}:${basisMiles}`;
     if (wroteMileCacheFor.current === writeKey) return;
     wroteMileCacheFor.current = writeKey;
     saveMileSplitCache(
       uid,
       workoutId,
-      mileSplitCacheWrites(mileSplits, mileSplitDocs, basisMiles)
+      mileSplitCacheWrites(mileSplits, gapPerMile, mileSplitDocs, basisMiles)
     ).catch(console.error);
   }, [
     uid,
@@ -643,6 +720,8 @@ export default function RunDetailPage() {
     cachedSplits,
     mileSplitDocs,
     mileSplits,
+    gapPerMile,
+    routePoints,
   ]);
 
   // Active goal race + its distance/inputs (same mapping Plan Insights uses).
@@ -752,14 +831,24 @@ export default function RunDetailPage() {
   // Apply override for display
   const displayWorkout = applyOverride(workout, override);
   const matchedPlanEntry = runTitleMap.get(displayWorkout.workoutId) ?? null;
+  // Cached simplified map path (>= 2 pts). Present ⇒ the route existed and was
+  // read on an earlier view, so it also proves route availability on a
+  // route-skip render where routePoints is empty.
+  const cachedMapPath =
+    displayWorkout.simplifiedPath && displayWorkout.simplifiedPath.length >= 2
+      ? displayWorkout.simplifiedPath
+      : null;
   // Derive route availability from the DATA, not just the parent flag. The iOS
   // headless sync can leave `hasRoute: false` on a doc that nonetheless has a
-  // populated `route` subcollection; once we've read >= 2 points, render the
-  // run as routed regardless of the flag. (< 2 points → unchanged no-route UI.)
-  const effectiveHasRoute = deriveEffectiveHasRoute(
-    displayWorkout.hasRoute,
-    routePoints.length
-  );
+  // populated `route` subcollection; once we've read >= 2 points (or cached a
+  // simplified path from an earlier read), render the run as routed regardless
+  // of the flag. (< 2 points and no cache → unchanged no-route UI.)
+  const effectiveHasRoute =
+    deriveEffectiveHasRoute(displayWorkout.hasRoute, routePoints.length) ||
+    cachedMapPath != null;
+  // A renderable route path exists from either the freshly read points or the
+  // cached simplified path (the route-skip render path).
+  const hasRoutePath = routePoints.length > 0 || cachedMapPath != null;
   // Display-only hint: iOS marks an in-progress route with `routeComplete:
   // false`. We still render every point we have — this never gates rendering.
   // Absent (legacy) or true → no hint.
@@ -1131,9 +1220,24 @@ export default function RunDetailPage() {
             unit={displayWorkout.avgPaceSecPerMile ? "/mi" : undefined}
           />
           {(() => {
-            // Dead-band/flat runs show the actual pace labelled "flat" \u2014 "\u2014"
-            // is reserved for runs with no route/elevation data at all.
-            const gapDisplay = selectGapDisplay(runGap);
+            // Prefer the cached run-level GAP (no route read) when there is no
+            // distance/duration override \u2014 the cache carries no basis, so an
+            // override falls back to the live route computation. Dead-band/flat
+            // runs show the actual pace labelled "flat"; "\u2014" is reserved for
+            // runs with no route/elevation data at all. On the route-skip path
+            // the cache has no netRise/flat signal, so a cached GAP renders as a
+            // plain value (no "flat" sublabel).
+            const gapDisplay =
+              override?.distanceMilesOverride == null &&
+              override?.durationSecondsOverride == null &&
+              displayWorkout.gapSecPerMile != null &&
+              displayWorkout.gapSecPerMile > 0 &&
+              runGap.runGapSecPerMile <= 0
+                ? {
+                    mode: "value" as const,
+                    paceSecPerMile: displayWorkout.gapSecPerMile,
+                  }
+                : selectGapDisplay(runGap);
             return (
               <StatBlock
                 label="GAP"
@@ -1312,9 +1416,12 @@ export default function RunDetailPage() {
       <div className="bg-card rounded-2xl border border-border overflow-hidden">
         {routeLoading ? (
           <div className="h-64 sm:h-96 bg-surface animate-pulse" />
-        ) : effectiveHasRoute && routePoints.length > 0 ? (
+        ) : effectiveHasRoute && hasRoutePath ? (
           <>
-            <RunMap points={routePoints} />
+            <RunMap
+              points={routePoints}
+              simplifiedPath={cachedMapPath ?? undefined}
+            />
             {routeSyncing && (
               <div className="px-4 py-2 border-t border-border">
                 <p className="text-xs text-textSecondary">
@@ -1343,7 +1450,7 @@ export default function RunDetailPage() {
         splits={mileSplits}
         routeLoading={routeLoading}
         hasRoute={effectiveHasRoute}
-        gapPerMile={runGap.perMileGapSecPerMile}
+        gapPerMile={gapPerMile}
       />
 
       {/* ── Pace & HR Charts ───────────────────────────────── */}
@@ -1366,13 +1473,15 @@ export default function RunDetailPage() {
         )}
 
       {/* ── Heart Rate Zone Breakdown ──────────────────────── */}
-      {effectiveHasRoute && routePoints.length > 1 && (
-        <ZoneBreakdown
-          points={routePoints}
-          maxHR={resolvedMaxHR}
-          thresholdPaceSecPerMile={userSettings?.thresholdPaceSecPerMile}
-        />
-      )}
+      {effectiveHasRoute &&
+        (routePoints.length > 1 || displayWorkout.zoneBreakdown) && (
+          <ZoneBreakdown
+            points={routePoints}
+            maxHR={resolvedMaxHR}
+            thresholdPaceSecPerMile={userSettings?.thresholdPaceSecPerMile}
+            cache={displayWorkout.zoneBreakdown}
+          />
+        )}
     </div>
   );
 }

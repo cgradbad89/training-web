@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   splitsFromCachedDocs,
+  cachedGapPerMile,
   mileSplitCacheWrites,
 } from "@/utils/mileSplitDocs";
 import { type MileSplitDoc } from "@/utils/mileSplitsCache";
@@ -106,6 +107,43 @@ describe("splitsFromCachedDocs", () => {
   });
 });
 
+describe("cachedGapPerMile", () => {
+  function gapDocs(basis = 2.4): MileSplitDoc[] {
+    return [
+      { id: "m1", mile: 1, gapSecPerMile: 520, basisTotalMiles: basis },
+      { id: "m2", mile: 2, gapSecPerMile: 505, basisTotalMiles: basis },
+    ];
+  }
+
+  it("returns the per-mile GAP array (index = mile-1) when fully cached", () => {
+    expect(cachedGapPerMile(gapDocs(), 2.4)).toEqual([520, 505]);
+  });
+
+  it("counts a 0 GAP (all-stopped mile) as cached", () => {
+    const docs: MileSplitDoc[] = [
+      { id: "m1", mile: 1, gapSecPerMile: 0, basisTotalMiles: 2.4 },
+      { id: "m2", mile: 2, gapSecPerMile: 505, basisTotalMiles: 2.4 },
+    ];
+    expect(cachedGapPerMile(docs, 2.4)).toEqual([0, 505]);
+  });
+
+  it("returns null when any mile is missing GAP", () => {
+    const docs: MileSplitDoc[] = [
+      { id: "m1", mile: 1, gapSecPerMile: 520, basisTotalMiles: 2.4 },
+      { id: "m2", mile: 2, basisTotalMiles: 2.4 }, // no gap
+    ];
+    expect(cachedGapPerMile(docs, 2.4)).toBeNull();
+  });
+
+  it("returns null when the basis total no longer matches (override)", () => {
+    expect(cachedGapPerMile(gapDocs(2.4), 3.0)).toBeNull();
+  });
+
+  it("returns null for empty docs", () => {
+    expect(cachedGapPerMile([], 2.4)).toBeNull();
+  });
+});
+
 describe("mileSplitCacheWrites", () => {
   const computed: MileSplit[] = [
     { mile: 1, segmentMiles: 1, paceSecPerMile: 540, isPartial: false },
@@ -116,7 +154,7 @@ describe("mileSplitCacheWrites", () => {
     const existing: MileSplitDoc[] = [
       { id: "iosDocA", mile: 1, avgBpm: 150, sampleCount: 20 },
     ];
-    const writes = mileSplitCacheWrites(computed, existing, 1.4);
+    const writes = mileSplitCacheWrites(computed, [510, 505], existing, 1.4);
     expect(writes).toHaveLength(2);
     expect(writes[0].docId).toBe("iosDocA");
     expect(writes[1].docId).toBe("mile_2");
@@ -124,22 +162,29 @@ describe("mileSplitCacheWrites", () => {
       mile: 1,
       distanceMiles: 1,
       paceSecPerMile: 540,
+      gapSecPerMile: 510,
       isPartial: false,
       basisTotalMiles: 1.4,
     });
   });
 
   it("drops invalid splits and never emits writes for empty input", () => {
-    expect(mileSplitCacheWrites([], [], 1.4)).toEqual([]);
+    expect(mileSplitCacheWrites([], [], [], 1.4)).toEqual([]);
     const bad: MileSplit[] = [
       { mile: 1, segmentMiles: 0, paceSecPerMile: 540, isPartial: false },
       { mile: 2, segmentMiles: 1, paceSecPerMile: Number.NaN, isPartial: false },
     ];
-    expect(mileSplitCacheWrites(bad, [], 1.4)).toEqual([]);
+    expect(mileSplitCacheWrites(bad, [], [], 1.4)).toEqual([]);
+  });
+
+  it("writes a 0 GAP (renders as —) when a mile has no GAP entry", () => {
+    const writes = mileSplitCacheWrites(computed, [], [], 1.4);
+    expect(writes[0].data.gapSecPerMile).toBe(0);
+    expect(writes[1].data.gapSecPerMile).toBe(0);
   });
 
   it("round-trips: writes read back as the same splits", () => {
-    const writes = mileSplitCacheWrites(computed, [], 1.4);
+    const writes = mileSplitCacheWrites(computed, [510, 505], [], 1.4);
     const docs: MileSplitDoc[] = writes.map((w) => ({ id: w.docId, ...w.data }));
     const splits = splitsFromCachedDocs(docs, 1.4);
     expect(splits).toEqual([
