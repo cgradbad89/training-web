@@ -3,7 +3,13 @@ import {
   computePredictionImpact,
   computeRunImpact,
   computeCtlImpact,
+  computeCtlImpactFromCache,
+  CTL_IMPACT_SEED_DAYS,
 } from "@/utils/runImpact";
+import {
+  buildDailyLoadMap,
+  buildLoadEwmaSeries,
+} from "@/utils/trainingLoadSeries";
 import {
   predictRaceTime,
   HALF_MARATHON_MILES,
@@ -373,5 +379,103 @@ describe("computeCtlImpact", () => {
     const impact = computeCtlImpact(workouts, "current", 185, 60, TODAY)!;
     expect(impact.delta).toBeGreaterThan(0);
     expect(impact.withoutCtl).toBeGreaterThan(0); // "later" still contributes
+  });
+});
+
+// ─── CTL impact from the cached aggregatedStats series ───────────────────────
+
+/**
+ * Reproduce the exact series aggregatedStats caches: seed from max(earliest
+ * workout, now−179d), walk to `now`. computeCtlImpactFromCache reads only the
+ * LAST point, so the display-window slice aggregatedStats applies is irrelevant.
+ */
+function buildCachedSeries(
+  workouts: HealthWorkout[],
+  maxHr: number,
+  restingHr: number,
+  now: Date
+): { date: string; ctl: number; atl: number; tsb: number }[] {
+  const dailyMap = buildDailyLoadMap(workouts, maxHr, restingHr);
+  const earliest = workouts.reduce(
+    (min, w) => Math.min(min, w.startDate.getTime()),
+    Infinity
+  );
+  const seedFromWindow = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  seedFromWindow.setDate(seedFromWindow.getDate() - (CTL_IMPACT_SEED_DAYS - 1));
+  const seedFromHistory = isFinite(earliest) ? new Date(earliest) : null;
+  const seedStart =
+    seedFromHistory && seedFromHistory > seedFromWindow
+      ? seedFromHistory
+      : seedFromWindow;
+  return buildLoadEwmaSeries(dailyMap, seedStart, now).map((p) => ({
+    date: p.date,
+    ctl: p.ctl,
+    atl: p.atl,
+    tsb: p.tsb,
+  }));
+}
+
+describe("computeCtlImpactFromCache", () => {
+  it("regression-equivalence: matches live computeCtlImpact to floating precision", () => {
+    const workouts = [
+      mkWorkout("old-1", d("2026-04-01"), 80),
+      mkWorkout("old-2", d("2026-05-01"), 90),
+      mkWorkout("current", d("2026-05-30"), 100),
+    ];
+    const current = workouts.find((w) => w.workoutId === "current")!;
+    const series = buildCachedSeries(workouts, 185, 60, TODAY);
+
+    const live = computeCtlImpact(workouts, "current", 185, 60, TODAY)!;
+    const cache = computeCtlImpactFromCache(current, series, 185, 60)!;
+
+    // The EWMA is linear, so the cache subtraction reproduces the live delta
+    // and the same anchor CTL exactly (both walk the identical seed window).
+    expect(cache.withCtl).toBeCloseTo(live.withCtl, 9);
+    expect(cache.delta).toBeCloseTo(live.delta, 9);
+    expect(cache.withoutCtl).toBeCloseTo(live.withoutCtl, 9);
+    expect(cache.delta).toBeGreaterThan(0);
+  });
+
+  it("null-load run → delta 0, withoutCtl == withCtl (honest, never 0-coerced away)", () => {
+    const workouts = [
+      mkWorkout("old-1", d("2026-05-01"), 90),
+      mkWorkout("current", d("2026-05-30"), null), // no stored load, no avg HR
+    ];
+    const current = workouts.find((w) => w.workoutId === "current")!;
+    const series = buildCachedSeries(workouts, 185, 60, TODAY);
+    const cache = computeCtlImpactFromCache(current, series, 185, 60)!;
+    expect(cache.delta).toBe(0);
+    expect(cache.withoutCtl).toBe(cache.withCtl);
+  });
+
+  it("returns null for an empty series", () => {
+    const run = mkWorkout("current", d("2026-05-30"), 100);
+    expect(computeCtlImpactFromCache(run, [], 185, 60)).toBeNull();
+  });
+
+  it("a run far older than the seed window contributes ~0 (matches live's exact 0)", () => {
+    // Anchor the series to TODAY off recent workouts; the viewed run predates
+    // the window by >1yr. Both paths report a negligible contribution.
+    const recent = [
+      mkWorkout("r1", d("2026-05-15"), 90),
+      mkWorkout("r2", d("2026-05-28"), 95),
+    ];
+    const series = buildCachedSeries(recent, 185, 60, TODAY);
+    const oldRun = mkWorkout("ancient", d("2024-01-01"), 100);
+    const cache = computeCtlImpactFromCache(oldRun, series, 185, 60)!;
+    expect(cache.delta).toBeLessThan(1e-3);
+    expect(cache.delta).toBeGreaterThanOrEqual(0);
+    expect(cache.withoutCtl).toBeCloseTo(cache.withCtl, 6);
+  });
+
+  it("withCtl is the cached anchor value (accepted staleness), independent of the run", () => {
+    const workouts = [
+      mkWorkout("a", d("2026-05-10"), 70),
+      mkWorkout("current", d("2026-05-30"), 100),
+    ];
+    const series = buildCachedSeries(workouts, 185, 60, TODAY);
+    const current = workouts.find((w) => w.workoutId === "current")!;
+    const cache = computeCtlImpactFromCache(current, series, 185, 60)!;
+    expect(cache.withCtl).toBeCloseTo(series[series.length - 1].ctl, 12);
   });
 });

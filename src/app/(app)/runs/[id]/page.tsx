@@ -23,7 +23,8 @@ import {
   backfillRouteClusterIds,
   computeAndStoreBestEfforts,
   fetchHealthWorkout,
-  fetchHealthWorkouts,
+  fetchHealthWorkoutsInRange,
+  fetchLatestWorkoutId,
   fetchWorkoutsByRouteCluster,
   saveRouteClusterId,
   saveRunDetailCaches,
@@ -101,16 +102,24 @@ import {
 import {
   computeRunImpact,
   computeCtlImpact,
+  computeCtlImpactFromCache,
+  CTL_IMPACT_SEED_DAYS,
+  type CtlImpact,
 } from "@/utils/runImpact";
+import {
+  recentImpactWindowStart,
+  ctlSeedWindowStart,
+  planTitleWindow,
+} from "@/utils/runDetailQueryWindows";
+import {
+  isAggregatedStatsStale,
+  reviveAggregatedStatsDates,
+  type AggregatedStatsDoc,
+} from "@/utils/aggregatedStats";
 import { parseLocalDate } from "@/utils/dates";
 import { type Race, RACE_DISTANCE_MILES } from "@/types/race";
 import { type UserSettings } from "@/types/userSettings";
-import {
-  collection,
-  getDocs,
-  query,
-  orderBy,
-} from "firebase/firestore";
+import { doc, getDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import {
   getMileSplits,
@@ -204,6 +213,12 @@ export default function RunDetailPage() {
     WorkoutOverride
   > | null>(null);
   const [races, setRaces] = useState<Race[]>([]);
+  // Plan-title mapping data source: a narrow ±2-day window around the VIEWED
+  // run's date (not today), so this run gets the same plan-entry label the Runs
+  // list shows even when it falls outside the account's most recent workouts.
+  const [planWindowWorkouts, setPlanWindowWorkouts] = useState<
+    HealthWorkout[] | null
+  >(null);
   // Route Performance data source: the runs sharing this run's deterministic
   // routeClusterId (narrow where-query — replaces the geographic clustering
   // over the all-workouts scan). clusterBackfillDone gates the query so the
@@ -589,29 +604,39 @@ export default function RunDetailPage() {
   }, [uid, workoutId]);
 
   // ── Route Performance + Run Impact data (deferred, non-blocking) ──────────
-  // Same data path the Routes / insights pages already use: one all-workouts
-  // query + overrides + races. No new collections, fields, or rules.
+  // Two narrow, purpose-specific reads replace the old unconditional 500-doc
+  // cap: a 56-day recency window (feeds the prediction impact, fast-finish
+  // hydration, and the routeClusterId backfill) and a ±2-day window around the
+  // VIEWED run's date (feeds plan-title mapping). No new collections/rules.
+  const runStartMs = workout ? workout.startDate.getTime() : null;
   useEffect(() => {
-    if (!uid) return;
+    if (!uid || runStartMs == null) return;
     let cancelled = false;
+
+    const recentSince = recentImpactWindowStart(new Date());
+    const planWin = planTitleWindow(new Date(runStartMs));
+
     Promise.all([
-      fetchHealthWorkouts(uid, { limitCount: 500 }),
+      fetchHealthWorkoutsInRange(uid, recentSince),
       fetchAllOverrides(uid),
       fetchRaces(uid),
+      fetchHealthWorkoutsInRange(uid, planWin.start, planWin.end),
     ])
-      .then(([all, overrides, fetchedRaces]) => {
+      .then(([recent, overrides, fetchedRaces, planWorkouts]) => {
         if (cancelled) return;
-        setAllWorkoutsRaw(all);
+        setAllWorkoutsRaw(recent);
         setAllOverrides(overrides);
         setRaces(fetchedRaces);
+        setPlanWindowWorkouts(planWorkouts);
 
         // One-time lazy migration: assign routeClusterId to any run-like,
         // routed workout still missing it (start-point read + merge write per
         // missing run — the SAME per-run start-point read the old geographic
-        // clustering paid on every view). Once all runs carry the field this
-        // resolves with zero reads/writes. Gates the narrow cluster query so
-        // first-view membership is complete.
-        backfillRouteClusterIds(uid, all)
+        // clustering paid on every view). Fed by the 56-day recency window (the
+        // closest still-running superset); any run viewed also self-heals its
+        // own ID in Wave 1 above. Gates the narrow cluster query so first-view
+        // membership is complete.
+        backfillRouteClusterIds(uid, recent)
           .catch(console.error)
           .then(() => {
             if (!cancelled) setClusterBackfillDone(true);
@@ -621,7 +646,7 @@ export default function RunDetailPage() {
     return () => {
       cancelled = true;
     };
-  }, [uid]);
+  }, [uid, runStartMs]);
 
   // Route Performance membership — one narrow equality query on the current
   // run's deterministic routeClusterId (typically a handful of docs) instead
@@ -797,15 +822,84 @@ export default function RunDetailPage() {
     resolvedRestingHR,
   ]);
 
-  const ctlImpact = useMemo(() => {
-    if (!workoutsForInsights || workoutsForInsights.length === 0) return null;
-    return computeCtlImpact(
-      workoutsForInsights,
-      workoutId,
-      resolvedMaxHR,
-      resolvedRestingHR
-    );
-  }, [workoutsForInsights, workoutId, resolvedMaxHR, resolvedRestingHR]);
+  // CTL impact — read from the cached aggregatedStats training-load series when
+  // it is FRESH (isAggregatedStatsStale === false), subtracting this run's own
+  // decayed EWMA contribution mathematically (no 180-day read). This page never
+  // triggers an aggregatedStats recompute: on a stale/absent cache it falls back
+  // to the live computeCtlImpact over a dedicated 180-day seed read so the EWMA
+  // keeps its full window. Freshness is checked against the latest workout id
+  // (a 1-doc read), independent of the narrowed recency window (which may be
+  // empty for an inactive user).
+  const [ctlImpact, setCtlImpact] = useState<CtlImpact | null>(null);
+  const runLoadV2 = workout?.trainingLoadV2 ?? null;
+  const runAvgHr = workout?.avgHeartRate ?? null;
+  useEffect(() => {
+    if (!uid || !workout) {
+      setCtlImpact(null);
+      return;
+    }
+    let cancelled = false;
+    const viewedRun = applyOverride(workout, override);
+
+    void (async () => {
+      const [statsSnap, latestWorkoutId] = await Promise.all([
+        getDoc(doc(db, `users/${uid}/insights/aggregatedStats`)),
+        fetchLatestWorkoutId(uid),
+      ]);
+      if (cancelled) return;
+
+      const cached = statsSnap.exists()
+        ? reviveAggregatedStatsDates(statsSnap.data() as AggregatedStatsDoc)
+        : null;
+
+      // Fresh cache → linear cache subtraction (no full workout read).
+      if (cached && !isAggregatedStatsStale(cached, latestWorkoutId)) {
+        const fromCache = computeCtlImpactFromCache(
+          viewedRun,
+          cached.trainingLoad.series,
+          resolvedMaxHR,
+          resolvedRestingHR
+        );
+        if (!cancelled) setCtlImpact(fromCache);
+        return;
+      }
+
+      // Stale/absent → live compute over a dedicated 180-day window (overrides
+      // applied + excluded filtered, matching the insights run shaping). Never
+      // recomputes/writes aggregatedStats.
+      const [seedWorkouts, overrides] = await Promise.all([
+        fetchHealthWorkoutsInRange(uid, ctlSeedWindowStart(new Date())),
+        fetchAllOverrides(uid),
+      ]);
+      if (cancelled) return;
+      const shaped = seedWorkouts
+        .map((w) => applyOverride(w, overrides[w.workoutId] ?? null))
+        .filter((w) => !overrides[w.workoutId]?.isExcluded);
+      const live = computeCtlImpact(
+        shaped,
+        workoutId,
+        resolvedMaxHR,
+        resolvedRestingHR
+      );
+      if (!cancelled) setCtlImpact(live);
+    })().catch((err) => {
+      if (!cancelled) console.error("[ctlImpact]", err);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    uid,
+    workoutId,
+    runStartMs,
+    runLoadV2,
+    runAvgHr,
+    override,
+    resolvedMaxHR,
+    resolvedRestingHR,
+  ]);
 
   // Active running plan → priority-1 plan label. Cheap one-shot fetch; the
   // match is computed over the deferred all-workouts set so this run gets the
@@ -818,8 +912,8 @@ export default function RunDetailPage() {
   }, [uid]);
 
   const runTitleMap = useMemo(
-    () => buildRunTitleMap(activeRunningPlan, allWorkoutsRaw ?? []),
-    [activeRunningPlan, allWorkoutsRaw]
+    () => buildRunTitleMap(activeRunningPlan, planWindowWorkouts ?? []),
+    [activeRunningPlan, planWindowWorkouts]
   );
 
   if (loading) {

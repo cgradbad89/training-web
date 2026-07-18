@@ -29,7 +29,8 @@ vi.mock("@/hooks/useUnsavedChanges", () => ({
 // Mock services
 vi.mock("@/services/healthWorkouts", () => ({
   fetchHealthWorkout: vi.fn(),
-  fetchHealthWorkouts: vi.fn().mockResolvedValue([]),
+  fetchHealthWorkoutsInRange: vi.fn().mockResolvedValue([]),
+  fetchLatestWorkoutId: vi.fn().mockResolvedValue(""),
   fetchWorkoutsByRouteCluster: vi.fn().mockResolvedValue([]),
   backfillRouteClusterIds: vi.fn().mockResolvedValue(undefined),
   computeAndStoreBestEfforts: vi.fn().mockResolvedValue(undefined),
@@ -37,6 +38,16 @@ vi.mock("@/services/healthWorkouts", () => ({
   saveRunDetailCaches: vi.fn().mockResolvedValue(undefined),
   saveWeatherForWorkout: vi.fn().mockResolvedValue(undefined),
 }));
+// The CTL-impact effect reads the aggregatedStats doc directly (getDoc). Keep it
+// off the network: a non-existent snapshot forces the live-fallback path, which
+// resolves to null over the (empty) mocked window reads.
+vi.mock("firebase/firestore", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("firebase/firestore")>();
+  return {
+    ...actual,
+    getDoc: vi.fn().mockResolvedValue({ exists: () => false }),
+  };
+});
 vi.mock("@/services/shoes", () => ({
   fetchShoes: vi.fn().mockResolvedValue([]),
   fetchManualShoeAssignmentsMap: vi.fn().mockResolvedValue({}),
@@ -118,7 +129,7 @@ describe("RunDetailPage Execution Structure", () => {
     await act(async () => {
       resolveWorkout!({
         workoutId: "workout_123",
-        startDate: "2024-01-01T10:00:00Z",
+        startDate: new Date("2024-01-01T10:00:00Z"),
         distanceMiles: 3,
         durationSeconds: 1800,
         isRunLike: true,
@@ -137,7 +148,7 @@ describe("RunDetailPage Execution Structure", () => {
   it("handles a routeless workout gracefully (empty splits) and does not fetch weather", async () => {
     (fetchHealthWorkout as any).mockResolvedValue({
       workoutId: "workout_123",
-      startDate: "2024-01-01T10:00:00Z",
+      startDate: new Date("2024-01-01T10:00:00Z"),
       distanceMiles: 3,
       durationSeconds: 1800,
       isRunLike: true,
@@ -169,7 +180,7 @@ describe("RunDetailPage Execution Structure", () => {
 
     (fetchHealthWorkout as any).mockResolvedValue({
       workoutId: "workout_123",
-      startDate: "2024-01-01T10:00:00Z",
+      startDate: new Date("2024-01-01T10:00:00Z"),
       distanceMiles: 3,
       durationSeconds: 1800,
       isRunLike: true,
@@ -201,7 +212,7 @@ describe("RunDetailPage Execution Structure", () => {
       await Promise.resolve();
     });
 
-    expect(fetchWeatherForRun).toHaveBeenCalledWith(40, -74, "2024-01-01T10:00:00Z");
+    expect(fetchWeatherForRun).toHaveBeenCalledWith(40, -74, new Date("2024-01-01T10:00:00Z"));
   });
 });
 
@@ -219,7 +230,7 @@ function cachedWorkout(
 ): Record<string, unknown> {
   return {
     workoutId: "workout_123",
-    startDate: "2024-01-01T10:00:00Z",
+    startDate: new Date("2024-01-01T10:00:00Z"),
     distanceMiles: 3,
     durationSeconds: 1800,
     isRunLike: true,

@@ -24,7 +24,9 @@ import {
 import {
   buildDailyLoadMap,
   buildLoadEwmaSeries,
+  CTL_DAYS,
 } from "@/utils/trainingLoadSeries";
+import { resolveDisplayLoad } from "@/utils/trainingLoad";
 import { type HealthWorkout } from "@/types/healthWorkout";
 
 export interface PredictionImpact {
@@ -225,5 +227,69 @@ export function computeCtlImpact(
     withCtl: withLast.ctl,
     withoutCtl: withoutLast.ctl,
     delta: withLast.ctl - withoutLast.ctl,
+  };
+}
+
+/** Parse a local "YYYY-MM-DD" string into a local-midnight Date. */
+function parseLocalIsoDate(iso: string): Date {
+  const [y, m, d] = iso.split("-").map((p) => parseInt(p, 10));
+  return new Date(y, m - 1, d);
+}
+
+/**
+ * CTL impact read from the CACHED aggregatedStats training-load series, with NO
+ * live 180-day recompute (and never triggering an aggregatedStats recompute).
+ *
+ * Exploits the linearity of the CTL EWMA. The series was built by the identical
+ * {@link buildLoadEwmaSeries} that {@link computeCtlImpact} uses, whose recurrence
+ * `ctl_d = ctl_{d-1}·(1−α) + load_d·α` (α = 1 − exp(−1/CTL_DAYS)) makes a single
+ * run's marginal contribution to the LAST cached CTL point exactly
+ *
+ *     load · α · (1 − α)^daysAgo
+ *
+ * where `daysAgo` is calendar days from the run's local day to the series' last
+ * (anchor) day. Removing the run would drop the final CTL by precisely this
+ * amount (solve the per-day error recurrence e_d = e_{d-1}(1−α) + Δload_d·α from
+ * a zero seed → e_anchor = load·α·(1−α)^daysAgo for any run inside the seed
+ * window), so this matches {@link computeCtlImpact}'s delta to floating-point
+ * precision. `load` resolves through the same {@link resolveDisplayLoad} single
+ * source of truth; a null load contributes 0 (reported honestly, never hidden).
+ *
+ * withCtl is the cached series' last point — i.e. CTL as of the cache's compute
+ * time (the accepted staleness tradeoff), NOT recomputed to "now".
+ *
+ * CALLER CONTRACT: only invoke when the cache is confirmed fresh
+ * (isAggregatedStatsStale === false). A stale/absent cache must fall back to the
+ * live {@link computeCtlImpact} over a freshly read ≥180-day workout window.
+ * Returns null when the series is empty.
+ */
+export function computeCtlImpactFromCache(
+  run: HealthWorkout,
+  series: { date: string; ctl: number }[],
+  maxHr: number,
+  restingHr: number
+): CtlImpact | null {
+  if (series.length === 0) return null;
+
+  const last = series[series.length - 1];
+  const withCtl = last.ctl;
+
+  const anchor = parseLocalIsoDate(last.date);
+  const runDay = startOfLocalDay(run.startDate);
+  const daysAgo = Math.round(
+    (anchor.getTime() - runDay.getTime()) / 86400000
+  );
+
+  const load = resolveDisplayLoad(run, maxHr, restingHr);
+  let contribution = 0;
+  if (load != null && daysAgo >= 0) {
+    const alpha = 1 - Math.exp(-1 / CTL_DAYS);
+    contribution = load * alpha * Math.pow(1 - alpha, daysAgo);
+  }
+
+  return {
+    withCtl,
+    withoutCtl: withCtl - contribution,
+    delta: contribution,
   };
 }

@@ -258,6 +258,51 @@ export async function fetchHealthWorkouts(
   );
 }
 
+/**
+ * Bounded `startDate`-range read of healthWorkouts. `start` is inclusive; `end`
+ * is inclusive when provided. Both bounds sit on the single `startDate` field,
+ * so only Firestore's automatic single-field index is required — no composite
+ * index. Ordered newest-first for parity with {@link fetchHealthWorkouts}.
+ *
+ * Replaces the run-detail page's unconditional 500-doc cap with narrow,
+ * purpose-specific windows (56-day recency for impact, ±2-day for plan-title
+ * matching, 180-day seed for the CTL live fallback).
+ */
+export async function fetchHealthWorkoutsInRange(
+  uid: string,
+  start: Date,
+  end?: Date
+): Promise<HealthWorkout[]> {
+  const constraints: QueryConstraint[] = [where("startDate", ">=", start)];
+  if (end) constraints.push(where("startDate", "<=", end));
+  constraints.push(orderBy("startDate", "desc"));
+
+  const q = query(
+    collection(db, "users", uid, "healthWorkouts"),
+    ...constraints
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) =>
+    docToHealthWorkout(d.id, d.data() as Record<string, unknown>)
+  );
+}
+
+/**
+ * The most recent workout's ID (by `startDate`), or "" when the user has none.
+ * A single 1-doc read — lets the run-detail page check aggregatedStats freshness
+ * (isAggregatedStatsStale) WITHOUT loading the full workout set (whose narrowed
+ * recency window can be empty for an inactive user).
+ */
+export async function fetchLatestWorkoutId(uid: string): Promise<string> {
+  const q = query(
+    collection(db, "users", uid, "healthWorkouts"),
+    orderBy("startDate", "desc"),
+    limit(1)
+  );
+  const snap = await getDocs(q);
+  return snap.docs[0]?.id ?? "";
+}
+
 export async function fetchHealthWorkout(
   uid: string,
   workoutId: string
