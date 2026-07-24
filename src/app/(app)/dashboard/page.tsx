@@ -68,6 +68,7 @@ import {
   formatMiles,
 } from "@/utils/pace";
 import { resolveActivityTitle } from "@/utils/resolveActivityTitle";
+import { selectActiveWorkouts } from "@/utils/selectActiveWorkouts";
 import {
   weekStart as getWeekStart,
   weekEnd as getWeekEnd,
@@ -1662,6 +1663,17 @@ export default function DashboardPage() {
     refreshWorkouts,
   } = useAppData();
 
+  // AppDataContext deliberately does NOT pre-apply workoutOverrides exclusions
+  // (see AppDataContext.tsx) — each page filters for itself, exactly as the
+  // Workouts page does (workouts/page.tsx). Every Dashboard card + Week Score
+  // computation below consumes this filtered array so a manually excluded
+  // workout (e.g. a dismissed Strava/Apple Health duplicate) never appears or
+  // counts here. Memoized + placed before any early return (React #310 guard).
+  const activeWorkouts = useMemo(
+    () => selectActiveWorkouts(workouts, overrides),
+    [workouts, overrides]
+  );
+
   const [weekMetrics, setWeekMetrics] = useState<HealthMetric[]>([]);
   const [todayMetric, setTodayMetric] = useState<HealthMetric | null>(null);
   const [ringGoals, setRingGoals] = useState<HealthGoalDoc[]>([]);
@@ -1817,10 +1829,10 @@ export default function DashboardPage() {
 
   const actualMiles = useMemo(
     () =>
-      workouts
+      activeWorkouts
         .filter((w) => w.isRunLike && isInWeek(w, selectedWeekStart, selectedWeekEnd))
         .reduce((s, w) => s + w.distanceMiles, 0),
-    [workouts, selectedWeekStart, selectedWeekEnd]
+    [activeWorkouts, selectedWeekStart, selectedWeekEnd]
   );
 
   // Sum of in-week per-session loads, matching the filters the Running
@@ -1829,7 +1841,7 @@ export default function DashboardPage() {
   // warmup/aborted activity.
   const thisWeekTotalLoad = useMemo(() => {
     let total = 0;
-    for (const w of workouts) {
+    for (const w of activeWorkouts) {
       if (!isInWeek(w, selectedWeekStart, selectedWeekEnd)) continue;
       if (w.isRunLike) {
         if (w.distanceMiles < MIN_RUN_MILES_FOR_AVG) continue;
@@ -1841,7 +1853,7 @@ export default function DashboardPage() {
       total += load;
     }
     return total;
-  }, [workouts, selectedWeekStart, selectedWeekEnd, maxHr, restingHr]);
+  }, [activeWorkouts, selectedWeekStart, selectedWeekEnd, maxHr, restingHr]);
 
   // 28-day rolling baseline ending TODAY — same value the Load Score
   // Training Load card surfaces as "28-Day Avg/Wk". Anchored on today
@@ -1849,10 +1861,10 @@ export default function DashboardPage() {
   // weekly capacity, which doesn't shift when they navigate to a past
   // week.
   const avgWeeklyLoad = useMemo(() => {
-    const dailyMap = buildDailyLoadMap(workouts, maxHr, restingHr);
+    const dailyMap = buildDailyLoadMap(activeWorkouts, maxHr, restingHr);
     const total28 = rollingLoad(dailyMap, new Date(), 28);
     return total28 / 4;
-  }, [workouts, maxHr, restingHr]);
+  }, [activeWorkouts, maxHr, restingHr]);
 
   // Workout-plan session counts for the selected week — mirrors the
   // derivation inside WorkoutPlanProgressCard.
@@ -1999,7 +2011,7 @@ export default function DashboardPage() {
             ...(activePlan ? [activePlan] : []),
             ...(activeWorkoutPlan ? [activeWorkoutPlan] : []),
           ]}
-          actualRuns={workouts}
+          actualRuns={activeWorkouts}
           weekStart={selectedWeekStart}
         />
       </section>
@@ -2018,9 +2030,9 @@ export default function DashboardPage() {
 
       {/* Row 5: Training Load row — Mileage + Load Score side-by-side */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <TrainingLoadCard workouts={workouts} weekStart={selectedWeekStart} weekEnd={selectedWeekEnd} />
+        <TrainingLoadCard workouts={activeWorkouts} weekStart={selectedWeekStart} weekEnd={selectedWeekEnd} />
         <LoadScoreTrainingLoadCard
-          workouts={workouts}
+          workouts={activeWorkouts}
           weekStart={selectedWeekStart}
           weekEnd={selectedWeekEnd}
           maxHr={maxHr}
@@ -2032,7 +2044,7 @@ export default function DashboardPage() {
           removed Plan Progress row) followed by Runs / Avg Pace / Avg HR /
           Run Load. */}
       <RunningStatsCard
-        workouts={workouts}
+        workouts={activeWorkouts}
         weekStart={selectedWeekStart}
         weekEnd={selectedWeekEnd}
         plannedMiles={plannedMiles}
@@ -2046,12 +2058,12 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch">
         <PlanProgressCard
           activePlan={activePlan}
-          workouts={workouts}
+          workouts={activeWorkouts}
           weekStart={selectedWeekStart}
           weekEnd={selectedWeekEnd}
         />
         <ThisWeekRunsCard
-          workouts={workouts}
+          workouts={activeWorkouts}
           weekStart={selectedWeekStart}
           maxHr={maxHr}
           restingHr={restingHr}
@@ -2061,7 +2073,7 @@ export default function DashboardPage() {
       {/* Row 8: Workout KPIs — Planned + Actual workouts (from the active
           workout plan) followed by Avg Dur / Avg HR / Workout Load. */}
       <WorkoutsStatsCard
-        workouts={workouts}
+        workouts={activeWorkouts}
         weekStart={selectedWeekStart}
         weekEnd={selectedWeekEnd}
         sessionsPlanned={sessionsPlanned}
@@ -2079,7 +2091,7 @@ export default function DashboardPage() {
           weekStart={selectedWeekStart}
         />
         <WorkoutSummaryCard
-          workouts={workouts}
+          workouts={activeWorkouts}
           weekStart={selectedWeekStart}
           weekEnd={selectedWeekEnd}
           maxHr={maxHr}
