@@ -154,11 +154,23 @@ const EMPTY_TIER = (tier: EfficiencyTier): TierBaseline => ({
  * race list is supplied, so without it the RACE bucket stays empty. (Additive
  * optional param — see the Phase-1 output report.)
  */
-export function buildEfficiencyBaselines(
+/**
+ * Bucket workouts into RACE / QUALITY / BASELINE tiers by classifying them with
+ * buildQualifyingEfforts and re-associating each effort with its source workout.
+ *
+ * EffortPoint drops the workout's HR/cadence/id, so we re-associate by a
+ * composite key of the two effort fields derived verbatim from the workout
+ * (distanceMiles, timeSeconds) plus ageDays. A shared `asOf` makes ageDays
+ * deterministic on both sides, so the key uniquely identifies a run (ageDays
+ * encodes startMs); FIFO dequeuing resolves genuine duplicates and keeps
+ * in-window efforts from matching out-of-window workouts that share
+ * distance+duration.
+ */
+function bucketWorkoutsByTier(
   workouts: EfficiencyWorkout[],
-  windowDays: number = DEFAULT_WINDOW_DAYS,
-  races?: RaceMatchInput[]
-): Record<EfficiencyTier, TierBaseline> {
+  windowDays: number,
+  races: RaceMatchInput[] | undefined
+): Record<EfficiencyTier, EfficiencyWorkout[]> {
   const asOf = Date.now()
   const efforts: EffortPoint[] = buildQualifyingEfforts(workouts, {
     daysBack: windowDays,
@@ -197,11 +209,40 @@ export function buildEfficiencyBaselines(
     tierWorkouts[e.tier].push(w)
   }
 
+  return tierWorkouts
+}
+
+export function buildEfficiencyBaselines(
+  workouts: EfficiencyWorkout[],
+  windowDays: number = DEFAULT_WINDOW_DAYS,
+  races?: RaceMatchInput[]
+): Record<EfficiencyTier, TierBaseline> {
+  const tierWorkouts = bucketWorkoutsByTier(workouts, windowDays, races)
   const result = {} as Record<EfficiencyTier, TierBaseline>
   for (const tier of ['BASELINE', 'QUALITY', 'RACE'] as const) {
     result[tier] = summarizeTier(tier, tierWorkouts[tier])
   }
   return result
+}
+
+/**
+ * Map each in-window workout's id → its efficiency tier, using the same
+ * classification as buildEfficiencyBaselines. Callers (run detail / runs list)
+ * use it to pick the run's own tier + baseline for computeEfficiencyScore.
+ * Workouts outside the window (or filtered out by the classifier's sanity
+ * gates) are simply absent from the map — callers fall back to BASELINE.
+ */
+export function buildEfficiencyTierMap(
+  workouts: EfficiencyWorkout[],
+  windowDays: number = DEFAULT_WINDOW_DAYS,
+  races?: RaceMatchInput[]
+): Map<string, EfficiencyTier> {
+  const tierWorkouts = bucketWorkoutsByTier(workouts, windowDays, races)
+  const map = new Map<string, EfficiencyTier>()
+  for (const tier of ['BASELINE', 'QUALITY', 'RACE'] as const) {
+    for (const w of tierWorkouts[tier]) map.set(w.workoutId, tier)
+  }
+  return map
 }
 
 function summarizeTier(
@@ -234,6 +275,32 @@ function summarizeTier(
     runCount,
     cadenceRunCount,
   }
+}
+
+/**
+ * Convenience wiring helper for the UI: given a workout plus precomputed
+ * baselines + tier map (both built once per page), resolve the run's own tier,
+ * baseline, and score in one call — everything EfficiencyScoreBadge needs.
+ * A run absent from the tier map (out of window / filtered) falls back to
+ * BASELINE. Missing pace/HR flow through to computeEfficiencyScore's guards
+ * (→ building_baseline).
+ */
+export function scoreWorkoutEfficiency(
+  workout: EfficiencyWorkout,
+  baselines: Record<EfficiencyTier, TierBaseline>,
+  tierMap: Map<string, EfficiencyTier>
+): { result: EfficiencyScoreResult; tier: EfficiencyTier; baselineRunCount: number } {
+  const tier = tierMap.get(workout.workoutId) ?? 'BASELINE'
+  const baseline = baselines[tier]
+  const result = computeEfficiencyScore({
+    avgPaceSecPerMile: workout.avgPaceSecPerMile ?? 0,
+    avgHeartRate: workout.avgHeartRate ?? 0,
+    cadenceSPM: workout.cadenceSPM ?? null,
+    tier,
+    baseline,
+    qualityBaseline: baselines.QUALITY,
+  })
+  return { result, tier, baselineRunCount: baseline.runCount }
 }
 
 // ─── Score ───────────────────────────────────────────────────────────────────

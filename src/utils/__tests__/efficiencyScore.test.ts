@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest'
 import {
   computeEfficiencyFactor,
   buildEfficiencyBaselines,
+  buildEfficiencyTierMap,
+  scoreWorkoutEfficiency,
   computeEfficiencyScore,
   MIN_BASELINE_RUNS,
   MIN_CADENCE_BASELINE_RUNS,
@@ -143,6 +145,74 @@ describe('buildEfficiencyBaselines', () => {
     ]
     const b = buildEfficiencyBaselines(workouts)
     expect(b.BASELINE.runCount).toBe(2) // the null-HR run contributes no EF
+  })
+})
+
+// ─── buildEfficiencyTierMap ─────────────────────────────────────────────────
+
+describe('buildEfficiencyTierMap', () => {
+  it('maps each in-window run id to its classified tier', () => {
+    const easy = [1, 2, 3, 4].map((n) =>
+      makeWorkout({ distanceMiles: 5, secPerMile: 540, startDate: daysAgo(n) })
+    )
+    const fast = [5, 6].map((n) =>
+      makeWorkout({ distanceMiles: 4, secPerMile: 500, startDate: daysAgo(n) })
+    )
+    const map = buildEfficiencyTierMap([...easy, ...fast])
+    expect(map.get(easy[0].workoutId)).toBe('BASELINE')
+    expect(map.get(fast[0].workoutId)).toBe('QUALITY')
+    expect(map.get(fast[1].workoutId)).toBe('QUALITY')
+  })
+
+  it('omits out-of-window runs from the map', () => {
+    const recent = [1, 2].map((n) =>
+      makeWorkout({ distanceMiles: 5, secPerMile: 540, startDate: daysAgo(n) })
+    )
+    const old = makeWorkout({ distanceMiles: 5, secPerMile: 540, startDate: daysAgo(400) })
+    const map = buildEfficiencyTierMap([...recent, old])
+    expect(map.has(recent[0].workoutId)).toBe(true)
+    expect(map.has(old.workoutId)).toBe(false)
+  })
+})
+
+// ─── scoreWorkoutEfficiency ─────────────────────────────────────────────────
+
+describe('scoreWorkoutEfficiency', () => {
+  it('resolves tier, baseline, and score for a run in the map', () => {
+    const runs = [1, 2, 3, 4, 5, 6].map((n) =>
+      makeWorkout({ distanceMiles: 5, secPerMile: 540, startDate: daysAgo(n) })
+    )
+    const baselines = buildEfficiencyBaselines(runs)
+    const tierMap = buildEfficiencyTierMap(runs)
+    const out = scoreWorkoutEfficiency(runs[0], baselines, tierMap)
+    expect(out.tier).toBe('BASELINE')
+    expect(out.baselineRunCount).toBe(6)
+    expect(out.result.status).toBe('scored')
+    expect(out.result.score).toBeCloseTo(50, 6) // run EF == baseline EF
+  })
+
+  it('falls back to BASELINE tier for a run absent from the map', () => {
+    const runs = [1, 2].map((n) =>
+      makeWorkout({ distanceMiles: 5, secPerMile: 540, startDate: daysAgo(n) })
+    )
+    const baselines = buildEfficiencyBaselines(runs)
+    const tierMap = buildEfficiencyTierMap(runs)
+    const orphan = makeWorkout({ distanceMiles: 6, secPerMile: 520, startDate: daysAgo(500) })
+    const out = scoreWorkoutEfficiency(orphan, baselines, tierMap)
+    expect(out.tier).toBe('BASELINE')
+    // Only 2 baseline runs (< MIN_BASELINE_RUNS) -> building
+    expect(out.result.status).toBe('building_baseline')
+  })
+
+  it('returns building_baseline when the run lacks HR', () => {
+    const runs = [1, 2, 3, 4, 5, 6].map((n) =>
+      makeWorkout({ distanceMiles: 5, secPerMile: 540, startDate: daysAgo(n) })
+    )
+    const baselines = buildEfficiencyBaselines(runs)
+    const tierMap = buildEfficiencyTierMap(runs)
+    const noHr = makeWorkout({ distanceMiles: 5, secPerMile: 540, avgHeartRate: null, startDate: daysAgo(2) })
+    const out = scoreWorkoutEfficiency(noHr, baselines, tierMap)
+    expect(out.result.status).toBe('building_baseline')
   })
 })
 

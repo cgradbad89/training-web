@@ -22,6 +22,12 @@ vi.mock("@/hooks/useAuth", () => ({
   useAuth: () => ({ user: { uid: "u1" } }),
 }));
 
+// The page reads the shared workouts array for efficiency baselines; the tests
+// render it outside AppDataProvider, so stub the hook with an empty set.
+vi.mock("@/contexts/AppDataContext", () => ({
+  useAppData: () => ({ workouts: [] }),
+}));
+
 vi.mock("@/hooks/useUnsavedChanges", () => ({
   useUnsavedChanges: vi.fn(),
 }));

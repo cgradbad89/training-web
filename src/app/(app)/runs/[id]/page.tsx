@@ -14,11 +14,18 @@ import { StatBlock } from "@/components/ui/StatBlock";
 import { MetricBadge } from "@/components/ui/MetricBadge";
 import { InfoTooltip } from "@/components/ui/InfoTooltip";
 import { TrainingLoadBadge } from "@/components/ui/TrainingLoadBadge";
+import { EfficiencyScoreBadge } from "@/components/runs/EfficiencyScoreBadge";
 import { WeatherTile } from "@/components/runs/WeatherTile";
 import { RoutePerformanceSection } from "@/components/runs/RoutePerformanceSection";
 import { RunImpactSection } from "@/components/runs/RunImpactSection";
 import { useAuth } from "@/hooks/useAuth";
+import { useAppData } from "@/contexts/AppDataContext";
 import { useUnsavedChanges } from "@/hooks/useUnsavedChanges";
+import {
+  buildEfficiencyBaselines,
+  buildEfficiencyTierMap,
+  scoreWorkoutEfficiency,
+} from "@/utils/efficiencyScore";
 import {
   backfillRouteClusterIds,
   computeAndStoreBestEfforts,
@@ -177,6 +184,9 @@ export default function RunDetailPage() {
   const workoutId = params.id as string;
   const { user } = useAuth();
   const uid = user?.uid ?? null;
+  // Shared, already-fetched workouts (AppDataContext one-time fetch) — used ONLY
+  // to build the efficiency baselines below. No new Firestore read.
+  const { workouts: sharedWorkouts } = useAppData();
 
   const [workout, setWorkout] = useState<HealthWorkout | null>(null);
   const [routePoints, setRoutePoints] = useState<RoutePoint[]>([]);
@@ -255,6 +265,18 @@ export default function RunDetailPage() {
 
   // Compute mile splits unconditionally (before early returns) to satisfy Rules of Hooks
   const displayWorkoutForSplits = workout ? applyOverride(workout, override) : null;
+
+  // Efficiency score for THIS run vs the runner's own 60-day tier baseline.
+  // Baselines come from the shared AppDataContext run set (no new read); the
+  // viewed run scores against its own tier even if it predates that window
+  // (absent from the tier map → BASELINE fallback in scoreWorkoutEfficiency).
+  const runEfficiency = useMemo(() => {
+    if (!displayWorkoutForSplits) return null;
+    const runWorkouts = sharedWorkouts.filter((w) => w.isRunLike);
+    const baselines = buildEfficiencyBaselines(runWorkouts);
+    const tierMap = buildEfficiencyTierMap(runWorkouts);
+    return scoreWorkoutEfficiency(displayWorkoutForSplits, baselines, tierMap);
+  }, [sharedWorkouts, displayWorkoutForSplits]);
   const mileSplits = useMemo<MileSplit[]>(
     () => {
       // Cached path: splits persisted on the mileSplits subcollection are used
@@ -1408,6 +1430,18 @@ export default function RunDetailPage() {
               size="large"
             />
           </div>
+          {runEfficiency && (
+            <div className="flex flex-col gap-0.5">
+              <span className="text-xs text-textSecondary uppercase tracking-wide">
+                Efficiency
+              </span>
+              <EfficiencyScoreBadge
+                result={runEfficiency.result}
+                tier={runEfficiency.tier}
+                baselineRunCount={runEfficiency.baselineRunCount}
+              />
+            </div>
+          )}
           <div className="flex flex-col gap-0.5">
             <span className="text-xs text-textSecondary uppercase tracking-wide flex items-center">
               HR Drift

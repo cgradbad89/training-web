@@ -11,6 +11,7 @@ import { useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight, AlertTriangle, EyeOff, Download, RefreshCw } from "lucide-react";
 
 import { TrainingLoadBadge } from "@/components/ui/TrainingLoadBadge";
+import { EfficiencyScoreBadge } from "@/components/runs/EfficiencyScoreBadge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { RunsSkeleton } from "./RunsSkeleton";
 import { MiniCalendar, toLocalIsoDateForCalendar } from "@/components/MiniCalendar";
@@ -27,6 +28,11 @@ import {
   resolveDisplayLoad,
   MIN_RUN_MILES_FOR_AVG,
 } from "@/utils/trainingLoad";
+import {
+  buildEfficiencyBaselines,
+  buildEfficiencyTierMap,
+  scoreWorkoutEfficiency,
+} from "@/utils/efficiencyScore";
 import { formatPace, formatDuration, formatMiles } from "@/utils/pace";
 import { resolveActivityTitle } from "@/utils/resolveActivityTitle";
 import {
@@ -56,6 +62,9 @@ import {
 } from "@/utils/duplicateDetection";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/** Precomputed efficiency for one run — what EfficiencyScoreBadge needs. */
+type RunEfficiency = ReturnType<typeof scoreWorkoutEfficiency>;
 
 function getLocalDate(w: HealthWorkout): Date {
   return w.startDate;
@@ -375,6 +384,8 @@ interface RunRowProps {
   restingHr: number;
   /** Matched active-plan entry title context, or null when the run is off-plan. */
   matchedPlanEntry?: RunTitleContext | null;
+  /** Precomputed efficiency score for this run (null → not computable). */
+  efficiency?: RunEfficiency | null;
 }
 
 function RunRow({
@@ -389,6 +400,7 @@ function RunRow({
   maxHr,
   restingHr,
   matchedPlanEntry,
+  efficiency,
 }: RunRowProps) {
   const localDate = getLocalDate(run);
   const dayAbbrev = DAY_ABBREVS[(localDate.getDay() + 6) % 7];
@@ -442,6 +454,17 @@ function RunRow({
         {/* Col 4: Pace */}
         <div className="w-20 shrink-0 text-sm text-textPrimary tabular-nums text-right">
           {getPaceDisplay(run)}
+        </div>
+
+        {/* Col 4b: Efficiency — compact, hidden on mobile to prevent overflow */}
+        <div className="hidden md:block shrink-0">
+          {efficiency && (
+            <EfficiencyScoreBadge
+              result={efficiency.result}
+              tier={efficiency.tier}
+              baselineRunCount={efficiency.baselineRunCount}
+            />
+          )}
         </div>
 
         {/* Col 5: Heart Rate — hidden on mobile to prevent overflow */}
@@ -566,6 +589,7 @@ interface WeekGroupProps {
   maxHr: number;
   restingHr: number;
   runTitleMap: Map<string, RunTitleContext>;
+  efficiencyByRun: Map<string, RunEfficiency>;
 }
 
 function WeekGroup({
@@ -582,6 +606,7 @@ function WeekGroup({
   onRunClick,
   maxHr,
   runTitleMap,
+  efficiencyByRun,
 }: WeekGroupProps) {
   const wStart = new Date(wKey + "T00:00:00");
   const weekLabel = wStart.toLocaleDateString("en-US", { month: "short", day: "numeric" });
@@ -638,6 +663,7 @@ function WeekGroup({
             maxHr={maxHr}
             restingHr={restingHr}
             matchedPlanEntry={runTitleMap.get(run.workoutId) ?? null}
+            efficiency={efficiencyByRun.get(run.workoutId) ?? null}
           />
         );
       })}
@@ -742,6 +768,20 @@ export default function RunsPage() {
     () => findActiveRunningPlan(plans),
     [plans]
   );
+
+  // Efficiency baselines + per-run tier are computed ONCE over the shared run
+  // set (60-day trailing window inside the builder). No new Firestore reads —
+  // this reuses the AppDataContext workouts array. Older/out-of-window runs are
+  // absent from the tier map and fall back to BASELINE inside the helper.
+  const efficiencyByRun = useMemo(() => {
+    const baselines = buildEfficiencyBaselines(allRuns);
+    const tierMap = buildEfficiencyTierMap(allRuns);
+    const map = new Map<string, RunEfficiency>();
+    for (const r of allRuns) {
+      map.set(r.workoutId, scoreWorkoutEfficiency(r, baselines, tierMap));
+    }
+    return map;
+  }, [allRuns]);
 
   const [isRefreshing, setIsRefreshing] = useState(false);
   const handleManualRefresh = useCallback(async () => {
@@ -1271,6 +1311,9 @@ export default function RunsPage() {
             <div className="w-20 shrink-0 text-xs font-semibold uppercase tracking-widest text-textSecondary text-right">
               Pace
             </div>
+            <div className="hidden md:block shrink-0 text-xs font-semibold uppercase tracking-widest text-textSecondary">
+              Eff
+            </div>
             <div className="hidden sm:block w-16 shrink-0 text-xs font-semibold uppercase tracking-widest text-textSecondary text-right">
               HR
             </div>
@@ -1325,6 +1368,7 @@ export default function RunsPage() {
               maxHr={maxHr}
               restingHr={restingHr}
               runTitleMap={runTitleMap}
+              efficiencyByRun={efficiencyByRun}
               innerRef={(el) => {
                 weekRefs.current[wk] = el;
               }}
