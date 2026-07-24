@@ -64,7 +64,7 @@ Deferred:         [anything not completed, or "none"]
 | Local repo | /Users/johnfolstrom/Desktop/training-web |
 | iOS sync repo | cgradbad89/MEA.git — do not modify from this repo |
 | Firestore rules | Do not modify without explicit task instruction |
-| API keys | `GEMINI_API_KEY` and `ANTHROPIC_API_KEY` are server-only — never `NEXT_PUBLIC_*` |
+| API keys | `GEMINI_API_KEY` and `ANTHROPIC_API_KEY` are server-only — never `NEXT_PUBLIC_*`. Gemini is the default AI Coach provider. |
 
 ## Architecture Quick Reference
 
