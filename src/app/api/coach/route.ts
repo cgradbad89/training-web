@@ -74,7 +74,7 @@ export async function POST(req: NextRequest) {
     } else {
       // Default to Gemini
       const stream = await gemini.models.generateContentStream({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3.5-flash',
         contents: question,
         config: {
           systemInstruction: systemPrompt,

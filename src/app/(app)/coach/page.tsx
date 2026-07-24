@@ -228,7 +228,7 @@ export default function CoachPage() {
               onChange={e => setProvider(e.target.value as 'gemini' | 'anthropic')}
               className="text-xs bg-surface border border-border rounded-lg px-2 py-1 text-textSecondary outline-none focus:ring-1 focus:ring-primary/20"
             >
-              <option value="gemini">Gemini 2.5 (Default)</option>
+              <option value="gemini">Gemini 3.5 (Default)</option>
               <option value="anthropic">Claude Sonnet</option>
             </select>
           </div>
