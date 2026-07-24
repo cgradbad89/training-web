@@ -16,6 +16,7 @@ import {
   type WorkoutLike,
   type RaceMatchInput,
 } from '@/utils/riegelFit'
+import { weekStart } from '@/utils/dates'
 
 // ─── Tuning constants ────────────────────────────────────────────────────────
 // NOTE (product-owner confirmation needed): every value below is a tuning
@@ -35,6 +36,11 @@ export const CADENCE_SCALE_PCT = 0.05
 
 /** Default trailing window (days) over which baselines are built. */
 export const DEFAULT_WINDOW_DAYS = 60
+
+/** Trailing window for the weekly efficiency trend (16 weeks). Tuning value. */
+export const EFFICIENCY_TREND_WINDOW_DAYS = 112
+/** Trailing window for the distance-bucket breakdown. Tuning value. */
+export const EFFICIENCY_BUCKET_WINDOW_DAYS = 90
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -368,4 +374,125 @@ export function computeEfficiencyScore(
     cadenceDeltaVsBaseline,
     status: 'scored',
   }
+}
+
+// ─── Trend & distance buckets ──────────────────────────────────────────────────
+
+export interface EfficiencyTrendPoint {
+  /** ISO date (YYYY-MM-DD), Monday-start week. */
+  weekStartDate: string
+  /** Mean score across scored runs that week; null when zero scored runs. */
+  avgScore: number | null
+  scoredRunCount: number
+}
+
+export type DistanceBucket = 'short' | 'mid' | 'long'
+
+export interface DistanceBucketSummary {
+  bucket: DistanceBucket
+  /** Mean percentDeltaVsBaseline across scored runs in the bucket; null if none. */
+  avgPercentDeltaVsBaseline: number | null
+  scoredRunCount: number
+}
+
+/** Format a Date as a local YYYY-MM-DD string (no UTC shift). */
+function isoDate(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+/**
+ * Weekly efficiency trend: average each Monday-start week's scored-run scores
+ * within the trailing `windowDays`. EVERY week in the window is emitted, in
+ * chronological order — weeks with no scored runs get avgScore: null (a gap the
+ * chart renders as a break, never interpolated or dropped). Runs whose status is
+ * 'building_baseline' are excluded (never counted as 0). Scoring reuses the
+ * 60-day tier baseline (buildEfficiencyBaselines / buildEfficiencyTierMap) so a
+ * run is measured against the same baseline the per-run badge uses.
+ */
+export function buildEfficiencyTrend(
+  workouts: EfficiencyWorkout[],
+  windowDays: number = EFFICIENCY_TREND_WINDOW_DAYS
+): EfficiencyTrendPoint[] {
+  const now = Date.now()
+  const cutoff = now - windowDays * 86400000
+  const baselines = buildEfficiencyBaselines(workouts)
+  const tierMap = buildEfficiencyTierMap(workouts)
+
+  const perWeek = new Map<string, { sum: number; count: number }>()
+  for (const w of workouts) {
+    const startMs = parseStartMs(w.startDate)
+    if (!isFinite(startMs) || startMs < cutoff || startMs > now) continue
+    const { result } = scoreWorkoutEfficiency(w, baselines, tierMap)
+    if (result.status !== 'scored' || result.score == null) continue
+    const key = isoDate(weekStart(new Date(startMs)))
+    const cell = perWeek.get(key) ?? { sum: 0, count: 0 }
+    cell.sum += result.score
+    cell.count += 1
+    perWeek.set(key, cell)
+  }
+
+  // Enumerate every Monday-start week across the window so zero-scored weeks
+  // still appear (as null gaps). Stepping by +7 calendar days keeps DST honest.
+  const out: EfficiencyTrendPoint[] = []
+  const lastMondayMs = weekStart(new Date(now)).getTime()
+  for (
+    const d = weekStart(new Date(cutoff));
+    d.getTime() <= lastMondayMs;
+    d.setDate(d.getDate() + 7)
+  ) {
+    const key = isoDate(d)
+    const cell = perWeek.get(key)
+    out.push({
+      weekStartDate: key,
+      avgScore: cell ? cell.sum / cell.count : null,
+      scoredRunCount: cell ? cell.count : 0,
+    })
+  }
+  return out
+}
+
+/**
+ * Average percentDeltaVsBaseline per distance bucket within the trailing
+ * `windowDays`. Buckets: short < 5 mi, mid 5 ≤ d < 10, long ≥ 10 (boundaries at
+ * exactly 5.0 and 10.0 fall into the higher bucket). Only 'scored' runs count;
+ * 'building_baseline' runs are excluded. All three buckets are always returned
+ * in fixed order [short, mid, long]; an empty bucket has
+ * avgPercentDeltaVsBaseline: null.
+ */
+export function buildDistanceBucketSummary(
+  workouts: EfficiencyWorkout[],
+  windowDays: number = EFFICIENCY_BUCKET_WINDOW_DAYS
+): DistanceBucketSummary[] {
+  const now = Date.now()
+  const cutoff = now - windowDays * 86400000
+  const baselines = buildEfficiencyBaselines(workouts)
+  const tierMap = buildEfficiencyTierMap(workouts)
+
+  const acc: Record<DistanceBucket, { sum: number; count: number }> = {
+    short: { sum: 0, count: 0 },
+    mid: { sum: 0, count: 0 },
+    long: { sum: 0, count: 0 },
+  }
+  for (const w of workouts) {
+    const startMs = parseStartMs(w.startDate)
+    if (!isFinite(startMs) || startMs < cutoff || startMs > now) continue
+    const { result } = scoreWorkoutEfficiency(w, baselines, tierMap)
+    if (result.status !== 'scored' || result.percentDeltaVsBaseline == null) continue
+    const miles = w.distanceMiles ?? 0
+    const bucket: DistanceBucket = miles < 5 ? 'short' : miles < 10 ? 'mid' : 'long'
+    acc[bucket].sum += result.percentDeltaVsBaseline
+    acc[bucket].count += 1
+  }
+
+  return (['short', 'mid', 'long'] as const).map((bucket) => {
+    const a = acc[bucket]
+    return {
+      bucket,
+      avgPercentDeltaVsBaseline: a.count > 0 ? a.sum / a.count : null,
+      scoredRunCount: a.count,
+    }
+  })
 }

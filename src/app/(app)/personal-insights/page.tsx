@@ -182,6 +182,13 @@ const PaceTrendChart = dynamic(
   () => import("./PaceTrendChart").then((m) => m.PaceTrendChart),
   { ssr: false, loading: () => <ChartSkeleton height={220} /> },
 );
+const EfficiencyTrendSection = dynamic(
+  () =>
+    import("@/components/insights/EfficiencyTrendSection").then(
+      (m) => m.EfficiencyTrendSection,
+    ),
+  { ssr: false, loading: () => <ChartSkeleton height={300} /> },
+);
 const WeatherImpactSection = dynamic(
   () => import("./WeatherImpactSection").then((m) => m.WeatherImpactSection),
   { ssr: false, loading: () => <ChartSkeleton height={340} /> },
@@ -1641,6 +1648,11 @@ export default function PersonalInsightsPage() {
           Ask about my PRs and trends
         </button>
       </Card>
+
+      {/* ── Efficiency Trend ─────────────────────────────── */}
+      <div className="mt-6">
+        <EfficiencyTrendSection workouts={workouts} />
+      </div>
         </>
       )}
 

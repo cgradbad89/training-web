@@ -5,6 +5,8 @@ import {
   buildEfficiencyTierMap,
   scoreWorkoutEfficiency,
   computeEfficiencyScore,
+  buildEfficiencyTrend,
+  buildDistanceBucketSummary,
   MIN_BASELINE_RUNS,
   MIN_CADENCE_BASELINE_RUNS,
   SCORE_SCALE_PCT,
@@ -13,6 +15,15 @@ import {
   type EfficiencyWorkout,
   type TierBaseline,
 } from '../efficiencyScore'
+import { weekStart } from '@/utils/dates'
+
+/** Local replica of the module's private isoDate for computing expected keys. */
+function isoDate(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
 
 // ─── Test helpers ──────────────────────────────────────────────────────────
 
@@ -394,5 +405,132 @@ describe('computeEfficiencyScore', () => {
     })
     expect(high.score).toBe(100)
     expect(low.score).toBe(0)
+  })
+})
+
+// ─── buildEfficiencyTrend ────────────────────────────────────────────────────
+
+describe('buildEfficiencyTrend', () => {
+  it('emits null avgScore for weeks with zero scored runs (gap, not dropped)', () => {
+    // 2 runs ~1 week ago + 4 runs ~5 weeks ago → several empty weeks between.
+    const recent = [6, 7].map((n) =>
+      makeWorkout({ distanceMiles: 5, secPerMile: 540, startDate: daysAgo(n) })
+    )
+    const older = [33, 34, 35, 36].map((n) =>
+      makeWorkout({ distanceMiles: 5, secPerMile: 540, startDate: daysAgo(n) })
+    )
+    const trend = buildEfficiencyTrend([...recent, ...older])
+
+    // All six runs scored (baseline runCount = 6), each score == 50.
+    const scoredTotal = trend.reduce((s, t) => s + t.scoredRunCount, 0)
+    expect(scoredTotal).toBe(6)
+    const nullWeeks = trend.filter((t) => t.avgScore === null)
+    expect(nullWeeks.length).toBeGreaterThan(0)
+    for (const t of trend) {
+      if (t.scoredRunCount > 0) expect(t.avgScore).toBeCloseTo(50, 6)
+      else expect(t.avgScore).toBeNull()
+    }
+  })
+
+  it('buckets runs into their Monday-start weeks', () => {
+    const runs = [2, 3, 12, 20, 21, 30].map((n) =>
+      makeWorkout({ distanceMiles: 5, secPerMile: 540, startDate: daysAgo(n) })
+    )
+    const trend = buildEfficiencyTrend(runs)
+
+    // Manually group scored runs by Monday-start week key.
+    const expected = new Map<string, number>()
+    for (const r of runs) {
+      const key = isoDate(weekStart(r.startDate as Date))
+      expected.set(key, (expected.get(key) ?? 0) + 1)
+    }
+    for (const [key, count] of expected) {
+      const point = trend.find((t) => t.weekStartDate === key)
+      expect(point).toBeDefined()
+      expect(point!.scoredRunCount).toBe(count)
+      expect(point!.avgScore).toBeCloseTo(50, 6)
+    }
+    // Points are in chronological order.
+    const dates = trend.map((t) => t.weekStartDate)
+    expect([...dates].sort()).toEqual(dates)
+  })
+
+  it('honors the windowDays boundary', () => {
+    const runs = [1, 2, 3, 4, 5, 6].map((n) =>
+      makeWorkout({ distanceMiles: 5, secPerMile: 540, startDate: daysAgo(n) })
+    )
+    const far = makeWorkout({ distanceMiles: 5, secPerMile: 540, startDate: daysAgo(30) })
+    const all = [...runs, far]
+
+    const wide = buildEfficiencyTrend(all, 112)
+    const narrow = buildEfficiencyTrend(all, 7)
+    expect(wide.reduce((s, t) => s + t.scoredRunCount, 0)).toBe(7)
+    expect(narrow.reduce((s, t) => s + t.scoredRunCount, 0)).toBe(6) // far run excluded
+  })
+
+  it('excludes building_baseline runs (never counts them as 0)', () => {
+    const good = [1, 2, 3, 4, 5, 6].map((n) =>
+      makeWorkout({ distanceMiles: 5, secPerMile: 540, startDate: daysAgo(n) })
+    )
+    const noHr = makeWorkout({ distanceMiles: 5, secPerMile: 540, avgHeartRate: null, startDate: daysAgo(3) })
+    const trend = buildEfficiencyTrend([...good, noHr])
+    expect(trend.reduce((s, t) => s + t.scoredRunCount, 0)).toBe(6)
+  })
+})
+
+// ─── buildDistanceBucketSummary ──────────────────────────────────────────────
+
+describe('buildDistanceBucketSummary', () => {
+  it('always returns short/mid/long in fixed order', () => {
+    const summary = buildDistanceBucketSummary([])
+    expect(summary.map((s) => s.bucket)).toEqual(['short', 'mid', 'long'])
+  })
+
+  it('places boundary distances 5.0 in mid and 10.0 in long', () => {
+    const short = [1, 2, 3, 4, 5].map((n) =>
+      makeWorkout({ distanceMiles: 4, secPerMile: 540, startDate: daysAgo(n) })
+    )
+    const boundary5 = makeWorkout({ distanceMiles: 5, secPerMile: 540, startDate: daysAgo(6) })
+    const mid = makeWorkout({ distanceMiles: 9.9, secPerMile: 540, startDate: daysAgo(7) })
+    const boundary10 = makeWorkout({ distanceMiles: 10, secPerMile: 540, startDate: daysAgo(8) })
+    const summary = buildDistanceBucketSummary([...short, boundary5, mid, boundary10])
+
+    const by = Object.fromEntries(summary.map((s) => [s.bucket, s]))
+    expect(by.short.scoredRunCount).toBe(5)
+    expect(by.mid.scoredRunCount).toBe(2) // 5.0 and 9.9
+    expect(by.long.scoredRunCount).toBe(1) // 10.0
+  })
+
+  it('returns null avgPercentDeltaVsBaseline for an empty bucket', () => {
+    const short = [1, 2, 3, 4, 5, 6].map((n) =>
+      makeWorkout({ distanceMiles: 4, secPerMile: 540, startDate: daysAgo(n) })
+    )
+    const summary = buildDistanceBucketSummary(short)
+    const by = Object.fromEntries(summary.map((s) => [s.bucket, s]))
+    expect(by.mid.avgPercentDeltaVsBaseline).toBeNull()
+    expect(by.mid.scoredRunCount).toBe(0)
+    expect(by.long.avgPercentDeltaVsBaseline).toBeNull()
+    expect(by.long.scoredRunCount).toBe(0)
+  })
+
+  it('averages percentDelta (not raw score) and excludes building_baseline runs', () => {
+    // 5 short baseline runs at HR 150 + 1 MID run at HR 140 (lower HR → higher
+    // EF → positive percentDelta). Same pace keeps every run BASELINE tier. The
+    // mid bucket isolates the efficient run so its average delta is > 0 (the full
+    // baseline set would average to ~0 by construction). A no-HR run in short
+    // must be dropped as building_baseline.
+    const base = [1, 2, 3, 4, 5].map((n) =>
+      makeWorkout({ distanceMiles: 4, secPerMile: 540, avgHeartRate: 150, startDate: daysAgo(n) })
+    )
+    const efficientMid = makeWorkout({ distanceMiles: 6, secPerMile: 540, avgHeartRate: 140, startDate: daysAgo(6) })
+    const noHr = makeWorkout({ distanceMiles: 4, secPerMile: 540, avgHeartRate: null, startDate: daysAgo(7) })
+    const summary = buildDistanceBucketSummary([...base, efficientMid, noHr])
+    const by = Object.fromEntries(summary.map((s) => [s.bucket, s]))
+    expect(by.short.scoredRunCount).toBe(5) // no-HR run excluded
+    expect(by.mid.scoredRunCount).toBe(1)
+    const midDelta = by.mid.avgPercentDeltaVsBaseline as number
+    expect(midDelta).toBeGreaterThan(0)
+    // It's a fraction (percentDelta), not a 0-100 raw score.
+    expect(midDelta).toBeLessThan(1)
   })
 })
