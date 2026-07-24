@@ -36,6 +36,8 @@ function scored(over: Partial<EfficiencyScoreResult> = {}): EfficiencyScoreResul
     score: 70,
     percentDeltaVsBaseline: 0.09,
     cadenceDeltaVsBaseline: null,
+    hrrPct: 71,
+    usedRegression: false,
     status: "scored",
     ...over,
   };
@@ -45,6 +47,8 @@ const building: EfficiencyScoreResult = {
   score: null,
   percentDeltaVsBaseline: null,
   cadenceDeltaVsBaseline: null,
+  hrrPct: null,
+  usedRegression: false,
   status: "building_baseline",
 };
 
@@ -73,20 +77,33 @@ describe("EfficiencyScoreBadge", () => {
   it("renders the building-baseline state with muted styling", () => {
     act(() => {
       root.render(
-        <EfficiencyScoreBadge result={building} tier="BASELINE" baselineRunCount={3} />
+        <EfficiencyScoreBadge result={building} baselineRunCount={3} />
       );
     });
     const pill = container.querySelector('[aria-label="Efficiency score"]')!;
     expect(pill.textContent).toContain("Building baseline");
     expect(pill.className).toContain("text-textSecondary");
-    // building state carries no color-band fill
     expect(pill.className).not.toContain("text-success");
+  });
+
+  it("shows a plain run-count building message (no 'similar-effort' wording)", () => {
+    act(() => {
+      root.render(
+        <EfficiencyScoreBadge result={building} baselineRunCount={3} />
+      );
+    });
+    const pill = container.querySelector('[aria-label="Efficiency score"]')!;
+    hover(pill);
+    const tooltip = container.querySelector('[role="tooltip"]')!;
+    expect(tooltip.textContent).toContain("Not enough runs yet");
+    expect(tooltip.textContent).toContain("3 of 5");
+    expect(tooltip.textContent).not.toContain("similar-effort");
   });
 
   it("renders a high-band score in success color", () => {
     act(() => {
       root.render(
-        <EfficiencyScoreBadge result={scored({ score: 80 })} tier="QUALITY" baselineRunCount={6} />
+        <EfficiencyScoreBadge result={scored({ score: 80 })} baselineRunCount={6} />
       );
     });
     const pill = container.querySelector('[aria-label="Efficiency score"]')!;
@@ -97,7 +114,7 @@ describe("EfficiencyScoreBadge", () => {
   it("renders a mid-band score in warning color", () => {
     act(() => {
       root.render(
-        <EfficiencyScoreBadge result={scored({ score: 50 })} tier="BASELINE" baselineRunCount={6} />
+        <EfficiencyScoreBadge result={scored({ score: 50 })} baselineRunCount={6} />
       );
     });
     const pill = container.querySelector('[aria-label="Efficiency score"]')!;
@@ -107,11 +124,44 @@ describe("EfficiencyScoreBadge", () => {
   it("renders a low-band score in danger color", () => {
     act(() => {
       root.render(
-        <EfficiencyScoreBadge result={scored({ score: 20 })} tier="BASELINE" baselineRunCount={6} />
+        <EfficiencyScoreBadge result={scored({ score: 20 })} baselineRunCount={6} />
       );
     });
     const pill = container.querySelector('[aria-label="Efficiency score"]')!;
     expect(pill.className).toContain("text-danger");
+  });
+
+  it("shows the run's HRR effort line in the tooltip", () => {
+    act(() => {
+      root.render(
+        <EfficiencyScoreBadge result={scored({ hrrPct: 74 })} baselineRunCount={6} />
+      );
+    });
+    const pill = container.querySelector('[aria-label="Efficiency score"]')!;
+    hover(pill);
+    const tooltip = container.querySelector('[role="tooltip"]')!;
+    expect(tooltip.textContent).toContain("74% HRR");
+  });
+
+  it("appends '(effort-adjusted)' only when usedRegression is true", () => {
+    act(() => {
+      root.render(
+        <EfficiencyScoreBadge result={scored({ usedRegression: true })} baselineRunCount={6} />
+      );
+    });
+    let tooltip = container.querySelector('[role="tooltip"]');
+    hover(container.querySelector('[aria-label="Efficiency score"]')!);
+    tooltip = container.querySelector('[role="tooltip"]')!;
+    expect(tooltip!.textContent).toContain("(effort-adjusted)");
+
+    act(() => {
+      root.render(
+        <EfficiencyScoreBadge result={scored({ usedRegression: false })} baselineRunCount={6} />
+      );
+    });
+    hover(container.querySelector('[aria-label="Efficiency score"]')!);
+    tooltip = container.querySelector('[role="tooltip"]')!;
+    expect(tooltip!.textContent).not.toContain("(effort-adjusted)");
   });
 
   it("shows the cadence line in the tooltip when a cadence delta is present", () => {
@@ -119,7 +169,6 @@ describe("EfficiencyScoreBadge", () => {
       root.render(
         <EfficiencyScoreBadge
           result={scored({ score: 70, cadenceDeltaVsBaseline: 0.03 })}
-          tier="QUALITY"
           baselineRunCount={6}
         />
       );
@@ -137,7 +186,6 @@ describe("EfficiencyScoreBadge", () => {
       root.render(
         <EfficiencyScoreBadge
           result={scored({ score: 70, cadenceDeltaVsBaseline: null })}
-          tier="QUALITY"
           baselineRunCount={6}
         />
       );
@@ -146,8 +194,5 @@ describe("EfficiencyScoreBadge", () => {
     hover(pill);
     const tooltip = container.querySelector('[role="tooltip"]')!;
     expect(tooltip.textContent).not.toContain("Cadence");
-    // effort-type label uses the human word, never the raw enum
-    expect(tooltip.textContent).toContain("quality");
-    expect(tooltip.textContent).not.toContain("QUALITY");
   });
 });

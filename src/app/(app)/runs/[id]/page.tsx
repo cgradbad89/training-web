@@ -22,9 +22,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { useAppData } from "@/contexts/AppDataContext";
 import { useUnsavedChanges } from "@/hooks/useUnsavedChanges";
 import {
-  buildEfficiencyBaselines,
-  buildEfficiencyTierMap,
-  scoreWorkoutEfficiency,
+  buildEfficiencyBaseline,
+  computeEfficiencyScore,
 } from "@/utils/efficiencyScore";
 import {
   backfillRouteClusterIds,
@@ -266,17 +265,37 @@ export default function RunDetailPage() {
   // Compute mile splits unconditionally (before early returns) to satisfy Rules of Hooks
   const displayWorkoutForSplits = workout ? applyOverride(workout, override) : null;
 
-  // Efficiency score for THIS run vs the runner's own 60-day tier baseline.
-  // Baselines come from the shared AppDataContext run set (no new read); the
-  // viewed run scores against its own tier even if it predates that window
-  // (absent from the tier map → BASELINE fallback in scoreWorkoutEfficiency).
+  // Resolved HR anchors (same source Training Load uses). Declared before the
+  // efficiency memo below, which reads them.
+  const resolvedMaxHR = resolveMaxHr(userSettings);
+  const resolvedRestingHR = resolveRestingHr(userSettings);
+
+  // Efficiency score for THIS run vs the runner's own baseline, anchored to the
+  // viewed run's OWN date (a trailing 60-day window ending strictly before it,
+  // self-excluded) so the score is stable regardless of newer runs. Baseline
+  // runs come from the shared AppDataContext set (no new read); HR anchors from
+  // the same resolved settings used for Training Load.
   const runEfficiency = useMemo(() => {
     if (!displayWorkoutForSplits) return null;
-    const runWorkouts = sharedWorkouts.filter((w) => w.isRunLike);
-    const baselines = buildEfficiencyBaselines(runWorkouts);
-    const tierMap = buildEfficiencyTierMap(runWorkouts);
-    return scoreWorkoutEfficiency(displayWorkoutForSplits, baselines, tierMap);
-  }, [sharedWorkouts, displayWorkoutForSplits]);
+    const runWorkouts = sharedWorkouts.filter(
+      (w) => w.isRunLike && w.workoutId !== displayWorkoutForSplits.workoutId
+    );
+    const baseline = buildEfficiencyBaseline(
+      runWorkouts,
+      displayWorkoutForSplits.startDate,
+      resolvedRestingHR,
+      resolvedMaxHR
+    );
+    const result = computeEfficiencyScore({
+      avgPaceSecPerMile: displayWorkoutForSplits.avgPaceSecPerMile ?? 0,
+      avgHeartRate: displayWorkoutForSplits.avgHeartRate ?? 0,
+      cadenceSPM: displayWorkoutForSplits.cadenceSPM ?? null,
+      restingHr: resolvedRestingHR,
+      maxHr: resolvedMaxHR,
+      baseline,
+    });
+    return { result, baselineRunCount: baseline.runCount };
+  }, [sharedWorkouts, displayWorkoutForSplits, resolvedMaxHR, resolvedRestingHR]);
   const mileSplits = useMemo<MileSplit[]>(
     () => {
       // Cached path: splits persisted on the mileSplits subcollection are used
@@ -368,8 +387,6 @@ export default function RunDetailPage() {
     shoes,
     assignments
   );
-  const resolvedMaxHR = resolveMaxHr(userSettings);
-  const resolvedRestingHR = resolveRestingHr(userSettings);
 
   useEffect(() => {
     if (!uid || !workoutId) return;
@@ -1437,7 +1454,6 @@ export default function RunDetailPage() {
               </span>
               <EfficiencyScoreBadge
                 result={runEfficiency.result}
-                tier={runEfficiency.tier}
                 baselineRunCount={runEfficiency.baselineRunCount}
               />
             </div>

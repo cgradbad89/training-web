@@ -1,29 +1,33 @@
 // Per-run efficiency score — pace-relative-to-heart-rate effort scored against
-// the runner's OWN rolling, tier-aware baseline.
+// the runner's OWN rolling baseline, with a continuous %HR-reserve effort
+// adjustment.
 //
 // Pure client-side computation only. This module performs NO Firestore reads or
 // writes: callers pass an already-fetched, single-uid-scoped workouts array in.
-// (Cross-user / collection-group queries are forbidden for healthWorkouts — see
-// CLAUDE.md hygiene note. This module never queries at all.)
 //
-// Tier classification is REUSED from riegelFit.ts (buildQualifyingEfforts) so
-// efficiency baselines bucket runs the same way the race predictor does —
-// RACE / QUALITY / BASELINE — rather than inventing a parallel rule.
+// TWO product decisions implemented here (replacing the prior tier-split model):
+//  (a) EFFORT ADJUSTMENT — instead of bucketing runs into BASELINE/QUALITY tiers
+//      (a derived, unreliable label) and keeping a separate baseline per tier, a
+//      single baseline is fitted as a linear regression of Efficiency Factor on
+//      %HR-reserve (Karvonen). A run is then scored against the EF *expected at
+//      its own effort level*, so a hard run and an easy run are compared fairly
+//      without needing a discrete tier. Below a minimum %HRR spread (or run
+//      count) the regression is untrustworthy and we fall back to the flat
+//      average EF baseline.
+//  (b) DATE ANCHORING — every baseline is anchored to the SCORED RUN'S OWN date
+//      (a trailing window ending strictly before that run), never Date.now().
+//      Previously the window was anchored to "today", so a run's historical
+//      score silently drifted every time a newer run was added. scoreWorkouts-
+//      Efficiency builds a per-run, self-excluding baseline to fix this.
 
-import {
-  buildQualifyingEfforts,
-  type EffortPoint,
-  type WorkoutLike,
-  type RaceMatchInput,
-} from '@/utils/riegelFit'
 import { weekStart } from '@/utils/dates'
+import { computeHRReserve } from '@/utils/hrReserve'
 
 // ─── Tuning constants ────────────────────────────────────────────────────────
 // NOTE (product-owner confirmation needed): every value below is a tuning
-// default, not a derived quantity. They should be revisited once real scores are
-// visible against actual run history (see the Phase-1 output report).
+// default, not a derived quantity.
 
-/** Below this many EF-backed runs, a tier's baseline is not usable for scoring. */
+/** Below this many EF-backed runs, the baseline is not usable for scoring. */
 export const MIN_BASELINE_RUNS = 5
 /** Below this many cadence-bearing runs, the cadence modifier is skipped. */
 export const MIN_CADENCE_BASELINE_RUNS = 3
@@ -34,8 +38,18 @@ export const CADENCE_MODIFIER_MAX_POINTS = 5
 /** A ±CADENCE_SCALE_PCT cadence delta maps to the full ±CADENCE_MODIFIER_MAX_POINTS swing. */
 export const CADENCE_SCALE_PCT = 0.05
 
-/** Default trailing window (days) over which baselines are built. */
+/** Default trailing window (days) over which a baseline is built. */
 export const DEFAULT_WINDOW_DAYS = 60
+
+/**
+ * Minimum %HRR spread (hrrMax − hrrMin, on the 0–1 Karvonen scale) required
+ * before a fitted EF-on-%HRR regression is trusted. Below this the effort levels
+ * cluster too tightly to fit a meaningful slope, so we fall back to the flat
+ * average-EF baseline. 0.08 = 8 percentage points of %HRR. TUNING VALUE — this
+ * account's real 60–90 day %HRR range is ~39 points, well above this floor, so
+ * the regression path is the common case here.
+ */
+export const MIN_HRR_RANGE_FOR_REGRESSION = 0.08
 
 /** Trailing window for the weekly efficiency trend (16 weeks). Tuning value. */
 export const EFFICIENCY_TREND_WINDOW_DAYS = 112
@@ -44,56 +58,52 @@ export const EFFICIENCY_BUCKET_WINDOW_DAYS = 90
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-export type EfficiencyTier = 'BASELINE' | 'QUALITY' | 'RACE'
-
-export interface TierBaseline {
-  tier: EfficiencyTier
+export interface EfficiencyBaseline {
   avgEfficiencyFactor: number
   avgCadenceSPM: number | null
   runCount: number
   cadenceRunCount: number
+  /** Min/max %HRR (0–1) across the baseline runs — the regression's valid domain. */
+  hrrMin: number
+  hrrMax: number
+  /** OLS fit of EF on %HRR (0–1). null when spread/count is below threshold. */
+  regression: { slope: number; intercept: number } | null
 }
 
 export interface EfficiencyScoreInputs {
   avgPaceSecPerMile: number
   avgHeartRate: number
   cadenceSPM: number | null
-  tier: EfficiencyTier
-  baseline: TierBaseline
-  /**
-   * The QUALITY-tier baseline, required only to score a RACE-tier run whose own
-   * RACE baseline has too few runs (races are run at quality-like effort — see
-   * SCORING step 1). Optional because non-RACE runs never consult it.
-   *
-   * DEVIATION from the Phase-1 prompt's interface: the prompt specified a single
-   * `baseline`, but the RACE→QUALITY fallback cannot be resolved inside
-   * computeEfficiencyScore without access to the QUALITY baseline. Added as an
-   * optional field so the specified fields are otherwise unchanged.
-   */
-  qualityBaseline?: TierBaseline
+  restingHr: number
+  maxHr: number
+  baseline: EfficiencyBaseline
 }
 
 export interface EfficiencyScoreResult {
   /** 0-100, null when status is 'building_baseline'. */
   score: number | null
-  /** e.g. 0.12 for +12% more efficient than baseline; null when not scored. */
+  /** e.g. 0.12 for +12% more efficient than the effort-adjusted baseline. */
   percentDeltaVsBaseline: number | null
   /** null if cadence unavailable on the run or the baseline. */
   cadenceDeltaVsBaseline: number | null
+  /** This run's %HR-reserve as an integer percent (0–100). null when not scored. */
+  hrrPct: number | null
+  /** True when the effort-adjusted (regression) baseline was used; false for the flat fallback. */
+  usedRegression: boolean
   status: 'scored' | 'building_baseline'
 }
 
 /**
- * A healthWorkouts document, extended with the run-level fields efficiency
- * scoring needs. WorkoutLike (reused from riegelFit) supplies the fields the
- * tier classifier reads; the three below are additive and all nullable because
- * cadence coverage is high but not universal and HR/pace can be missing.
- *
- * DEVIATION from the Phase-1 prompt: the prompt's buildEfficiencyBaselines
- * signature named `WorkoutLike[]`, but WorkoutLike carries none of the
- * efficiency fields, so this superset is required to read them.
+ * The minimal healthWorkouts shape efficiency scoring reads. Structurally a
+ * subset of HealthWorkout, so callers pass their fetched runs directly. All
+ * measurement fields are nullable because HR/pace/cadence coverage is high but
+ * not universal.
  */
-export type EfficiencyWorkout = WorkoutLike & {
+export interface EfficiencyWorkout {
+  workoutId: string
+  startDate: Date | string | { toDate?: () => Date } | null | undefined
+  distanceMiles?: number | null
+  durationSeconds: number
   avgPaceSecPerMile?: number | null
   avgHeartRate?: number | null
   cadenceSPM?: number | null
@@ -109,8 +119,8 @@ function isPositiveFinite(v: number | null | undefined): v is number {
   return v != null && isFinite(v) && v > 0
 }
 
-/** Parse a workout startDate into epoch ms, mirroring buildQualifyingEfforts. */
-function parseStartMs(sd: WorkoutLike['startDate']): number {
+/** Parse a workout startDate into epoch ms. */
+function parseStartMs(sd: EfficiencyWorkout['startDate']): number {
   if (sd && typeof sd === 'object' && typeof (sd as { toDate?: () => Date }).toDate === 'function') {
     return (sd as { toDate: () => Date }).toDate().getTime()
   }
@@ -133,139 +143,86 @@ export function computeEfficiencyFactor(
   return speedMph / avgHeartRate
 }
 
+/**
+ * Ordinary least-squares fit of y on x. Returns null when the x-variance is
+ * ~zero (degenerate — no meaningful slope), so callers fall back to a flat mean.
+ */
+function fitLinearRegression(
+  xs: number[],
+  ys: number[]
+): { slope: number; intercept: number } | null {
+  const n = xs.length
+  if (n < 2) return null
+  let sumX = 0
+  let sumY = 0
+  for (let i = 0; i < n; i++) {
+    sumX += xs[i]
+    sumY += ys[i]
+  }
+  const meanX = sumX / n
+  const meanY = sumY / n
+  let sxx = 0
+  let sxy = 0
+  for (let i = 0; i < n; i++) {
+    const dx = xs[i] - meanX
+    sxx += dx * dx
+    sxy += dx * (ys[i] - meanY)
+  }
+  if (!(sxx > 0) || !isFinite(sxx)) return null
+  const slope = sxy / sxx
+  const intercept = meanY - slope * meanX
+  if (!isFinite(slope) || !isFinite(intercept)) return null
+  return { slope, intercept }
+}
+
 // ─── Baseline builder ────────────────────────────────────────────────────────
 
-const EMPTY_TIER = (tier: EfficiencyTier): TierBaseline => ({
-  tier,
+const EMPTY_BASELINE: EfficiencyBaseline = {
   avgEfficiencyFactor: 0,
   avgCadenceSPM: null,
   runCount: 0,
   cadenceRunCount: 0,
-})
-
-/**
- * Bucket workouts into RACE / QUALITY / BASELINE tiers (via buildQualifyingEfforts)
- * within the trailing `windowDays`, then compute each tier's average efficiency
- * factor and average cadence.
- *
- * Mapping efforts back to their source workouts: EffortPoint drops the workout's
- * HR/cadence/id, so we re-associate by a composite key of the two effort fields
- * derived verbatim from the workout (distanceMiles, timeSeconds) plus ageDays.
- * A shared `asOf` reference makes ageDays deterministic on both sides, so the key
- * uniquely identifies a run (ageDays encodes startMs); FIFO dequeuing resolves
- * genuine duplicates and keeps in-window efforts from matching out-of-window
- * workouts that happen to share distance+duration.
- *
- * `races` is an optional forward: buildQualifyingEfforts only tags RACE when a
- * race list is supplied, so without it the RACE bucket stays empty. (Additive
- * optional param — see the Phase-1 output report.)
- */
-/**
- * Bucket workouts into RACE / QUALITY / BASELINE tiers by classifying them with
- * buildQualifyingEfforts and re-associating each effort with its source workout.
- *
- * EffortPoint drops the workout's HR/cadence/id, so we re-associate by a
- * composite key of the two effort fields derived verbatim from the workout
- * (distanceMiles, timeSeconds) plus ageDays. A shared `asOf` makes ageDays
- * deterministic on both sides, so the key uniquely identifies a run (ageDays
- * encodes startMs); FIFO dequeuing resolves genuine duplicates and keeps
- * in-window efforts from matching out-of-window workouts that share
- * distance+duration.
- */
-function bucketWorkoutsByTier(
-  workouts: EfficiencyWorkout[],
-  windowDays: number,
-  races: RaceMatchInput[] | undefined
-): Record<EfficiencyTier, EfficiencyWorkout[]> {
-  const asOf = Date.now()
-  const efforts: EffortPoint[] = buildQualifyingEfforts(workouts, {
-    daysBack: windowDays,
-    races,
-    asOf,
-  })
-
-  // Buckets of workouts keyed identically to how an EffortPoint keys, preserving
-  // input order so FIFO dequeuing matches buildQualifyingEfforts' stable order.
-  const buckets = new Map<string, EfficiencyWorkout[]>()
-  const keyOf = (miles: number, seconds: number, ageDays: number): string =>
-    `${miles}|${seconds}|${ageDays}`
-
-  for (const w of workouts) {
-    const miles = w.distanceMiles ?? 0
-    const startMs = parseStartMs(w.startDate)
-    if (!isFinite(startMs)) continue
-    const ageDays = (asOf - startMs) / 86400000
-    const key = keyOf(miles, w.durationSeconds, ageDays)
-    const arr = buckets.get(key)
-    if (arr) arr.push(w)
-    else buckets.set(key, [w])
-  }
-
-  const tierWorkouts: Record<EfficiencyTier, EfficiencyWorkout[]> = {
-    BASELINE: [],
-    QUALITY: [],
-    RACE: [],
-  }
-
-  for (const e of efforts) {
-    if (e.tier !== 'RACE' && e.tier !== 'QUALITY' && e.tier !== 'BASELINE') continue
-    const key = keyOf(e.distanceMiles, e.timeSeconds, e.ageDays)
-    const w = buckets.get(key)?.shift()
-    if (!w) continue
-    tierWorkouts[e.tier].push(w)
-  }
-
-  return tierWorkouts
-}
-
-export function buildEfficiencyBaselines(
-  workouts: EfficiencyWorkout[],
-  windowDays: number = DEFAULT_WINDOW_DAYS,
-  races?: RaceMatchInput[]
-): Record<EfficiencyTier, TierBaseline> {
-  const tierWorkouts = bucketWorkoutsByTier(workouts, windowDays, races)
-  const result = {} as Record<EfficiencyTier, TierBaseline>
-  for (const tier of ['BASELINE', 'QUALITY', 'RACE'] as const) {
-    result[tier] = summarizeTier(tier, tierWorkouts[tier])
-  }
-  return result
+  hrrMin: 0,
+  hrrMax: 0,
+  regression: null,
 }
 
 /**
- * Map each in-window workout's id → its efficiency tier, using the same
- * classification as buildEfficiencyBaselines. Callers (run detail / runs list)
- * use it to pick the run's own tier + baseline for computeEfficiencyScore.
- * Workouts outside the window (or filtered out by the classifier's sanity
- * gates) are simply absent from the map — callers fall back to BASELINE.
+ * Build the efficiency baseline from the runs falling in the trailing window
+ * ending strictly before `asOfDate`:  (asOfDate − windowDays) ≤ date < asOfDate.
+ *
+ * A run contributes to the EF baseline only when it has a valid avgPaceSecPerMile
+ * AND avgHeartRate (both needed for EF and %HRR). Cadence stats are accumulated
+ * independently over runs that carry a positive cadenceSPM, so cadence coverage
+ * is unaffected by whether the regression or flat path is used.
+ *
+ * When runCount ≥ MIN_BASELINE_RUNS and the %HRR spread ≥ MIN_HRR_RANGE_FOR_
+ * REGRESSION, an OLS regression of EF on %HRR is fitted (the effort adjustment);
+ * otherwise `regression` is null and callers use the flat avgEfficiencyFactor.
  */
-export function buildEfficiencyTierMap(
+export function buildEfficiencyBaseline(
   workouts: EfficiencyWorkout[],
-  windowDays: number = DEFAULT_WINDOW_DAYS,
-  races?: RaceMatchInput[]
-): Map<string, EfficiencyTier> {
-  const tierWorkouts = bucketWorkoutsByTier(workouts, windowDays, races)
-  const map = new Map<string, EfficiencyTier>()
-  for (const tier of ['BASELINE', 'QUALITY', 'RACE'] as const) {
-    for (const w of tierWorkouts[tier]) map.set(w.workoutId, tier)
-  }
-  return map
-}
+  asOfDate: Date,
+  restingHr: number,
+  maxHr: number,
+  windowDays: number = DEFAULT_WINDOW_DAYS
+): EfficiencyBaseline {
+  const asOfMs = asOfDate.getTime()
+  if (!isFinite(asOfMs)) return EMPTY_BASELINE
+  const cutoffMs = asOfMs - windowDays * 86400000
 
-function summarizeTier(
-  tier: EfficiencyTier,
-  workouts: EfficiencyWorkout[]
-): TierBaseline {
-  if (workouts.length === 0) return EMPTY_TIER(tier)
-
-  let efSum = 0
-  let runCount = 0
+  const efValues: number[] = []
+  const hrrValues: number[] = []
   let cadenceSum = 0
   let cadenceRunCount = 0
 
   for (const w of workouts) {
+    const startMs = parseStartMs(w.startDate)
+    if (!isFinite(startMs) || startMs < cutoffMs || startMs >= asOfMs) continue
+
     if (isPositiveFinite(w.avgPaceSecPerMile) && isPositiveFinite(w.avgHeartRate)) {
-      efSum += computeEfficiencyFactor(w.avgPaceSecPerMile, w.avgHeartRate)
-      runCount++
+      efValues.push(computeEfficiencyFactor(w.avgPaceSecPerMile, w.avgHeartRate))
+      hrrValues.push(computeHRReserve(w.avgHeartRate, restingHr, maxHr))
     }
     // cadenceSPM is number | null — nulls (and non-finite/≤0) are excluded.
     if (isPositiveFinite(w.cadenceSPM)) {
@@ -274,39 +231,37 @@ function summarizeTier(
     }
   }
 
+  const runCount = efValues.length
+  if (runCount === 0) {
+    // Preserve any cadence-only stats even when no EF-backed run exists.
+    return {
+      ...EMPTY_BASELINE,
+      avgCadenceSPM: cadenceRunCount > 0 ? cadenceSum / cadenceRunCount : null,
+      cadenceRunCount,
+    }
+  }
+
+  const avgEfficiencyFactor = efValues.reduce((a, b) => a + b, 0) / runCount
+  const hrrMin = Math.min(...hrrValues)
+  const hrrMax = Math.max(...hrrValues)
+
+  let regression: { slope: number; intercept: number } | null = null
+  if (
+    runCount >= MIN_BASELINE_RUNS &&
+    hrrMax - hrrMin >= MIN_HRR_RANGE_FOR_REGRESSION
+  ) {
+    regression = fitLinearRegression(hrrValues, efValues)
+  }
+
   return {
-    tier,
-    avgEfficiencyFactor: runCount > 0 ? efSum / runCount : 0,
+    avgEfficiencyFactor,
     avgCadenceSPM: cadenceRunCount > 0 ? cadenceSum / cadenceRunCount : null,
     runCount,
     cadenceRunCount,
+    hrrMin,
+    hrrMax,
+    regression,
   }
-}
-
-/**
- * Convenience wiring helper for the UI: given a workout plus precomputed
- * baselines + tier map (both built once per page), resolve the run's own tier,
- * baseline, and score in one call — everything EfficiencyScoreBadge needs.
- * A run absent from the tier map (out of window / filtered) falls back to
- * BASELINE. Missing pace/HR flow through to computeEfficiencyScore's guards
- * (→ building_baseline).
- */
-export function scoreWorkoutEfficiency(
-  workout: EfficiencyWorkout,
-  baselines: Record<EfficiencyTier, TierBaseline>,
-  tierMap: Map<string, EfficiencyTier>
-): { result: EfficiencyScoreResult; tier: EfficiencyTier; baselineRunCount: number } {
-  const tier = tierMap.get(workout.workoutId) ?? 'BASELINE'
-  const baseline = baselines[tier]
-  const result = computeEfficiencyScore({
-    avgPaceSecPerMile: workout.avgPaceSecPerMile ?? 0,
-    avgHeartRate: workout.avgHeartRate ?? 0,
-    cadenceSPM: workout.cadenceSPM ?? null,
-    tier,
-    baseline,
-    qualityBaseline: baselines.QUALITY,
-  })
-  return { result, tier, baselineRunCount: baseline.runCount }
 }
 
 // ─── Score ───────────────────────────────────────────────────────────────────
@@ -315,65 +270,117 @@ const BUILDING: EfficiencyScoreResult = {
   score: null,
   percentDeltaVsBaseline: null,
   cadenceDeltaVsBaseline: null,
+  hrrPct: null,
+  usedRegression: false,
   status: 'building_baseline',
 }
 
 /**
- * Score one run's efficiency against its tier baseline, 0-100 (50 = neutral,
- * matching the baseline). Returns status 'building_baseline' with null score
- * when no usable baseline exists yet.
+ * Score one run's efficiency against its effort-adjusted baseline, 0-100
+ * (50 = neutral, matching the baseline). Returns status 'building_baseline'
+ * with null score when no usable baseline exists yet.
  */
 export function computeEfficiencyScore(
   inputs: EfficiencyScoreInputs
 ): EfficiencyScoreResult {
-  const { avgPaceSecPerMile, avgHeartRate, cadenceSPM, tier, baseline } = inputs
+  const { avgPaceSecPerMile, avgHeartRate, cadenceSPM, restingHr, maxHr, baseline } =
+    inputs
 
-  // Step 1 — resolve a usable baseline (with the RACE→QUALITY fallback).
-  let effective = baseline
-  if (baseline.runCount < MIN_BASELINE_RUNS) {
-    const q = inputs.qualityBaseline
-    if (tier === 'RACE' && q != null && q.runCount >= MIN_BASELINE_RUNS) {
-      effective = q
-    } else {
-      return BUILDING
-    }
-  }
-
-  // Guard: the baseline / run inputs must be usable to compute an EF ratio.
-  if (!isPositiveFinite(effective.avgEfficiencyFactor)) return BUILDING
+  // Step 1 — usable baseline + valid run inputs, else building.
+  if (baseline.runCount < MIN_BASELINE_RUNS) return BUILDING
   if (!isPositiveFinite(avgPaceSecPerMile) || !isPositiveFinite(avgHeartRate)) {
     return BUILDING
   }
 
-  // Steps 2-4 — EF delta → raw score.
+  // Step 2 — this run's EF and %HRR.
   const runEF = computeEfficiencyFactor(avgPaceSecPerMile, avgHeartRate)
-  const percentDelta =
-    (runEF - effective.avgEfficiencyFactor) / effective.avgEfficiencyFactor
+  const runHrr = computeHRReserve(avgHeartRate, restingHr, maxHr)
+  const hrrPct = Math.round(runHrr * 100)
+
+  // Step 3 — expected EF at this run's effort level (regression) or flat mean.
+  let expectedEF: number
+  let usedRegression: boolean
+  if (baseline.regression != null) {
+    const clampedHrr = clamp(runHrr, baseline.hrrMin, baseline.hrrMax)
+    expectedEF = baseline.regression.intercept + baseline.regression.slope * clampedHrr
+    usedRegression = true
+  } else {
+    expectedEF = baseline.avgEfficiencyFactor
+    usedRegression = false
+  }
+  if (!isPositiveFinite(expectedEF)) return BUILDING
+
+  // Steps 4-5 — EF delta → raw score.
+  const percentDelta = (runEF - expectedEF) / expectedEF
   const rawScore = clamp(50 + (percentDelta / SCORE_SCALE_PCT) * 50, 0, 100)
 
-  // Step 5 — optional cadence modifier.
+  // Step 6 — optional cadence modifier (unchanged logic).
   let finalScore = rawScore
   let cadenceDeltaVsBaseline: number | null = null
   if (
     isPositiveFinite(cadenceSPM) &&
-    isPositiveFinite(effective.avgCadenceSPM) &&
-    effective.cadenceRunCount >= MIN_CADENCE_BASELINE_RUNS
+    isPositiveFinite(baseline.avgCadenceSPM) &&
+    baseline.cadenceRunCount >= MIN_CADENCE_BASELINE_RUNS
   ) {
     const cadenceDelta =
-      (cadenceSPM - effective.avgCadenceSPM) / effective.avgCadenceSPM
+      (cadenceSPM - baseline.avgCadenceSPM) / baseline.avgCadenceSPM
     const modifier =
       clamp(cadenceDelta / CADENCE_SCALE_PCT, -1, 1) * CADENCE_MODIFIER_MAX_POINTS
     finalScore = clamp(rawScore + modifier, 0, 100)
     cadenceDeltaVsBaseline = cadenceDelta
   }
 
-  // Step 6.
+  // Step 7.
   return {
     score: finalScore,
     percentDeltaVsBaseline: percentDelta,
     cadenceDeltaVsBaseline,
+    hrrPct,
+    usedRegression,
     status: 'scored',
   }
+}
+
+/**
+ * Score every workout against its OWN date-anchored baseline. For each workout
+ * with a valid date, its baseline is built from the OTHER workouts over the
+ * trailing `windowDays` ending strictly before that run's date, then the run is
+ * scored. This is what fixes the "anchored to today" drift bug: a run's score
+ * depends only on runs that preceded it, so adding a later-dated run never
+ * changes an earlier run's score.
+ *
+ * Keyed by workoutId. Workouts with an unparseable date are omitted.
+ */
+export function scoreWorkoutsEfficiency(
+  workouts: EfficiencyWorkout[],
+  restingHr: number,
+  maxHr: number,
+  windowDays: number = DEFAULT_WINDOW_DAYS
+): Map<string, EfficiencyScoreResult> {
+  const out = new Map<string, EfficiencyScoreResult>()
+  for (const w of workouts) {
+    const startMs = parseStartMs(w.startDate)
+    if (!isFinite(startMs)) continue
+    // Self-excluding baseline: score a run only against OTHER runs.
+    const others = workouts.filter((o) => o !== w)
+    const baseline = buildEfficiencyBaseline(
+      others,
+      new Date(startMs),
+      restingHr,
+      maxHr,
+      windowDays
+    )
+    const result = computeEfficiencyScore({
+      avgPaceSecPerMile: w.avgPaceSecPerMile ?? 0,
+      avgHeartRate: w.avgHeartRate ?? 0,
+      cadenceSPM: w.cadenceSPM ?? null,
+      restingHr,
+      maxHr,
+      baseline,
+    })
+    out.set(w.workoutId, result)
+  }
+  return out
 }
 
 // ─── Trend & distance buckets ──────────────────────────────────────────────────
@@ -408,25 +415,29 @@ function isoDate(d: Date): string {
  * within the trailing `windowDays`. EVERY week in the window is emitted, in
  * chronological order — weeks with no scored runs get avgScore: null (a gap the
  * chart renders as a break, never interpolated or dropped). Runs whose status is
- * 'building_baseline' are excluded (never counted as 0). Scoring reuses the
- * 60-day tier baseline (buildEfficiencyBaselines / buildEfficiencyTierMap) so a
- * run is measured against the same baseline the per-run badge uses.
+ * 'building_baseline' are excluded (never counted as 0).
+ *
+ * Each run is scored via scoreWorkoutsEfficiency, so every run is measured
+ * against its OWN date-anchored 60-day baseline — the same anchoring the per-run
+ * badge uses, and the same "anchored to today" fix. `windowDays` here only bounds
+ * which weeks are displayed, not the per-run baseline window.
  */
 export function buildEfficiencyTrend(
   workouts: EfficiencyWorkout[],
+  restingHr: number,
+  maxHr: number,
   windowDays: number = EFFICIENCY_TREND_WINDOW_DAYS
 ): EfficiencyTrendPoint[] {
   const now = Date.now()
   const cutoff = now - windowDays * 86400000
-  const baselines = buildEfficiencyBaselines(workouts)
-  const tierMap = buildEfficiencyTierMap(workouts)
+  const scores = scoreWorkoutsEfficiency(workouts, restingHr, maxHr)
 
   const perWeek = new Map<string, { sum: number; count: number }>()
   for (const w of workouts) {
     const startMs = parseStartMs(w.startDate)
     if (!isFinite(startMs) || startMs < cutoff || startMs > now) continue
-    const { result } = scoreWorkoutEfficiency(w, baselines, tierMap)
-    if (result.status !== 'scored' || result.score == null) continue
+    const result = scores.get(w.workoutId)
+    if (!result || result.status !== 'scored' || result.score == null) continue
     const key = isoDate(weekStart(new Date(startMs)))
     const cell = perWeek.get(key) ?? { sum: 0, count: 0 }
     cell.sum += result.score
@@ -461,15 +472,18 @@ export function buildEfficiencyTrend(
  * 'building_baseline' runs are excluded. All three buckets are always returned
  * in fixed order [short, mid, long]; an empty bucket has
  * avgPercentDeltaVsBaseline: null.
+ *
+ * Each run is scored via scoreWorkoutsEfficiency (date-anchored per-run baseline).
  */
 export function buildDistanceBucketSummary(
   workouts: EfficiencyWorkout[],
+  restingHr: number,
+  maxHr: number,
   windowDays: number = EFFICIENCY_BUCKET_WINDOW_DAYS
 ): DistanceBucketSummary[] {
   const now = Date.now()
   const cutoff = now - windowDays * 86400000
-  const baselines = buildEfficiencyBaselines(workouts)
-  const tierMap = buildEfficiencyTierMap(workouts)
+  const scores = scoreWorkoutsEfficiency(workouts, restingHr, maxHr)
 
   const acc: Record<DistanceBucket, { sum: number; count: number }> = {
     short: { sum: 0, count: 0 },
@@ -479,8 +493,10 @@ export function buildDistanceBucketSummary(
   for (const w of workouts) {
     const startMs = parseStartMs(w.startDate)
     if (!isFinite(startMs) || startMs < cutoff || startMs > now) continue
-    const { result } = scoreWorkoutEfficiency(w, baselines, tierMap)
-    if (result.status !== 'scored' || result.percentDeltaVsBaseline == null) continue
+    const result = scores.get(w.workoutId)
+    if (!result || result.status !== 'scored' || result.percentDeltaVsBaseline == null) {
+      continue
+    }
     const miles = w.distanceMiles ?? 0
     const bucket: DistanceBucket = miles < 5 ? 'short' : miles < 10 ? 'mid' : 'long'
     acc[bucket].sum += result.percentDeltaVsBaseline

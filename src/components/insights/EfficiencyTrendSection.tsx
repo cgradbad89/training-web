@@ -48,13 +48,20 @@ function signedPct(fraction: number): string {
  */
 export function EfficiencyTrendSection({
   workouts,
+  restingHr,
+  maxHr,
 }: {
   workouts: EfficiencyWorkout[];
+  restingHr: number;
+  maxHr: number;
 }): React.JSX.Element {
-  const trend = useMemo(() => buildEfficiencyTrend(workouts), [workouts]);
+  const trend = useMemo(
+    () => buildEfficiencyTrend(workouts, restingHr, maxHr),
+    [workouts, restingHr, maxHr]
+  );
   const buckets = useMemo(
-    () => buildDistanceBucketSummary(workouts),
-    [workouts]
+    () => buildDistanceBucketSummary(workouts, restingHr, maxHr),
+    [workouts, restingHr, maxHr]
   );
 
   const weeksWithData = trend.filter((t) => t.scoredRunCount > 0).length;

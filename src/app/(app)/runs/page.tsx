@@ -29,9 +29,9 @@ import {
   MIN_RUN_MILES_FOR_AVG,
 } from "@/utils/trainingLoad";
 import {
-  buildEfficiencyBaselines,
-  buildEfficiencyTierMap,
-  scoreWorkoutEfficiency,
+  buildEfficiencyBaseline,
+  computeEfficiencyScore,
+  type EfficiencyScoreResult,
 } from "@/utils/efficiencyScore";
 import { formatPace, formatDuration, formatMiles } from "@/utils/pace";
 import { resolveActivityTitle } from "@/utils/resolveActivityTitle";
@@ -64,7 +64,7 @@ import {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /** Precomputed efficiency for one run — what EfficiencyScoreBadge needs. */
-type RunEfficiency = ReturnType<typeof scoreWorkoutEfficiency>;
+type RunEfficiency = { result: EfficiencyScoreResult; baselineRunCount: number };
 
 function getLocalDate(w: HealthWorkout): Date {
   return w.startDate;
@@ -461,7 +461,6 @@ function RunRow({
           {efficiency && (
             <EfficiencyScoreBadge
               result={efficiency.result}
-              tier={efficiency.tier}
               baselineRunCount={efficiency.baselineRunCount}
             />
           )}
@@ -769,19 +768,32 @@ export default function RunsPage() {
     [plans]
   );
 
-  // Efficiency baselines + per-run tier are computed ONCE over the shared run
-  // set (60-day trailing window inside the builder). No new Firestore reads —
-  // this reuses the AppDataContext workouts array. Older/out-of-window runs are
-  // absent from the tier map and fall back to BASELINE inside the helper.
+  // Efficiency score per run, each against its OWN date-anchored 60-day baseline
+  // (a trailing window ending strictly before that run, self-excluded) so a
+  // run's score never drifts as newer runs arrive. No new Firestore reads — this
+  // reuses the AppDataContext workouts array and the resolved HR anchors.
   const efficiencyByRun = useMemo(() => {
-    const baselines = buildEfficiencyBaselines(allRuns);
-    const tierMap = buildEfficiencyTierMap(allRuns);
     const map = new Map<string, RunEfficiency>();
     for (const r of allRuns) {
-      map.set(r.workoutId, scoreWorkoutEfficiency(r, baselines, tierMap));
+      const others = allRuns.filter((o) => o !== r);
+      const baseline = buildEfficiencyBaseline(
+        others,
+        getLocalDate(r),
+        restingHr,
+        maxHr
+      );
+      const result = computeEfficiencyScore({
+        avgPaceSecPerMile: r.avgPaceSecPerMile ?? 0,
+        avgHeartRate: r.avgHeartRate ?? 0,
+        cadenceSPM: r.cadenceSPM ?? null,
+        restingHr,
+        maxHr,
+        baseline,
+      });
+      map.set(r.workoutId, { result, baselineRunCount: baseline.runCount });
     }
     return map;
-  }, [allRuns]);
+  }, [allRuns, maxHr, restingHr]);
 
   const [isRefreshing, setIsRefreshing] = useState(false);
   const handleManualRefresh = useCallback(async () => {

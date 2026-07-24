@@ -4,13 +4,11 @@ import React, { useRef, useState } from "react";
 import {
   MIN_BASELINE_RUNS,
   type EfficiencyScoreResult,
-  type EfficiencyTier,
 } from "@/utils/efficiencyScore";
 
 interface EfficiencyScoreBadgeProps {
   result: EfficiencyScoreResult;
-  tier: EfficiencyTier;
-  /** inputs.baseline.runCount from the caller — used ONLY for the
+  /** The run's baseline runCount from the caller — used ONLY for the
    *  "building baseline" tooltip messaging (how far off a usable baseline is). */
   baselineRunCount: number;
 }
@@ -19,9 +17,8 @@ interface EfficiencyScoreBadgeProps {
  * Score → color band. 65+ reads as efficient (green), <35 as inefficient
  * (red), everything between neutral (amber).
  *
- * DEVIATION from the Phase-1/2 prompt (which specified this as a non-exported
- * internal helper): exported so it can be unit-tested directly, per the test
- * requirements. Not part of the component's rendering contract.
+ * Exported so it can be unit-tested directly. Not part of the component's
+ * rendering contract.
  */
 export function getScoreBand(score: number): "high" | "mid" | "low" {
   if (score >= 65) return "high";
@@ -37,13 +34,6 @@ const BAND_CLASSES: Record<"high" | "mid" | "low", string> = {
   low: "text-danger bg-danger/10 border-danger/20",
 };
 
-// Raw enum → human label shown in the tooltip (never the raw enum).
-const TIER_LABEL: Record<EfficiencyTier, string> = {
-  BASELINE: "easy",
-  QUALITY: "quality",
-  RACE: "race",
-};
-
 /** Round a fraction (0.12) to a signed percent string ("+12%", "-8%", "0%"). */
 function signedPct(fraction: number): string {
   const pct = Math.round(fraction * 100);
@@ -57,7 +47,6 @@ function signedPct(fraction: number): string {
  */
 export function EfficiencyScoreBadge({
   result,
-  tier,
   baselineRunCount,
 }: EfficiencyScoreBadgeProps): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null);
@@ -109,8 +98,8 @@ export function EfficiencyScoreBadge({
           </p>
           {isBuilding ? (
             <p className="text-[11px] text-textSecondary">
-              Not enough similar-effort runs yet in the last 60 days (
-              {baselineRunCount} of {MIN_BASELINE_RUNS}).
+              Not enough runs yet in the last 60 days ({baselineRunCount} of{" "}
+              {MIN_BASELINE_RUNS}).
             </p>
           ) : (
             <div className="space-y-1 text-[11px] text-textSecondary">
@@ -122,16 +111,23 @@ export function EfficiencyScoreBadge({
               </div>
               {result.percentDeltaVsBaseline != null && (
                 <div className="flex justify-between gap-2">
-                  <span>vs your 60-day baseline</span>
+                  <span>
+                    vs your 60-day baseline
+                    {result.usedRegression ? " (effort-adjusted)" : ""}
+                  </span>
                   <span className="tabular-nums text-textPrimary">
                     {signedPct(result.percentDeltaVsBaseline)}
                   </span>
                 </div>
               )}
-              <div className="flex justify-between gap-2">
-                <span>Effort type</span>
-                <span className="text-textPrimary">{TIER_LABEL[tier]}</span>
-              </div>
+              {result.hrrPct != null && (
+                <div className="flex justify-between gap-2">
+                  <span>Effort</span>
+                  <span className="tabular-nums text-textPrimary">
+                    {result.hrrPct}% HRR
+                  </span>
+                </div>
+              )}
               {result.cadenceDeltaVsBaseline != null && (
                 <div className="flex justify-between gap-2">
                   <span>Cadence vs baseline</span>
@@ -143,7 +139,7 @@ export function EfficiencyScoreBadge({
             </div>
           )}
           <p className="text-[10px] text-textSecondary italic mt-2">
-            Speed per heartbeat vs your own recent {TIER_LABEL[tier]}-effort runs.
+            Speed per heartbeat vs your own recent runs at a similar effort level.
           </p>
         </div>
       )}

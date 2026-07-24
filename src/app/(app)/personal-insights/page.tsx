@@ -1651,7 +1651,11 @@ export default function PersonalInsightsPage() {
 
       {/* ── Efficiency Trend ─────────────────────────────── */}
       <div className="mt-6">
-        <EfficiencyTrendSection workouts={workouts} />
+        <EfficiencyTrendSection
+          workouts={workouts}
+          restingHr={restingHr}
+          maxHr={maxHr}
+        />
       </div>
         </>
       )}
