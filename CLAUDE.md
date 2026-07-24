@@ -64,7 +64,7 @@ Deferred:         [anything not completed, or "none"]
 | Local repo | /Users/johnfolstrom/Desktop/training-web |
 | iOS sync repo | cgradbad89/MEA.git — do not modify from this repo |
 | Firestore rules | Do not modify without explicit task instruction |
-| API keys | `ANTHROPIC_API_KEY` is server-only — never `NEXT_PUBLIC_ANTHROPIC_*` |
+| API keys | `GEMINI_API_KEY` and `ANTHROPIC_API_KEY` are server-only — never `NEXT_PUBLIC_*` |
 
 ## Architecture Quick Reference
 
@@ -72,7 +72,7 @@ Deferred:         [anything not completed, or "none"]
 src/
   app/
     (app)/          # Auth-guarded routes (dashboard, runs, plans, health, etc.)
-    api/coach/      # Server-side Anthropic API route
+    api/coach/      # Server-side Gemini & Anthropic API route
     login/          # Public login page
   components/       # Shared UI components + layout/
   hooks/            # useAuth, useActivities, useUnsavedChanges

@@ -46,6 +46,7 @@ export default function CoachPage() {
   const [response, setResponse] = useState('')
   const [asking, setAsking] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [provider, setProvider] = useState<'gemini' | 'anthropic'>('gemini')
   const [hasAsked, setHasAsked] = useState(false)
   const responseRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -171,6 +172,7 @@ export default function CoachPage() {
         body: JSON.stringify({
           question: questionToAsk,
           context,
+          provider,
         }),
         signal: controller.signal,
       })
@@ -218,10 +220,20 @@ export default function CoachPage() {
                         justify-center">
           <BotMessageSquare className="w-5 h-5 text-primary" />
         </div>
-        <div>
-          <h1 className="text-2xl font-bold text-textPrimary">AI Coach</h1>
+        <div className="flex-1">
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold text-textPrimary">AI Coach</h1>
+            <select
+              value={provider}
+              onChange={e => setProvider(e.target.value as 'gemini' | 'anthropic')}
+              className="text-xs bg-surface border border-border rounded-lg px-2 py-1 text-textSecondary outline-none focus:ring-1 focus:ring-primary/20"
+            >
+              <option value="gemini">Gemini 2.5 (Default)</option>
+              <option value="anthropic">Claude Sonnet</option>
+            </select>
+          </div>
           <p className="text-xs text-textSecondary mt-0.5">
-            Powered by Claude · Based on your last 30 days of training
+            Based on your last 30 days of training
           </p>
         </div>
         {context && (

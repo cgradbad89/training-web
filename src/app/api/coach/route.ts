@@ -1,8 +1,13 @@
 import Anthropic from '@anthropic-ai/sdk'
+import { GoogleGenAI } from '@google/genai'
 import { NextRequest } from 'next/server'
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
+})
+
+const gemini = new GoogleGenAI({
+  apiKey: process.env.GEMINI_API_KEY,
 })
 
 export async function POST(req: NextRequest) {
@@ -28,7 +33,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { question, context } = await req.json()
+    const { question, context, provider = 'gemini' } = await req.json()
 
     if (!question || !context) {
       return new Response(
@@ -40,30 +45,53 @@ export async function POST(req: NextRequest) {
     // Build structured system prompt with all training context
     const systemPrompt = buildSystemPrompt(context)
 
-    // Stream response from Claude
-    const stream = await anthropic.messages.stream({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 1024,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: question }],
-    })
+    let readable: ReadableStream;
 
-    // Return as a ReadableStream for streaming to client
-    const readable = new ReadableStream({
-      async start(controller) {
-        for await (const chunk of stream) {
-          if (
-            chunk.type === 'content_block_delta' &&
-            chunk.delta.type === 'text_delta'
-          ) {
-            controller.enqueue(
-              new TextEncoder().encode(chunk.delta.text)
-            )
+    if (provider === 'anthropic') {
+      // Stream response from Claude
+      const stream = await anthropic.messages.stream({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 1024,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: question }],
+      })
+
+      readable = new ReadableStream({
+        async start(controller) {
+          for await (const chunk of stream) {
+            if (
+              chunk.type === 'content_block_delta' &&
+              chunk.delta.type === 'text_delta'
+            ) {
+              controller.enqueue(
+                new TextEncoder().encode(chunk.delta.text)
+              )
+            }
           }
+          controller.close()
+        },
+      })
+    } else {
+      // Default to Gemini
+      const stream = await gemini.models.generateContentStream({
+        model: 'gemini-2.5-pro',
+        contents: question,
+        config: {
+          systemInstruction: systemPrompt,
         }
-        controller.close()
-      },
-    })
+      })
+
+      readable = new ReadableStream({
+        async start(controller) {
+          for await (const chunk of stream) {
+            if (chunk.text) {
+              controller.enqueue(new TextEncoder().encode(chunk.text));
+            }
+          }
+          controller.close()
+        }
+      })
+    }
 
     return new Response(readable, {
       headers: {

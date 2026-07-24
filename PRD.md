@@ -29,7 +29,7 @@
 | Database | Firebase Firestore | ^12.11.0 |
 | Auth | Firebase Auth | ^12.11.0 |
 | Admin SDK | firebase-admin | ^13.7.0 |
-| AI | @anthropic-ai/sdk | ^0.82.0 |
+| AI | @google/genai, @anthropic-ai/sdk | — |
 | Testing | Vitest | ^4.1.2 |
 | Test DOM | happy-dom | ^20.8.9 |
 
@@ -65,7 +65,7 @@
 | Plan Insights | `/(app)/plan-insights` | Done | Running plan adherence, weekly mileage vs plan, predicted vs goal finish time. Adherence math now comes from the shared pure `buildPlanAdherence` (`src/utils/planAdherence.ts`) with `throughDate = getWeekStart(now)` (elapsed-weeks behavior preserved); charts live in `src/components/charts/`. Also a **predicted-finish trend** chart (`PredictionTrendChart`): predicted race time recomputed as of each plan week's end vs. a constant goal reference line, from the pure `buildPredictionTrend` (`src/utils/racePrediction.ts`) — in-memory recompute, no storage. Gated on an active race + linked plan + race distance; shows a "not enough data yet" state until ≥2 weeks predict. The chart also carries a **dashed plan-completion projection** extending the trend to race day (`buildAnchoredPredictionProjection`, `src/utils/predictionTrend.ts`; anchors to today's live prediction and lets the raw blended signal apply only a bounded ±4% nudge — see §7c); absent for past races / plans with no remaining run entries / no live prediction, in which case the chart renders exactly as before. Also an **Actual vs Planned** table (directly below the mileage chart; `src/utils/planActualTable.ts` → `buildActualVsPlannedWeeks`): collapsible week groups (current/most-recent week expanded by default) with one row per planned run — planned/actual distance, pace, and run-level actual avg HR — distance-weighted per-week pace subtotals, and direction-coded deltas (longer distance / faster pace = `text-success`; pace delta is **inverted** so a smaller actual pace reads as good). Pure in-memory derivation reusing `matchPlanToActual` / `statusForRunEntry`; no Firestore writes. See §5.25. |
 | AI Coach | `/(app)/coach` | Done | Chat with Claude using full training context; streaming response |
 | Settings | `/(app)/settings` | Done | Athlete profile settings: max heart rate, resting heart rate (30–120 bpm, default 60, for V2 load), threshold pace, prediction-based threshold suggestion, run-HR max suggestion, and general preferences |
-| API: Coach | `/api/coach` | Done | Server-side Anthropic call; requires Firebase ID token; max_tokens=1024 |
+| API: Coach | `/api/coach` | Done | Server-side Gemini & Anthropic call; requires Firebase ID token |
 
 **Navigation shell (responsive).** The `(app)` layout (`src/app/(app)/layout.tsx`) renders a desktop-only left sidebar (`SideNav`, `w-52` = 208px, `hidden lg:flex`) and, below the `lg` breakpoint, a fixed bottom tab bar (`MobileTabBar`, `src/components/layout/MobileTabBar.tsx`, `lg:hidden`). The tab bar shows **4 primary tabs — This Week, Runs, Workouts, Personal Insights** — plus a **"More"** tab that opens a bottom sheet listing all remaining destinations (Plan Insights, Health, Routes, Plans & Goals, Races, Shoes, AI Coach, Settings); the sheet closes on item tap, backdrop tap, or Escape (plain fixed-overlay + `useState`, no new dependency). All nav surfaces consume a **single source of truth**, `src/components/layout/navItems.ts` (`NAV_ITEMS` full list + `PRIMARY_MOBILE_HREFS` product-decision array; primary/secondary item lists are *derived* from `NAV_ITEMS`, so sidebar and tab bar cannot drift). The primary-4 selection is a product decision and is trivially reorderable by editing `PRIMARY_MOBILE_HREFS`. A partition test (`src/components/layout/__tests__/navItems.test.ts`) guards that primary + secondary exactly cover `NAV_ITEMS` with no dupes/omissions.
 
@@ -365,7 +365,7 @@ Dismissed duplicate workout pairs. Prevents re-surfacing the same duplicate warn
 | Firebase Admin SDK | Server-side ID token verification for `/api/coach` | `FIREBASE_SERVICE_ACCOUNT_JSON` (JSON blob, server-side only) |
 | Google Auth | User authentication (Google OAuth via Firebase) | Uses Firebase config above |
 | Google Maps | Route draw (Maps JS API + Directions API + WALKING mode + Places Autocomplete) | `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` |
-| Anthropic / Claude | AI Coach — model: `claude-sonnet-4-6`, max_tokens 1024 | `ANTHROPIC_API_KEY` (server-side only, never `NEXT_PUBLIC_`) |
+| Gemini / Anthropic | AI Coach — models: `gemini-2.5-pro`, `claude-sonnet-4-6` | `GEMINI_API_KEY`, `ANTHROPIC_API_KEY` (server-side only, never `NEXT_PUBLIC_`) |
 | HealthKit iOS sync | Syncs Apple Watch workouts, health metrics, GPS routes to Firestore | iOS repo: `cgradbad89/MEA.git` — do not modify from this repo |
 | Hub App | Sibling app nav links in HubBanner top bar | `NEXT_PUBLIC_HUB_URL` |
 | Open-Meteo | Historical weather for runs (archive API) — fetched client-side, hour-matched to the run start, cached on `healthWorkouts.weather` | none (free, no API key) |
