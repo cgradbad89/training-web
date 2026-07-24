@@ -116,7 +116,7 @@ export const WORKOUT_CATEGORY_HK_TYPES: Record<WorkoutCategory, string[]> = {
   cycling: ['cycling', 'indoorCycling'],
   pilates: ['pilates', 'mindAndBody', 'mind_and_body'],
   yoga: ['yoga'],
-  hiit: ['highIntensityIntervalTraining', 'crossTraining'],
+  hiit: ['highIntensityIntervalTraining', 'crossTraining', 'workout'],
 }
 
 // ─── Workout plan types (unified — includes former Pilates) ─────────────────
