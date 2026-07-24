@@ -365,7 +365,7 @@ Dismissed duplicate workout pairs. Prevents re-surfacing the same duplicate warn
 | Firebase Admin SDK | Server-side ID token verification for `/api/coach` | `FIREBASE_SERVICE_ACCOUNT_JSON` (JSON blob, server-side only) |
 | Google Auth | User authentication (Google OAuth via Firebase) | Uses Firebase config above |
 | Google Maps | Route draw (Maps JS API + Directions API + WALKING mode + Places Autocomplete) | `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` |
-| Gemini / Anthropic | AI Coach — models: `gemini-2.5-pro`, `claude-sonnet-4-6` | `GEMINI_API_KEY`, `ANTHROPIC_API_KEY` (server-side only, never `NEXT_PUBLIC_`) |
+| Gemini / Anthropic | AI Coach — models: `gemini-2.5-flash`, `claude-sonnet-4-6` | `GEMINI_API_KEY`, `ANTHROPIC_API_KEY` (server-side only, never `NEXT_PUBLIC_`) |
 | HealthKit iOS sync | Syncs Apple Watch workouts, health metrics, GPS routes to Firestore | iOS repo: `cgradbad89/MEA.git` — do not modify from this repo |
 | Hub App | Sibling app nav links in HubBanner top bar | `NEXT_PUBLIC_HUB_URL` |
 | Open-Meteo | Historical weather for runs (archive API) — fetched client-side, hour-matched to the run start, cached on `healthWorkouts.weather` | none (free, no API key) |
