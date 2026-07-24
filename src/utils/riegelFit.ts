@@ -346,7 +346,7 @@ function median(values: number[]): number | null {
 
 // ─── Build qualifying efforts ──────────────────────────────────────────────────
 
-type WorkoutLike = {
+export type WorkoutLike = {
   workoutId: string
   distanceMiles?: number | null
   durationSeconds: number
