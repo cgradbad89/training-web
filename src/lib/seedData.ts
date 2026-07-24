@@ -141,7 +141,7 @@ export const DEFAULT_HALF_MARATHON_PLAN: Omit<RunningPlan, "id" | "createdAt" | 
 
 // ─── September 2026 Half Marathon Plan ───────────────────────────────────────
 //
-// 16-week plan targeting a 9:30–9:45 /mi half marathon on 2026-09-06.
+// 18-week plan targeting a 9:09 /mi half marathon on 2026-09-20.
 // Week 1 begins Monday 2026-05-18.
 // Parsed from the training CSV. OFF/rest days are omitted (no entry record).
 
@@ -181,7 +181,7 @@ function sept(
   weekday: number,
   distanceMiles: number,
   runType: PlanRunType,
-  pace: { seconds: number; mmss: string },
+  pace: { seconds: number; mmss: string } | null,
   description: string,
   notes: string | null = null
 ): PlannedRunEntry {
@@ -192,8 +192,8 @@ function sept(
     dayOfWeek: weekday - 1,
     distanceMiles,
     runType,
-    paceTarget: pace.mmss,
-    targetPaceSecondsPerMile: pace.seconds,
+    paceTarget: pace?.mmss,
+    targetPaceSecondsPerMile: pace?.seconds,
     description,
     notes: notes ?? undefined,
     targetHeartRate: null,
@@ -344,47 +344,75 @@ export const SEPT_HM_PLAN_ENTRIES: PlannedRunEntry[] = [
     "12 miles (last 3 @ 9:20)",
     "Long run moved to Sunday — camping Fri–Sat (Aug 7–8). Last 3 miles @ 9:20"),
 
-  // Week 13 (Peak)
-  sept(12, 1, 3.0, "outdoor", paceMidpoint("10:15", "10:45"),
-    "3 miles easy",
-    "Easy or rest if Sunday's (Wk12) long run was taxing"),
-  sept(12, 2, 7.0, "outdoor", paceMidpoint("9:10", "9:20"),
-    "2 easy + 5 @ tempo"),
-  sept(12, 3, 4.0, "outdoor", paceMidpoint("10:15", "10:45"),
-    "4 miles easy"),
-  sept(12, 4, 5.0, "outdoor", paceMidpoint("10:15", "10:45"),
-    "5 miles easy"),
-  sept(12, 6, 12.5, "longRun", paceMidpoint("10:00", "10:15"),
-    "12-13 miles (last 3 @ 9:15)", "Last 3 miles @ 9:15"),
-
-  // Week 14 (Sharpen)
-  sept(13, 1, 3.0, "outdoor", paceMidpoint("10:15", "10:45"),
+  // Week 13 (Index 12)
+  sept(12, 1, 3.0, "outdoor", paceExact("10:30"),
     "3 miles easy"),
-  sept(13, 2, 6.0, "outdoor", paceMidpoint("9:15", "9:25"),
-    "2 easy + 4 @ race pace"),
-  sept(13, 4, 4.0, "outdoor", paceMidpoint("10:15", "10:45"),
+  sept(12, 2, 6.0, "outdoor", paceMidpoint("8:50", "9:10"),
+    "2 miles easy + 4 miles @ 9:00 pace + 1 mile easy"),
+  sept(12, 3, 4.0, "outdoor", paceExact("10:30"),
     "4 miles easy"),
-  sept(13, 6, 10.0, "longRun", paceMidpoint("10:00", "10:15"),
-    "10 miles (last 2 @ RP)", "Last 2 miles @ race pace"),
+  sept(12, 4, 4.0, "outdoor", paceExact("10:30"),
+    "4 miles easy"),
+  sept(12, 6, 11.0, "longRun", paceExact("10:08"),
+    "11 miles (last 2 @ 9:00)"),
 
-  // Week 15 (Pre-Taper)
-  sept(14, 2, 5.0, "outdoor", paceMidpoint("9:15", "9:25"),
-    "2 easy + 3 @ race pace"),
-  sept(14, 4, 3.0, "outdoor", paceMidpoint("10:15", "10:45"),
+  // Week 14 (Index 13)
+  sept(13, 1, 3.0, "outdoor", paceExact("10:30"),
     "3 miles easy"),
-  sept(14, 6, 8.0, "longRun", paceMidpoint("10:00", "10:20"),
-    "8 miles easy"),
+  sept(13, 2, 6.0, "outdoor", paceMidpoint("8:50", "9:10"),
+    "2 miles easy + 4 miles @ 9:00 pace + 1 mile easy"),
+  sept(13, 3, 4.0, "outdoor", paceExact("10:30"),
+    "4 miles easy"),
+  sept(13, 4, 4.0, "outdoor", paceExact("10:30"),
+    "4 miles easy"),
+  sept(13, 6, 12.0, "longRun", paceExact("10:08"),
+    "12 miles (last 2 @ 9:00)"),
 
-  // Week 16 (Taper + Race)
-  sept(15, 1, 2.5, "outdoor", paceMidpoint("10:15", "10:45"),
-    "2.5 miles easy"),
-  sept(15, 2, 2.0, "outdoor", paceExact("10:15"),
-    "2 miles easy + 4x20s strides"),
-  sept(15, 4, 2.0, "outdoor", paceMidpoint("10:15", "10:45"),
-    "2 miles easy"),
-  sept(15, 7, 13.1, "longRun", paceMidpoint("9:15", "9:30"),
-    "Half Marathon — 13.1 miles",
-    "Primary: sub-9:30 (9:15–9:30/mi) · Stretch: sub-9:15"),
+  // Week 15 (Index 14)
+  sept(14, 1, 3.0, "outdoor", paceExact("10:30"),
+    "3 miles easy"),
+  sept(14, 2, 7.0, "outdoor", paceMidpoint("8:50", "9:10"),
+    "2 miles easy + 5 miles @ 9:00 pace + 1 mile easy"),
+  sept(14, 3, 4.0, "outdoor", paceExact("10:30"),
+    "4 miles easy"),
+  sept(14, 4, 4.0, "outdoor", paceExact("10:30"),
+    "4 miles easy"),
+  sept(14, 6, 13.0, "longRun", paceExact("10:08"),
+    "13 miles (last 3 @ 9:00)"),
+
+  // Week 16 (Index 15)
+  sept(15, 1, 3.0, "outdoor", paceExact("10:30"),
+    "3 miles easy"),
+  sept(15, 2, 6.0, "outdoor", paceExact("8:45"),
+    "2 miles easy + 6x800m hard (8:45 pace) with 400m jog + 1.5 miles easy"),
+  sept(15, 3, 4.0, "outdoor", paceExact("10:30"),
+    "4 miles easy"),
+  sept(15, 4, 4.0, "outdoor", paceExact("10:30"),
+    "4 miles easy"),
+  sept(15, 6, 10.0, "longRun", paceExact("10:30"),
+    "10 miles easy"),
+
+  // Week 17 (Index 16)
+  sept(16, 1, 3.0, "outdoor", paceExact("10:30"),
+    "3 miles easy"),
+  sept(16, 2, 5.0, "outdoor", paceMidpoint("8:50", "9:10"),
+    "2 miles easy + 3 miles @ 9:00 pace + 1 mile easy"),
+  sept(16, 3, 3.0, "outdoor", paceExact("10:30"),
+    "3 miles easy"),
+  sept(16, 4, 3.0, "outdoor", paceExact("10:30"),
+    "3 miles easy"),
+  sept(16, 6, 8.0, "longRun", paceExact("10:30"),
+    "8 miles strictly easy", "Let legs recover"),
+
+  // Week 18 (Index 17)
+  sept(17, 2, 3.0, "outdoor", null,
+    "3 miles easy + 4x30s strides"),
+  sept(17, 3, 3.0, "outdoor", paceExact("10:30"),
+    "3 miles easy"),
+  sept(17, 4, 2.0, "outdoor", paceExact("10:30"),
+    "2 miles shakeout"),
+  sept(17, 7, 13.1, "longRun", paceMidpoint("9:00", "9:09"),
+    "Half Marathon — 13.1 miles", "Target 9:09 pace for sub-2:00"),
 ];
 
 /** Group a flat entry list into PlanWeek[] for the given week count. */
@@ -417,8 +445,8 @@ export async function seedSeptHMPlan(userId: string): Promise<{
   raceCreated: boolean;
 }> {
   // ── Race linkage ────────────────────────────────────────────────────────
-  const RACE_DATE = "2026-09-06";
-  const TARGET_PACE_SECONDS = 555; // 9:15 stretch pace — primary sub-9:30, stretch sub-9:15
+  const RACE_DATE = "2026-09-20";
+  const TARGET_PACE_SECONDS = 549; // 9:09 target pace
 
   let raceId: string;
   let raceCreated = false;
@@ -454,9 +482,9 @@ export async function seedSeptHMPlan(userId: string): Promise<{
   }
 
   // ── Plan ────────────────────────────────────────────────────────────────
-  const numberOfWeeks = 16;
+  const numberOfWeeks = 18;
   const plan = await createPlan<RunningPlan>(userId, {
-    name: "Half Marathon — Sept 2026 (Sub 9:30)",
+    name: "Half Marathon — Sept 20, 2026 (Sub 9:09)",
     planType: "running",
     startDate: "2026-05-18",
     status: "draft",
@@ -485,7 +513,7 @@ export function buildSeptTravelMigration(
 ): RunningPlan | null {
   if (existingPlan.travelRevision === "reduced-travel-v1") return null;
 
-  const newWeeks = groupEntriesIntoWeeks(SEPT_HM_PLAN_ENTRIES, 16);
+  const newWeeks = groupEntriesIntoWeeks(SEPT_HM_PLAN_ENTRIES, 18);
   const mergedWeeks = newWeeks.map((newWeek) => {
     if (newWeek.weekNumber <= 2) {
       return (
