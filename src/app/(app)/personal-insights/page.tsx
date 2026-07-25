@@ -20,7 +20,7 @@ import { PersonalInsightsSkeleton } from "./PersonalInsightsSkeleton";
 import { InsightsTabsBar, type InsightsTab } from "./InsightsTabsBar";
 // Best Efforts hidden per product decision (restore with the render block below).
 // import { BestEffortsSection } from "./BestEffortsSection";
-import { type PaceRangeRun } from "@/lib/paceRangeTrend";
+import { type RunAnalysisWorkout } from "@/lib/runAnalysisTrend";
 import { MetricBadge } from "@/components/ui/MetricBadge";
 import { useAuth } from "@/hooks/useAuth";
 import { useAppData } from "@/contexts/AppDataContext";
@@ -155,8 +155,11 @@ import { db } from "@/lib/firebase";
 // placeholder while its chunk streams in. The three "…Chart" wrappers are the
 // page's own inline charts extracted verbatim (props/behavior/colors unchanged);
 // the section components are lazy-imported at their existing call sites.
-const PaceByDistanceSection = dynamic(
-  () => import("./PaceByDistanceSection").then((m) => m.PaceByDistanceSection),
+const RunAnalysisSection = dynamic(
+  () =>
+    import("@/components/insights/RunAnalysisSection").then(
+      (m) => m.RunAnalysisSection,
+    ),
   { ssr: false, loading: () => <ChartSkeleton height={400} /> },
 );
 const WorkoutTrendsSection = dynamic(
@@ -181,13 +184,6 @@ const Vo2TrendChart = dynamic(
 const PaceTrendChart = dynamic(
   () => import("./PaceTrendChart").then((m) => m.PaceTrendChart),
   { ssr: false, loading: () => <ChartSkeleton height={220} /> },
-);
-const EfficiencyTrendSection = dynamic(
-  () =>
-    import("@/components/insights/EfficiencyTrendSection").then(
-      (m) => m.EfficiencyTrendSection,
-    ),
-  { ssr: false, loading: () => <ChartSkeleton height={300} /> },
 );
 const WeatherImpactSection = dynamic(
   () => import("./WeatherImpactSection").then((m) => m.WeatherImpactSection),
@@ -1069,15 +1065,22 @@ export default function PersonalInsightsPage() {
 
   const runs = useMemo(() => workouts.filter((w) => w.isRunLike), [workouts]);
 
-  // Mapping for the "Pace by distance" section. startDate is already a JS Date
-  // on HealthWorkout (no .toDate() needed). Memoized so the section's internal
-  // useMemo stays stable across unrelated re-renders.
-  const paceRangeRuns = useMemo<PaceRangeRun[]>(
+  // Mapping for the "Run Analysis" section. HealthWorkout.startDate is a JS Date;
+  // RunAnalysisWorkout.date is a string, so we serialize via toISOString() — it
+  // round-trips to the identical instant, so local-day bucketing is preserved.
+  // Memoized so the section's internal useMemo stays stable across unrelated
+  // re-renders.
+  const runAnalysisWorkouts = useMemo<RunAnalysisWorkout[]>(
     () =>
       runs.map((r) => ({
+        workoutId: r.workoutId,
+        date: r.startDate.toISOString(),
         distanceMiles: r.distanceMiles,
         durationSeconds: r.durationSeconds,
-        date: r.startDate,
+        avgPaceSecPerMile: r.avgPaceSecPerMile,
+        avgHeartRate: r.avgHeartRate,
+        cadenceSPM: r.cadenceSPM,
+        activityType: r.activityType,
       })),
     [runs]
   );
@@ -1497,8 +1500,12 @@ export default function PersonalInsightsPage() {
         </Card>
       )}
 
-      {/* ── Pace by Distance (mileage-range trend) ──────── */}
-      <PaceByDistanceSection runs={paceRangeRuns} />
+      {/* ── Run Analysis (merged metric trend by distance range) ──────── */}
+      <RunAnalysisSection
+        workouts={runAnalysisWorkouts}
+        restingHr={restingHr}
+        maxHr={maxHr}
+      />
 
       {/* ── Weather impact (pace & HR vs. temperature) ──── */}
       <SectionHeader icon={CloudSun} title="Weather Impact" />
@@ -1649,14 +1656,6 @@ export default function PersonalInsightsPage() {
         </button>
       </Card>
 
-      {/* ── Efficiency Trend ─────────────────────────────── */}
-      <div className="mt-6">
-        <EfficiencyTrendSection
-          workouts={workouts}
-          restingHr={restingHr}
-          maxHr={maxHr}
-        />
-      </div>
         </>
       )}
 
