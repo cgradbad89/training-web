@@ -87,11 +87,17 @@ function monthStart(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), 1);
 }
 
-function periodStartFor(date: Date, granularity: TrendGranularity): Date {
+export function periodStartFor(
+  date: Date,
+  granularity: TrendGranularity
+): Date {
   return granularity === "week" ? weekStart(date) : monthStart(date);
 }
 
-function labelFor(periodStart: Date, granularity: TrendGranularity): string {
+export function labelFor(
+  periodStart: Date,
+  granularity: TrendGranularity
+): string {
   if (granularity === "week") {
     return periodStart.toLocaleDateString("en-US", {
       month: "short",
