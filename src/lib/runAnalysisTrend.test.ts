@@ -45,31 +45,60 @@ function w(
   };
 }
 
-describe("buildRunAnalysisTrend — pace metric", () => {
-  it("averages avgPaceSecPerMile (simple mean) of in-range runs per bucket", () => {
-    // Two runs in the same Mon-Sun week (Mon May 4 2026): paces 400 & 500.
-    const runs = [
-      w("a", iso(2026, 4, 4), 4, 1600, { pace: 400 }),
-      w("b", iso(2026, 4, 6), 4, 2200, { pace: 500 }),
+describe("buildRunAnalysisTrend — pace metric (distance-weighted)", () => {
+  it("matches computePaceRangeTrend's per-bucket value exactly (parity)", () => {
+    // One long run and one short run at different paces, same week bucket
+    // (Mon May 4 2026). Both derived paces (dur/miles) sit within
+    // computePaceRangeTrend's [180,1200] sanity bounds so the two are comparable.
+    const specs = [
+      { id: "long", y: 2026, m: 4, d: 4, miles: 10, dur: 5000 }, // 500 s/mi
+      { id: "short", y: 2026, m: 4, d: 6, miles: 2, dur: 800 }, //  400 s/mi
     ];
-    const pts = buildRunAnalysisTrend(runs, "pace", 1, 10, "3m", RESTING_HR, MAX_HR, NOW);
+    const runs = specs.map((s) =>
+      w(s.id, iso(s.y, s.m, s.d), s.miles, s.dur, { pace: s.dur / s.miles })
+    );
+    const paceRuns: PaceRangeRun[] = specs.map((s) => ({
+      distanceMiles: s.miles,
+      durationSeconds: s.dur,
+      date: new Date(s.y, s.m, s.d, 12),
+    }));
+
+    const pts = buildRunAnalysisTrend(runs, "pace", 1, 15, "3m", RESTING_HR, MAX_HR, NOW);
+    const ref = computePaceRangeTrend(paceRuns, 1, 15, "3m", NOW);
+
     expect(pts).toHaveLength(1);
-    expect(pts[0].value).toBe(450);
+    expect(ref.points).toHaveLength(1);
+    // Identical per-bucket value against REAL computePaceRangeTrend output.
+    expect(pts[0].value as number).toBeCloseTo(ref.points[0].avgPaceSeconds, 10);
     expect(pts[0].runCount).toBe(2);
   });
 
-  it("excludes runs with null/invalid pace from the average", () => {
+  it("weights by distance so a long+short mix differs from a naive simple mean", () => {
+    // long: 10 mi @ 500 s/mi, short: 2 mi @ 400 s/mi in one bucket.
     const runs = [
-      w("a", iso(2026, 4, 4), 4, 1600, { pace: 400 }),
-      w("b", iso(2026, 4, 5), 4, 2000, { pace: null }),
-      w("c", iso(2026, 4, 6), 4, 2200, { pace: 500 }),
+      w("long", iso(2026, 4, 4), 10, 5000, { pace: 500 }),
+      w("short", iso(2026, 4, 6), 2, 800, { pace: 400 }),
+    ];
+    const pts = buildRunAnalysisTrend(runs, "pace", 1, 15, "3m", RESTING_HR, MAX_HR, NOW);
+    expect(pts).toHaveLength(1);
+    // Distance-weighted = Σdur/Σmiles = (5000+800)/(10+2) = 5800/12 ≈ 483.33 s/mi.
+    expect(pts[0].value as number).toBeCloseTo(5800 / 12, 10);
+    // NOT the naive simple mean of (500+400)/2 = 450 — regression guard.
+    const simpleMean = (500 + 400) / 2;
+    expect(Math.abs((pts[0].value as number) - simpleMean)).toBeGreaterThan(10);
+    expect(pts[0].runCount).toBe(2);
+  });
+
+  it("returns value null when no run has a computable pace (zero duration)", () => {
+    const runs = [
+      w("a", iso(2026, 4, 4), 4, 0, { pace: null }),
+      w("b", iso(2026, 4, 6), 4, 0, { pace: null }),
     ];
     const pts = buildRunAnalysisTrend(runs, "pace", 1, 10, "3m", RESTING_HR, MAX_HR, NOW);
     expect(pts).toHaveLength(1);
-    // Mean of 400 & 500 only; the null-pace run doesn't dilute it.
-    expect(pts[0].value).toBe(450);
-    // runCount still counts ALL distance-matched runs, incl. the null-pace one.
-    expect(pts[0].runCount).toBe(3);
+    expect(pts[0].value).toBeNull(); // null gap, NOT 0
+    // runCount still counts ALL distance-matched runs.
+    expect(pts[0].runCount).toBe(2);
   });
 });
 
@@ -225,7 +254,8 @@ describe("buildRunAnalysisTrend — distance-range filtering", () => {
     const pts = buildRunAnalysisTrend(runs, "pace", 3, 5, "3m", RESTING_HR, MAX_HR, NOW);
     expect(pts).toHaveLength(1);
     expect(pts[0].runCount).toBe(3);
-    expect(pts[0].value).toBeCloseTo((500 + 400 + 500) / 3, 10);
+    // Distance-weighted Σdur/Σmiles = (1500+1600+2500)/(3+4+5) = 5600/12.
+    expect(pts[0].value as number).toBeCloseTo(5600 / 12, 10);
   });
 
   it("excludes runs just below min and just above max", () => {
@@ -291,12 +321,13 @@ describe("buildRunAnalysisTrend — window + granularity parity with paceRangeTr
   it("excludes runs before the trailing-window start", () => {
     const runs = [
       w("old", iso(2026, 1, 1), 4, 1600, { pace: 400 }), // Feb 1 — outside 3m
-      w("recent", iso(2026, 4, 4), 4, 1600, { pace: 500 }), // May 4 — inside
+      w("recent", iso(2026, 4, 4), 4, 2000, { pace: 500 }), // May 4 — inside (2000/4=500)
     ];
     // 3m window from NOW (Jun 1) starts Mar 1, so the Feb 1 run is excluded.
     const pts = buildRunAnalysisTrend(runs, "pace", 1, 10, "3m", RESTING_HR, MAX_HR, NOW);
     expect(pts).toHaveLength(1);
     expect(pts[0].runCount).toBe(1);
+    // Single in-window run: distance-weighted pace = 2000/4 = 500 s/mi.
     expect(pts[0].value).toBe(500);
   });
 });

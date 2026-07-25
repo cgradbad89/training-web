@@ -93,43 +93,69 @@ function toEfficiencyWorkout(w: RunAnalysisWorkout): EfficiencyWorkout {
  * baseline). A null contribution is EXCLUDED from the bucket average — never
  * treated as 0.
  */
-function metricValueForRun(
+function metricContribution(
   w: RunAnalysisWorkout,
   metric: RunAnalysisMetric,
   effScores: Map<string, EfficiencyScoreResult> | null,
   restingHr: number,
   maxHr: number
-): number | null {
+): { value: number; weight: number } | null {
   switch (metric) {
-    case "pace":
-      return isPositiveFinite(w.avgPaceSecPerMile) ? w.avgPaceSecPerMile : null;
+    case "pace": {
+      // DISTANCE-WEIGHTED, matching computePaceRangeTrend exactly: pace is
+      // derived from durationSeconds / distanceMiles (NOT the avgPaceSecPerMile
+      // field) and weighted by distanceMiles, so a bucket reduces to
+      // Σ durationSeconds / Σ distanceMiles. Runs without a positive distance or
+      // duration can't yield a pace and are excluded (a long+short mix is then
+      // weighted by mileage, not counted equally). NB: computePaceRangeTrend's
+      // extra [180,1200] sec/mi sanity bounds are caller-level filtering and are
+      // intentionally NOT replicated here — per this fix, only the aggregation
+      // formula changes; bucketing/filtering stay as-is.
+      if (!isPositiveFinite(w.distanceMiles)) return null;
+      if (!isPositiveFinite(w.durationSeconds)) return null;
+      const pace = w.durationSeconds / w.distanceMiles;
+      if (!Number.isFinite(pace)) return null;
+      return { value: pace, weight: w.distanceMiles };
+    }
     case "cadence":
-      return isPositiveFinite(w.cadenceSPM) ? w.cadenceSPM : null;
+      return isPositiveFinite(w.cadenceSPM)
+        ? { value: w.cadenceSPM, weight: 1 }
+        : null;
     case "heartRate":
-      return isPositiveFinite(w.avgHeartRate) ? w.avgHeartRate : null;
-    case "load":
-      return computeTrainingLoadV2(
+      return isPositiveFinite(w.avgHeartRate)
+        ? { value: w.avgHeartRate, weight: 1 }
+        : null;
+    case "load": {
+      const load = computeTrainingLoadV2(
         w.durationSeconds,
         w.avgHeartRate,
         maxHr,
         restingHr,
         w.activityType
       );
+      return load != null && Number.isFinite(load)
+        ? { value: load, weight: 1 }
+        : null;
+    }
     case "efficiencyScore": {
       const r = effScores?.get(w.workoutId);
       // Only 'scored' runs count; 'building_baseline' is excluded (not 0).
       if (!r || r.status !== "scored" || r.score == null) return null;
-      return r.score;
+      return { value: r.score, weight: 1 };
     }
   }
 }
 
 interface BucketAccum {
   periodStart: Date;
-  /** Sum of valid metric contributions. */
-  sum: number;
-  /** Runs that contributed a valid (non-null) metric value. */
-  metricCount: number;
+  /** Σ(value × weight) across contributing runs. For pace, weight = miles so
+   *  this is Σ durationSeconds; for the other metrics weight = 1 so it is a
+   *  plain Σ value. */
+  weightedSum: number;
+  /** Σ(weight) — the denominator, and the "did any run contribute?" gate. For
+   *  the weight-1 metrics this equals the count of contributing runs, so their
+   *  arithmetic (weightedSum / weightSum) is identical to a simple mean. */
+  weightSum: number;
   /** Distance+window-matching runs, regardless of metric computability. */
   runCount: number;
 }
@@ -192,15 +218,20 @@ export function buildRunAnalysisTrend(
     const key = ps.getTime();
     let bucket = buckets.get(key);
     if (!bucket) {
-      bucket = { periodStart: ps, sum: 0, metricCount: 0, runCount: 0 };
+      bucket = { periodStart: ps, weightedSum: 0, weightSum: 0, runCount: 0 };
       buckets.set(key, bucket);
     }
     bucket.runCount += 1;
 
-    const value = metricValueForRun(w, metric, effScores, restingHr, maxHr);
-    if (value != null && Number.isFinite(value)) {
-      bucket.sum += value;
-      bucket.metricCount += 1;
+    const contrib = metricContribution(w, metric, effScores, restingHr, maxHr);
+    if (
+      contrib != null &&
+      Number.isFinite(contrib.value) &&
+      Number.isFinite(contrib.weight) &&
+      contrib.weight > 0
+    ) {
+      bucket.weightedSum += contrib.value * contrib.weight;
+      bucket.weightSum += contrib.weight;
     }
   }
 
@@ -209,7 +240,7 @@ export function buildRunAnalysisTrend(
     .map((b) => ({
       bucketLabel: labelFor(b.periodStart, granularity),
       bucketStartDate: isoDate(b.periodStart),
-      value: b.metricCount > 0 ? b.sum / b.metricCount : null,
+      value: b.weightSum > 0 ? b.weightedSum / b.weightSum : null,
       runCount: b.runCount,
     }));
 }
