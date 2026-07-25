@@ -42,9 +42,10 @@ export interface PaceRangeTrendResult {
 }
 
 // Pace sanity bounds (sec/mi). Mirrors the guard used elsewhere on this page
-// for the fastest-mile computation.
-const MIN_VALID_PACE = 180;
-const MAX_VALID_PACE = 1200;
+// for the fastest-mile computation. Exported so runAnalysisTrend's pace metric
+// applies the identical outlier guard (single source of truth).
+export const MIN_VALID_PACE = 180;
+export const MAX_VALID_PACE = 1200;
 
 /** 1m/2m/3m bucket by week; 6m/12m/ytd bucket by month. */
 export function granularityForWindow(window: TrendWindow): TrendGranularity {

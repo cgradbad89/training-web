@@ -19,6 +19,8 @@ import {
   windowStartDate,
   periodStartFor,
   labelFor,
+  MIN_VALID_PACE,
+  MAX_VALID_PACE,
   type TrendWindow,
 } from "@/lib/paceRangeTrend";
 import { computeTrainingLoadV2 } from "@/utils/trainingLoad";
@@ -108,13 +110,15 @@ function metricContribution(
       // Σ durationSeconds / Σ distanceMiles. Runs without a positive distance or
       // duration can't yield a pace and are excluded (a long+short mix is then
       // weighted by mileage, not counted equally). NB: computePaceRangeTrend's
-      // extra [180,1200] sec/mi sanity bounds are caller-level filtering and are
-      // intentionally NOT replicated here — per this fix, only the aggregation
-      // formula changes; bucketing/filtering stay as-is.
+      // [MIN_VALID_PACE, MAX_VALID_PACE] sec/mi sanity bounds — the SAME outlier
+      // guard computePaceRangeTrend applies (a GPS-glitch sub-3:00/mi split or a
+      // stopped-clock 20:00+/mi crawl is dropped so it can't distort the bucket).
+      // Pace-metric only; the other metrics have no such bound.
       if (!isPositiveFinite(w.distanceMiles)) return null;
       if (!isPositiveFinite(w.durationSeconds)) return null;
       const pace = w.durationSeconds / w.distanceMiles;
       if (!Number.isFinite(pace)) return null;
+      if (pace < MIN_VALID_PACE || pace > MAX_VALID_PACE) return null;
       return { value: pace, weight: w.distanceMiles };
     }
     case "cadence":

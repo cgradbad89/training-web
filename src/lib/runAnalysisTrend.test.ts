@@ -102,6 +102,55 @@ describe("buildRunAnalysisTrend — pace metric (distance-weighted)", () => {
   });
 });
 
+describe("buildRunAnalysisTrend — pace outlier guard ([180,1200] sec/mi)", () => {
+  it("excludes a run whose derived pace is below 180 sec/mi (GPS glitch)", () => {
+    const runs = [
+      w("glitch", iso(2026, 4, 4), 3, 300, { pace: 100 }), // 300/3 = 100 s/mi (<180)
+      w("valid", iso(2026, 4, 6), 4, 1600, { pace: 400 }), // 1600/4 = 400 s/mi
+    ];
+    const pts = buildRunAnalysisTrend(runs, "pace", 1, 10, "3m", RESTING_HR, MAX_HR, NOW);
+    expect(pts).toHaveLength(1);
+    // The sub-3:00/mi glitch is dropped; value = the valid run's pace only.
+    expect(pts[0].value).toBe(400);
+    // runCount is metric-agnostic (raw distance-filtered set) — unchanged here.
+    expect(pts[0].runCount).toBe(2);
+  });
+
+  it("excludes a run whose derived pace is above 1200 sec/mi (stopped-clock crawl)", () => {
+    const runs = [
+      w("crawl", iso(2026, 4, 4), 1, 1500, { pace: 1500 }), // 1500/1 = 1500 s/mi (>1200)
+      w("valid", iso(2026, 4, 6), 4, 1600, { pace: 400 }),
+    ];
+    const pts = buildRunAnalysisTrend(runs, "pace", 1, 10, "3m", RESTING_HR, MAX_HR, NOW);
+    expect(pts).toHaveLength(1);
+    expect(pts[0].value).toBe(400);
+    expect(pts[0].runCount).toBe(2);
+  });
+
+  it("does NOT apply the pace guard to another metric (heartRate)", () => {
+    // Same two outlier-PACE runs, but both carry a valid avgHeartRate. The pace
+    // bound is pace-only, so both contribute to the heartRate average.
+    const runs = [
+      w("glitch", iso(2026, 4, 4), 3, 300, { pace: 100, hr: 190 }),
+      w("crawl", iso(2026, 4, 6), 1, 1500, { pace: 1500, hr: 130 }),
+    ];
+    const pts = buildRunAnalysisTrend(
+      runs,
+      "heartRate",
+      1,
+      10,
+      "3m",
+      RESTING_HR,
+      MAX_HR,
+      NOW
+    );
+    expect(pts).toHaveLength(1);
+    // Mean of 190 & 130 — neither run is dropped by the pace guard.
+    expect(pts[0].value).toBe(160);
+    expect(pts[0].runCount).toBe(2);
+  });
+});
+
 describe("buildRunAnalysisTrend — cadence metric", () => {
   it("averages cadenceSPM, ignoring null cadence", () => {
     const runs = [
