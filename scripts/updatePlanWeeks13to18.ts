@@ -221,6 +221,226 @@ export async function dumpRawRange(from: string, to: string): Promise<void> {
   if (reportPath) writeFileSync(reportPath, lines.join("\n"), "utf8");
 }
 
+// ─── Phase 2 (follow-up session): restore 7 entries stripped by the prior
+// reduced-travel-v1 migration. Values cross-checked against
+// src/lib/seedData.ts's SEPT_HM_PLAN_ENTRIES (the canonical source this plan
+// was seeded from) — all match exactly except 2026-09-08's paceTarget, where
+// the live sibling convention (established on 8/11, 8/18, 8/25 in the prior
+// session) stores the literal "8:50-9:10" range string rather than the seed's
+// collapsed single-value midpoint "9:00"; both agree on the underlying
+// targetPaceSecondsPerMile (540).
+//
+// IDs deliberately do NOT reuse the seed's "sept-hm-w{weekIndex}-d{weekday}"
+// convention: sept-hm-w16-d2 already exists in the live plan but was
+// repurposed to weekday=5 (Fri 9/11) by an earlier edit without renaming its
+// id, so generating that id for the new weekday=2 (9/8) entry would collide.
+// crypto.randomUUID() (matching createPlan's own id scheme in
+// src/services/plans.ts) sidesteps that risk entirely for all 7 inserts. ────
+
+export interface InsertRow {
+  date: string;
+  weekNumber: number;
+  weekday: number;
+  runType: "outdoor";
+  distanceMiles: number;
+  paceTarget?: string;
+  description: string;
+}
+
+export const INSERTS: InsertRow[] = [
+  { date: "2026-08-19", weekNumber: 14, weekday: 3, runType: "outdoor", distanceMiles: 4, paceTarget: "10:30", description: "4 miles easy" },
+  { date: "2026-08-24", weekNumber: 15, weekday: 1, runType: "outdoor", distanceMiles: 3, paceTarget: "10:30", description: "3 miles easy" },
+  { date: "2026-08-26", weekNumber: 15, weekday: 3, runType: "outdoor", distanceMiles: 4, paceTarget: "10:30", description: "4 miles easy" },
+  { date: "2026-09-02", weekNumber: 16, weekday: 3, runType: "outdoor", distanceMiles: 4, paceTarget: "10:30", description: "4 miles easy" },
+  { date: "2026-09-08", weekNumber: 17, weekday: 2, runType: "outdoor", distanceMiles: 5, paceTarget: "8:50-9:10", description: "2 miles easy + 3 miles @ 9:00 pace + 1 mile easy" },
+  { date: "2026-09-15", weekNumber: 18, weekday: 2, runType: "outdoor", distanceMiles: 3, description: "3 miles easy + 4x30s strides" },
+  { date: "2026-09-17", weekNumber: 18, weekday: 4, runType: "outdoor", distanceMiles: 2, paceTarget: "10:30", description: "2 miles shakeout" },
+];
+
+export interface InsertResult {
+  date: string;
+  weekNumber: number;
+  weekday: number;
+  inserted: boolean;
+  insertedAtArrayIndex?: number;
+  entryId?: string;
+  entry?: Record<string, unknown>;
+  error?: string;
+}
+
+export interface InsertRunResult {
+  planId: string;
+  planName: string;
+  startDate: string;
+  entryCountBefore: number;
+  entryCountAfter: number;
+  results: InsertResult[];
+  committed: boolean;
+}
+
+export async function runInsertMissingEntries(opts: { commit?: boolean } = {}): Promise<InsertRunResult> {
+  const commit = opts.commit === true;
+  const db = getDb();
+
+  const planSnap = await db.collection(`users/${TARGET_UID}/plans`).get();
+  const activeDoc = planSnap.docs.find((d) => {
+    const data = d.data();
+    const planType = (data.planType as string | undefined) ?? "running";
+    if (planType !== "running") return false;
+    if (typeof data.status === "string") return data.status === "active";
+    return data.isActive === true;
+  });
+  if (!activeDoc) throw new Error(`No active RunningPlan found for uid=${TARGET_UID}`);
+
+  const plan = activeDoc.data() as {
+    name?: string;
+    startDate: string;
+    weeks: Array<{ weekNumber: number; entries: Record<string, unknown>[] }>;
+  };
+
+  const entryCountBefore = plan.weeks.reduce((sum, w) => sum + w.entries.length, 0);
+  const results: InsertResult[] = [];
+
+  for (const target of INSERTS) {
+    try {
+      const week = plan.weeks.find((w) => w.weekNumber === target.weekNumber);
+      if (!week) {
+        results.push({ date: target.date, weekNumber: target.weekNumber, weekday: target.weekday, inserted: false, error: `week ${target.weekNumber} not found in plan` });
+        continue;
+      }
+
+      // Safety check: an entry already computing to this date would mean our
+      // Phase 1 gap analysis is stale — do not silently overwrite.
+      const already = week.entries.find((e) => {
+        const d = dateForEntry(plan.startDate, e.weekIndex as number, e.weekday as number);
+        return d === target.date;
+      });
+      if (already) {
+        results.push({ date: target.date, weekNumber: target.weekNumber, weekday: target.weekday, inserted: false, error: `an entry already exists for this date (id=${already.id})` });
+        continue;
+      }
+
+      const weekIndexForWeek = target.weekNumber - 1;
+      // Verify weekIndex against a sibling in this same week rather than
+      // assuming weekNumber-1 (Phase 1 requirement).
+      const siblingWeekIndex = week.entries.length > 0 ? (week.entries[0].weekIndex as number) : weekIndexForWeek;
+      if (siblingWeekIndex !== weekIndexForWeek) {
+        results.push({ date: target.date, weekNumber: target.weekNumber, weekday: target.weekday, inserted: false, error: `weekIndex mismatch: sibling has weekIndex=${siblingWeekIndex}, expected ${weekIndexForWeek}` });
+        continue;
+      }
+
+      const newEntry: Record<string, unknown> = {
+        id: crypto.randomUUID(),
+        weekIndex: weekIndexForWeek,
+        weekday: target.weekday,
+        dayOfWeek: target.weekday - 1,
+        distanceMiles: target.distanceMiles,
+        runType: target.runType,
+        description: target.description,
+        targetHeartRate: null,
+      };
+      if (target.paceTarget) {
+        newEntry.paceTarget = target.paceTarget;
+        newEntry.targetPaceSecondsPerMile = paceStringToSeconds(target.paceTarget) ?? undefined;
+      }
+
+      // Insert sorted by weekday ascending, matching the existing convention
+      // in every week's entries array (date calc itself is field-driven, not
+      // position-driven, but this keeps display order consistent).
+      let insertAt = week.entries.length;
+      for (let i = 0; i < week.entries.length; i++) {
+        if ((week.entries[i].weekday as number) > target.weekday) {
+          insertAt = i;
+          break;
+        }
+      }
+
+      if (commit) {
+        week.entries.splice(insertAt, 0, newEntry);
+      }
+
+      results.push({
+        date: target.date,
+        weekNumber: target.weekNumber,
+        weekday: target.weekday,
+        inserted: true,
+        insertedAtArrayIndex: insertAt,
+        entryId: newEntry.id as string,
+        entry: newEntry,
+      });
+    } catch (e) {
+      results.push({ date: target.date, weekNumber: target.weekNumber, weekday: target.weekday, inserted: false, error: String(e) });
+    }
+  }
+
+  const lines: string[] = [];
+  const log = (s: string) => {
+    lines.push(s);
+    console.log(s);
+  };
+  log(`[insertMissingEntries] plan=${activeDoc.id} name=${plan.name} startDate=${plan.startDate} mode=${commit ? "COMMIT" : "DRY-RUN"}`);
+  for (const r of results) {
+    if (r.inserted) {
+      log(`  ${r.date} (wk${r.weekNumber} weekday=${r.weekday}) -> INSERT at arrayIndex=${r.insertedAtArrayIndex}: ${JSON.stringify(r.entry)}`);
+    } else {
+      log(`  ${r.date} (wk${r.weekNumber} weekday=${r.weekday}) -> FAILED: ${r.error}`);
+    }
+  }
+
+  const insertedCount = results.filter((r) => r.inserted).length;
+  const entryCountAfter = commit
+    ? plan.weeks.reduce((sum, w) => sum + w.entries.length, 0)
+    : entryCountBefore;
+  log(`[insertMissingEntries] entryCountBefore=${entryCountBefore} entryCountAfter=${entryCountAfter} inserted=${insertedCount}/${INSERTS.length}`);
+
+  const reportPath = process.env.UPDATEPLAN_REPORT;
+  if (reportPath) writeFileSync(reportPath, lines.join("\n"), "utf8");
+
+  if (commit && insertedCount > 0) {
+    await activeDoc.ref.update({ weeks: plan.weeks, updatedAt: new Date().toISOString() });
+    log(`[insertMissingEntries] COMMIT complete — wrote weeks field on plan ${activeDoc.id}.`);
+  }
+
+  return {
+    planId: activeDoc.id,
+    planName: (plan.name as string) ?? "",
+    startDate: plan.startDate,
+    entryCountBefore,
+    entryCountAfter,
+    results,
+    committed: commit && insertedCount > 0,
+  };
+}
+
+/** Read-only: dump full raw JSON of every entry in the given weekNumbers. */
+export async function dumpFullEntriesForWeeks(weekNumbers: number[]): Promise<void> {
+  const db = getDb();
+  const planSnap = await db.collection(`users/${TARGET_UID}/plans`).get();
+  const activeDoc = planSnap.docs.find((d) => {
+    const data = d.data();
+    const planType = (data.planType as string | undefined) ?? "running";
+    if (planType !== "running") return false;
+    if (typeof data.status === "string") return data.status === "active";
+    return data.isActive === true;
+  });
+  if (!activeDoc) throw new Error(`No active RunningPlan found for uid=${TARGET_UID}`);
+  const plan = activeDoc.data() as { weeks: Array<{ weekNumber: number; entries: Record<string, unknown>[] }> };
+  const lines: string[] = [];
+  const log = (s: string) => {
+    lines.push(s);
+    console.log(s);
+  };
+  for (const week of plan.weeks) {
+    if (!weekNumbers.includes(week.weekNumber)) continue;
+    log(`week#${week.weekNumber} entryCount=${week.entries.length}`);
+    for (const e of week.entries) {
+      log(`  ${JSON.stringify(e)}`);
+    }
+  }
+  const reportPath = process.env.UPDATEPLAN_REPORT;
+  if (reportPath) writeFileSync(reportPath, lines.join("\n"), "utf8");
+}
+
 export async function runUpdatePlanWeeks(opts: { commit?: boolean } = {}): Promise<RunResult> {
   const commit = opts.commit === true;
   const db = getDb();
