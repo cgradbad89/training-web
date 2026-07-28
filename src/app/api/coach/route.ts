@@ -1,14 +1,5 @@
-import Anthropic from '@anthropic-ai/sdk'
-import { GoogleGenAI } from '@google/genai'
 import { NextRequest } from 'next/server'
-
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-})
-
-const gemini = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-})
+import { getCoachResponseStream } from './coachStream'
 
 export async function POST(req: NextRequest) {
   // Verify Firebase Auth token
@@ -45,53 +36,14 @@ export async function POST(req: NextRequest) {
     // Build structured system prompt with all training context
     const systemPrompt = buildSystemPrompt(context)
 
-    let readable: ReadableStream;
-
-    if (provider === 'anthropic') {
-      // Stream response from Claude
-      const stream = await anthropic.messages.stream({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 1024,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: question }],
-      })
-
-      readable = new ReadableStream({
-        async start(controller) {
-          for await (const chunk of stream) {
-            if (
-              chunk.type === 'content_block_delta' &&
-              chunk.delta.type === 'text_delta'
-            ) {
-              controller.enqueue(
-                new TextEncoder().encode(chunk.delta.text)
-              )
-            }
-          }
-          controller.close()
-        },
-      })
-    } else {
-      // Default to Gemini
-      const stream = await gemini.models.generateContentStream({
-        model: 'gemini-3.5-flash',
-        contents: question,
-        config: {
-          systemInstruction: systemPrompt,
-        }
-      })
-
-      readable = new ReadableStream({
-        async start(controller) {
-          for await (const chunk of stream) {
-            if (chunk.text) {
-              controller.enqueue(new TextEncoder().encode(chunk.text));
-            }
-          }
-          controller.close()
-        }
-      })
-    }
+    // Anything that isn't an explicit 'anthropic' request resolves to Gemini,
+    // preserving the pre-existing default. Gemini gets retry + automatic
+    // Anthropic fallback; an explicit Anthropic request gets neither.
+    const { stream: readable } = await getCoachResponseStream({
+      requestedProvider: provider === 'anthropic' ? 'anthropic' : 'gemini',
+      systemPrompt,
+      question,
+    })
 
     return new Response(readable, {
       headers: {
