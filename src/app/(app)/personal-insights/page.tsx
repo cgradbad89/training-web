@@ -1482,6 +1482,13 @@ export default function PersonalInsightsPage() {
       <BestEffortsSection runs={runs} />
       */}
 
+      {/* ── Run Analysis (merged metric trend by distance range) ──────── */}
+      <RunAnalysisSection
+        workouts={runAnalysisWorkouts}
+        restingHr={restingHr}
+        maxHr={maxHr}
+      />
+
       {/* ── Pace Trends (Last 8 Weeks) ───────────────────── */}
       <SectionHeader icon={TrendingUp} title="Pace Trends — Last 8 Weeks" />
 
@@ -1499,13 +1506,6 @@ export default function PersonalInsightsPage() {
           </p>
         </Card>
       )}
-
-      {/* ── Run Analysis (merged metric trend by distance range) ──────── */}
-      <RunAnalysisSection
-        workouts={runAnalysisWorkouts}
-        restingHr={restingHr}
-        maxHr={maxHr}
-      />
 
       {/* ── Weather impact (pace & HR vs. temperature) ──── */}
       <SectionHeader icon={CloudSun} title="Weather Impact" />
