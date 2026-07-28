@@ -76,8 +76,10 @@ function isPositiveFinite(v: number | null | undefined): v is number {
   return v != null && Number.isFinite(v) && v > 0;
 }
 
-/** RunAnalysisWorkout → the minimal EfficiencyWorkout shape (date → startDate). */
-function toEfficiencyWorkout(w: RunAnalysisWorkout): EfficiencyWorkout {
+/** RunAnalysisWorkout → the minimal EfficiencyWorkout shape (date → startDate).
+ *  Exported so table/detail surfaces score the SAME shape this module buckets,
+ *  rather than duplicating the mapping. */
+export function toEfficiencyWorkout(w: RunAnalysisWorkout): EfficiencyWorkout {
   return {
     workoutId: w.workoutId,
     startDate: w.date,
@@ -247,4 +249,58 @@ export function buildRunAnalysisTrend(
       value: b.weightSum > 0 ? b.weightedSum / b.weightSum : null,
       runCount: b.runCount,
     }));
+}
+
+/**
+ * The individual runs BEHIND one chart bucket — the drill-down counterpart to
+ * buildRunAnalysisTrend's aggregate.
+ *
+ * Membership is the SAME predicate buildRunAnalysisTrend uses to increment a
+ * bucket's `runCount` (distance in [minMiles, maxMiles] inclusive, a parseable
+ * date at/after the trailing-window start, and a matching period start), so the
+ * returned length always equals that bucket's `runCount`.
+ *
+ * NB: metric validity is deliberately NOT applied. buildRunAnalysisTrend counts
+ * a run in `runCount` even when it contributes no metric value (missing HR, an
+ * out-of-[MIN_VALID_PACE, MAX_VALID_PACE] derived pace, a still-building
+ * efficiency baseline), and this table shows each run's own raw values — so a
+ * run excluded from the AVERAGE still appears here with its actual numbers.
+ *
+ * `bucketStartDate` is matched as a LOCAL YYYY-MM-DD string via the same isoDate
+ * used to mint RunAnalysisPoint.bucketStartDate — NOT by parsing it back into a
+ * Date. `new Date("2026-07-13")` parses as UTC midnight while periodStartFor
+ * returns LOCAL midnight, so a Date-to-Date comparison would silently match
+ * nothing in any timezone west of UTC.
+ *
+ * Returned in chronological ascending order. `now` mirrors buildRunAnalysisTrend's
+ * parameter so the trailing-window anchor is deterministic in tests.
+ */
+export function runsInBucket(
+  workouts: RunAnalysisWorkout[],
+  bucketStartDate: string,
+  window: TrendWindow,
+  minMiles: number,
+  maxMiles: number,
+  now: Date = new Date()
+): RunAnalysisWorkout[] {
+  const granularity = granularityForWindow(window);
+  const start = windowStartDate(window, now);
+
+  const matched: { w: RunAnalysisWorkout; t: number }[] = [];
+
+  for (const w of workouts) {
+    // In-range = TOTAL distance within [minMiles, maxMiles] inclusive.
+    if (w.distanceMiles < minMiles || w.distanceMiles > maxMiles) continue;
+
+    const d = new Date(w.date);
+    const t = d.getTime();
+    if (!Number.isFinite(t)) continue; // unparseable date → skip
+    if (d < start) continue; // outside the trailing window
+
+    if (isoDate(periodStartFor(d, granularity)) !== bucketStartDate) continue;
+
+    matched.push({ w, t });
+  }
+
+  return matched.sort((a, b) => a.t - b.t).map((m) => m.w);
 }

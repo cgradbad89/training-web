@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   buildRunAnalysisTrend,
+  runsInBucket,
   type RunAnalysisWorkout,
 } from "./runAnalysisTrend";
 import { computePaceRangeTrend, type PaceRangeRun } from "./paceRangeTrend";
@@ -399,5 +400,98 @@ describe("buildRunAnalysisTrend — misc", () => {
     const starts = pts.map((p) => p.bucketStartDate);
     expect(starts).toEqual([...starts].sort());
     expect(pts.map((p) => p.bucketLabel)).toEqual(["Mar", "Apr", "May"]);
+  });
+});
+
+// ─── runsInBucket — the drill-down behind a clicked chart point ───────────────
+//
+// May 11 2026 is a MONDAY (Jan 1 2026 = Thursday; May 11 is day-of-year 131,
+// (131-1) mod 7 = 4, Thu+4 = Mon), so May 11/13/16 share the week bucket
+// starting 2026-05-11 and May 18 opens the next one.
+
+describe("runsInBucket", () => {
+  it("includes runs at BOTH exact distance boundaries and excludes just outside", () => {
+    const runs = [
+      w("min", iso(2026, 4, 11), 3, 1620, { pace: 540 }), // exactly minMiles
+      w("mid", iso(2026, 4, 13), 4, 2160, { pace: 540 }),
+      w("max", iso(2026, 4, 16), 5, 2700, { pace: 540 }), // exactly maxMiles
+      w("under", iso(2026, 4, 13), 2.99, 1614, { pace: 540 }),
+      w("over", iso(2026, 4, 13), 5.01, 2705, { pace: 540 }),
+    ];
+    const got = runsInBucket(runs, "2026-05-11", "3m", 3, 5, NOW);
+    expect(got.map((r) => r.workoutId)).toEqual(["min", "mid", "max"]);
+  });
+
+  it("matches a WEEKLY bucket, excluding runs from the adjacent week", () => {
+    const runs = [
+      w("a", iso(2026, 4, 11), 4, 2160, { pace: 540 }), // Mon — in bucket
+      w("b", iso(2026, 4, 16), 4, 2160, { pace: 540 }), // Sat — in bucket
+      w("c", iso(2026, 4, 18), 4, 2160, { pace: 540 }), // next Mon — out
+    ];
+    const got = runsInBucket(runs, "2026-05-11", "3m", 3, 5, NOW);
+    expect(got.map((r) => r.workoutId)).toEqual(["a", "b"]);
+  });
+
+  it("matches a MONTHLY bucket on a month-granularity window", () => {
+    const runs = [
+      w("apr1", iso(2026, 3, 2), 4, 2160, { pace: 540 }),
+      w("apr2", iso(2026, 3, 28), 4, 2160, { pace: 540 }),
+      w("may", iso(2026, 4, 5), 4, 2160, { pace: 540 }),
+    ];
+    const got = runsInBucket(runs, "2026-04-01", "6m", 3, 5, NOW);
+    expect(got.map((r) => r.workoutId)).toEqual(["apr1", "apr2"]);
+  });
+
+  it("returns an empty array for a bucket with zero matching runs", () => {
+    const runs = [w("a", iso(2026, 4, 11), 4, 2160, { pace: 540 })];
+    expect(runsInBucket(runs, "2026-03-02", "3m", 3, 5, NOW)).toEqual([]);
+  });
+
+  it("still includes a run whose derived pace is OUTSIDE [MIN,MAX]_VALID_PACE", () => {
+    // 4 mi in 400s => 100 s/mi, far below MIN_VALID_PACE (180): excluded from the
+    // chart's pace AVERAGE, but it is still one of the bucket's runs.
+    const glitch = w("glitch", iso(2026, 4, 13), 4, 400, { pace: 100 });
+    const normal = w("normal", iso(2026, 4, 11), 4, 2160, { pace: 540 });
+    const got = runsInBucket([normal, glitch], "2026-05-11", "3m", 3, 5, NOW);
+    expect(got.map((r) => r.workoutId)).toEqual(["normal", "glitch"]);
+  });
+
+  it("includes runs missing every metric (membership is distance+date only)", () => {
+    const bare = w("bare", iso(2026, 4, 13), 4, 2160); // no pace/hr/cadence
+    const got = runsInBucket([bare], "2026-05-11", "3m", 3, 5, NOW);
+    expect(got.map((r) => r.workoutId)).toEqual(["bare"]);
+  });
+
+  it("returns runs chronologically ascending regardless of input order", () => {
+    const runs = [
+      w("late", iso(2026, 4, 16), 4, 2160, { pace: 540 }),
+      w("early", iso(2026, 4, 11), 4, 2160, { pace: 540 }),
+      w("mid", iso(2026, 4, 13), 4, 2160, { pace: 540 }),
+    ];
+    const got = runsInBucket(runs, "2026-05-11", "3m", 3, 5, NOW);
+    expect(got.map((r) => r.workoutId)).toEqual(["early", "mid", "late"]);
+  });
+
+  it("excludes runs before the trailing window start", () => {
+    // 3m window from June 1 2026 starts March 1 2026.
+    const old = w("old", iso(2026, 0, 12), 4, 2160, { pace: 540 }); // January
+    expect(runsInBucket([old], "2026-01-12", "3m", 3, 5, NOW)).toEqual([]);
+  });
+
+  it("length matches the SAME bucket's runCount from buildRunAnalysisTrend", () => {
+    // The core invariant: the drill-down never disagrees with the chart's count.
+    const runs = [
+      w("a", iso(2026, 4, 11), 4, 2160, { pace: 540, hr: 150 }),
+      w("b", iso(2026, 4, 13), 4, 400, { pace: 100, hr: 150 }), // pace outlier
+      w("c", iso(2026, 4, 16), 4, 2160, { pace: 540 }), // no HR
+      w("d", iso(2026, 4, 19), 4, 2160, { pace: 540, hr: 150 }),
+      w("far", iso(2026, 4, 13), 9, 4860, { pace: 540, hr: 150 }), // out of range
+    ];
+    const pts = buildRunAnalysisTrend(runs, "pace", 3, 5, "3m", RESTING_HR, MAX_HR, NOW);
+    expect(pts.length).toBeGreaterThan(0);
+    for (const p of pts) {
+      const inBucket = runsInBucket(runs, p.bucketStartDate, "3m", 3, 5, NOW);
+      expect(inBucket.length).toBe(p.runCount);
+    }
   });
 });

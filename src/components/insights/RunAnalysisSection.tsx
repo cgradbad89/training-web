@@ -15,10 +15,12 @@ import { formatPaceLabel } from "@/utils/pace";
 import { TrendWindow } from "@/lib/paceRangeTrend";
 import {
   buildRunAnalysisTrend,
+  runsInBucket,
   type RunAnalysisWorkout,
   type RunAnalysisMetric,
   type RunAnalysisPoint,
 } from "@/lib/runAnalysisTrend";
+import { RunBucketTable } from "@/components/insights/RunBucketTable";
 
 // ── Metric selector (single-select). "Run Analysis" merges the old Pace by
 //    Distance + Efficiency Trend into one chart. ──
@@ -133,6 +135,14 @@ function formatTooltipValue(metric: RunAnalysisMetric, value: number): string {
   }
 }
 
+/** The subset of Recharts' dot render-prop payload this chart reads. */
+interface DotRenderProps {
+  cx?: number;
+  cy?: number;
+  index?: number;
+  payload?: RunAnalysisPoint;
+}
+
 interface ChartTooltipProps {
   active?: boolean;
   payload?: Array<{ payload: RunAnalysisPoint }>;
@@ -180,6 +190,11 @@ export function RunAnalysisSection({
   const [window, setWindow] = React.useState<TrendWindow>("3m");
   const [minMiles, setMinMiles] = React.useState(3);
   const [maxMiles, setMaxMiles] = React.useState(5);
+  // Clicked bucket (by its local YYYY-MM-DD period start) + table visibility.
+  const [selectedBucketStartDate, setSelectedBucketStartDate] = React.useState<
+    string | null
+  >(null);
+  const [showTable, setShowTable] = React.useState(false);
 
   const points = useMemo(
     () =>
@@ -202,6 +217,34 @@ export function RunAnalysisSection({
     })[],
     [points]
   );
+
+  // A bucket selected under the OLD filters may not exist under the new ones, so
+  // any filter change clears the selection and closes the table — stale rows must
+  // never survive a filter change. Keyed on every filter input, so a future filter
+  // control can't forget to reset. (On mount this writes the values they already
+  // hold, so React bails out without an extra render.)
+  React.useEffect(() => {
+    setSelectedBucketStartDate(null);
+    setShowTable(false);
+  }, [metric, window, minMiles, maxMiles]);
+
+  // Gated on showTable so the bucket isn't re-filtered on every render while the
+  // table is hidden. Derives from selectedBucketStartDate, so clicking a DIFFERENT
+  // dot while the table is open swaps the rows in place — no second button click.
+  const bucketRuns = useMemo(() => {
+    if (!showTable || selectedBucketStartDate == null) return [];
+    return runsInBucket(
+      workouts,
+      selectedBucketStartDate,
+      window,
+      minMiles,
+      maxMiles
+    );
+  }, [showTable, selectedBucketStartDate, workouts, window, minMiles, maxMiles]);
+
+  const selectedLabel =
+    points.find((p) => p.bucketStartDate === selectedBucketStartDate)
+      ?.bucketLabel ?? "";
 
   const avgValue =
     nonNull.length > 0
@@ -245,6 +288,41 @@ export function RunAnalysisSection({
 
   const fillLeft = ((minMiles - SLIDER_MIN) / (SLIDER_MAX - SLIDER_MIN)) * 100;
   const fillRight = ((maxMiles - SLIDER_MIN) / (SLIDER_MAX - SLIDER_MIN)) * 100;
+
+  // Custom dot: clickable, and visibly ringed when its bucket is selected. Null
+  // buckets render an empty <g> — no dot and nothing to click, matching
+  // connectNulls={false}'s gap. Recharts clones the returned element, so a null
+  // return would warn; an empty group is the no-op.
+  function renderDot(props: DotRenderProps): React.ReactElement {
+    const { cx, cy, payload, index } = props;
+    const key = payload?.bucketStartDate ?? `dot-${index}`;
+    if (
+      payload == null ||
+      payload.value == null ||
+      !Number.isFinite(cx) ||
+      !Number.isFinite(cy)
+    ) {
+      return <g key={key} />;
+    }
+    const selected = payload.bucketStartDate === selectedBucketStartDate;
+    const bucketStartDate = payload.bucketStartDate;
+    return (
+      <circle
+        key={key}
+        cx={cx}
+        cy={cy}
+        r={selected ? 7 : 3}
+        fill="var(--color-chart-primary)"
+        stroke={selected ? "var(--color-card)" : "none"}
+        strokeWidth={selected ? 3 : 0}
+        style={{ cursor: "pointer" }}
+        onClick={(e) => {
+          e.stopPropagation();
+          setSelectedBucketStartDate(bucketStartDate);
+        }}
+      />
+    );
+  }
 
   return (
     <div className="bg-card rounded-2xl shadow-sm border border-border p-5">
@@ -406,7 +484,11 @@ export function RunAnalysisSection({
                 dataKey="value"
                 stroke="var(--color-chart-primary)"
                 strokeWidth={2}
-                dot={{ r: 3 }}
+                dot={renderDot}
+                isAnimationActive={false}
+                // Matches WeeklyLoadTile: the default hover dot would visually
+                // compete with the custom selected-dot ring.
+                activeDot={false}
                 connectNulls={false}
                 name={metric}
               />
@@ -417,6 +499,31 @@ export function RunAnalysisSection({
               ? "Lower on chart = faster · gaps are weeks/months with no qualifying runs"
               : "Gaps are weeks/months with no qualifying runs"}
           </p>
+
+          {/* Drill-down toggle — only once a bucket is selected. */}
+          {selectedBucketStartDate !== null && (
+            <div className="flex justify-end mt-3">
+              <button
+                type="button"
+                aria-expanded={showTable}
+                onClick={() => setShowTable((v) => !v)}
+                className="px-3 py-1 rounded-full text-xs font-medium bg-primary text-white transition-colors"
+              >
+                {showTable ? "Hide runs" : "Show runs"}
+              </button>
+            </div>
+          )}
+
+          {showTable && selectedBucketStartDate !== null && (
+            <RunBucketTable
+              runs={bucketRuns}
+              allWorkouts={workouts}
+              bucketLabel={selectedLabel}
+              runCount={bucketRuns.length}
+              restingHr={restingHr}
+              maxHr={maxHr}
+            />
+          )}
         </>
       )}
 
