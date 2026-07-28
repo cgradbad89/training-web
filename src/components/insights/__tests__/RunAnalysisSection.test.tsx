@@ -91,15 +91,24 @@ describe("RunAnalysisSection", () => {
     expect(container.textContent).toContain("Distance range");
   });
 
-  it("switching the metric pill changes the rendered headline", () => {
+  it("adding a second metric pill ADDS its headline rather than replacing", () => {
     render(weeklyRuns(12));
-    // Default metric is pace.
+    // Default selection is pace alone.
     expect(container.textContent).toContain("Avg pace");
     expect(container.textContent).not.toContain("Avg cadence");
 
+    // Multi-select: Cadence joins pace, it does not swap it out.
     clickButton("Cadence");
     expect(container.textContent).toContain("Avg cadence");
     expect(container.textContent).toContain("spm");
+    expect(container.textContent).toContain("Avg pace");
+  });
+
+  it("deselecting the first metric leaves the second as the only headline", () => {
+    render(weeklyRuns(12));
+    clickButton("Cadence"); // → [pace, cadence]
+    clickButton("Pace"); // → [cadence]
+    expect(container.textContent).toContain("Avg cadence");
     expect(container.textContent).not.toContain("Avg pace");
   });
 
@@ -122,9 +131,14 @@ describe("RunAnalysisSection", () => {
     // Pace (reversed axis) → the pace-specific caption is present.
     expect(container.textContent).toContain("Lower on chart = faster");
 
-    // Switching to a non-pace metric drops that caption (axis not reversed).
+    // Pace is still selected alongside HR, and its axis is still reversed, so
+    // the caption must STAY — it's keyed on pace being on either axis.
     clickButton("Heart rate");
     expect(container.textContent).toContain("Avg HR");
+    expect(container.textContent).toContain("Lower on chart = faster");
+
+    // Only once pace leaves the selection entirely does the caption drop.
+    clickButton("Pace");
     expect(container.textContent).not.toContain("Lower on chart = faster");
   });
 });

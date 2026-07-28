@@ -18,12 +18,13 @@ import {
   runsInBucket,
   type RunAnalysisWorkout,
   type RunAnalysisMetric,
-  type RunAnalysisPoint,
 } from "@/lib/runAnalysisTrend";
 import { RunBucketTable } from "@/components/insights/RunBucketTable";
+import { useIsDesktop } from "@/hooks/useMediaQuery";
 
-// ── Metric selector (single-select). "Run Analysis" merges the old Pace by
-//    Distance + Efficiency Trend into one chart. ──
+// ── Metric selector (multi-select, capped at 2). "Run Analysis" merges the old
+//    Pace by Distance + Efficiency Trend into one chart; selecting a SECOND
+//    metric overlays it on its own right-hand y-axis. ──
 const METRIC_OPTIONS: ReadonlyArray<{
   value: RunAnalysisMetric;
   label: string;
@@ -65,6 +66,36 @@ const SLIDER_STEP = 0.5;
 
 /** Below this many non-null points the trend isn't meaningful yet. */
 const MIN_POINTS_WITH_DATA = 3;
+
+/** At most two metrics may be overlaid — one per y-axis. A third axis has
+ *  nowhere to go, and three unrelated scales on one plot stop being readable. */
+const MAX_SELECTED_METRICS = 2;
+
+/** Line/axis/pill color per selection slot. Index 0 = first-selected (primary,
+ *  left axis), index 1 = second-selected (secondary, right axis). Both tokens
+ *  are already defined for light AND dark in globals.css. */
+const SERIES_COLORS = [
+  "var(--color-chart-primary)",
+  "var(--color-chart-secondary)",
+] as const;
+
+/**
+ * One chart row: a bucket's label/date plus BOTH metrics' values for it.
+ *
+ * `runCount` is a single shared field, not one per metric — buildRunAnalysisTrend's
+ * runCount is metric-agnostic (every distance+window-matched run, whether or not
+ * the metric was computable), so two calls over the same window/distance filters
+ * always report the same count for a given bucket.
+ */
+export interface RunAnalysisComparePoint {
+  bucketLabel: string;
+  bucketStartDate: string;
+  primaryValue: number | null;
+  /** null when only one metric is selected, or when the second metric has no
+   *  qualifying run in this bucket. */
+  secondaryValue: number | null;
+  runCount: number;
+}
 
 // ── Per-metric display formatting ────────────────────────────────────────────
 
@@ -135,24 +166,66 @@ function formatTooltipValue(metric: RunAnalysisMetric, value: number): string {
   }
 }
 
+/** Per-metric y-axis shape, so the SAME rules apply whether a metric lands on
+ *  the left (primary) or the right (secondary) axis — the axis config follows
+ *  the metric, never the slot. */
+function axisConfigFor(metric: RunAnalysisMetric): {
+  domain: [string | number, string | number];
+  reversed: boolean;
+  tickFormatter: ((v: number) => string) | undefined;
+  width: number;
+} {
+  const isPace = metric === "pace";
+  return {
+    domain: isPace
+      ? ["dataMin - 30", "dataMax + 30"]
+      : metric === "efficiencyScore"
+        ? [0, 100]
+        : ["auto", "auto"],
+    reversed: isPace,
+    tickFormatter: isPace ? (v: number) => formatPaceLabel(v) : undefined,
+    width: isPace ? 50 : 40,
+  };
+}
+
+/** Average + first-to-last delta over the non-null values of ONE series.
+ *  `count` gates the empty state. Delta is null below 2 points. */
+function summarize(values: ReadonlyArray<number | null>): {
+  avg: number | null;
+  delta: number | null;
+  count: number;
+} {
+  const nn = values.filter((v): v is number => v != null);
+  if (nn.length === 0) return { avg: null, delta: null, count: 0 };
+  return {
+    avg: nn.reduce((sum, v) => sum + v, 0) / nn.length,
+    delta: nn.length >= 2 ? nn[nn.length - 1] - nn[0] : null,
+    count: nn.length,
+  };
+}
+
 /** The subset of Recharts' dot render-prop payload this chart reads. */
 interface DotRenderProps {
   cx?: number;
   cy?: number;
   index?: number;
-  payload?: RunAnalysisPoint;
+  payload?: RunAnalysisComparePoint;
 }
 
 interface ChartTooltipProps {
   active?: boolean;
-  payload?: Array<{ payload: RunAnalysisPoint }>;
-  metric: RunAnalysisMetric;
+  payload?: Array<{ payload: RunAnalysisComparePoint }>;
+  metrics: ReadonlyArray<RunAnalysisMetric>;
 }
 
-function ChartTooltip({ active, payload, metric }: ChartTooltipProps) {
+function ChartTooltip({ active, payload, metrics }: ChartTooltipProps) {
   if (!active || !payload || payload.length === 0) return null;
+  // Both lines share one data row, so either entry's payload carries every
+  // metric's value — read [0] rather than iterating Recharts' series entries.
   const d = payload[0].payload;
-  if (d.value == null) return null;
+  const values = [d.primaryValue, d.secondaryValue];
+  // Nothing to say about a bucket where neither selected metric resolved.
+  if (values.every((v) => v == null)) return null;
   return (
     <div
       style={{
@@ -164,9 +237,26 @@ function ChartTooltip({ active, payload, metric }: ChartTooltipProps) {
       }}
     >
       <p style={{ color: "var(--color-textSecondary)" }}>{d.bucketLabel}</p>
-      <p style={{ color: "var(--color-textPrimary)", fontWeight: 600 }}>
-        {formatTooltipValue(metric, d.value)}
-      </p>
+      {metrics.map((m, i) => {
+        const v = values[i];
+        if (v == null) return null;
+        return (
+          <p
+            key={m}
+            style={{
+              // Single-metric keeps the plain primary-text headline it has
+              // today; only a 2-metric tooltip needs color to disambiguate.
+              color:
+                metrics.length > 1
+                  ? SERIES_COLORS[i]
+                  : "var(--color-textPrimary)",
+              fontWeight: 600,
+            }}
+          >
+            {formatTooltipValue(m, v)}
+          </p>
+        );
+      })}
       <p style={{ color: "var(--color-textSecondary)" }}>
         {d.runCount} {d.runCount === 1 ? "run" : "runs"}
       </p>
@@ -186,7 +276,11 @@ export function RunAnalysisSection({
   maxHr,
 }: RunAnalysisSectionProps): React.JSX.Element {
   // ── State (ALL hooks before any early return — React #310 guard) ──
-  const [metric, setMetric] = React.useState<RunAnalysisMetric>("pace");
+  // Click ORDER is the slot assignment: [0] is primary (left axis), [1] is
+  // secondary (right axis). Never empty, never longer than MAX_SELECTED_METRICS.
+  const [selectedMetrics, setSelectedMetrics] = React.useState<
+    RunAnalysisMetric[]
+  >(["pace"]);
   const [window, setWindow] = React.useState<TrendWindow>("3m");
   const [minMiles, setMinMiles] = React.useState(3);
   const [maxMiles, setMaxMiles] = React.useState(5);
@@ -196,37 +290,58 @@ export function RunAnalysisSection({
   >(null);
   const [showTable, setShowTable] = React.useState(false);
 
-  const points = useMemo(
-    () =>
+  // Recharts renders ticks as raw SVG <text>, so the breakpoint has to reach it
+  // as a prop — a Tailwind responsive class cannot target them.
+  const isDesktop = useIsDesktop();
+
+  const isDual = selectedMetrics.length > 1;
+
+  const points = useMemo<RunAnalysisComparePoint[]>(() => {
+    // ONE `now` for every series: buildRunAnalysisTrend defaults it to
+    // new Date(), and two independent defaults could straddle a period boundary
+    // and hand back misaligned bucket sets. Passing it explicitly removes that.
+    const now = new Date();
+    const series = selectedMetrics.map((m) =>
       buildRunAnalysisTrend(
         workouts,
-        metric,
+        m,
         minMiles,
         maxMiles,
         window,
         restingHr,
-        maxHr
-      ),
-    [workouts, metric, minMiles, maxMiles, window, restingHr, maxHr]
-  );
+        maxHr,
+        now
+      )
+    );
+    const primary = series[0] ?? [];
+    // Keyed by bucketStartDate rather than zipped by index: the bucketing is
+    // metric-independent so the two arrays ARE aligned, but a map is correct by
+    // construction instead of correct-by-assumption, at the same O(n).
+    const secondaryByBucket =
+      series.length > 1
+        ? new Map(series[1].map((p) => [p.bucketStartDate, p.value]))
+        : null;
 
-  // Non-null values drive the headline + empty-state threshold.
-  const nonNull = useMemo(
-    () => points.filter((p) => p.value != null) as (RunAnalysisPoint & {
-      value: number;
-    })[],
-    [points]
-  );
+    return primary.map((p) => ({
+      bucketLabel: p.bucketLabel,
+      bucketStartDate: p.bucketStartDate,
+      primaryValue: p.value,
+      secondaryValue: secondaryByBucket?.get(p.bucketStartDate) ?? null,
+      runCount: p.runCount,
+    }));
+  }, [workouts, selectedMetrics, minMiles, maxMiles, window, restingHr, maxHr]);
 
   // A bucket selected under the OLD filters may not exist under the new ones, so
   // any filter change clears the selection and closes the table — stale rows must
   // never survive a filter change. Keyed on every filter input, so a future filter
   // control can't forget to reset. (On mount this writes the values they already
-  // hold, so React bails out without an extra render.)
+  // hold, so React bails out without an extra render.) selectedMetrics is compared
+  // by REFERENCE, which is exactly right: toggleMetric returns the previous array
+  // unchanged on a no-op, so a rejected click doesn't clear the selection.
   React.useEffect(() => {
     setSelectedBucketStartDate(null);
     setShowTable(false);
-  }, [metric, window, minMiles, maxMiles]);
+  }, [selectedMetrics, window, minMiles, maxMiles]);
 
   // Gated on showTable so the bucket isn't re-filtered on every render while the
   // table is hidden. Derives from selectedBucketStartDate, so clicking a DIFFERENT
@@ -246,30 +361,50 @@ export function RunAnalysisSection({
     points.find((p) => p.bucketStartDate === selectedBucketStartDate)
       ?.bucketLabel ?? "";
 
-  const avgValue =
-    nonNull.length > 0
-      ? nonNull.reduce((sum, p) => sum + p.value, 0) / nonNull.length
-      : null;
+  // One headline per selected metric, each summarizing its OWN series.
+  const headlines = selectedMetrics.map((m, i) => {
+    const values = points.map((p) =>
+      i === 0 ? p.primaryValue : p.secondaryValue
+    );
+    const { avg, delta } = summarize(values);
+    return {
+      metric: m,
+      color: SERIES_COLORS[i],
+      text: avg != null ? `${formatAvg(m, avg)}${formatDelta(m, delta)}` : "",
+    };
+  });
 
-  // Chronological first vs last non-null value; null delta when < 2 points.
-  const trendDelta =
-    nonNull.length >= 2
-      ? nonNull[nonNull.length - 1].value - nonNull[0].value
-      : null;
+  // Gated on the PRIMARY series only, so single-metric behavior is untouched and
+  // adding a sparse second metric can never blank out a chart that was rendering.
+  const isEmpty =
+    summarize(points.map((p) => p.primaryValue)).count < MIN_POINTS_WITH_DATA;
 
-  const isEmpty = nonNull.length < MIN_POINTS_WITH_DATA;
-  const isPace = metric === "pace";
+  // The reversed-axis caption applies if pace is on EITHER axis.
+  const hasPace = selectedMetrics.includes("pace");
 
-  const yDomain: [string | number, string | number] = isPace
-    ? ["dataMin - 30", "dataMax + 30"]
-    : metric === "efficiencyScore"
-      ? [0, 100]
-      : ["auto", "auto"];
+  const primaryAxis = axisConfigFor(selectedMetrics[0]);
+  const secondaryAxis = isDual ? axisConfigFor(selectedMetrics[1]) : null;
 
-  const headline =
-    avgValue != null
-      ? `${formatAvg(metric, avgValue)}${formatDelta(metric, trendDelta)}`
-      : "";
+  // Absent (not `undefined`) when single-metric, so the chart keeps Recharts'
+  // default single-axis wiring exactly as it did before this feature.
+  const primaryAxisId = isDual ? { yAxisId: "primary" } : {};
+
+  // ── Metric multi-select ──
+  // Both rejection paths return `prev` UNCHANGED, so React bails out of the
+  // re-render and the filter-reset effect above doesn't fire.
+  function toggleMetric(m: RunAnalysisMetric) {
+    setSelectedMetrics((prev) => {
+      if (prev.includes(m)) {
+        // Never deselect down to zero — the chart always plots something.
+        if (prev.length === 1) return prev;
+        return prev.filter((x) => x !== m);
+      }
+      // At the cap, a click on a third metric is a no-op: silently swapping out
+      // someone's earlier pick would be a surprising way to lose a comparison.
+      if (prev.length >= MAX_SELECTED_METRICS) return prev;
+      return [...prev, m];
+    });
+  }
 
   // ── Distance quick-filter helpers ──
   function isPresetActive(min: number, max: number): boolean {
@@ -293,58 +428,77 @@ export function RunAnalysisSection({
   // buckets render an empty <g> — no dot and nothing to click, matching
   // connectNulls={false}'s gap. Recharts clones the returned element, so a null
   // return would warn; an empty group is the no-op.
-  function renderDot(props: DotRenderProps): React.ReactElement {
-    const { cx, cy, payload, index } = props;
-    const key = payload?.bucketStartDate ?? `dot-${index}`;
-    if (
-      payload == null ||
-      payload.value == null ||
-      !Number.isFinite(cx) ||
-      !Number.isFinite(cy)
-    ) {
-      return <g key={key} />;
-    }
-    const selected = payload.bucketStartDate === selectedBucketStartDate;
-    const bucketStartDate = payload.bucketStartDate;
-    return (
-      <circle
-        key={key}
-        cx={cx}
-        cy={cy}
-        r={selected ? 7 : 3}
-        fill="var(--color-chart-primary)"
-        stroke={selected ? "var(--color-card)" : "none"}
-        strokeWidth={selected ? 3 : 0}
-        style={{ cursor: "pointer" }}
-        onClick={(e) => {
-          e.stopPropagation();
-          setSelectedBucketStartDate(bucketStartDate);
-        }}
-      />
-    );
+  //
+  // Parameterized by value-key + color rather than forked per line: selection is
+  // bucket-keyed and metric-agnostic, so BOTH lines' dots select the same bucket
+  // and the click handler is identical. Whichever dot is on top receives the
+  // click when the two overlap — either one writes the same bucketStartDate, so
+  // no de-duplication is needed.
+  function dotRenderer(
+    valueKey: "primaryValue" | "secondaryValue",
+    color: string
+  ) {
+    return function renderDot(props: DotRenderProps): React.ReactElement {
+      const { cx, cy, payload, index } = props;
+      const key = `${valueKey}-${payload?.bucketStartDate ?? index}`;
+      if (
+        payload == null ||
+        payload[valueKey] == null ||
+        !Number.isFinite(cx) ||
+        !Number.isFinite(cy)
+      ) {
+        return <g key={key} />;
+      }
+      const selected = payload.bucketStartDate === selectedBucketStartDate;
+      const bucketStartDate = payload.bucketStartDate;
+      return (
+        <circle
+          key={key}
+          cx={cx}
+          cy={cy}
+          r={selected ? 7 : 3}
+          fill={color}
+          stroke={selected ? "var(--color-card)" : "none"}
+          strokeWidth={selected ? 3 : 0}
+          style={{ cursor: "pointer" }}
+          onClick={(e) => {
+            e.stopPropagation();
+            setSelectedBucketStartDate(bucketStartDate);
+          }}
+        />
+      );
+    };
   }
 
   return (
     <div className="bg-card rounded-2xl shadow-sm border border-border p-5">
       <h2 className="text-lg font-bold text-textPrimary">Run Analysis</h2>
       <p className="text-xs text-textSecondary mt-1 mb-4">
-        Trend one metric over time for runs whose total distance falls within the
-        selected range
+        Trend up to two metrics over time for runs whose total distance falls
+        within the selected range
       </p>
 
-      {/* Metric selector */}
+      {/* Metric selector — multi-select, capped at 2. An active pill wears its
+          own line's color, which is what makes a separate chart legend
+          unnecessary. */}
       <div className="flex flex-wrap gap-2 mb-4">
         {METRIC_OPTIONS.map((opt) => {
-          const active = metric === opt.value;
+          const slot = selectedMetrics.indexOf(opt.value);
+          const active = slot >= 0;
           return (
             <button
               key={opt.value}
               type="button"
               aria-pressed={active}
-              onClick={() => setMetric(opt.value)}
+              onClick={() => toggleMetric(opt.value)}
+              // Inline style, not a Tailwind class: the color is a CSS custom
+              // property chosen at runtime by selection slot.
+              style={
+                active ? { backgroundColor: SERIES_COLORS[slot] } : undefined
+              }
               className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
                 active
-                  ? "bg-primary text-white"
+                  ? "text-white"
                   : "bg-surface text-textSecondary hover:text-textPrimary"
               }`}
             >
@@ -443,10 +597,26 @@ export function RunAnalysisSection({
         </p>
       ) : (
         <>
-          {/* Headline summary */}
-          <p className="text-sm font-semibold text-textPrimary mb-3 tabular-nums">
-            {headline}
-          </p>
+          {/* Headline summary — one line per selected metric. With a single
+              metric this collapses to exactly the previous single headline
+              (no color dot, same text). */}
+          <div className="mb-3 space-y-1">
+            {headlines.map((h) => (
+              <p
+                key={h.metric}
+                className="text-sm font-semibold text-textPrimary tabular-nums flex items-center gap-2"
+              >
+                {isDual && (
+                  <span
+                    aria-hidden="true"
+                    className="inline-block w-2 h-2 rounded-full shrink-0"
+                    style={{ backgroundColor: h.color }}
+                  />
+                )}
+                {h.text}
+              </p>
+            ))}
+          </div>
 
           {/* Trend chart */}
           <ResponsiveContainer width="100%" height={220}>
@@ -468,34 +638,71 @@ export function RunAnalysisSection({
                 minTickGap={32}
               />
               <YAxis
-                domain={yDomain}
-                reversed={isPace}
+                {...primaryAxisId}
+                domain={primaryAxis.domain}
+                reversed={primaryAxis.reversed}
                 tick={{ fontSize: 10 }}
                 axisLine={false}
                 tickLine={false}
-                tickFormatter={
-                  isPace ? (v: number) => formatPaceLabel(v) : undefined
-                }
-                width={isPace ? 50 : 40}
+                tickFormatter={primaryAxis.tickFormatter}
+                width={primaryAxis.width}
               />
-              <Tooltip content={<ChartTooltip metric={metric} />} />
+              {/* Second metric's own scale, right-hand side — same yAxisId +
+                  orientation="right" pairing as RunOverlayChart. `reversed` is
+                  per-axis, so pace-on-the-right still reads faster = higher
+                  even when the left axis is a non-reversed metric.
+                  Below md the tick labels would eat ~40px of a ~270px plot, so
+                  they're dropped there and the axis width collapses with them —
+                  the colored line plus its own headline stat still carry the
+                  value. At width 0 Recharts stops PAINTING the axis group but
+                  still resolves its scale, so the secondary line and its dots
+                  plot identically (asserted in the dual-metric suite). */}
+              {isDual && secondaryAxis && (
+                <YAxis
+                  yAxisId="secondary"
+                  orientation="right"
+                  domain={secondaryAxis.domain}
+                  reversed={secondaryAxis.reversed}
+                  tick={isDesktop ? { fontSize: 10 } : false}
+                  axisLine={false}
+                  tickLine={false}
+                  tickFormatter={secondaryAxis.tickFormatter}
+                  width={isDesktop ? secondaryAxis.width : 0}
+                />
+              )}
+              <Tooltip content={<ChartTooltip metrics={selectedMetrics} />} />
               <Line
+                {...primaryAxisId}
                 type="monotone"
-                dataKey="value"
-                stroke="var(--color-chart-primary)"
+                dataKey="primaryValue"
+                stroke={SERIES_COLORS[0]}
                 strokeWidth={2}
-                dot={renderDot}
+                dot={dotRenderer("primaryValue", SERIES_COLORS[0])}
                 isAnimationActive={false}
                 // Matches WeeklyLoadTile: the default hover dot would visually
                 // compete with the custom selected-dot ring.
                 activeDot={false}
                 connectNulls={false}
-                name={metric}
+                name={selectedMetrics[0]}
               />
+              {isDual && (
+                <Line
+                  yAxisId="secondary"
+                  type="monotone"
+                  dataKey="secondaryValue"
+                  stroke={SERIES_COLORS[1]}
+                  strokeWidth={2}
+                  dot={dotRenderer("secondaryValue", SERIES_COLORS[1])}
+                  isAnimationActive={false}
+                  activeDot={false}
+                  connectNulls={false}
+                  name={selectedMetrics[1]}
+                />
+              )}
             </LineChart>
           </ResponsiveContainer>
           <p className="text-xs text-textSecondary mt-3 text-center">
-            {isPace
+            {hasPace
               ? "Lower on chart = faster · gaps are weeks/months with no qualifying runs"
               : "Gaps are weeks/months with no qualifying runs"}
           </p>
