@@ -500,8 +500,16 @@ export function RunAnalysisSection({
               : "Gaps are weeks/months with no qualifying runs"}
           </p>
 
-          {/* Drill-down toggle — only once a bucket is selected. */}
-          {selectedBucketStartDate !== null && (
+          {/* Before anything is selected the dots have no visible affordance, so
+              a hint carries discoverability (same copy pattern/styling as
+              WeeklyLoadTile's "Tap a point to view that week"). Once a bucket IS
+              selected the hint has done its job and the toggle takes the slot —
+              a ternary so the two can never render together. */}
+          {selectedBucketStartDate === null ? (
+            <p className="text-[10px] text-textSecondary text-center mt-1">
+              Tap a point to view those runs
+            </p>
+          ) : (
             <div className="flex justify-end mt-3">
               <button
                 type="button"

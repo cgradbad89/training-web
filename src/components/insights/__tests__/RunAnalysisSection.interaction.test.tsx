@@ -213,6 +213,47 @@ describe("RunAnalysisSection — click-to-expand runs table", () => {
     expect(findButton("Show runs")).toBeUndefined();
   });
 
+  it("shows the tap hint while no bucket is selected", () => {
+    render(weeklyRuns(12));
+    expect(container.textContent).toContain("Tap a point to view those runs");
+  });
+
+  it("drops the hint once a dot is selected, replacing it with the toggle", () => {
+    render(weeklyRuns(12));
+    clickDot(0);
+    expect(container.textContent).not.toContain("Tap a point to view those runs");
+    expect(findButton("Show runs")).toBeDefined();
+  });
+
+  it("never renders the hint and the toggle at the same time", () => {
+    render(weeklyRuns(12));
+    const hintShown = () =>
+      (container.textContent ?? "").includes("Tap a point to view those runs");
+    const toggleShown = () =>
+      findButton("Show runs") !== undefined || findButton("Hide runs") !== undefined;
+
+    expect(hintShown()).toBe(true);
+    expect(toggleShown()).toBe(false);
+
+    clickDot(1);
+    expect(hintShown()).toBe(false);
+    expect(toggleShown()).toBe(true);
+
+    clickButton("Show runs"); // table open — still no hint
+    expect(hintShown()).toBe(false);
+    expect(toggleShown()).toBe(true);
+  });
+
+  it("restores the hint when a filter change clears the selection", () => {
+    render(weeklyRuns(12));
+    clickDot(0);
+    expect(container.textContent).not.toContain("Tap a point to view those runs");
+
+    clickButton("Cadence"); // metric change resets the selection
+    expect(container.textContent).toContain("Tap a point to view those runs");
+    expect(findButton("Show runs")).toBeUndefined();
+  });
+
   it("navigates to the run detail page when a table row is clicked", () => {
     render(weeklyRuns(12));
     clickDot(0); // oldest bucket → w11 (points are chronological ascending)
