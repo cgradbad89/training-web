@@ -39,6 +39,15 @@ const MAX = 190;
 const PRIMARY_COLOR = "var(--color-chart-primary)";
 const SECONDARY_COLOR = "var(--color-chart-secondary)";
 
+/** Visible labels of the five metric pills, in render order. */
+const METRIC_LABELS = [
+  "Pace",
+  "Cadence",
+  "Efficiency score",
+  "Load",
+  "Heart rate",
+] as const;
+
 beforeEach(() => {
   isDesktop.mockReturnValue(true);
   (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
@@ -443,5 +452,76 @@ describe("RunAnalysisSection — pill color coding", () => {
     expect(findButton("Cadence")?.getAttribute("style")).toContain(
       PRIMARY_COLOR
     );
+  });
+});
+
+describe("RunAnalysisSection — dimmed pills at the metric cap", () => {
+  /** Every metric pill that is not currently selected. */
+  function inactivePills(): HTMLButtonElement[] {
+    return METRIC_LABELS.map((l) => findButton(l)).filter(
+      (b): b is HTMLButtonElement => !!b && b.getAttribute("aria-pressed") === "false"
+    );
+  }
+
+  function isDimmed(b: HTMLButtonElement): boolean {
+    return (
+      b.getAttribute("aria-disabled") === "true" &&
+      b.className.includes("opacity-40") &&
+      b.className.includes("cursor-not-allowed")
+    );
+  }
+
+  it("leaves every inactive pill undimmed with one metric selected", () => {
+    render(weeklyRuns(12));
+    const inactive = inactivePills();
+    expect(inactive).toHaveLength(4); // 5 metrics, 1 selected
+    expect(inactive.every((b) => !isDimmed(b))).toBe(true);
+    // Still fully interactive — the hover affordance is intact.
+    expect(inactive.every((b) => b.className.includes("hover:text-textPrimary"))).toBe(true);
+  });
+
+  it("dims every inactive pill once two metrics are selected", () => {
+    render(weeklyRuns(12));
+    clickButton("Cadence"); // → cap reached
+    const inactive = inactivePills();
+    expect(inactive).toHaveLength(3);
+    expect(inactive.every(isDimmed)).toBe(true);
+    // The hover colour-shift is dropped, so a blocked pill doesn't invite a click.
+    expect(inactive.some((b) => b.className.includes("hover:text-textPrimary"))).toBe(false);
+  });
+
+  it("never dims the two ACTIVE pills at the cap", () => {
+    render(weeklyRuns(12));
+    clickButton("Cadence");
+    for (const label of ["Pace", "Cadence"]) {
+      const btn = findButton(label)!;
+      expect(btn.getAttribute("aria-pressed")).toBe("true");
+      expect(btn.getAttribute("aria-disabled")).toBeNull();
+      expect(btn.className).not.toContain("opacity-40");
+      expect(btn.className).not.toContain("cursor-not-allowed");
+    }
+  });
+
+  it("un-dims the pills again when the selection drops back to one", () => {
+    render(weeklyRuns(12));
+    clickButton("Cadence"); // → cap
+    expect(inactivePills().every(isDimmed)).toBe(true);
+
+    clickButton("Cadence"); // → back to [pace]
+    expect(inactivePills().every((b) => !isDimmed(b))).toBe(true);
+  });
+
+  it("keeps a dimmed pill's click a no-op, and an active pill's still live", () => {
+    render(weeklyRuns(12));
+    clickButton("Cadence");
+
+    clickButton("Load"); // dimmed — refused, selection untouched
+    expect(pressed("Load")).toBe("false");
+    expect(pressed("Pace")).toBe("true");
+    expect(pressed("Cadence")).toBe("true");
+
+    // Deselecting is never blocked, so the cap can always be escaped.
+    clickButton("Cadence");
+    expect(pressed("Cadence")).toBe("false");
   });
 });

@@ -485,11 +485,20 @@ export function RunAnalysisSection({
         {METRIC_OPTIONS.map((opt) => {
           const slot = selectedMetrics.indexOf(opt.value);
           const active = slot >= 0;
+          // At the cap an unselected pill's click is already a no-op in
+          // toggleMetric — this makes that refusal visible instead of the pill
+          // just appearing to swallow the click. onClick stays attached rather
+          // than being conditionally removed: the guard already lives in one
+          // place, and duplicating it here would be a second thing to keep in
+          // sync. Selected pills are never dimmed — deselecting is still live.
+          const atCap = selectedMetrics.length >= MAX_SELECTED_METRICS;
+          const blocked = !active && atCap;
           return (
             <button
               key={opt.value}
               type="button"
               aria-pressed={active}
+              aria-disabled={blocked || undefined}
               onClick={() => toggleMetric(opt.value)}
               // Inline style, not a Tailwind class: the color is a CSS custom
               // property chosen at runtime by selection slot.
@@ -499,7 +508,11 @@ export function RunAnalysisSection({
               className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
                 active
                   ? "text-white"
-                  : "bg-surface text-textSecondary hover:text-textPrimary"
+                  : blocked
+                    ? // Dimming is opacity over the SAME inactive styling, not a
+                      // new color — nothing new to keep in step across themes.
+                      "bg-surface text-textSecondary opacity-40 cursor-not-allowed"
+                    : "bg-surface text-textSecondary hover:text-textPrimary"
               }`}
             >
               {opt.label}
