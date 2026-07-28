@@ -4,7 +4,7 @@
 
 - **Branch**: Work directly on `main`. If a branch is created automatically, merge it into `main` before pushing.
 - **Build**: Run `npm run build` after all changes. On failure, fix and retry. Stop after 3 consecutive failures — output the full error log and make no further changes.
-- **Test**: Run `npm test` after a passing build (`vitest run`, 1,072 baseline tests across 98 files — 1,065 passed, 7 skipped; as of the run-detail Firestore read-optimization session).
+- **Test**: Run `npm test` after a passing build (`vitest run`, 1,161 baseline tests across 108 files — 1,150 passed, 11 skipped; as of the 2026-07-28 worktree-cleanup session). This number drifts — always trust a fresh `vitest run` over this doc, and correct this line when it does. Also watch for stray `.claude/worktrees/*` checkouts inflating the count (vitest's exclude only covers `node_modules`/`.git`); run `git worktree list` if the total looks off.
 - **Commit**: Stage files by explicit path (`git add PRD.md src/...`). Never use `git add -A`. Commit and push only after build + tests pass.
 - **No broken commits**: Do not commit if `npm run build` or `npm test` fail.
 
@@ -80,7 +80,7 @@ src/
   services/         # All Firestore read/write (one file per collection)
   types/            # TypeScript interfaces mirroring Firestore documents
   utils/            # Domain logic: metrics, pace, dates, trainingLoad, riegelFit, etc.
-    __tests__/      # Vitest unit tests (1,072 tests across 98 files)
+    __tests__/      # Vitest unit tests (1,161 tests across 108 files)
 ```
 
 **See also**: `PRD.md` — full domain reference (data model, invariants, calculations, backlog, services).
