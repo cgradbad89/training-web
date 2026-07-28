@@ -68,10 +68,6 @@ import {
   type HRZoneNumber,
 } from "@/utils/trainingLoad";
 import { InfoTooltip } from "@/components/ui/InfoTooltip";
-import {
-  buildWeeklyLoadModel,
-  type WeeklyLoadModel,
-} from "@/utils/weeklyLoad";
 import { buildPersonalRecordsByYear } from "@/utils/personalRecords";
 import { buildPaceTrendsByDistanceBucket } from "@/utils/paceTrends";
 import { buildHrZoneDistribution } from "@/utils/hrZoneDistribution";
@@ -478,14 +474,16 @@ function tsbStatusLabel(tsb: number): string {
 
 function TrainingLoadSection({
   data,
-  weeklyLoad,
+  workouts,
+  restingHr,
   runTitleMap,
   intensity,
   intensityLoading,
   maxHr,
 }: {
   data: TrainingLoadSectionData;
-  weeklyLoad: WeeklyLoadModel;
+  workouts: HealthWorkout[];
+  restingHr: number;
   runTitleMap: Map<string, RunTitleContext>;
   intensity: {
     zoneMiles: Record<HRZoneNumber, number>;
@@ -721,8 +719,9 @@ function TrainingLoadSection({
 
       {/* Weekly Training Load tile (replaced the 16-week stacked bar chart) */}
       <WeeklyLoadTile
-        weeks={weeklyLoad.weeks}
-        medianWeekly={weeklyLoad.medianWeekly}
+        workouts={workouts}
+        maxHr={maxHr}
+        restingHr={restingHr}
         runTitleMap={runTitleMap}
       />
 
@@ -1344,15 +1343,6 @@ export default function PersonalInsightsPage() {
     };
   }, [workouts, maxHr, restingHr]);
 
-  // Weekly Training Load tile model — 16 Monday-anchored weeks with
-  // per-activity rows + the 6-month median baseline, all from the
-  // already-loaded `workouts` (overrides applied, excluded filtered) via
-  // resolveDisplayLoad. Replaces the old runLoad/workoutLoad bar data.
-  const weeklyLoadModel = useMemo(
-    () => buildWeeklyLoadModel(workouts, maxHr, restingHr, new Date()),
-    [workouts, maxHr, restingHr]
-  );
-
   // workoutId → matched plan-entry title context (priority-1 run label) for the
   // Weekly Load tile's run rows. Inverts matchPlanToActual once over the set.
   const runTitleMap = useMemo(
@@ -1404,7 +1394,8 @@ export default function PersonalInsightsPage() {
 
           <TrainingLoadSection
             data={trainingLoadData}
-            weeklyLoad={weeklyLoadModel}
+            workouts={workouts}
+            restingHr={restingHr}
             runTitleMap={runTitleMap}
             intensity={intensityData}
             intensityLoading={intensityLoading}

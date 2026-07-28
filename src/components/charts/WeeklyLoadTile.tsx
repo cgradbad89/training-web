@@ -17,26 +17,36 @@ import { TrainingLoadBadge } from "@/components/ui/TrainingLoadBadge";
 import {
   classifyWeekLoad,
   stepWeekIndex,
+  buildWeeklyLoadModel,
+  filterWorkoutsByLoadFilter,
   LOAD_BAND_BELOW_MAX,
   LOAD_BAND_TYPICAL_MAX,
   type LoadBand,
-  type WeekLoadSummary,
+  type WeeklyLoadFilter,
 } from "@/utils/weeklyLoad";
 import { parseLocalDate } from "@/utils/dates";
 import { formatDuration } from "@/utils/pace";
 import { resolveActivityTitle } from "@/utils/resolveActivityTitle";
 import { type RunTitleContext } from "@/utils/runPlanTitle";
 import { computeLoadIntensity } from "@/utils/loadScale";
+import { type HealthWorkout } from "@/types/healthWorkout";
 
 interface WeeklyLoadTileProps {
-  /** Oldest → newest; last entry = current week. */
-  weeks: WeekLoadSummary[];
-  /** 6-month median weekly load; 0 = no baseline yet. */
-  medianWeekly: number;
+  /** Already-loaded workouts (runs AND non-run); filtered in-tile by the
+   *  All/Runs/Workouts toggle before aggregation. */
+  workouts: HealthWorkout[];
+  maxHr: number;
+  restingHr: number;
   /** workoutId → matched plan-entry title context (priority-1 run label).
    *  Empty/omitted when no active plan is in scope. */
   runTitleMap?: Map<string, RunTitleContext>;
 }
+
+const LOAD_FILTER_OPTIONS: { value: WeeklyLoadFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "runs", label: "Runs" },
+  { value: "workouts", label: "Workouts" },
+];
 
 const BAND_LABEL: Record<LoadBand, string> = {
   below: "Below your typical range",
@@ -79,8 +89,26 @@ function activityDateLabel(iso: string): string {
  * selected week's activity list (runs navigate to /runs/[id]; workouts have
  * no detail route, so their rows are non-clickable).
  */
-export function WeeklyLoadTile({ weeks, medianWeekly, runTitleMap }: WeeklyLoadTileProps) {
+export function WeeklyLoadTile({
+  workouts,
+  maxHr,
+  restingHr,
+  runTitleMap,
+}: WeeklyLoadTileProps) {
   const router = useRouter();
+  const [weeklyLoadFilter, setWeeklyLoadFilter] =
+    useState<WeeklyLoadFilter>("all");
+
+  const { weeks, medianWeekly } = useMemo(
+    () =>
+      buildWeeklyLoadModel(
+        filterWorkoutsByLoadFilter(workouts, weeklyLoadFilter),
+        maxHr,
+        restingHr
+      ),
+    [workouts, maxHr, restingHr, weeklyLoadFilter]
+  );
+
   // Default selection: current week (last entry).
   const [selectedIndex, setSelectedIndex] = useState(
     Math.max(0, weeks.length - 1)
@@ -134,14 +162,36 @@ export function WeeklyLoadTile({ weeks, medianWeekly, runTitleMap }: WeeklyLoadT
     [weeks]
   );
 
+  const filterToggle = (
+    <div className="flex flex-wrap gap-1.5">
+      {LOAD_FILTER_OPTIONS.map((opt) => {
+        const active = opt.value === weeklyLoadFilter;
+        return (
+          <button
+            key={opt.value}
+            onClick={() => setWeeklyLoadFilter(opt.value)}
+            className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
+              active
+                ? "bg-primary text-white border-primary"
+                : "bg-surface text-textSecondary border-border hover:text-textPrimary"
+            }`}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+
   if (!selected) return null;
 
   if (!hasAnyActivity) {
     return (
-      <div className="bg-card rounded-2xl shadow-sm border border-border p-5">
-        <h3 className="text-sm font-semibold text-textPrimary mb-3">
+      <div className="bg-card rounded-2xl shadow-sm border border-border p-5 flex flex-col gap-3">
+        <h3 className="text-sm font-semibold text-textPrimary">
           Weekly Training Load
         </h3>
+        {filterToggle}
         <p className="text-sm text-textSecondary text-center py-6">
           Not enough activity in the last 16 weeks.
         </p>
@@ -189,6 +239,8 @@ export function WeeklyLoadTile({ weeks, medianWeekly, runTitleMap }: WeeklyLoadT
           </button>
         </div>
       </div>
+
+      {filterToggle}
 
       {/* Score block */}
       <div className="flex items-end gap-3 flex-wrap">

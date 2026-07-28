@@ -172,6 +172,22 @@ export function buildWeeklyLoadModel(
   return { weeks, medianWeekly: median(medianTotals) };
 }
 
+export type WeeklyLoadFilter = "all" | "runs" | "workouts";
+
+/**
+ * Narrow the input to buildWeeklyLoadModel by kind before aggregation, so the
+ * display series AND the 6-month median baseline recompute from the same
+ * filtered subset (apples-to-apples comparison, no separate median logic).
+ */
+export function filterWorkoutsByLoadFilter(
+  workouts: HealthWorkout[],
+  filter: WeeklyLoadFilter
+): HealthWorkout[] {
+  if (filter === "all") return workouts;
+  if (filter === "runs") return workouts.filter((w) => w.isRunLike);
+  return workouts.filter((w) => !w.isRunLike);
+}
+
 /**
  * Week-navigation step with hard bounds: index 0 = oldest week in the window,
  * weekCount−1 = current week. ‹/› can never step outside [0, weekCount−1].

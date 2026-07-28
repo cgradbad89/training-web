@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   classifyWeekLoad,
   buildWeeklyLoadModel,
+  filterWorkoutsByLoadFilter,
   stepWeekIndex,
   WEEKLY_LOAD_WEEKS_BACK,
 } from "@/utils/weeklyLoad";
@@ -149,6 +150,73 @@ describe("buildWeeklyLoadModel", () => {
     const workouts = [mkWorkout("now", new Date(2026, 5, 9), 100)];
     const model = buildWeeklyLoadModel(workouts, 185, 60, NOW);
     expect(model.medianWeekly).toBe(0);
+  });
+});
+
+describe("filterWorkoutsByLoadFilter", () => {
+  const runA = mkWorkout("run-a", new Date(2026, 5, 8), 50, true);
+  const runB = mkWorkout("run-b", new Date(2026, 5, 9), 60, true);
+  const workoutA = mkWorkout("wkt-a", new Date(2026, 5, 8), 30, false);
+  const workoutB = mkWorkout("wkt-b", new Date(2026, 5, 9), 40, false);
+  const mixed = [runA, workoutA, runB, workoutB];
+
+  it("'all' returns the array unchanged", () => {
+    expect(filterWorkoutsByLoadFilter(mixed, "all")).toBe(mixed);
+  });
+
+  it("'runs' returns only isRunLike===true entries", () => {
+    expect(filterWorkoutsByLoadFilter(mixed, "runs")).toEqual([runA, runB]);
+  });
+
+  it("'workouts' returns only isRunLike===false entries", () => {
+    expect(filterWorkoutsByLoadFilter(mixed, "workouts")).toEqual([
+      workoutA,
+      workoutB,
+    ]);
+  });
+
+  it("empty array input returns empty for every filter", () => {
+    expect(filterWorkoutsByLoadFilter([], "all")).toEqual([]);
+    expect(filterWorkoutsByLoadFilter([], "runs")).toEqual([]);
+    expect(filterWorkoutsByLoadFilter([], "workouts")).toEqual([]);
+  });
+
+  it("all-run input: 'workouts' filter yields empty, 'runs' yields everything", () => {
+    const allRuns = [runA, runB];
+    expect(filterWorkoutsByLoadFilter(allRuns, "workouts")).toEqual([]);
+    expect(filterWorkoutsByLoadFilter(allRuns, "runs")).toEqual(allRuns);
+  });
+
+  it("all-workout input: 'runs' filter yields empty, 'workouts' yields everything", () => {
+    const allWorkouts = [workoutA, workoutB];
+    expect(filterWorkoutsByLoadFilter(allWorkouts, "runs")).toEqual([]);
+    expect(filterWorkoutsByLoadFilter(allWorkouts, "workouts")).toEqual(
+      allWorkouts
+    );
+  });
+});
+
+describe("buildWeeklyLoadModel with pre-filtered input", () => {
+  it("median narrows correctly when fed a runs-only vs. workouts-only subset", () => {
+    const workouts = [
+      // Week of Jun 1 (completed): run 100, workout 300.
+      mkWorkout("run-1", new Date(2026, 5, 2), 100, true),
+      mkWorkout("wkt-1", new Date(2026, 5, 2), 300, false),
+      // Week of May 18 (completed): run 200, workout 500.
+      mkWorkout("run-2", new Date(2026, 4, 19), 200, true),
+      mkWorkout("wkt-2", new Date(2026, 4, 19), 500, false),
+    ];
+
+    const runsOnly = filterWorkoutsByLoadFilter(workouts, "runs");
+    const runsModel = buildWeeklyLoadModel(runsOnly, 185, 60, NOW);
+    expect(runsModel.medianWeekly).toBe(150); // median([100, 200])
+
+    const workoutsOnly = filterWorkoutsByLoadFilter(workouts, "workouts");
+    const workoutsModel = buildWeeklyLoadModel(workoutsOnly, 185, 60, NOW);
+    expect(workoutsModel.medianWeekly).toBe(400); // median([300, 500])
+
+    const fullModel = buildWeeklyLoadModel(workouts, 185, 60, NOW);
+    expect(fullModel.medianWeekly).toBe(550); // median([400, 700]) — unfiltered
   });
 });
 
