@@ -6,6 +6,7 @@ import {
   useAppData,
   type AppDataContextValue,
 } from "@/contexts/AppDataContext";
+import { selectActiveWorkouts } from "@/utils/selectActiveWorkouts";
 
 // React 19 requires this flag for act() to flush effects/microtasks in tests.
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -181,6 +182,50 @@ describe("AppDataProvider", () => {
       }));
     });
     expect(latest?.overrides.wX).toEqual({ workoutId: "wX", isExcluded: true });
+  });
+
+  // Regression guard for the Workouts-page ↔ Dashboard override desync
+  // (PRD.md §6): Dashboard's `activeWorkouts` is `selectActiveWorkouts(workouts,
+  // overrides)` fed straight from this ONE shared provider instance. Before the
+  // fix, workouts/page.tsx wrote exclusions to its own page-local state instead
+  // of calling patchOverrides, so this context's `overrides` never learned about
+  // them and any other consumer sharing the SAME provider (no remount) kept
+  // showing the "excluded" workout. This asserts the fixed contract end-to-end:
+  // a patchOverrides call — exactly what workouts/page.tsx now performs after a
+  // successful excludeWorkout() write — is immediately visible to a downstream
+  // selectActiveWorkouts consumer with no fresh AppDataProvider mount involved.
+  it("a downstream selectActiveWorkouts consumer reflects patchOverrides immediately, with no fresh provider mount", async () => {
+    h.fetchHealthWorkouts.mockResolvedValue([
+      { workoutId: "w1" },
+      { workoutId: "w2" },
+    ]);
+    await mount();
+
+    const before = selectActiveWorkouts(latest!.workouts, latest!.overrides);
+    expect(before.map((w) => w.workoutId)).toEqual(["w1", "w2"]);
+
+    // Simulate the Workouts page's exclude handler: the Firestore write has
+    // already succeeded by this point, and this is the local sync step.
+    await act(async () => {
+      latest?.patchOverrides((prev) => ({
+        ...prev,
+        w1: {
+          workoutId: "w1",
+          userId: "u1",
+          isExcluded: true,
+          excludedAt: new Date().toISOString(),
+          excludedReason: null,
+          distanceMilesOverride: null,
+          durationSecondsOverride: null,
+          runTypeOverride: null,
+          updatedAt: new Date().toISOString(),
+        },
+      }));
+    });
+
+    // Same provider instance — no unmount/remount between the two reads.
+    const after = selectActiveWorkouts(latest!.workouts, latest!.overrides);
+    expect(after.map((w) => w.workoutId)).toEqual(["w2"]);
   });
 });
 

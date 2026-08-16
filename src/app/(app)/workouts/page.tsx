@@ -22,14 +22,13 @@ import { useAuth } from "@/hooks/useAuth";
 import { useAppData } from "@/contexts/AppDataContext";
 import { useEnrichTrainingLoads } from "@/hooks/useEnrichTrainingLoads";
 import { fetchUserSettings } from "@/services/userSettings";
-import { fetchAllOverrides, excludeWorkout } from "@/services/workoutOverrides";
+import { excludeWorkout } from "@/services/workoutOverrides";
 import { detectDuplicatePairs, type DuplicatePair } from "@/utils/duplicateDetection";
 import {
   fetchDismissedDuplicates,
   dismissDuplicate,
   dismissedPairKey,
 } from "@/services/dismissedDuplicates";
-import { type WorkoutOverride } from "@/types/workoutOverride";
 import { formatDuration } from "@/utils/pace";
 import { resolveActivityTitle } from "@/utils/resolveActivityTitle";
 import { weekStart } from "@/utils/dates";
@@ -605,9 +604,11 @@ export default function WorkoutsPage() {
   const {
     workouts: contextWorkouts,
     workoutsLoading,
+    overrides,
+    overridesLoading,
+    patchOverrides,
     refreshWorkouts,
   } = useAppData();
-  const [overrides, setOverrides] = useState<Record<string, WorkoutOverride>>({});
   const [userSettings, setUserSettings] = useState<UserSettings | null>();
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -667,21 +668,21 @@ export default function WorkoutsPage() {
       .catch((err) => console.error("[fetchUserSettings]", err));
   }, [uid]);
 
-  // Fetch overrides + dismissed pairs. allWorkouts/excludedWorkouts derive
-  // from the shared contextWorkouts array above, so no listener is needed
-  // here — once these resolve, the useMemo split above picks them up.
+  // Fetch dismissed pairs. Overrides now come from the shared AppDataContext
+  // (see useAppData() above) instead of a page-local fetch, so excluding a
+  // workout here is visible to every other consumer (Dashboard, Runs) via
+  // patchOverrides — no separate override state to keep in sync. allWorkouts/
+  // excludedWorkouts derive from the shared contextWorkouts array above, so no
+  // listener is needed here — once dismissed pairs resolve, the useMemo split
+  // above picks them up.
   useEffect(() => {
     if (!uid) return;
     setLoading(true);
     let cancelled = false;
 
-    Promise.all([
-      fetchAllOverrides(uid),
-      fetchDismissedDuplicates(uid),
-    ])
-      .then(([fetchedOverrides, fetchedDismissed]) => {
+    fetchDismissedDuplicates(uid)
+      .then((fetchedDismissed) => {
         if (cancelled) return;
-        setOverrides(fetchedOverrides);
         dismissedRef.current = fetchedDismissed;
         setDismissedPairKeys(fetchedDismissed);
         setLoading(false);
@@ -776,7 +777,7 @@ export default function WorkoutsPage() {
     });
   }, []);
 
-  if (loading || workoutsLoading) {
+  if (loading || workoutsLoading || overridesLoading) {
     return <WorkoutsSkeleton />;
   }
 
@@ -867,22 +868,23 @@ export default function WorkoutsPage() {
                 onExclude={async () => {
                   if (!uid) return;
                   await excludeWorkout(uid, pair.otfWorkoutId);
-                  const newOverride: WorkoutOverride = {
-                    workoutId: pair.otfWorkoutId,
-                    userId: uid,
-                    isExcluded: true,
-                    excludedAt: new Date().toISOString(),
-                    excludedReason: "auto-suggested duplicate",
-                    distanceMilesOverride: null,
-                    durationSecondsOverride: null,
-                    runTypeOverride: null,
-                    updatedAt: new Date().toISOString(),
-                  };
-                  // allWorkouts is derived from overrides, so updating the
-                  // override map alone moves the workout to excluded.
-                  setOverrides((prev) => ({
+                  // allWorkouts is derived from the shared overrides map, so
+                  // patching it alone moves the workout to excluded — and
+                  // propagates to every other consumer (Dashboard, Runs).
+                  patchOverrides((prev) => ({
                     ...prev,
-                    [pair.otfWorkoutId]: newOverride,
+                    [pair.otfWorkoutId]: {
+                      ...prev[pair.otfWorkoutId],
+                      workoutId: pair.otfWorkoutId,
+                      userId: uid,
+                      isExcluded: true,
+                      excludedAt: new Date().toISOString(),
+                      excludedReason: "auto-suggested duplicate",
+                      distanceMilesOverride: null,
+                      durationSecondsOverride: null,
+                      runTypeOverride: null,
+                      updatedAt: new Date().toISOString(),
+                    },
                   }));
                 }}
                 onDismiss={() => {
@@ -950,7 +952,7 @@ export default function WorkoutsPage() {
           restingHr={restingHr}
           onClose={() => setSelectedWorkout(null)}
           onExcludeChange={(workoutId, excluded) => {
-            setOverrides((prev) => ({
+            patchOverrides((prev) => ({
               ...prev,
               [workoutId]: {
                 ...prev[workoutId],
@@ -965,9 +967,11 @@ export default function WorkoutsPage() {
                 updatedAt: new Date().toISOString(),
               },
             }));
-            // allWorkouts/excludedWorkouts are derived from overrides above,
-            // so the setOverrides call alone moves the workout between the
-            // active and excluded lists — no separate list state to sync.
+            // allWorkouts/excludedWorkouts are derived from the shared
+            // overrides map, so the patchOverrides call alone moves the
+            // workout between the active and excluded lists here — and,
+            // unlike the old page-local state, is also visible to every
+            // other AppDataContext consumer (Dashboard, Runs).
             setSelectedWorkout(null);
           }}
         />
