@@ -6,6 +6,7 @@ import { ArrowLeft, CheckCircle, Circle, ChevronLeft, ChevronRight, Play } from 
 
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { useAuth } from "@/hooks/useAuth";
+import { useAppData } from "@/contexts/AppDataContext";
 import { fetchPlan, updatePlan } from "@/services/plans";
 import {
   type WorkoutPlan,
@@ -62,6 +63,7 @@ export default function WorkoutDetailPage() {
   const router = useRouter();
   const { user } = useAuth();
   const uid = user?.uid ?? null;
+  const { refreshPlans } = useAppData();
 
   const planId = params.planId as string;
   const weekIndex = parseInt(params.weekIndex as string, 10);
@@ -202,6 +204,7 @@ export default function WorkoutDetailPage() {
       const updated: WorkoutPlan = { ...plan, weeks: updatedWeeks };
       await updatePlan(uid, updated);
       setPlan(updated);
+      await refreshPlans();
       setFinished(true);
       setTimeout(() => router.back(), 2000);
     } catch (err) {

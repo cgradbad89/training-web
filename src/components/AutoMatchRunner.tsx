@@ -40,30 +40,6 @@ export default function AutoMatchRunner() {
       try {
         const plans = await fetchPlans(uid)
 
-        // Debug — fires on real matching passes, not on every render/snapshot.
-        // eslint-disable-next-line no-console
-        console.log(
-          '[AutoMatchRunner] non-running workouts (last 500):',
-          workouts
-            .filter((w) => !w.isRunLike)
-            .map((w) => ({
-              workoutId: w.workoutId,
-              date: w.startDate.toISOString().split('T')[0],
-              activityType: w.activityType,
-            }))
-        )
-        // eslint-disable-next-line no-console
-        console.log(
-          '[AutoMatchRunner] active workout plans:',
-          plans
-            .filter(
-              (p) =>
-                (p as { planType?: string }).planType === 'workout' &&
-                (p as { status?: string }).status === 'active'
-            )
-            .map((p) => p.name)
-        )
-
         await autoMatchCrossTrainingSessions(uid, plans, workouts)
         lastKey.current = key
       } catch (err) {

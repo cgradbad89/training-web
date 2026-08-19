@@ -185,26 +185,6 @@ export async function autoMatchCrossTrainingSessions(
     const key = localISODate(sessionDate);
     const candidates = byDate.get(key);
 
-    // Debug — fires whenever there's a same-day candidate to consider OR the
-    // session is a 'strength' category (so we log even no-candidate days for
-    // that category which was the original regression vector).
-    if (entry.category === 'strength' || candidates) {
-      // eslint-disable-next-line no-console
-      console.log('[autoMatch] checking session:', {
-        sessionDate: key,
-        category: entry.category ?? '(legacy)',
-        planId: plan.id,
-        weekIndex: entry.weekIndex,
-        weekday: entry.weekday,
-        candidateWorkouts: (candidates ?? []).map((w) => ({
-          workoutId: w.workoutId,
-          date: localISODate(w.startDate),
-          activityType: w.activityType,
-          isRunLike: w.isRunLike,
-        })),
-      });
-    }
-
     if (!candidates || candidates.length === 0) return null;
 
     // Determine predicate: category-aware or legacy.
@@ -218,20 +198,11 @@ export async function autoMatchCrossTrainingSessions(
 
     const matchIdx = candidates.findIndex(predicate);
     if (matchIdx === -1) {
-      // eslint-disable-next-line no-console
-      console.log('[autoMatch] no match for session', {
-        sessionDate: key,
-        category: entry.category ?? '(legacy)',
-        candidateActivityTypes: candidates.map((w) => w.activityType),
-      });
       return null;
     }
 
     const matched = candidates.splice(matchIdx, 1)[0];
     result.matched += 1;
-    console.log(
-      `[AutoMatch] Workout session matched: ${plan.id} day ${entry.weekIndex * 7 + (entry.weekday - 1)} → ${matched.workoutId}`
-    );
     return {
       ...entry,
       completed: true,

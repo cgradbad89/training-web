@@ -1,19 +1,18 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CrossTrainingPlanDetail } from "@/components/CrossTrainingPlanDetail";
 import { RunningPlanDetail } from "@/components/RunningPlanDetail";
 import { PlanExportModal } from "@/components/PlanExportModal";
 import { useAuth } from "@/hooks/useAuth";
+import { useAppData } from "@/contexts/AppDataContext";
 import {
-  fetchPlans,
   createPlan,
   updatePlan,
   deletePlan,
   setActivePlan,
   setPlanCompletion,
-  nextStatusForSibling,
 } from "@/services/plans";
 import { deepCopyRunningPlan } from "@/utils/planCopy";
 import {
@@ -21,7 +20,7 @@ import {
   weeksForSpan,
   copyPlanWithNewStart,
 } from "@/utils/planDateEdit";
-import { fetchHealthWorkouts } from "@/services/healthWorkouts";
+import { applyOverride } from "@/types/workoutOverride";
 import { fetchRaces } from "@/services/races";
 import { type Race } from "@/types/race";
 import {
@@ -35,20 +34,12 @@ import {
   type RunningPlan,
   type WorkoutPlan,
   type LegacyPilatesPlan,
-  type PlannedRunEntry,
-  type PlanWeek,
   type PlanRunType,
   isRunningPlan,
   isWorkoutPlan,
   isLegacyPilatesPlan,
   groupPlansByStatus,
 } from "@/types/plan";
-import { type HealthWorkout } from "@/types/healthWorkout";
-import {
-  matchPlanToActual,
-  statusForRunEntry,
-  type PlanMatch,
-} from "@/utils/planMatching";
 import { useRouter } from "next/navigation";
 import {
   CheckCircle,
@@ -68,37 +59,6 @@ import { GoalsTab } from "@/components/GoalsTab";
 import { useGoals } from "@/hooks/useGoals";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-/** Compute the calendar date of a plan entry */
-function plannedDate(plan: RunningPlan, entry: PlannedRunEntry): Date {
-  const [year, month, day] = plan.startDate.split("-").map(Number);
-  const start = new Date(year, month - 1, day);
-  const daysOffset = entry.weekIndex * 7 + (entry.weekday - 1);
-  const d = new Date(start);
-  d.setDate(start.getDate() + daysOffset);
-  return d;
-}
-
-/** Compute the calendar date of a specific weekday in a specific week */
-function dayDate(plan: RunningPlan, weekIndex: number, weekday: number): Date {
-  const [year, month, day] = plan.startDate.split("-").map(Number);
-  const start = new Date(year, month - 1, day);
-  const offset = weekIndex * 7 + (weekday - 1);
-  const d = new Date(start);
-  d.setDate(start.getDate() + offset);
-  return d;
-}
-
-function toISODate(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-function activityDate(a: HealthWorkout): string {
-  return a.startDate.toISOString().split("T")[0];
-}
 
 /** Return ISO date string for next Monday from today */
 function nextMonday(): string {
@@ -305,12 +265,38 @@ function Modal({
 export default function PlansPage() {
   const { user } = useAuth();
   const router = useRouter();
-  const [plans, setPlans] = useState<Plan[]>([]);
-  const [activities, setActivities] = useState<HealthWorkout[]>([]);
+
+  // Shared cross-page data (plans / workouts) now comes from AppDataContext
+  // instead of this page's own fetchPlans/fetchHealthWorkouts calls, so
+  // exclusions, field overrides, and post-edit freshness match /dashboard.
+  const {
+    plans,
+    plansLoading,
+    workouts: rawWorkouts,
+    workoutsLoading,
+    overrides,
+    refreshPlans,
+  } = useAppData();
+
+  // Apply overrides and drop excluded workouts — same processing /dashboard
+  // and /plan-insights do, so a workout excluded elsewhere never counts as a
+  // completed plan entry here either.
+  const activities = useMemo(
+    () =>
+      rawWorkouts
+        .map((w) => applyOverride(w, overrides[w.workoutId] ?? null))
+        .filter((w) => !overrides[w.workoutId]?.isExcluded),
+    [rawWorkouts, overrides]
+  );
+
   const [races, setRaces] = useState<Race[]>([]);
+  const [racesLoading, setRacesLoading] = useState(true);
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [selectedWeekIndex, setSelectedWeekIndex] = useState(0);
-  const [loading, setLoading] = useState(true);
+  // Seed/migration (once per mount, after plans load) + initial plan
+  // selection (once, after seeding settles) — see the effects below.
+  const [seeded, setSeeded] = useState(false);
+  const [initialSelectDone, setInitialSelectDone] = useState(false);
   const [saving, setSaving] = useState(false);
   const [mobileView, setMobileView] = useState<"list" | "detail">("list");
   const [pageView, setPageView] = useState<"plans" | "calendar" | "goals">(
@@ -361,9 +347,6 @@ export default function PlansPage() {
   const selectedRaceDate = selectedRaceId
     ? races.find((r) => r.id === selectedRaceId)?.raceDate
     : undefined;
-  const matchMap = selectedRunningPlan
-    ? matchPlanToActual(selectedRunningPlan, activities)
-    : new Map<string, PlanMatch | null>();
 
   // Sidebar grouping — "Workout Plans" includes legacy pilates docs
   // so the user can see them and delete manually.
@@ -374,31 +357,39 @@ export default function PlansPage() {
   );
 
   // ── Load ──────────────────────────────────────────────────────────────────
+  // Plans + workouts come from AppDataContext (fetched once at the (app)
+  // layout). Races stay a page-local fetch — out of this refactor's scope.
 
   useEffect(() => {
     if (!user) return;
-    loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setRacesLoading(true);
+    fetchRaces(user.uid)
+      .then(setRaces)
+      .finally(() => setRacesLoading(false));
   }, [user]);
 
-  async function loadAll() {
-    if (!user) return;
-    setLoading(true);
-    try {
-      const [loadedPlans, loadedActivities, loadedRaces] = await Promise.all([
-        fetchPlans(user.uid),
-        fetchHealthWorkouts(user.uid),
-        fetchRaces(user.uid),
-      ]);
+  // One-time seed / migration pass, run once per mount after the shared
+  // `plans` array has loaded from context. Same conditions as the old
+  // loadAll(): seed a default plan if none exist, seed/replace the Sept 2026
+  // half marathon plan, then run buildSeptTravelMigration on it. Any write
+  // triggers a single refreshPlans() so context (and /dashboard) picks it up.
+  useEffect(() => {
+    if (!user || plansLoading || seeded) return;
+    let cancelled = false;
 
-      let finalPlans: Plan[] = loadedPlans;
+    async function runSeedAndMigration() {
+      if (!user) return;
+      let finalPlans: Plan[] = plans;
+      let plansChanged = false;
+
       // Seed default running plan only if no plans of any kind exist
-      if (loadedPlans.length === 0) {
-        const seeded = await createPlan<RunningPlan>(
+      if (plans.length === 0) {
+        const seededPlan = await createPlan<RunningPlan>(
           user.uid,
           DEFAULT_HALF_MARATHON_PLAN
         );
-        finalPlans = [seeded];
+        finalPlans = [seededPlan];
+        plansChanged = true;
       }
 
       // One-time seed / replacement: September 2026 half marathon plan.
@@ -418,6 +409,7 @@ export default function PlansPage() {
         try {
           await deletePlan(user.uid, existingSept.id);
           finalPlans = finalPlans.filter((p) => p.id !== existingSept.id);
+          plansChanged = true;
         } catch (err) {
           console.error("[SeedSeptHMPlan] delete old plan error", err);
         }
@@ -427,6 +419,7 @@ export default function PlansPage() {
         try {
           const { plan: septPlan } = await seedSeptHMPlan(user.uid);
           finalPlans = [...finalPlans, septPlan];
+          plansChanged = true;
         } catch (err) {
           console.error("[SeedSeptHMPlan] error", err);
         }
@@ -442,39 +435,46 @@ export default function PlansPage() {
           const migrated = buildSeptTravelMigration(septPlan);
           if (migrated) {
             await updatePlan(user.uid, migrated);
-            finalPlans = finalPlans.map((p) =>
-              p.id === migrated.id ? migrated : p
-            );
+            plansChanged = true;
           }
         }
       } catch (err) {
         console.error("[SeptTravelMigration] error", err);
       }
 
-      setPlans(finalPlans);
-      setActivities(loadedActivities);
-      setRaces(loadedRaces);
-
-      const active = finalPlans.find((p) => p.status === "active") ?? finalPlans[0];
-      if (active) {
-        setSelectedPlanId(active.id);
-        setSelectedWeekIndex(currentWeekIndex(active));
+      if (plansChanged) {
+        await refreshPlans();
       }
-    } finally {
-      setLoading(false);
     }
-  }
+
+    void runSeedAndMigration().finally(() => {
+      if (!cancelled) setSeeded(true);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, plansLoading, seeded]);
+
+  // Initial plan selection — once, after seeding/migration has settled, mirror
+  // the old loadAll()'s "select active plan (or first) on load" behavior.
+  // Guarded so it never re-fires on later plans changes (e.g. after a user
+  // edit's refreshPlans()), which would yank the user back to another plan.
+  useEffect(() => {
+    if (!user || plansLoading || !seeded || initialSelectDone) return;
+    const active = plans.find((p) => p.status === "active") ?? plans[0];
+    if (active) {
+      setSelectedPlanId(active.id);
+      setSelectedWeekIndex(currentWeekIndex(active));
+    }
+    setInitialSelectDone(true);
+  }, [user, plansLoading, seeded, initialSelectDone, plans]);
+
+  const loading =
+    plansLoading || workoutsLoading || racesLoading || !seeded || !initialSelectDone;
 
   function currentWeekIndex(plan: Plan): number {
-    // TEMP debug — confirms what fields the helper sees per plan. Remove
-    // once both running and workout plans verified to land on the right week.
-    // eslint-disable-next-line no-console
-    console.log("[currentWeekIndex]", {
-      name: plan.name,
-      status: plan.status,
-      startDate: plan.startDate,
-      weeksLength: plan.weeks?.length,
-    });
     // Inactive / template plans always open at Week 1 — users editing a
     // template or browsing an archived plan want to see the start, not a
     // computed "current week" that's meaningless for an unstarted plan.
@@ -496,25 +496,7 @@ export default function PlansPage() {
     setSaving(true);
     try {
       await setActivePlan(user.uid, planId, plans);
-      // Mirror the service's same-type-only behaviour locally so a running
-      // plan activation never flips the active workout plan's flag (and
-      // vice versa). Plans of the other type keep their existing status. A
-      // same-type "completed" sibling is left unchanged (not demoted), via
-      // the same nextStatusForSibling rule the service uses.
-      const target = plans.find((p) => p.id === planId);
-      const targetIsRunning = !!target && isRunningPlan(target);
-      const targetIsWorkout = !!target && isWorkoutPlan(target);
-      setPlans((prev) =>
-        prev.map((p) => {
-          const sameType =
-            (targetIsRunning && isRunningPlan(p)) ||
-            (targetIsWorkout && isWorkoutPlan(p));
-          if (!sameType) return p;
-          const next = nextStatusForSibling(p, planId);
-          if (!next) return p; // completed sibling — leave unchanged
-          return { ...p, ...next };
-        })
-      );
+      await refreshPlans();
     } finally {
       setSaving(false);
     }
@@ -529,8 +511,8 @@ export default function PlansPage() {
     if (!plan) return;
     setSaving(true);
     try {
-      const merged = await setPlanCompletion(user.uid, plan, "complete");
-      setPlans((prev) => prev.map((p) => (p.id === planId ? merged : p)));
+      await setPlanCompletion(user.uid, plan, "complete");
+      await refreshPlans();
     } finally {
       setSaving(false);
     }
@@ -542,8 +524,8 @@ export default function PlansPage() {
     if (!plan) return;
     setSaving(true);
     try {
-      const merged = await setPlanCompletion(user.uid, plan, "reopen");
-      setPlans((prev) => prev.map((p) => (p.id === planId ? merged : p)));
+      await setPlanCompletion(user.uid, plan, "reopen");
+      await refreshPlans();
     } finally {
       setSaving(false);
     }
@@ -581,7 +563,7 @@ export default function PlansPage() {
           })),
         });
       }
-      setPlans((prev) => [...prev, plan]);
+      await refreshPlans();
       setSelectedPlanId(plan.id);
       setSelectedWeekIndex(0);
       setMobileView("detail");
@@ -611,7 +593,7 @@ export default function PlansPage() {
         user.uid,
         deepCopyRunningPlan(selectedPlan, name)
       );
-      setPlans((prev) => [...prev, plan]);
+      await refreshPlans();
       setSelectedPlanId(plan.id);
       setShowCopyRunningPlanModal(false);
       setCopyRunningPlanName("");
@@ -631,21 +613,18 @@ export default function PlansPage() {
         "id" | "createdAt" | "updatedAt"
       >
     );
-    setPlans((prev) => [...prev, plan]);
+    await refreshPlans();
     setSelectedPlanId(plan.id);
     setCopyPlanFlash(`✓ Copied as "${plan.name}"`);
     setTimeout(() => setCopyPlanFlash(null), 3000);
   }
 
-  /**
-   * Persist updates to a Workout plan from CrossTrainingPlanDetail.
-   * Optimistically updates local state, then writes through Firestore.
-   */
+  /** Persist updates to a Workout plan from CrossTrainingPlanDetail. */
   async function handleCrossTrainingUpdate(updated: WorkoutPlan) {
     if (!user) return;
-    setPlans((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
     try {
       await updatePlan(user.uid, updated);
+      await refreshPlans();
     } catch (e) {
       console.error(e);
     }
@@ -657,9 +636,9 @@ export default function PlansPage() {
    */
   async function handleRunningPlanUpdate(updated: RunningPlan) {
     if (!user) return;
-    setPlans((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
     try {
       await updatePlan(user.uid, updated);
+      await refreshPlans();
     } catch (e) {
       console.error(e);
     }
@@ -675,7 +654,7 @@ export default function PlansPage() {
         "id" | "createdAt" | "updatedAt"
       >
     );
-    setPlans((prev) => [...prev, plan]);
+    await refreshPlans();
     setSelectedPlanId(plan.id);
     setCopyPlanFlash(`✓ Copied as "${plan.name}"`);
     setTimeout(() => setCopyPlanFlash(null), 3000);
@@ -687,7 +666,7 @@ export default function PlansPage() {
     try {
       const updated = { ...selectedPlan, name: nameInput.trim() };
       await updatePlan(user.uid, updated);
-      setPlans((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+      await refreshPlans();
       setShowRenameModal(false);
       setNameInput("");
     } finally {
@@ -701,40 +680,14 @@ export default function PlansPage() {
     try {
       await deletePlan(user.uid, selectedPlan.id);
       const remaining = plans.filter((p) => p.id !== selectedPlan.id);
-      setPlans(remaining);
       setSelectedPlanId(remaining[0]?.id ?? null);
+      await refreshPlans();
       setConfirmDelete(false);
     } finally {
       setSaving(false);
     }
   }
 
-
-  // ── Derived (running plan only — polymorphic plans render via separate component) ──
-
-  const currentWeek: PlanWeek | undefined =
-    selectedRunningPlan?.weeks[selectedWeekIndex];
-
-  const weekEntries = (currentWeek?.entries ?? [])
-    .slice()
-    .sort((a, b) => a.weekday - b.weekday);
-
-  function weekDateRange(plan: Plan, weekIdx: number): string {
-    const start = new Date(plan.startDate + "T00:00:00");
-    start.setDate(start.getDate() + weekIdx * 7);
-    const end = new Date(start);
-    end.setDate(start.getDate() + 6);
-    const fmt = (d: Date) =>
-      d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-    return `${fmt(start)} – ${fmt(end)}`;
-  }
-
-  function weekStats(_plan: RunningPlan, week: PlanWeek) {
-    const runEntries = week.entries.filter((e) => e.runType !== "rest");
-    const completed = runEntries.filter((e) => matchMap.get(e.id)).length;
-    const totalMiles = runEntries.reduce((s, e) => s + e.distanceMiles, 0);
-    return { completed, total: runEntries.length, totalMiles };
-  }
 
   function openTypePicker() {
     setShowTypePicker(true);
@@ -864,8 +817,8 @@ export default function PlansPage() {
               try {
                 await deletePlan(user.uid, selectedPlan.id);
                 const remaining = plans.filter((p) => p.id !== selectedPlan.id);
-                setPlans(remaining);
                 setSelectedPlanId(remaining[0]?.id ?? null);
+                await refreshPlans();
               } finally {
                 setSaving(false);
               }
@@ -901,8 +854,8 @@ export default function PlansPage() {
                   try {
                     await deletePlan(user.uid, selectedPlan.id);
                     const remaining = plans.filter((p) => p.id !== selectedPlan.id);
-                    setPlans(remaining);
                     setSelectedPlanId(remaining[0]?.id ?? null);
+                    await refreshPlans();
                   } finally {
                     setSaving(false);
                   }
@@ -949,8 +902,8 @@ export default function PlansPage() {
                 const remaining = plans.filter(
                   (p) => p.id !== selectedRunningPlan.id
                 );
-                setPlans(remaining);
                 setSelectedPlanId(remaining[0]?.id ?? null);
+                await refreshPlans();
               } finally {
                 setSaving(false);
               }
