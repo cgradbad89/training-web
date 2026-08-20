@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   matchPlanToActual,
   statusForRunEntry,
+  isPlanEntryCompleted,
 } from "@/utils/planMatching";
 import { type RunningPlan, type PlannedRunEntry } from "@/types/plan";
 import { type HealthWorkout } from "@/types/healthWorkout";
@@ -140,5 +141,25 @@ describe("statusForRunEntry — quality → status mapping unchanged", () => {
     expect(statusForRunEntry(plan, plan.weeks[0].entries[0], matchMap, NOW)).toBe(
       "upcoming"
     );
+  });
+});
+
+// ─── isPlanEntryCompleted — canonical "any match counts" helper (Phase 1) ────
+
+describe("isPlanEntryCompleted", () => {
+  it("'met' (full match) is completed", () => {
+    expect(isPlanEntryCompleted("met")).toBe(true);
+  });
+
+  it("'partial' (partial match) is completed", () => {
+    expect(isPlanEntryCompleted("partial")).toBe(true);
+  });
+
+  it("'missed' (no match, past) is NOT completed", () => {
+    expect(isPlanEntryCompleted("missed")).toBe(false);
+  });
+
+  it("'upcoming' (no match, future) is NOT completed", () => {
+    expect(isPlanEntryCompleted("upcoming")).toBe(false);
   });
 });

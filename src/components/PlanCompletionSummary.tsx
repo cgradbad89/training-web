@@ -28,7 +28,7 @@ import { buildWorkoutPlanSummary } from "@/utils/workoutPlanSummary";
 import { ChartSkeleton } from "@/components/ui/ChartSkeleton";
 import { formatCompletedAt } from "@/utils/planFormat";
 import { formatPace } from "@/utils/pace";
-import { DEFAULT_MAX_HR } from "@/utils/trainingLoad";
+import { useAppData } from "@/contexts/AppDataContext";
 
 // The three Recharts charts in this (completed-plan-only) summary are lazy-
 // loaded client-side, so Recharts stays out of the plan-detail initial bundle
@@ -128,14 +128,19 @@ export function PlanCompletionSummary({
   plan,
   activities = [],
 }: PlanCompletionSummaryProps) {
-  // Hook before any early return (React error #310).
+  // Hooks before any early return (React error #310).
   const [expanded, setExpanded] = useState(true);
+  // Real stored HR anchors (users/{uid}/settings/prefs), same 185/60
+  // fallback-if-missing as every other load display in the app — no
+  // separate DEFAULT_MAX_HR constant here.
+  const { maxHr, restingHr } = useAppData();
 
   if (plan.status !== "completed") return null;
 
   if (isRunningPlan(plan)) {
     const result = buildPlanAdherence(plan, activities, {
-      maxHr: DEFAULT_MAX_HR,
+      maxHr,
+      restingHr,
     });
     const chartData = result.weeks.map((w) => ({
       label: w.label,

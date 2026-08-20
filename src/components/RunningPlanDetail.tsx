@@ -471,10 +471,14 @@ export function RunningPlanDetail({
     renderWeekAccessory: (entries) => {
       if (entries.filter((e) => e.runType !== "rest").length === 0) return null;
       const { completedRuns, totalRuns, plannedMiles, actualMiles, pct } =
-        computeWeekCompletion(entries, (id) => {
-          const m = matchMap.get(id);
-          return m ? m.activity.distanceMiles : null;
-        });
+        computeWeekCompletion(
+          entries,
+          (id) => {
+            const m = matchMap.get(id);
+            return m ? m.activity.distanceMiles : null;
+          },
+          (entry) => statusForRunEntry(plan, entry, matchMap)
+        );
       return (
         <div className="mt-4 p-3 rounded-xl bg-surface border border-border">
           <div className="flex items-center justify-between text-sm mb-2">

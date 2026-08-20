@@ -16,7 +16,11 @@
 
 import { type RunningPlan } from "@/types/plan";
 import { type HealthWorkout } from "@/types/healthWorkout";
-import { matchPlanToActual } from "@/utils/planMatching";
+import {
+  matchPlanToActual,
+  statusForRunEntry,
+  isPlanEntryCompleted,
+} from "@/utils/planMatching";
 import { resolveDisplayLoad, DEFAULT_RESTING_HR } from "@/utils/trainingLoad";
 
 export interface WeekAdherence {
@@ -87,7 +91,11 @@ export function buildPlanAdherence(
     let completedRuns = 0;
     for (const e of runEntries) {
       const m = matchMap.get(e.id);
-      if (m && m.quality === "full") completedRuns += 1;
+      // Canonical "is completed" rule (isPlanEntryCompleted): full AND
+      // partial matches both count — not just "full" as before.
+      if (isPlanEntryCompleted(statusForRunEntry(plan, e, matchMap))) {
+        completedRuns += 1;
+      }
       if (m && !matchedIds.has(m.activity.workoutId)) {
         actualMiles += m.activity.distanceMiles;
         matchedIds.add(m.activity.workoutId);

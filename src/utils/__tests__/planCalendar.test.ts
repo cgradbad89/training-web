@@ -127,6 +127,30 @@ describe("buildCalendarEvents — running events carry the 4-state status", () =
   });
 });
 
+describe("buildCalendarEvents — CalendarEvent.completed now routed through isPlanEntryCompleted (Phase 3 regression)", () => {
+  it("completed matches isPlanEntryCompleted(status) for every state in one mixed week — output unchanged from the old 'match != null' check", () => {
+    const plan = makeRunningPlan([
+      runEntry(0, 1, 10, "met-mon"),      // Mon — full match
+      runEntry(0, 2, 10, "partial-tue"),  // Tue — partial match
+      runEntry(0, 3, 10, "missed-wed"),   // Wed — no match, past
+    ]);
+    const runs = [
+      run("2026-01-19T12:00:00Z", 9),  // Mon, 90% — met
+      run("2026-01-20T12:00:00Z", 3),  // Tue, 30% — partial
+      // Wed: no run.
+    ];
+    const events = buildCalendarEvents([plan], runs);
+    const byId = Object.fromEntries(events.map((e) => [e.entryId, e]));
+
+    expect(byId["met-mon"].status).toBe("met");
+    expect(byId["met-mon"].completed).toBe(true);
+    expect(byId["partial-tue"].status).toBe("partial");
+    expect(byId["partial-tue"].completed).toBe(true);
+    expect(byId["missed-wed"].status).toBe("missed");
+    expect(byId["missed-wed"].completed).toBe(false);
+  });
+});
+
 describe("buildCalendarEvents — workout events are unaffected (no status concept)", () => {
   it("leaves `status` undefined and preserves the existing `completed` boolean semantics", () => {
     const plan = makeWorkoutPlan([

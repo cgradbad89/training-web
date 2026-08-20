@@ -225,3 +225,18 @@ export function statusForRunEntry(
   startOfToday.setHours(0, 0, 0, 0);
   return entryDate < startOfToday ? "missed" : "upcoming";
 }
+
+/**
+ * Single source of truth for "is this planned entry completed", given its
+ * four-state status. "met" (full match) and "partial" (partial match) both
+ * count as completed; "missed" and "upcoming" (no match) do not.
+ *
+ * This is the canonical "any match counts as completed" rule — no page
+ * should compute this independently again. Route any completion tally
+ * (Plan Completion Summary, Plan Insights, week-progress bars, calendar
+ * `completed` flags, etc.) through this helper instead of re-deriving it
+ * from `PlanMatch.quality` or a raw "match != null" check.
+ */
+export function isPlanEntryCompleted(status: RunEntryStatus): boolean {
+  return status === "met" || status === "partial";
+}

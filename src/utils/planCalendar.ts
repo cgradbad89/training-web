@@ -2,6 +2,7 @@ import type { RunningPlan, WorkoutPlan, WorkoutCategory } from "@/types/plan";
 import {
   matchPlanToActual,
   statusForRunEntry,
+  isPlanEntryCompleted,
   type RunEntryStatus,
 } from "@/utils/planMatching";
 import type { HealthWorkout } from "@/types/healthWorkout";
@@ -108,6 +109,7 @@ export function buildCalendarEvents(
             entry.description ??
             (entry.runType ? (RUN_TYPE_LABELS[entry.runType] ?? entry.runType) : "Run");
           const match = matchMap.get(entry.id) ?? null;
+          const status = statusForRunEntry(plan, entry, matchMap);
           events.push({
             date: sessionDate(plan.startDate, entry.weekIndex, dayIndex),
             entryId: entry.id,
@@ -120,9 +122,12 @@ export function buildCalendarEvents(
             sessionIndex,
             label,
             distanceMiles: entry.distanceMiles,
-            completed: match != null,
+            // Canonical "is completed" rule (isPlanEntryCompleted) — same
+            // "any match counts" output as the old `match != null` check,
+            // now routed through the single shared helper.
+            completed: isPlanEntryCompleted(status),
             isRestDay: false,
-            status: statusForRunEntry(plan, entry, matchMap),
+            status,
             activity: match?.activity ?? null,
           });
         }

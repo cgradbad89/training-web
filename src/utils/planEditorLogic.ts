@@ -8,6 +8,7 @@
  */
 
 import type { PlannedWorkoutEntry, PlannedRunEntry } from "@/types/plan";
+import { isPlanEntryCompleted, type RunEntryStatus } from "@/utils/planMatching";
 
 /** Minimal shape the generic helpers need: every plan entry knows its weekday. */
 export interface WeekdayEntry {
@@ -148,18 +149,22 @@ export interface WeekCompletion {
 }
 
 /**
- * Compute a running week's completion from its planned entries and a resolver
- * that returns the matched actual miles for an entry id (null = no match).
- * Mirrors the legacy WeekSummaryBar exactly — a run counts as completed when it
- * has a match; planned/actual mileage drive the percent. Pure (the caller pulls
- * matches from the existing matchPlanToActual map) — no new match logic.
+ * Compute a running week's completion from its planned entries, a resolver
+ * that returns the matched actual miles for an entry id (null = no match),
+ * and a resolver for the entry's four-state status. "Completed" is decided
+ * by the single canonical `isPlanEntryCompleted` helper (full AND partial
+ * matches both count) — mirrors the legacy WeekSummaryBar's "any match
+ * counts" behavior exactly, just no longer computed inline here. Pure (the
+ * caller pulls matches/status from the existing matchPlanToActual map) — no
+ * new match logic.
  */
 export function computeWeekCompletion(
   entries: PlannedRunEntry[],
-  matchedMilesFor: (entryId: string) => number | null
+  matchedMilesFor: (entryId: string) => number | null,
+  statusFor: (entry: PlannedRunEntry) => RunEntryStatus
 ): WeekCompletion {
   const runEntries = entries.filter((e) => e.runType !== "rest");
-  const completed = runEntries.filter((e) => matchedMilesFor(e.id) != null);
+  const completed = runEntries.filter((e) => isPlanEntryCompleted(statusFor(e)));
   const plannedMiles = runEntries.reduce((s, e) => s + e.distanceMiles, 0);
   const actualMiles = completed.reduce(
     (s, e) => s + (matchedMilesFor(e.id) ?? 0),

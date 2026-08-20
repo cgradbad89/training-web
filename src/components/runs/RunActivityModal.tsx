@@ -38,7 +38,7 @@ interface RunActivityModalProps {
 
 const STATUS_BADGE: Record<RunEntryStatus, { label: string; className: string }> = {
   met: { label: "Completed", className: "bg-success/15 text-success" },
-  partial: { label: "Incomplete", className: "bg-warning/15 text-warning" },
+  partial: { label: "Partial", className: "bg-warning/15 text-warning" },
   missed: { label: "Missed", className: "bg-danger/15 text-danger" },
   upcoming: {
     label: "Upcoming",

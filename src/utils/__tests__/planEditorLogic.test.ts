@@ -13,8 +13,10 @@ import {
   runMutationWithDirty,
   normalizeScheduledTime,
 } from "@/utils/planEditorLogic";
-import type { PlannedWorkoutEntry, PlannedRunEntry } from "@/types/plan";
+import type { PlannedWorkoutEntry, PlannedRunEntry, RunningPlan } from "@/types/plan";
 import { deepCopyRunEntry } from "@/utils/planCopy";
+import { matchPlanToActual, statusForRunEntry, type RunEntryStatus } from "@/utils/planMatching";
+import type { HealthWorkout } from "@/types/healthWorkout";
 
 // Minimal entry shape for the generic copy helpers + a deterministic copy fn
 // (no crypto randomness) so assertions are stable.
@@ -294,7 +296,9 @@ describe("computeWeekCompletion", () => {
     const entries = [run("a", 5), run("b", 8), run("c", 3)];
     // 'a' matched to a 4.8-mi actual, 'b' matched to 8, 'c' unmatched.
     const matched: Record<string, number> = { a: 4.8, b: 8 };
-    const r = computeWeekCompletion(entries, (id) => matched[id] ?? null);
+    const statusFor = (e: PlannedRunEntry): RunEntryStatus =>
+      matched[e.id] != null ? "met" : "missed";
+    const r = computeWeekCompletion(entries, (id) => matched[id] ?? null, statusFor);
     expect(r.completedRuns).toBe(2);
     expect(r.totalRuns).toBe(3);
     expect(r.plannedMiles).toBe(16);
@@ -303,27 +307,106 @@ describe("computeWeekCompletion", () => {
   });
 
   it("reports zeros and pct 0 for an empty week", () => {
-    const r = computeWeekCompletion([], () => null);
+    const r = computeWeekCompletion([], () => null, () => "missed");
     expect(r).toEqual({ completedRuns: 0, totalRuns: 0, plannedMiles: 0, actualMiles: 0, pct: 0 });
   });
 
   it("excludes rest entries and yields pct 0 for a rest-only week", () => {
-    const r = computeWeekCompletion([run("x", 0, "rest")], () => null);
+    const r = computeWeekCompletion([run("x", 0, "rest")], () => null, () => "missed");
     expect(r.totalRuns).toBe(0);
     expect(r.pct).toBe(0);
   });
 
   it("clamps pct to 1 when actual exceeds planned", () => {
-    const r = computeWeekCompletion([run("a", 5)], () => 9);
+    const r = computeWeekCompletion([run("a", 5)], () => 9, () => "met");
     expect(r.pct).toBe(1);
     expect(r.actualMiles).toBe(9);
   });
 
-  it("treats a 0-mile matched activity as completed (match present, not miles)", () => {
-    const r = computeWeekCompletion([run("a", 5)], () => 0);
+  it("treats a 0-mile matched activity as completed (status-driven, not miles)", () => {
+    const r = computeWeekCompletion([run("a", 5)], () => 0, () => "met");
     expect(r.completedRuns).toBe(1);
     expect(r.actualMiles).toBe(0);
     expect(r.pct).toBe(0);
+  });
+
+  it("a 'partial' status counts as completed too (isPlanEntryCompleted — any match counts)", () => {
+    const r = computeWeekCompletion([run("a", 5)], () => 2, () => "partial");
+    expect(r.completedRuns).toBe(1);
+    expect(r.actualMiles).toBe(2);
+  });
+
+  it("an 'upcoming' status does NOT count as completed even if miles happen to be non-null", () => {
+    // Defensive case: statusFor is the source of truth for completion, not
+    // matchedMilesFor's null-ness.
+    const r = computeWeekCompletion([run("a", 5)], () => 5, () => "upcoming");
+    expect(r.completedRuns).toBe(0);
+    expect(r.actualMiles).toBe(0);
+  });
+});
+
+// ─── Phase 3 regression: computeWeekCompletion via the real matching engine ──
+
+describe("computeWeekCompletion — routed through statusForRunEntry/isPlanEntryCompleted (output unchanged)", () => {
+  function runEntry(weekday: number, distanceMiles: number, id: string): PlannedRunEntry {
+    return { id, weekIndex: 0, weekday, dayOfWeek: weekday - 1, distanceMiles, runType: "outdoor" };
+  }
+
+  function healthRun(startISO: string, distanceMiles: number): HealthWorkout {
+    return {
+      workoutId: `run-${startISO}`,
+      isRunLike: true,
+      startDate: new Date(startISO),
+      distanceMiles,
+      durationSeconds: distanceMiles * 600,
+      avgHeartRate: null,
+      trainingLoadV2: null,
+    } as unknown as HealthWorkout;
+  }
+
+  it("counts full AND partial matches as completed — same output the inline 'match != null' check produced before this refactor", () => {
+    const plan: RunningPlan = {
+      id: "plan1",
+      name: "Test Plan",
+      planType: "running",
+      startDate: "2026-01-19", // Monday
+      status: "active",
+      isActive: true,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      weeks: [
+        {
+          weekNumber: 1,
+          entries: [
+            runEntry(1, 5, "full-mon"),    // Mon — full match
+            runEntry(2, 5, "partial-tue"), // Tue — partial match
+            runEntry(3, 5, "missed-wed"),  // Wed — no run
+          ],
+        },
+      ],
+    };
+    const runs = [
+      healthRun("2026-01-19T12:00:00Z", 5), // Mon, full
+      healthRun("2026-01-20T12:00:00Z", 1), // Tue, 20% — partial
+    ];
+    const matchMap = matchPlanToActual(plan, runs);
+    const entries = plan.weeks[0].entries;
+
+    const r = computeWeekCompletion(
+      entries,
+      (id) => {
+        const m = matchMap.get(id);
+        return m ? m.activity.distanceMiles : null;
+      },
+      (entry) => statusForRunEntry(plan, entry, matchMap)
+    );
+
+    // Both full and partial matches count — identical to the pre-refactor
+    // "matchedMilesFor(id) != null" behavior (computeWeekCompletion already
+    // treated any match as completed; this only changes HOW it decides that).
+    expect(r.completedRuns).toBe(2);
+    expect(r.totalRuns).toBe(3);
+    expect(r.actualMiles).toBeCloseTo(6, 5); // 5 (full) + 1 (partial)
   });
 });
 

@@ -103,31 +103,75 @@ describe("buildPlanAdherence — full span", () => {
   });
 });
 
-describe("buildPlanAdherence — completedRuns requires 'full' quality (85% threshold)", () => {
-  it("a partial-quality match (below 85%) still adds its mileage but is not counted as completed", () => {
+describe("buildPlanAdherence — completedRuns counts ANY match, full or partial (isPlanEntryCompleted)", () => {
+  it("a partial-quality match (below 85%) adds its mileage AND now counts as completed", () => {
     // W1 planned 5mi; actual run is only 3mi (60%) — matches (day-proximity
-    // gate only) but grades "partial", so it should count toward actualMiles
-    // but NOT toward completedRuns.
+    // gate only) and grades "partial". Under the standardized "any match
+    // counts" rule (isPlanEntryCompleted), this now counts toward
+    // completedRuns too (previously it did not — only "full" counted).
     const shortRun = run("2026-01-19T12:00:00Z", 3, 3 * 600);
     const r = buildPlanAdherence(makePlan(), [shortRun, W2_RUN], { maxHr: 185 });
     expect(r.weeks[0].actualMiles).toBeCloseTo(3, 5);
-    expect(r.weeks[0].completedRuns).toBe(0);
-    // W2 (6/6 = 100%) still counts as completed.
-    expect(r.totalCompletedRuns).toBe(1);
+    expect(r.weeks[0].completedRuns).toBe(1); // partial now counts
+    // W1 (partial) + W2 (full) — was 1 (W2 only) before this change.
+    expect(r.totalCompletedRuns).toBe(2);
     // actualMiles total is unaffected by the completion grading — still sums
     // matched + bonus mileage regardless of quality.
     expect(r.totalActualMiles).toBeCloseTo(9, 5); // 3 + 6
   });
 
-  it("a run more than 3mi short of planned (previously unmatched entirely) now still contributes to actualMiles as before, via matching rather than the old bonus-run path", () => {
-    // Previously this 4mi-short run would fail to match altogether and instead
-    // be picked up as a "bonus" unmatched run within the week range. Now it
-    // matches directly (partial quality), so actualMiles is unchanged either way.
+  it("a run more than 3mi short of planned still matches (partial quality) and now counts as completed", () => {
+    // Matches directly (partial quality) via the day-proximity gate; under
+    // the new "any match counts" rule this is completed even though it's
+    // far short of the planned distance.
     const plan = makePlan();
     const veryShortRun = run("2026-01-19T12:00:00Z", 1, 1 * 600); // planned 5mi, 20%
     const r = buildPlanAdherence(plan, [veryShortRun], { maxHr: 185 });
     expect(r.weeks[0].actualMiles).toBeCloseTo(1, 5);
-    expect(r.weeks[0].completedRuns).toBe(0);
+    expect(r.weeks[0].completedRuns).toBe(1); // was 0 before this change
+  });
+});
+
+describe("buildPlanAdherence — Phase 2 fixture: before/after count on a mixed week", () => {
+  it("3 full + 1 partial + 1 missed → completedRuns is 4 (was 3 when only 'full' counted)", () => {
+    // Single week, 5 entries: e1-e3 match at >=85% ("full"), e4 matches below
+    // 85% ("partial"), e5 has no actual run at all ("missed"). Before this
+    // session's Phase 2 change, buildPlanAdherence counted quality === "full"
+    // only, so completedRuns would have been 3. Routed through the canonical
+    // isPlanEntryCompleted helper, full AND partial both count → 4.
+    const plan: RunningPlan = {
+      id: "plan-fixture",
+      name: "Fixture Plan",
+      planType: "running",
+      startDate: "2026-01-19", // Monday
+      status: "completed",
+      isActive: false,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      weeks: [
+        {
+          weekNumber: 1,
+          entries: [
+            runEntry(0, 1, 5, "e1"), // Mon — full match
+            runEntry(0, 2, 5, "e2"), // Tue — full match
+            runEntry(0, 3, 5, "e3"), // Wed — full match
+            runEntry(0, 4, 5, "e4"), // Thu — partial match (40%)
+            runEntry(0, 5, 5, "e5"), // Fri — no run at all (missed)
+          ],
+        },
+      ],
+    };
+    const runs = [
+      run("2026-01-19T12:00:00Z", 5, 5 * 600), // Mon → e1, full
+      run("2026-01-20T12:00:00Z", 5, 5 * 600), // Tue → e2, full
+      run("2026-01-21T12:00:00Z", 5, 5 * 600), // Wed → e3, full
+      run("2026-01-22T12:00:00Z", 2, 2 * 600), // Thu → e4, partial (40%)
+      // Fri (e5): intentionally no run.
+    ];
+    const r = buildPlanAdherence(plan, runs, { maxHr: 185 });
+    expect(r.totalPlannedRuns).toBe(5);
+    // Pin the AFTER value. Old ("full"-only) behavior would have been 3.
+    expect(r.totalCompletedRuns).toBe(4);
   });
 });
 
