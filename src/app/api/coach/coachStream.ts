@@ -126,6 +126,16 @@ export async function getCoachResponseStream(params: {
       abortSignal,
       ...COACH_GENERATION_SETTINGS,
       onError: ({ error }) => logGenerationError(error),
+      onEnd: ({ finishReason, usage }) => {
+        console.log('[Coach] AI Gateway generation completed', {
+          model: COACH_MODEL,
+          finishReason,
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          textTokens: usage.outputTokenDetails.textTokens,
+          reasoningTokens: usage.outputTokenDetails.reasoningTokens,
+        })
+      },
     })
 
     const iterator = result.stream[Symbol.asyncIterator]()

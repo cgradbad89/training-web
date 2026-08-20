@@ -26,7 +26,7 @@ Rationale:
 
 - Coaching quality: Vercel describes Sonnet 5 as improving instruction-following, professional work, document parsing, and long-context memory over Sonnet 4.6. Those characteristics fit concise, data-grounded coaching better than optimizing solely for lowest token price.
 - Reliability: the Gateway catalog exposes Sonnet 5 through multiple inference providers, allowing Gateway-level same-model routing/failover without application-visible provider changes.
-- Context suitability: 1,000,000-token context window and 128,000-token model output ceiling; the application retains its much smaller explicit 1,024-token output cap.
+- Context suitability: 1,000,000-token context window and 128,000-token model output ceiling; the application retains its much smaller explicit 1,024-token output cap. Reasoning is explicitly disabled so Sonnet 5's adaptive hidden reasoning cannot consume that concise-answer budget (a production smoke test caught and corrected this before verification was marked complete).
 - Cost: launch pricing is $2 per million input tokens and $10 per million output tokens through August 31, 2026. Published standard pricing is $3/M input and $15/M output afterward. At the application cap, output spend is bounded to about $0.01024 during launch pricing or $0.01536 at standard pricing, plus input tokens.
 
 Configuration is centralized in `src/app/api/coach/coachConfig.ts`; model identifiers and generation limits must not be duplicated elsewhere.

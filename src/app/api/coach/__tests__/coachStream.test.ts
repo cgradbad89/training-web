@@ -78,6 +78,7 @@ describe('getCoachResponseStream', () => {
         system: ASK.systemPrompt,
         prompt: ASK.question,
         maxOutputTokens: COACH_GENERATION_SETTINGS.maxOutputTokens,
+        reasoning: COACH_GENERATION_SETTINGS.reasoning,
         maxRetries: COACH_GENERATION_SETTINGS.maxRetries,
       })
     )
