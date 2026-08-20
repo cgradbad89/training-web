@@ -4,7 +4,7 @@
 
 - **Branch**: Work directly on `main`. If a branch is created automatically, merge it into `main` before pushing.
 - **Build**: Run `npm run build` after all changes. On failure, fix and retry. Stop after 3 consecutive failures — output the full error log and make no further changes.
-- **Test**: Run `npm test` after a passing build (`vitest run`, 1,173 baseline tests across 109 files — 1,162 passed, 11 skipped; as of the 2026-08-15 Workouts-page override-sync fix session). This number drifts — always trust a fresh `vitest run` over this doc, and correct this line when it does. Also watch for stray `.claude/worktrees/*` checkouts inflating the count (vitest's exclude only covers `node_modules`/`.git`); run `git worktree list` if the total looks off.
+- **Test**: Run `npm test` after a passing build (`vitest run`, 1,202 baseline tests across 114 files — 1,191 passed, 11 skipped; as of the 2026-08-20 override-aware-plan-matching / AutoMatchRunner session). This number drifts — always trust a fresh `vitest run` over this doc, and correct this line when it does. Also watch for stray `.claude/worktrees/*` checkouts inflating the count (vitest's exclude only covers `node_modules`/`.git`); run `git worktree list` if the total looks off.
 - **Commit**: Stage files by explicit path (`git add PRD.md src/...`). Never use `git add -A`. Commit and push only after build + tests pass.
 - **No broken commits**: Do not commit if `npm run build` or `npm test` fail.
 
