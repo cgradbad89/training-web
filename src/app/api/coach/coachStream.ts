@@ -1,223 +1,166 @@
-import Anthropic from '@anthropic-ai/sdk'
-import { GoogleGenAI } from '@google/genai'
-
-// Provider models. Both remain hardcoded (see PRD §2 — the Gemini default is
-// deliberately hardcoded in both the client component and the API route).
-export const GEMINI_MODEL = 'gemini-3.5-flash'
-export const ANTHROPIC_MODEL = 'claude-sonnet-4-6'
-
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-})
-
-const gemini = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-})
-
-// ── Retry configuration ───────────────────────────────────────────────────────
-
-export interface GeminiRetryConfig {
-  /** Total Gemini attempts including the first — not just the retries. */
-  maxAttempts: number
-  baseDelayMs: number
-}
-
-export const GEMINI_RETRY_CONFIG: GeminiRetryConfig = {
-  maxAttempts: 3,
-  baseDelayMs: 400,
-}
+import { streamText } from 'ai'
+import { COACH_GENERATION_SETTINGS, COACH_MODEL } from './coachConfig'
 
 export interface CoachStreamResult {
-  stream: ReadableStream
-  provider: 'gemini' | 'anthropic'
-  usedFallback: boolean
+  stream: ReadableStream<string>
 }
 
-// ── Error classification ──────────────────────────────────────────────────────
-
-function numericStatus(value: unknown): number | null {
-  if (typeof value === 'number' && Number.isFinite(value)) return value
-  if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
-    return Number(value.trim())
+export class CoachServiceError extends Error {
+  constructor(
+    readonly status: number,
+    readonly clientMessage: string
+  ) {
+    super(clientMessage)
+    this.name = 'CoachServiceError'
   }
+}
+
+function errorStatus(error: unknown): number | null {
+  if (typeof error !== 'object' || error === null) return null
+
+  for (const value of [
+    (error as { statusCode?: unknown }).statusCode,
+    (error as { status?: unknown }).status,
+  ]) {
+    if (typeof value === 'number' && Number.isFinite(value)) return value
+  }
+
   return null
 }
 
-function errorMessage(error: unknown): string {
-  if (typeof error === 'string') return error
-  if (error instanceof Error) return error.message
-  if (typeof error === 'object' && error !== null) {
-    const message = (error as { message?: unknown }).message
-    if (typeof message === 'string') return message
-  }
-  return ''
+function errorName(error: unknown): string {
+  if (typeof error !== 'object' || error === null) return 'UnknownError'
+  const name = (error as { name?: unknown }).name
+  return typeof name === 'string' ? name : 'UnknownError'
 }
 
 /**
- * True only for Gemini overload/unavailability, which is worth retrying.
- *
- * `@google/genai@2` surfaces overload two ways depending on transport: the
- * legacy `ApiError` carries a numeric `status`, while the next-gen `APIError`
- * carries both `status` and `statusCode` (a 503 becomes `InternalServerError`).
- * The serialized body also spells the condition out in the message, e.g.
- * `503 ... {"code":503,"message":"The model is overloaded...","status":"UNAVAILABLE"}`.
- *
- * Auth failures, 4xx, and malformed requests return false — retrying those
- * just burns the budget before the fallback that would actually help.
+ * Converts Gateway/provider failures into stable application errors without
+ * leaking provider response bodies, credentials, request IDs, or stack traces.
  */
-export function isRetryableGeminiError(error: unknown): boolean {
-  if (error === null || error === undefined) return false
+export function toCoachServiceError(error: unknown): CoachServiceError {
+  if (error instanceof CoachServiceError) return error
 
-  if (typeof error === 'object') {
-    const candidate = error as {
-      status?: unknown
-      statusCode?: unknown
-      code?: unknown
-    }
-    for (const field of [candidate.status, candidate.statusCode, candidate.code]) {
-      if (numericStatus(field) === 503) return true
-    }
+  const status = errorStatus(error)
+  const name = errorName(error)
+
+  if (status === 429 || name === 'GatewayRateLimitError') {
+    return new CoachServiceError(
+      429,
+      'AI Coach is receiving too many requests. Please try again shortly.'
+    )
   }
 
-  const message = errorMessage(error).toLowerCase()
-  return message.includes('unavailable') || message.includes('overloaded')
+  if (
+    status === 401 ||
+    status === 403 ||
+    name === 'GatewayAuthenticationError' ||
+    name === 'GatewayForbiddenError' ||
+    name === 'GatewayError'
+  ) {
+    return new CoachServiceError(
+      503,
+      'AI Coach is temporarily unavailable. Please try again later.'
+    )
+  }
+
+  if (
+    status === 404 ||
+    status === 408 ||
+    status === 424 ||
+    status === 503 ||
+    name === 'GatewayModelNotFoundError' ||
+    name === 'GatewayFailedDependencyError' ||
+    name === 'GatewayTimeoutError'
+  ) {
+    return new CoachServiceError(
+      503,
+      'AI Coach is temporarily unavailable. Please try again shortly.'
+    )
+  }
+
+  return new CoachServiceError(
+    502,
+    'AI Coach could not complete the request. Please try again.'
+  )
 }
 
-/** Exponential backoff with ±20% jitter: ~400ms after attempt 1, ~800ms after attempt 2. */
-export function backoffDelayMs(
-  attemptNumber: number,
-  config: GeminiRetryConfig = GEMINI_RETRY_CONFIG
-): number {
-  const exponential = config.baseDelayMs * Math.pow(2, attemptNumber - 1)
-  const jitter = 1 + (Math.random() * 0.4 - 0.2)
-  return Math.round(exponential * jitter)
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms))
-}
-
-// ── Provider calls ────────────────────────────────────────────────────────────
-
-export async function streamAnthropicResponse(
-  systemPrompt: string,
-  question: string
-): Promise<ReadableStream> {
-  const stream = await anthropic.messages.stream({
-    model: ANTHROPIC_MODEL,
-    max_tokens: 1024,
-    system: systemPrompt,
-    messages: [{ role: 'user', content: question }],
-  })
-
-  return new ReadableStream({
-    async start(controller) {
-      try {
-        for await (const chunk of stream) {
-          if (
-            chunk.type === 'content_block_delta' &&
-            chunk.delta.type === 'text_delta'
-          ) {
-            controller.enqueue(new TextEncoder().encode(chunk.delta.text))
-          }
-        }
-        controller.close()
-      } catch (error) {
-        controller.error(error)
-      }
-    },
+function logGenerationError(error: unknown): void {
+  console.error('[Coach] AI Gateway generation failed', {
+    model: COACH_MODEL,
+    errorName: errorName(error),
+    status: errorStatus(error),
   })
 }
 
 /**
- * Opens a Gemini stream and pulls the FIRST chunk before returning.
- *
- * That pull is the commit point: while it is still in flight nothing has
- * reached the client, so the caller is free to retry or fall back. Once it
- * resolves we are committed to Gemini — the buffered first chunk is replayed
- * into the returned stream and the rest is pumped as before.
+ * Pulls text from the AI SDK full stream so error parts remain observable.
+ * The SDK's text-only stream intentionally suppresses error parts.
  */
-async function openGeminiStream(
-  systemPrompt: string,
-  question: string
-): Promise<ReadableStream> {
-  const response = await gemini.models.generateContentStream({
-    model: GEMINI_MODEL,
-    contents: question,
-    config: {
-      systemInstruction: systemPrompt,
-    },
-  })
+async function nextTextDelta(
+  iterator: AsyncIterator<ReturnType<typeof streamText>['stream'] extends AsyncIterable<infer T> ? T : never>
+): Promise<IteratorResult<string>> {
+  for (;;) {
+    const result = await iterator.next()
+    if (result.done) return { done: true, value: undefined }
 
-  const iterator = response[Symbol.asyncIterator]()
-  const firstChunk = await iterator.next()
-
-  return new ReadableStream({
-    async start(controller) {
-      try {
-        let result = firstChunk
-        while (!result.done) {
-          const text = result.value?.text
-          if (text) {
-            controller.enqueue(new TextEncoder().encode(text))
-          }
-          result = await iterator.next()
-        }
-        controller.close()
-      } catch (error) {
-        // Mid-stream failure: bytes may already have reached the client, so we
-        // surface the break rather than restarting on another provider.
-        controller.error(error)
-      }
-    },
-  })
+    if (result.value.type === 'error') throw result.value.error
+    if (result.value.type === 'text-delta') {
+      return { done: false, value: result.value.text }
+    }
+  }
 }
-
-// ── Orchestrator ──────────────────────────────────────────────────────────────
 
 export async function getCoachResponseStream(params: {
-  requestedProvider: 'gemini' | 'anthropic'
   systemPrompt: string
   question: string
+  abortSignal?: AbortSignal
 }): Promise<CoachStreamResult> {
-  const { requestedProvider, systemPrompt, question } = params
+  const { systemPrompt, question, abortSignal } = params
 
-  // An explicit Anthropic request is the user's choice — no retry, no fallback.
-  // A failure here propagates to the route's outer catch exactly as before.
-  if (requestedProvider === 'anthropic') {
-    const stream = await streamAnthropicResponse(systemPrompt, question)
-    console.log('[Coach] served by anthropic (explicitly requested) — fallback=false')
-    return { stream, provider: 'anthropic', usedFallback: false }
+  try {
+    const result = streamText({
+      model: COACH_MODEL,
+      system: systemPrompt,
+      prompt: question,
+      abortSignal,
+      ...COACH_GENERATION_SETTINGS,
+      onError: ({ error }) => logGenerationError(error),
+    })
+
+    const iterator = result.stream[Symbol.asyncIterator]()
+    // Treat the first text delta as the HTTP commit point. Authentication,
+    // entitlement, rate-limit, and unavailable-model failures that happen
+    // before it become controlled JSON responses from the route.
+    const first = await nextTextDelta(iterator)
+
+    const stream = new ReadableStream<string>({
+      async start(controller) {
+        try {
+          if (!first.done) controller.enqueue(first.value)
+
+          for (;;) {
+            const next = await nextTextDelta(iterator)
+            if (next.done) break
+            controller.enqueue(next.value)
+          }
+
+          controller.close()
+        } catch (error) {
+          // HTTP headers may already be committed. Error the stream with only a
+          // controlled application error; never write a provider error as text.
+          controller.error(toCoachServiceError(error))
+        }
+      },
+      async cancel() {
+        await iterator.return?.()
+      },
+    })
+
+    console.log(`[Coach] streaming via AI Gateway model=${COACH_MODEL}`)
+    return { stream }
+  } catch (error) {
+    logGenerationError(error)
+    throw toCoachServiceError(error)
   }
-
-  const { maxAttempts } = GEMINI_RETRY_CONFIG
-  let lastError: unknown
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      const stream = await openGeminiStream(systemPrompt, question)
-      console.log(
-        `[Coach] served by gemini on attempt ${attempt}/${maxAttempts} — fallback=false`
-      )
-      return { stream, provider: 'gemini', usedFallback: false }
-    } catch (error) {
-      lastError = error
-      const retryable = isRetryableGeminiError(error)
-      console.warn(
-        `[Coach] gemini attempt ${attempt}/${maxAttempts} failed ` +
-          `(retryable=${retryable}): ${errorMessage(error)}`
-      )
-      if (!retryable) break
-      if (attempt === maxAttempts) break
-      await sleep(backoffDelayMs(attempt))
-    }
-  }
-
-  console.warn(
-    `[Coach] gemini unavailable after ${maxAttempts} attempt(s) — ` +
-      `falling back to anthropic. Last error: ${errorMessage(lastError)}`
-  )
-  const stream = await streamAnthropicResponse(systemPrompt, question)
-  console.log('[Coach] served by anthropic — fallback=true')
-  return { stream, provider: 'anthropic', usedFallback: true }
 }

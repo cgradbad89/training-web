@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server'
+import { createTextStreamResponse } from 'ai'
 import { getCoachResponseStream } from './coachStream'
 
 export async function POST(req: NextRequest) {
@@ -24,28 +25,33 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { question, context, provider = 'gemini' } = await req.json()
+    let body: unknown
+    try {
+      body = await req.json()
+    } catch {
+      return jsonError('Invalid request body', 400)
+    }
 
-    if (!question || !context) {
-      return new Response(
-        JSON.stringify({ error: 'Missing question or context' }),
-        { status: 400, headers: { 'Content-Type': 'application/json' } }
-      )
+    const { question, context } = body as {
+      question?: unknown
+      context?: unknown
+    }
+
+    if (typeof question !== 'string' || !question.trim() || !context) {
+      return jsonError('Missing question or context', 400)
     }
 
     // Build structured system prompt with all training context
-    const systemPrompt = buildSystemPrompt(context)
+    const systemPrompt = buildSystemPrompt(context as CoachContext)
 
-    // Anything that isn't an explicit 'anthropic' request resolves to Gemini,
-    // preserving the pre-existing default. Gemini gets retry + automatic
-    // Anthropic fallback; an explicit Anthropic request gets neither.
     const { stream: readable } = await getCoachResponseStream({
-      requestedProvider: provider === 'anthropic' ? 'anthropic' : 'gemini',
       systemPrompt,
       question,
+      abortSignal: req.signal,
     })
 
-    return new Response(readable, {
+    return createTextStreamResponse({
+      stream: readable,
       headers: {
         'Content-Type': 'text/plain; charset=utf-8',
         'Transfer-Encoding': 'chunked',
@@ -53,13 +59,25 @@ export async function POST(req: NextRequest) {
       },
     })
   } catch (error: unknown) {
-    console.error('Coach API error:', error)
-    const message = error instanceof Error ? error.message : 'Unknown error'
-    return new Response(
-      JSON.stringify({ error: message }),
-      { status: 500, headers: { 'Content-Type': 'application/json' } }
-    )
+    const status =
+      typeof error === 'object' && error !== null &&
+      typeof (error as { status?: unknown }).status === 'number'
+        ? (error as { status: number }).status
+        : 500
+    const message =
+      typeof error === 'object' && error !== null &&
+      typeof (error as { clientMessage?: unknown }).clientMessage === 'string'
+        ? (error as { clientMessage: string }).clientMessage
+        : 'AI Coach could not complete the request. Please try again.'
+    return jsonError(message, status)
   }
+}
+
+function jsonError(message: string, status: number): Response {
+  return new Response(JSON.stringify({ error: message }), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  })
 }
 
 // ── Prompt builder ────────────────────────────────────────────────────────────
