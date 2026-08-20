@@ -7,7 +7,22 @@ const EARTH_RADIUS_MI = 3958.8;
  * fastest-mile algorithm changes so already-computed workout documents are
  * refreshed once on their next eligible route read/backfill.
  */
-export const BEST_EFFORTS_COMPUTATION_VERSION = 1;
+export const BEST_EFFORTS_COMPUTATION_VERSION = 2;
+
+export const MIN_VALID_FASTEST_MILE_SECONDS = 180;
+export const MAX_VALID_FASTEST_MILE_SECONDS = 1200;
+
+/** Domain validity window for a persisted or displayed fastest-mile result. */
+export function isValidFastestMileSeconds(
+  seconds: number | null
+): seconds is number {
+  return (
+    seconds !== null &&
+    Number.isFinite(seconds) &&
+    seconds > MIN_VALID_FASTEST_MILE_SECONDS &&
+    seconds < MAX_VALID_FASTEST_MILE_SECONDS
+  );
+}
 
 function toRad(deg: number): number {
   return (deg * Math.PI) / 180;
@@ -80,7 +95,7 @@ export function findBestFastestMileAcrossRuns(
 ): { seconds: number; date: Date } | null {
   const valid = results.filter(
     (r): r is { seconds: number; date: Date } =>
-      r != null && r.seconds > 180 && r.seconds < 1200
+      r != null && isValidFastestMileSeconds(r.seconds)
   );
   return valid.length > 0
     ? valid.reduce((a, b) => (a.seconds < b.seconds ? a : b))

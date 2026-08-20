@@ -12,6 +12,7 @@ import { haversineMeters } from "@/utils/mileSplits";
 import {
   BEST_EFFORTS_COMPUTATION_VERSION,
   fastestMileSegment,
+  isValidFastestMileSeconds,
 } from "@/utils/fastestMileSegment";
 
 export const METERS_PER_MILE = 1609.344;
@@ -198,7 +199,10 @@ export function computeBestEfforts(points: RoutePoint[]): BestEffortsMap {
   // Keep the persisted 1mi value byte-for-byte aligned with the historical
   // Personal Insights route algorithm. Other standard distances continue to
   // use the generalized meter-based implementation above.
-  result["1mi"] = fastestMileSegment(points);
+  const fastestMileSeconds = fastestMileSegment(points);
+  result["1mi"] = isValidFastestMileSeconds(fastestMileSeconds)
+    ? fastestMileSeconds
+    : null;
 
   return result;
 }

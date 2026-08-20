@@ -8,6 +8,7 @@ import {
 import { getRoutePoints } from "@/utils/routeCache";
 import { getMileSplits } from "@/utils/mileSplitsCache";
 import { fetchWeatherForRun } from "@/lib/weather";
+import { BEST_EFFORTS_COMPUTATION_VERSION } from "@/utils/fastestMileSegment";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -257,7 +258,7 @@ function cachedWorkout(
       half: null,
       computedFromRouteComplete: true,
       computedFromPointCount: 1000,
-      computationVersion: 1,
+      computationVersion: BEST_EFFORTS_COMPUTATION_VERSION,
     },
     overlayChartCache: {
       distancesMiles: [0, 1, 2, 3],

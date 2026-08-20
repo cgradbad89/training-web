@@ -9,6 +9,7 @@ import {
   repairBestEffortsFreshnessWithStore,
   type BestEffortRepairStore,
 } from "./repairBestEffortsFreshness";
+import { BEST_EFFORTS_COMPUTATION_VERSION } from "@/utils/fastestMileSegment";
 
 function route(): RoutePoint[] {
   return [
@@ -112,7 +113,7 @@ describe("repairBestEffortsFreshness", () => {
     expect(store.writes[0].bestEfforts).toMatchObject({
       computedFromRouteComplete: true,
       computedFromPointCount: 2,
-      computationVersion: 1,
+      computationVersion: BEST_EFFORTS_COMPUTATION_VERSION,
     });
   });
 

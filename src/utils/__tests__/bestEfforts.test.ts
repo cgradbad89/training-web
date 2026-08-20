@@ -123,6 +123,22 @@ describe("computeBestEfforts", () => {
 
     expect(efforts["1mi"]).toBeCloseTo(paceSecPerMile, 2);
   });
+
+  it.each([
+    ["near-zero", 0.001],
+    ["lower boundary", 180],
+    ["upper boundary", 1200],
+    ["over-limit", 1575.873],
+  ])("returns null for a %s computed 1mi result", (_label, seconds) => {
+    const efforts = computeBestEfforts(
+      route([
+        [0, 0],
+        [BEST_EFFORT_DISTANCES_M["1mi"], seconds],
+      ])
+    );
+
+    expect(efforts["1mi"]).toBeNull();
+  });
 });
 
 describe("best-effort freshness basis", () => {
