@@ -73,13 +73,16 @@ function makeWorkoutPlan(entries: PlannedWorkoutEntry[]): WorkoutPlan {
   };
 }
 
-// Minimal HealthWorkout — only the fields the matcher reads. UTC-noon
-// timestamps keep the calendar day stable regardless of the runner's timezone.
+// Minimal HealthWorkout — only the fields the matcher reads. Pinned to LOCAL
+// noon on `startISO`'s date so the calendar day is stable in every timezone
+// (matchPlanToActual keys workouts by their LOCAL day, so a literal 12:00Z
+// instant would land on the next calendar day at UTC+12 and beyond).
 function run(startISO: string, distanceMiles: number, id?: string): HealthWorkout {
+  const [y, m, d] = startISO.slice(0, 10).split("-").map(Number);
   return {
     workoutId: id ?? `run-${startISO}`,
     isRunLike: true,
-    startDate: new Date(startISO),
+    startDate: new Date(y, m - 1, d, 12, 0, 0),
     distanceMiles,
     durationSeconds: distanceMiles * 600,
     avgHeartRate: null,

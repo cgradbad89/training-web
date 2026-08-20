@@ -92,8 +92,34 @@ function plannedEntryDate(plan: RunningPlan, entry: PlannedRunEntry): Date {
   return d;
 }
 
+/**
+ * The workout's LOCAL calendar day key, "YYYY-MM-DD".
+ *
+ * This must agree with `plannedEntryDate`/`toISODate` above (planned dates are
+ * built from LOCAL date components) and with every mileage/stat surface in the
+ * app, all of which bucket a run by its local day — `weeklyLoad.ts`,
+ * `trainingLoadSeries.ts`, `routePerformance.ts`, `MiniCalendar.tsx` each carry
+ * their own identical `toLocalIsoDate`, and `services/autoMatch.ts` groups its
+ * workout pool with the same `localISODate` (getFullYear/getMonth/getDate)
+ * mechanism. `toISODate` here IS that mechanism — this is a reuse, not a
+ * reimplementation.
+ *
+ * The bug this replaces (PRD §6): the key was `startDate.toISOString()`, i.e.
+ * the UTC day. West of UTC that rolls forward for evening runs (a 21:00 EDT
+ * Sunday run is Monday in UTC); east of UTC it rolls backward for the small
+ * hours (a 00:30 CET Monday run is Sunday in UTC). Verified against the real
+ * matcher: with a plan holding a Sunday entry and the next week's Monday
+ * entry, a 21:00-local Sunday run matched the MONDAY entry in America/New_York
+ * while its mileage counted toward the Sunday week on every stat card, and a
+ * Sunday-evening + Monday-morning pair had their two entries swapped outright.
+ *
+ * The ±1-day tolerance below is untouched and needed no adjustment: both
+ * `differenceInCalendarDays` and `isoWeekNumber` operate on the "YYYY-MM-DD"
+ * STRINGS, so they are agnostic to how a key was derived — this changes only
+ * which day a run reports, not what "within one day" means.
+ */
 function workoutDate(w: HealthWorkout): string {
-  return w.startDate.toISOString().split("T")[0];
+  return toISODate(w.startDate);
 }
 
 // A run is "full" completion once its actual mileage reaches 85% of planned;

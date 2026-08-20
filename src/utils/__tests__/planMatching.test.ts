@@ -41,13 +41,20 @@ function makePlan(entries: PlannedRunEntry[]): RunningPlan {
   };
 }
 
-// Minimal HealthWorkout — only the fields the matcher reads. UTC-noon
-// timestamps keep the calendar day stable regardless of the runner's timezone.
+// Minimal HealthWorkout — only the fields the matcher reads.
+//
+// `startISO`'s DATE part is what these fixtures care about; the run is pinned
+// to LOCAL noon on that day so its calendar day is stable in every timezone.
+// (Storing the literal UTC instant instead was stable only while the matcher
+// keyed workouts by their UTC day — now that it keys by the local day, a
+// 12:00Z fixture would land on the next calendar day at UTC+12 and beyond.)
+// Time-of-day is irrelevant to the matcher: it compares day keys only.
 function run(startISO: string, distanceMiles: number, id?: string): HealthWorkout {
+  const [y, m, d] = startISO.slice(0, 10).split("-").map(Number);
   return {
     workoutId: id ?? `run-${startISO}`,
     isRunLike: true,
-    startDate: new Date(startISO),
+    startDate: new Date(y, m - 1, d, 12, 0, 0),
     distanceMiles,
     durationSeconds: distanceMiles * 600,
     avgHeartRate: null,
@@ -249,5 +256,161 @@ describe("matchPlanToActual — distanceMilesOverride changes the quality tier",
     const m = matchPlanToActual(plan, [pre], { w1: override("w1", 9.5) });
     expect(m.get("e1")?.quality).toBe("full");
     expect(m.get("e1")?.activity.distanceMiles).toBe(9.5);
+  });
+});
+
+// ─── Local vs UTC day keying ─────────────────────────────────────────────────
+//
+// A workout's date key is its LOCAL calendar day (utils/planMatching
+// `toISODate`, the same getFullYear/getMonth/getDate mechanism
+// services/autoMatch.ts uses via `localISODate`, and the same day every
+// mileage/stat surface buckets a run under). It used to be the UTC day
+// (`startDate.toISOString()`), which rolls a late-evening run forward a day
+// west of UTC and an after-midnight run backward a day east of UTC.
+//
+// These fixtures build their timestamps from LOCAL components
+// (`new Date(y, m, d, h, min)`) so "9pm local" is genuinely 9pm wherever the
+// suite runs. Under the old UTC keying the evening cases failed in every
+// timezone west of UTC and the after-midnight case failed in every timezone
+// east of it; at TZ=UTC exactly, local and UTC days coincide and the
+// assertions hold either way.
+
+/** The local "YYYY-MM-DD" day key every stat/mileage surface buckets a run by. */
+function statCardDayKey(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function runAtLocal(
+  y: number,
+  monthIndex: number,
+  day: number,
+  hour: number,
+  minute: number,
+  distanceMiles: number,
+  id: string
+): HealthWorkout {
+  return {
+    workoutId: id,
+    isRunLike: true,
+    startDate: new Date(y, monthIndex, day, hour, minute, 0),
+    distanceMiles,
+    durationSeconds: distanceMiles * 600,
+    avgHeartRate: null,
+    trainingLoadV2: null,
+  } as unknown as HealthWorkout;
+}
+
+/** Multi-week plan starting Mon 2026-01-19 (week 1 = Jan 19–25, week 2 = Jan 26–Feb 1). */
+function makeMultiWeekPlan(weeks: PlannedRunEntry[][]): RunningPlan {
+  return {
+    ...makePlan([]),
+    weeks: weeks.map((entries, i) => ({ weekNumber: i + 1, entries })),
+  };
+}
+
+describe("matchPlanToActual — local-day keying (was UTC)", () => {
+  it("a 9pm local Sunday run matches its own Sunday entry, not next week's Monday", () => {
+    const plan = makeMultiWeekPlan([
+      [runEntry(0, 7, 6, "w1-sun")], // Sun 2026-01-25
+      [runEntry(1, 1, 4, "w2-mon")], // Mon 2026-01-26
+    ]);
+    const w = runAtLocal(2026, 0, 25, 21, 0, 6, "sun-evening");
+
+    const m = matchPlanToActual(plan, [w]);
+    expect(m.get("w1-sun")?.activity.workoutId).toBe("sun-evening");
+    expect(m.get("w2-mon")).toBeNull();
+  });
+
+  it("the day a late-evening run is keyed under equals the day the stat cards bucket it under", () => {
+    const plan = makeMultiWeekPlan([
+      [runEntry(0, 7, 6, "w1-sun")],
+      [runEntry(1, 1, 4, "w2-mon")],
+    ]);
+    const w = runAtLocal(2026, 0, 25, 21, 0, 6, "sun-evening");
+
+    // The stat/mileage surfaces bucket this run on Sun 2026-01-25 …
+    expect(statCardDayKey(w.startDate)).toBe("2026-01-25");
+    // … and the matcher now attributes it to the entry planned for that same
+    // local day (Sun = weekday 7 of week 1, i.e. plan start + 6 days).
+    const matched = matchPlanToActual(plan, [w]).get("w1-sun");
+    expect(matched).not.toBeNull();
+    expect(statCardDayKey(matched!.activity.startDate)).toBe("2026-01-25");
+  });
+
+  it("a Sunday-evening run and the next Monday-morning run keep their own entries (no swap)", () => {
+    // Under UTC keying BOTH runs keyed to 2026-01-26: the Sunday run claimed
+    // the Monday entry in pass 1 and the Monday run fell back to the Sunday
+    // entry via the ±1-day pass — the two were matched to each other's days.
+    const plan = makeMultiWeekPlan([
+      [runEntry(0, 7, 6, "w1-sun")],
+      [runEntry(1, 1, 4, "w2-mon")],
+    ]);
+    const sun = runAtLocal(2026, 0, 25, 21, 0, 6, "sun-run");
+    const mon = runAtLocal(2026, 0, 26, 7, 0, 4, "mon-run");
+
+    const m = matchPlanToActual(plan, [sun, mon]);
+    expect(m.get("w1-sun")?.activity.workoutId).toBe("sun-run");
+    expect(m.get("w2-mon")?.activity.workoutId).toBe("mon-run");
+  });
+
+  it("a 00:30 local Monday run matches the Monday entry, not the previous day's Sunday entry", () => {
+    // Mirror-image case for positive UTC offsets (e.g. Europe/Berlin), where
+    // the UTC key rolled an after-midnight run BACK onto the prior day.
+    const plan = makeMultiWeekPlan([
+      [runEntry(0, 7, 6, "w1-sun")],
+      [runEntry(1, 1, 4, "w2-mon")],
+    ]);
+    const w = runAtLocal(2026, 0, 26, 0, 30, 4, "after-midnight");
+
+    const m = matchPlanToActual(plan, [w]);
+    expect(m.get("w2-mon")?.activity.workoutId).toBe("after-midnight");
+    expect(m.get("w1-sun")).toBeNull();
+  });
+
+  it("a Sunday-evening run with no Sunday entry stays in its own week (±1-day tolerance picks Saturday over next Monday)", () => {
+    // Tiebreaker rule 1 ("prefer same/past ISO week") already did this for
+    // daytime Sunday runs; keying evening runs locally makes them behave the
+    // same instead of jumping a week forward onto the Monday entry.
+    const plan = makeMultiWeekPlan([
+      [runEntry(0, 6, 6, "w1-sat")], // Sat 2026-01-24
+      [runEntry(1, 1, 4, "w2-mon")], // Mon 2026-01-26
+    ]);
+    const w = runAtLocal(2026, 0, 25, 21, 0, 5, "sun-evening");
+
+    const m = matchPlanToActual(plan, [w]);
+    expect(m.get("w1-sat")?.activity.workoutId).toBe("sun-evening");
+    expect(m.get("w2-mon")).toBeNull();
+  });
+
+  it("regression: typical daytime runs still match their own same-day entries", () => {
+    const plan = makeMultiWeekPlan([
+      [
+        runEntry(0, 2, 5, "w1-tue"), // Tue 2026-01-20
+        runEntry(0, 4, 7, "w1-thu"), // Thu 2026-01-22
+      ],
+    ]);
+    const tue = runAtLocal(2026, 0, 20, 18, 0, 5, "tue-run"); // 6pm
+    const thu = runAtLocal(2026, 0, 22, 10, 0, 7, "thu-run"); // 10am
+
+    const m = matchPlanToActual(plan, [tue, thu]);
+    expect(m.get("w1-tue")?.activity.workoutId).toBe("tue-run");
+    expect(m.get("w1-tue")?.quality).toBe("full");
+    expect(m.get("w1-thu")?.activity.workoutId).toBe("thu-run");
+    expect(m.get("w1-thu")?.quality).toBe("full");
+  });
+
+  it("regression: the ±1-day tolerance width is unchanged (1 day off matches, 2 days off does not)", () => {
+    const plan = makeMultiWeekPlan([[runEntry(0, 1, 5, "w1-mon")]]); // Mon 2026-01-19
+
+    const oneDayOff = runAtLocal(2026, 0, 20, 12, 0, 5, "tue-run");
+    expect(
+      matchPlanToActual(plan, [oneDayOff]).get("w1-mon")?.activity.workoutId
+    ).toBe("tue-run");
+
+    const twoDaysOff = runAtLocal(2026, 0, 21, 12, 0, 5, "wed-run");
+    expect(matchPlanToActual(plan, [twoDaysOff]).get("w1-mon")).toBeNull();
   });
 });
