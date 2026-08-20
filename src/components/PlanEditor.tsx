@@ -23,6 +23,7 @@ import { ChevronLeft, ChevronRight, Plus, Copy, X } from "lucide-react";
 
 import type { Plan } from "@/types/plan";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { planWeekIndexFor } from "@/utils/planMatching";
 import {
   pageWeekIndex,
   clampWeekIndex,
@@ -59,11 +60,7 @@ function weekDateRange(startDate: string, weekIdx: number): string {
 /** Week containing today for active plans; week 1 for inactive/template plans. */
 function defaultWeekForPlan(plan: Plan): number {
   if (plan.status !== "active") return 0;
-  const start = new Date(plan.startDate + "T00:00:00");
-  const today = new Date();
-  const diff = Math.floor(
-    (today.getTime() - start.getTime()) / (7 * 24 * 3600 * 1000)
-  );
+  const diff = planWeekIndexFor(plan.startDate, new Date());
   return Math.max(0, Math.min(diff, plan.weeks.length - 1));
 }
 

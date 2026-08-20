@@ -298,3 +298,143 @@ describe("PlansPage — shared AppDataContext wiring", () => {
     ).toBe("Sept 2026 Half Marathon Sub 9:30");
   });
 });
+
+// ─── WorkoutPlan.startDate Monday normalization ──────────────────────────────
+//
+// RunningPlan.startDate is Monday-normalized by contract; WorkoutPlan.startDate
+// was not, which could desync the calendar from the week tiles for a
+// non-Monday-start workout plan. New workout plans now snap to the Monday of
+// the week containing the chosen date (via the existing `snapToMonday` helper
+// in planDateEdit.ts — the same one the copy/slide paths already use).
+// Existing plan documents are deliberately NOT migrated.
+
+/** Drive the create flow: + → plan-type → set dates → Create. */
+async function createPlanViaUI(
+  type: "Running Plan" | "Workout Plan",
+  startDate: string,
+  endDate: string,
+  name = "New Plan"
+) {
+  const findBtn = (text: string) =>
+    Array.from(container.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes(text)
+    );
+
+  // The "+" new-plan trigger (icon-only, identified by its title) opens the
+  // plan-type picker.
+  const plusBtn = container.querySelector<HTMLButtonElement>(
+    'button[title="New plan"]'
+  );
+  expect(plusBtn).toBeTruthy();
+  await act(async () => {
+    plusBtn!.click();
+  });
+
+  await act(async () => {
+    findBtn(type)!.click();
+  });
+
+  const setInput = (el: HTMLInputElement, value: string) => {
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value"
+    )!.set!;
+    setter.call(el, value);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+
+  const textInputs = Array.from(
+    container.querySelectorAll<HTMLInputElement>('input[type="text"]')
+  );
+  const dateInputs = Array.from(
+    container.querySelectorAll<HTMLInputElement>('input[type="date"]')
+  );
+  await act(async () => {
+    setInput(textInputs[0], name);
+  });
+  await act(async () => {
+    setInput(dateInputs[0], startDate);
+  });
+  await act(async () => {
+    setInput(dateInputs[1], endDate);
+  });
+
+  await act(async () => {
+    findBtn("Create")!.click();
+  });
+  await flush();
+}
+
+describe("PlansPage — new WorkoutPlan.startDate is Monday-normalized", () => {
+  it("snaps a Wednesday start back to that week's Monday", async () => {
+    await mount();
+    // Wed 2026-01-21 → Mon 2026-01-19.
+    await createPlanViaUI("Workout Plan", "2026-01-21", "2026-03-15");
+
+    expect(h.createPlan).toHaveBeenCalledTimes(1);
+    const [, payload] = h.createPlan.mock.calls[0];
+    expect(payload.planType).toBe("workout");
+    expect(payload.startDate).toBe("2026-01-19");
+  });
+
+  it("snaps a Sunday start back to the Monday ON OR BEFORE it, not forward", async () => {
+    await mount();
+    // Sun 2026-01-25 belongs to the week starting Mon 2026-01-19.
+    await createPlanViaUI("Workout Plan", "2026-01-25", "2026-03-15");
+
+    const [, payload] = h.createPlan.mock.calls[0];
+    expect(payload.startDate).toBe("2026-01-19");
+  });
+
+  it("is a no-op when the chosen start date is already a Monday", async () => {
+    await mount();
+    await createPlanViaUI("Workout Plan", "2026-01-19", "2026-03-15");
+
+    const [, payload] = h.createPlan.mock.calls[0];
+    expect(payload.startDate).toBe("2026-01-19");
+  });
+
+  it("re-derives the week count from the snapped start so the chosen end stays covered", async () => {
+    await mount();
+    // Wed 2026-01-21 → Tue 2026-02-03 is 2 weeks from the raw input, but only
+    // covers through Sun 2026-02-01 once the start snaps back to Mon 01-19.
+    await createPlanViaUI("Workout Plan", "2026-01-21", "2026-02-03");
+
+    const [, payload] = h.createPlan.mock.calls[0];
+    expect(payload.startDate).toBe("2026-01-19");
+    // Mon 01-19 + 3*7 - 1 = Sun 02-08, which covers the chosen Feb 3 end.
+    expect(payload.weeks).toHaveLength(3);
+  });
+
+  it("leaves RunningPlan creation untouched (out of scope this session)", async () => {
+    await mount();
+    await createPlanViaUI("Running Plan", "2026-01-21", "2026-03-15");
+
+    const [, payload] = h.createPlan.mock.calls[0];
+    expect(payload.planType).toBe("running");
+    expect(payload.startDate).toBe("2026-01-21");
+  });
+
+  it("never rewrites an EXISTING workout plan document — no updatePlan on mount", async () => {
+    // A pre-session workout plan with a Thursday start stays exactly as stored.
+    const legacy: Plan = {
+      id: "wp-legacy",
+      name: "Legacy Strength Block",
+      planType: "workout",
+      startDate: "2026-01-22", // Thursday — deliberately not Monday
+      status: "active",
+      isActive: true,
+      weeks: [{ weekNumber: 1, entries: [] }],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    } as Plan;
+    h.useAppDataReturn.plans = [buildSeptPlan(), legacy];
+
+    await mount();
+
+    expect(h.updatePlan).not.toHaveBeenCalled();
+    expect(h.createPlan).not.toHaveBeenCalled();
+    // The in-memory copy the page holds is still the stored Thursday date.
+    expect((h.useAppDataReturn.plans[1] as Plan).startDate).toBe("2026-01-22");
+  });
+});

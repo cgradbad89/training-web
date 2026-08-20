@@ -1,8 +1,51 @@
 import { type RunningPlan, type PlannedRunEntry } from "@/types/plan";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { applyOverride, type WorkoutOverride } from "@/types/workoutOverride";
+import { parseLocalDate } from "@/utils/dates";
 
 export type MatchQuality = "full" | "partial";
+
+const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Canonical "which plan week is `referenceDate` in" index for a plan whose
+ * `startDate` is the stored "YYYY-MM-DD" string. 0 = the plan's first week.
+ *
+ * This standardizes ONLY the parsing and the arithmetic. It does NOT decide
+ * which reference date is appropriate — that is the caller's business, and
+ * different surfaces legitimately differ (the Monday of the week being viewed
+ * on /dashboard, "now" on /plans and PlanEditor). Callers keep their own
+ * reference date and their own clamping/range checks.
+ *
+ * `startDate` is parsed as LOCAL midnight via `parseLocalDate` (invariant #12).
+ * The bug this replaces: three call sites used `new Date(plan.startDate)`,
+ * which parses a date-only string as UTC midnight. At a POSITIVE UTC offset
+ * (e.g. Europe/Berlin, UTC+1) that lands an hour AHEAD of the local Monday the
+ * caller passes in, so `weekStart - planStart` goes slightly negative and
+ * `Math.floor` returns **-1 for the plan's own first week** — the week tiles
+ * then read "no plan this week" on a plan that started that very Monday.
+ *
+ * The result is unclamped and can be negative (reference date before the plan
+ * started) or past the last week; every caller already range-checks it.
+ *
+ * KNOWN LIMITATION (pre-existing, deliberately preserved — see PRD §6 #41):
+ * the `Math.floor` on a raw millisecond difference under-counts by one week
+ * for every reference date after a SPRING-FORWARD DST transition inside the
+ * plan (49 calendar days becomes 49 days minus an hour = 6.994 weeks → 6).
+ * A 13-week plan starting in January hits this from March onward. Fall-back
+ * is harmless (the extra hour rounds down to the same index). Switching to
+ * `Math.round` fixes it — the dashboard's own page-title week-diff already
+ * does exactly that, with a comment saying why — but that changes the
+ * displayed week at every call site, so it is left for an explicit decision
+ * rather than folded into this parsing unification.
+ */
+export function planWeekIndexFor(
+  startDate: string,
+  referenceDate: Date
+): number {
+  const start = parseLocalDate(startDate);
+  return Math.floor((referenceDate.getTime() - start.getTime()) / MS_PER_WEEK);
+}
 
 export interface PlanMatch {
   activity: HealthWorkout;

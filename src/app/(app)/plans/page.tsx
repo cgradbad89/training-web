@@ -15,10 +15,12 @@ import {
   setPlanCompletion,
 } from "@/services/plans";
 import { deepCopyRunningPlan } from "@/utils/planCopy";
+import { planWeekIndexFor } from "@/utils/planMatching";
 import {
   endDateForWeeks,
   weeksForSpan,
   copyPlanWithNewStart,
+  snapToMonday,
 } from "@/utils/planDateEdit";
 import { applyOverride } from "@/types/workoutOverride";
 import { fetchRaces } from "@/services/races";
@@ -480,11 +482,7 @@ export default function PlansPage() {
     // computed "current week" that's meaningless for an unstarted plan.
     // Only active plans auto-jump to the week containing today's date.
     if (plan.status !== "active") return 0;
-    const start = new Date(plan.startDate + "T00:00:00");
-    const today = new Date();
-    const diff = Math.floor(
-      (today.getTime() - start.getTime()) / (7 * 24 * 3600 * 1000)
-    );
+    const diff = planWeekIndexFor(plan.startDate, new Date());
     // Clamp: today before startDate → 0; today after last week → last week.
     return Math.max(0, Math.min(diff, plan.weeks.length - 1));
   }
@@ -551,13 +549,23 @@ export default function PlansPage() {
           })),
         });
       } else {
+        // Workout plans are Monday-normalized on creation (same contract
+        // RunningPlan.startDate carries), so week N of the plan always lines up
+        // with a Mon–Sun calendar week and the /dashboard week tiles agree with
+        // the calendar. The date input is free-form, so a Wednesday pick snaps
+        // back to that week's Monday. Existing plan documents are untouched.
+        const workoutStartDate = snapToMonday(startDateInput);
+        // Week count is re-derived from the SNAPPED start, not the raw input:
+        // snapping moves the start up to 6 days earlier, and reusing the raw
+        // `numWeeks` could end the plan before the end date the user picked.
+        const workoutWeeks = weeksForSpan(workoutStartDate, endDateInput);
         plan = await createPlan<WorkoutPlan>(user.uid, {
           name: nameInput.trim(),
           planType: "workout",
-          startDate: startDateInput,
+          startDate: workoutStartDate,
           status: "draft",
           isActive: false,
-          weeks: Array.from({ length: numWeeks }, (_, i) => ({
+          weeks: Array.from({ length: workoutWeeks }, (_, i) => ({
             weekNumber: i + 1,
             entries: [],
           })),

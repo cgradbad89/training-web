@@ -100,6 +100,7 @@ import {
 } from "@/types/plan";
 import {
   matchPlanToActual,
+  planWeekIndexFor,
   statusForRunEntry,
   type PlanMatch,
 } from "@/utils/planMatching";
@@ -666,10 +667,7 @@ function PlanProgressCard({ activePlan, workouts, overrides, weekStart, weekEnd 
     );
   }
 
-  const planStart = new Date(activePlan.startDate);
-  const weekIndex = Math.floor(
-    (weekStart.getTime() - planStart.getTime()) / (7 * 24 * 60 * 60 * 1000)
-  );
+  const weekIndex = planWeekIndexFor(activePlan.startDate, weekStart);
   const planWeek =
     weekIndex >= 0 && weekIndex < activePlan.weeks.length
       ? activePlan.weeks[weekIndex]
@@ -835,10 +833,7 @@ function WorkoutPlanProgressCard({
     );
   }
 
-  const planStart = new Date(activeWorkoutPlan.startDate + "T00:00:00");
-  const weekIndex = Math.floor(
-    (weekStart.getTime() - planStart.getTime()) / (7 * 24 * 60 * 60 * 1000)
-  );
+  const weekIndex = planWeekIndexFor(activeWorkoutPlan.startDate, weekStart);
   const planWeek =
     weekIndex >= 0 && weekIndex < activeWorkoutPlan.weeks.length
       ? activeWorkoutPlan.weeks[weekIndex]
@@ -1789,10 +1784,7 @@ export default function DashboardPage() {
 
   const plannedMiles = useMemo(() => {
     if (!activePlan) return 0;
-    const planStart = new Date(activePlan.startDate);
-    const weekIndex = Math.floor(
-      (selectedWeekStart.getTime() - planStart.getTime()) / (7 * 24 * 60 * 60 * 1000)
-    );
+    const weekIndex = planWeekIndexFor(activePlan.startDate, selectedWeekStart);
     if (weekIndex < 0 || weekIndex >= activePlan.weeks.length) return 0;
     return activePlan.weeks[weekIndex].entries.reduce((s, e) => s + e.distanceMiles, 0);
   }, [activePlan, selectedWeekStart]);
@@ -1816,11 +1808,7 @@ export default function DashboardPage() {
   // daysElapsed (weekday 1=Mon..7=Sun; legacy dayOfWeek = weekday-1).
   const plannedMilesThroughToday = useMemo(() => {
     if (!activePlan) return 0;
-    const planStart = new Date(activePlan.startDate);
-    const weekIndex = Math.floor(
-      (selectedWeekStart.getTime() - planStart.getTime()) /
-        (7 * 24 * 60 * 60 * 1000)
-    );
+    const weekIndex = planWeekIndexFor(activePlan.startDate, selectedWeekStart);
     if (weekIndex < 0 || weekIndex >= activePlan.weeks.length) return 0;
     return activePlan.weeks[weekIndex].entries.reduce((s, e) => {
       const weekday = e.weekday ?? e.dayOfWeek + 1;
@@ -1879,10 +1867,9 @@ export default function DashboardPage() {
     if (!activeWorkoutPlan) {
       return { sessionsCompleted: 0, sessionsPlanned: 0 };
     }
-    const planStart = new Date(activeWorkoutPlan.startDate + "T00:00:00");
-    const weekIndex = Math.floor(
-      (selectedWeekStart.getTime() - planStart.getTime()) /
-        (7 * 24 * 60 * 60 * 1000)
+    const weekIndex = planWeekIndexFor(
+      activeWorkoutPlan.startDate,
+      selectedWeekStart
     );
     if (weekIndex < 0 || weekIndex >= activeWorkoutPlan.weeks.length) {
       return { sessionsCompleted: 0, sessionsPlanned: 0 };
@@ -1910,10 +1897,9 @@ export default function DashboardPage() {
         sessionsPlannedThroughToday: 0,
       };
     }
-    const planStart = new Date(activeWorkoutPlan.startDate + "T00:00:00");
-    const weekIndex = Math.floor(
-      (selectedWeekStart.getTime() - planStart.getTime()) /
-        (7 * 24 * 60 * 60 * 1000)
+    const weekIndex = planWeekIndexFor(
+      activeWorkoutPlan.startDate,
+      selectedWeekStart
     );
     if (weekIndex < 0 || weekIndex >= activeWorkoutPlan.weeks.length) {
       return {

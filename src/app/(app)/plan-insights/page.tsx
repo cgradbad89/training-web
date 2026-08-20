@@ -35,6 +35,7 @@ import {
   type RiegelFit,
 } from "@/utils/riegelFit";
 import { buildPlanAdherence } from "@/utils/planAdherence";
+import { planWeekIndexFor } from "@/utils/planMatching";
 import {
   buildActualVsPlannedWeeks,
   distanceDelta,
@@ -557,10 +558,9 @@ export default function PlanInsightsPage() {
   // Current week in plan
   const currentPlanWeek = useMemo(() => {
     if (!activePlan) return null;
-    const planStart = parseLocalDate(activePlan.startDate);
-    const now = new Date();
-    const weekIndex = Math.floor(
-      (getWeekStart(now).getTime() - planStart.getTime()) / (7 * 86400000)
+    const weekIndex = planWeekIndexFor(
+      activePlan.startDate,
+      getWeekStart(new Date())
     );
     if (weekIndex < 0 || weekIndex >= activePlan.weeks.length) return null;
     return activePlan.weeks[weekIndex];
@@ -580,10 +580,7 @@ export default function PlanInsightsPage() {
   // finished or hasn't started.
   const defaultExpandedWeekIndex = useMemo<number | null>(() => {
     if (!activePlan || actualVsPlannedWeeks.length === 0) return null;
-    const planStart = parseLocalDate(activePlan.startDate);
-    const wi = Math.floor(
-      (getWeekStart(new Date()).getTime() - planStart.getTime()) / (7 * 86400000)
-    );
+    const wi = planWeekIndexFor(activePlan.startDate, getWeekStart(new Date()));
     if (wi >= 0 && wi < actualVsPlannedWeeks.length) return wi;
     return actualVsPlannedWeeks[actualVsPlannedWeeks.length - 1].weekIndex;
   }, [activePlan, actualVsPlannedWeeks]);

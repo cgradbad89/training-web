@@ -9,6 +9,7 @@ import {
 import { weekStart as getWeekStart, parseLocalDate, daysUntil } from '@/utils/dates'
 import { resolveActivityTitle } from '@/utils/resolveActivityTitle'
 import { buildRunTitleMap } from '@/utils/runPlanTitle'
+import { planWeekIndexFor } from '@/utils/planMatching'
 import {
   resolveDisplayLoad,
   DEFAULT_MAX_HR,
@@ -182,9 +183,7 @@ export function buildCoachContext(
     })
 
     // Determine current week by index
-    const weekIndex = Math.floor(
-      (getWeekStart(today).getTime() - planStart.getTime()) / (7 * 86400000)
-    )
+    const weekIndex = planWeekIndexFor(activePlan.startDate, getWeekStart(today))
     const currentWeekNum = weekIndex >= 0 && weekIndex < planWeeks.length
       ? planWeeks[weekIndex].weekNumber
       : planWeeks.length
