@@ -11,8 +11,6 @@ import {
   Bike,
   Activity,
   CheckCircle2,
-  MinusCircle,
-  XCircle,
   Circle,
   ChevronDown,
   RefreshCw,
@@ -76,6 +74,7 @@ import {
 } from "@/utils/dates";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { type WorkoutOverride } from "@/types/workoutOverride";
+import { RunStatusIcon } from "@/components/RunStatusIcon";
 import { WorkoutDetailModal } from "@/components/WorkoutDetailModal";
 import { RunActivityModal } from "@/components/runs/RunActivityModal";
 import {
@@ -704,7 +703,7 @@ function PlanProgressCard({ activePlan, workouts, overrides, weekStart, weekEnd 
 
             const rowContent = (
               <>
-                <StatusIcon status={status} />
+                <RunStatusIcon status={status} />
                 <span className="text-xs text-textSecondary w-7 shrink-0">{dayLabel}</span>
                 <span className="text-sm text-textPrimary flex-1">
                   {entry.notes ?? (entry.workoutType
@@ -790,19 +789,6 @@ function PlanProgressCard({ activePlan, workouts, overrides, weekStart, weekEnd 
     )}
     </>
   );
-}
-
-function StatusIcon({ status }: { status: RunStatus }) {
-  switch (status) {
-    case "met":
-      return <CheckCircle2 size={15} className="text-success shrink-0" />;
-    case "partial":
-      return <MinusCircle size={15} className="text-warning shrink-0" />;
-    case "missed":
-      return <XCircle size={15} className="text-danger shrink-0" />;
-    case "upcoming":
-      return <Circle size={15} className="text-textSecondary shrink-0" />;
-  }
 }
 
 // ─── Workout Plan Progress ────────────────────────────────────────────────────

@@ -268,7 +268,11 @@ describe("predictRaceTime extraEfforts hook", () => {
 
 // ── buildPredictionProjection ───────────────────────────────────────────────
 
-function mkPlan(weeks: PlanWeek[], startDate = "2026-06-01T00:00:00"): RunningPlan {
+// `RunningPlan.startDate` is a DATE-ONLY ISO string ("YYYY-MM-DD") — that is
+// what services/plans.ts normalizes every plan to on read, and what
+// buildPredictionProjection now feeds to `parseLocalDate`. The fixture used to
+// pass "…T00:00:00", a shape the read path never produces.
+function mkPlan(weeks: PlanWeek[], startDate = "2026-06-01"): RunningPlan {
   return {
     id: "plan-1",
     name: "Test Plan",
@@ -427,7 +431,7 @@ function hmPlan(): RunningPlan {
       ],
     });
   }
-  return mkPlan(weeks, "2026-06-08T00:00:00");
+  return mkPlan(weeks, "2026-06-08");
 }
 const HM_TODAY = d("2026-07-06");
 const HM_RACE_DATE = d("2026-08-30");

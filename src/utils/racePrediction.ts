@@ -154,11 +154,17 @@ export function buildPredictionTrend(
   now: Date = new Date()
 ): PredictionTrendPoint[] {
   const { goalSeconds } = params;
-  const planStart = new Date(plan.startDate);
+  // Plan start as LOCAL midnight (invariant #12) via the canonical
+  // `parseLocalDate` — NOT `new Date(...)`, which parses a date-only string as
+  // UTC midnight and, west of UTC, lands on the SUNDAY EVENING before the
+  // plan's Monday. That shifted every week window below a full day early, so
+  // each trend point's `asOf` excluded its own week's Sunday (see PRD §6 #43).
+  const planStart = parseLocalDate(plan.startDate);
   const nowMs = now.getTime();
 
   return plan.weeks.map((week) => {
-    // Week date range — identical to buildPlanAdherence (Mon → Sun EOD).
+    // Week date range (Mon 00:00 → Sun 23:59:59.999 LOCAL) — the same windows
+    // `buildPlanAdherence` derives, now that both parse the start identically.
     const ws = new Date(planStart);
     ws.setDate(ws.getDate() + (week.weekNumber - 1) * 7);
     const we = new Date(ws);

@@ -22,9 +22,6 @@ import {
   CalendarPlus,
   X,
   Check,
-  CheckCircle,
-  Circle,
-  AlertCircle,
 } from "lucide-react";
 
 import {
@@ -42,6 +39,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { PlanDateEditor } from "@/components/PlanDateEditor";
 import { PlanCompletionSummary } from "@/components/PlanCompletionSummary";
 import { PlanEditor, type PlanEditorConfig } from "@/components/PlanEditor";
+import { RunStatusIcon } from "@/components/RunStatusIcon";
 import {
   makeNewRunEntry,
   runningWeekSummaryLabel,
@@ -362,16 +360,10 @@ export function RunningPlanDetail({
       const status = statusForRunEntry(plan, entry, matchMap);
       const match = matchMap.get(entry.id);
 
-      let statusIcon: ReactNode;
-      if (status === "met") {
-        statusIcon = <CheckCircle className="w-4 h-4 text-success shrink-0" />;
-      } else if (status === "partial") {
-        statusIcon = <Check className="w-4 h-4 text-warning shrink-0" />;
-      } else if (status === "missed") {
-        statusIcon = <AlertCircle className="w-4 h-4 text-danger shrink-0" />;
-      } else {
-        statusIcon = <Circle className="w-4 h-4 text-border shrink-0" />;
-      }
+      // Shared four-state icon (see RunStatusIcon) — this row used to draw its
+      // own set, where "partial" rendered a bare checkmark that read as "met"
+      // at this size. size={16} preserves the previous w-4/h-4 footprint.
+      const statusIcon: ReactNode = <RunStatusIcon status={status} size={16} />;
 
       // Copy button shows on the day's first entry only (matches legacy /edit).
       const daySessions = [...entriesForWeek(entry.weekIndex)]

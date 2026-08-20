@@ -41,6 +41,7 @@ import {
   type PredictionRun,
   type RacePredictionParams,
 } from "@/utils/racePrediction";
+import { parseLocalDate } from "@/utils/dates";
 import { type RunningPlan, type PlannedRunEntry } from "@/types/plan";
 
 export interface PredictionProjectionPoint {
@@ -90,7 +91,12 @@ export function buildPredictionProjection(
   const today = input.today ?? new Date();
   const nowMs = today.getTime();
   const raceMs = raceDate.getTime();
-  const planStart = new Date(plan.startDate);
+  // Plan start as LOCAL midnight (invariant #12) via the canonical
+  // `parseLocalDate` — NOT `new Date(...)`, which parses a date-only string as
+  // UTC midnight and, west of UTC, lands on the SUNDAY EVENING before the
+  // plan's Monday. That shifted BOTH the week windows below and every
+  // `plannedEntryDate` a full day early (see PRD §6 #43).
+  const planStart = parseLocalDate(plan.startDate);
 
   // Stable across the whole projection (not recomputed per-week) — derived from
   // every entry in the plan, elapsed and future alike, already in scope here.
@@ -117,7 +123,9 @@ export function buildPredictionProjection(
   const points: PredictionProjectionPoint[] = [];
 
   for (const week of plan.weeks) {
-    // Week date range — identical to buildPlanAdherence / buildPredictionTrend.
+    // Week date range (Mon 00:00 → Sun 23:59:59.999 LOCAL) — the same windows
+    // buildPlanAdherence / buildPredictionTrend derive, now that all three parse
+    // the plan start identically.
     const ws = new Date(planStart);
     ws.setDate(ws.getDate() + (week.weekNumber - 1) * 7);
     const we = new Date(ws);
