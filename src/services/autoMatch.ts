@@ -21,6 +21,8 @@ import {
   WORKOUT_CATEGORY_HK_TYPES,
 } from "@/types/plan";
 import { updatePlan } from "@/services/plans";
+import { type WorkoutOverride } from "@/types/workoutOverride";
+import { selectActiveWorkouts } from "@/utils/selectActiveWorkouts";
 
 // ─── Activity type filters ──────────────────────────────────────────────────
 
@@ -118,23 +120,38 @@ export interface AutoMatchResult {
  *
  * - Skips sessions already `completed === true`
  * - Skips sessions whose planned date is in the future
+ * - Skips workouts the user has excluded via a workoutOverride — an excluded
+ *   workout must never persist `completed: true` onto a plan entry (this
+ *   matcher writes to Firestore, so an exclusion applied after the fact could
+ *   otherwise leave a permanent completion behind)
  * - Each HealthWorkout can only satisfy one session per run
  * - Duration-only sessions match yoga/pilates/mind-body activity types
  * - Exercise-based sessions match any other non-running workout
  * - Running plans and orphaned legacy pilates plans pass through unchanged
+ *
+ * `overrides` is the raw workoutOverrides map keyed by workoutId (the same
+ * shape AppDataContext exposes). Exclusions are applied with the shared
+ * `selectActiveWorkouts` predicate — omitting the argument keeps the previous
+ * "nothing excluded" behaviour.
  */
 export async function autoMatchCrossTrainingSessions(
   uid: string,
   plans: Plan[],
-  healthWorkouts: HealthWorkout[]
+  healthWorkouts: HealthWorkout[],
+  overrides: Record<string, WorkoutOverride> = {}
 ): Promise<{ plans: Plan[]; result: AutoMatchResult }> {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
+  // Drop excluded workouts BEFORE they can become match candidates — the only
+  // way an excluded workout could reach `entry.completed = true` is by sitting
+  // in this pool.
+  const activeWorkouts = selectActiveWorkouts(healthWorkouts, overrides);
+
   // Group HealthWorkouts by local calendar date for O(1) lookup.
   // Each entry holds workouts not yet consumed by a match this pass.
   const byDate = new Map<string, HealthWorkout[]>();
-  for (const w of healthWorkouts) {
+  for (const w of activeWorkouts) {
     const key = localISODate(w.startDate);
     const list = byDate.get(key);
     if (list) list.push(w);

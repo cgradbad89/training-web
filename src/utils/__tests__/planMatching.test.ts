@@ -6,6 +6,7 @@ import {
 } from "@/utils/planMatching";
 import { type RunningPlan, type PlannedRunEntry } from "@/types/plan";
 import { type HealthWorkout } from "@/types/healthWorkout";
+import { applyOverride, type WorkoutOverride } from "@/types/workoutOverride";
 
 // ─── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -161,5 +162,92 @@ describe("isPlanEntryCompleted", () => {
 
   it("'upcoming' (no match, future) is NOT completed", () => {
     expect(isPlanEntryCompleted("upcoming")).toBe(false);
+  });
+});
+
+// ─── Override-aware match quality ────────────────────────────────────────────
+//
+// `distanceMilesOverride` is a user correction to a workout's recorded
+// distance. It does NOT move the 85% full/partial threshold — it only changes
+// the distance the threshold is applied to. Before this was wired in, a
+// corrected distance showed on /runs and /plan-insights but the plan grid on
+// /dashboard and /plans still graded the raw HealthKit value.
+
+function override(
+  workoutId: string,
+  distanceMilesOverride: number | null,
+  isExcluded = false
+): WorkoutOverride {
+  return {
+    workoutId,
+    userId: "u1",
+    isExcluded,
+    excludedAt: null,
+    excludedReason: null,
+    distanceMilesOverride,
+    durationSecondsOverride: null,
+    runTypeOverride: null,
+    updatedAt: "2026-01-20T00:00:00.000Z",
+  };
+}
+
+describe("matchPlanToActual — distanceMilesOverride changes the quality tier", () => {
+  // Planned 10 mi → 85% threshold is 8.5 mi.
+  const plan = makePlan([runEntry(0, 1, 10, "e1")]);
+
+  it("raw 7.0 mi grades partial; corrected 9.5 mi grades full", () => {
+    const w = run("2026-01-19T12:00:00Z", 7.0, "w1");
+
+    // Before: no overrides → 7.0 / 10 = 0.70 < 0.85
+    expect(matchPlanToActual(plan, [w]).get("e1")?.quality).toBe("partial");
+
+    // After: the user corrects the GPS undercount to 9.5 → 0.95 ≥ 0.85
+    const after = matchPlanToActual(plan, [w], { w1: override("w1", 9.5) });
+    expect(after.get("e1")?.quality).toBe("full");
+  });
+
+  it("raw 9.5 mi grades full; corrected 7.0 mi grades partial (inverse)", () => {
+    const w = run("2026-01-19T12:00:00Z", 9.5, "w1");
+
+    expect(matchPlanToActual(plan, [w]).get("e1")?.quality).toBe("full");
+
+    const after = matchPlanToActual(plan, [w], { w1: override("w1", 7.0) });
+    expect(after.get("e1")?.quality).toBe("partial");
+  });
+
+  it("statusForRunEntry follows the corrected tier (partial → met)", () => {
+    const w = run("2026-01-19T12:00:00Z", 7.0, "w1");
+    const entry = plan.weeks[0].entries[0];
+
+    const before = matchPlanToActual(plan, [w]);
+    expect(statusForRunEntry(plan, entry, before, NOW)).toBe("partial");
+
+    const after = matchPlanToActual(plan, [w], { w1: override("w1", 9.5) });
+    expect(statusForRunEntry(plan, entry, after, NOW)).toBe("met");
+  });
+
+  it("PlanMatch.activity carries the override-applied distance", () => {
+    const w = run("2026-01-19T12:00:00Z", 7.0, "w1");
+    const m = matchPlanToActual(plan, [w], { w1: override("w1", 9.5) });
+    expect(m.get("e1")?.activity.distanceMiles).toBe(9.5);
+    // Source workout is never mutated.
+    expect(w.distanceMiles).toBe(7.0);
+  });
+
+  it("an override with a null distanceMilesOverride leaves the tier alone", () => {
+    const w = run("2026-01-19T12:00:00Z", 7.0, "w1");
+    const m = matchPlanToActual(plan, [w], { w1: override("w1", null) });
+    expect(m.get("e1")?.quality).toBe("partial");
+    expect(m.get("e1")?.activity.distanceMiles).toBe(7.0);
+  });
+
+  it("re-applying the same override to an already-corrected run is idempotent", () => {
+    // Callers like /plans pre-apply overrides AND may pass the map through;
+    // applyOverride assigns absolute values, so double application is safe.
+    const raw = run("2026-01-19T12:00:00Z", 7.0, "w1");
+    const pre = applyOverride(raw, override("w1", 9.5));
+    const m = matchPlanToActual(plan, [pre], { w1: override("w1", 9.5) });
+    expect(m.get("e1")?.quality).toBe("full");
+    expect(m.get("e1")?.activity.distanceMiles).toBe(9.5);
   });
 });

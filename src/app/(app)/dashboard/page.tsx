@@ -75,6 +75,7 @@ import {
   isSameWeek,
 } from "@/utils/dates";
 import { type HealthWorkout } from "@/types/healthWorkout";
+import { type WorkoutOverride } from "@/types/workoutOverride";
 import { WorkoutDetailModal } from "@/components/WorkoutDetailModal";
 import { RunActivityModal } from "@/components/runs/RunActivityModal";
 import {
@@ -613,13 +614,19 @@ function WorkoutSummaryCard({
 interface PlanProgressCardProps {
   activePlan: RunningPlan | null;
   workouts: HealthWorkout[];
+  /**
+   * Raw workoutOverrides map keyed by workoutId. Handed to matchPlanToActual
+   * so a user-corrected distanceMilesOverride grades the entry here exactly as
+   * it does on /plans, /plan-insights, and /runs.
+   */
+  overrides?: Record<string, WorkoutOverride>;
   weekStart: Date;
   weekEnd: Date;
 }
 
 type RunStatus = "met" | "partial" | "missed" | "upcoming";
 
-function PlanProgressCard({ activePlan, workouts, weekStart, weekEnd }: PlanProgressCardProps) {
+function PlanProgressCard({ activePlan, workouts, overrides, weekStart, weekEnd }: PlanProgressCardProps) {
   // matchPlanToActual filters isRunLike internally and locks each run to at
   // most one planned entry via its usedGlobal Set. The Plans page and the
   // dashboard's WeekCalendar tile already call it with the same {plan,
@@ -628,9 +635,9 @@ function PlanProgressCard({ activePlan, workouts, weekStart, weekEnd }: PlanProg
   const matchMap = useMemo<Map<string, PlanMatch | null>>(
     () =>
       activePlan
-        ? matchPlanToActual(activePlan, workouts)
+        ? matchPlanToActual(activePlan, workouts, overrides)
         : new Map<string, PlanMatch | null>(),
-    [activePlan, workouts]
+    [activePlan, workouts, overrides]
   );
 
   // Selected planned run → opens the RunActivityModal (planned vs actual).
@@ -2012,6 +2019,7 @@ export default function DashboardPage() {
             ...(activeWorkoutPlan ? [activeWorkoutPlan] : []),
           ]}
           actualRuns={activeWorkouts}
+          overrides={overrides}
           weekStart={selectedWeekStart}
         />
       </section>
@@ -2059,6 +2067,7 @@ export default function DashboardPage() {
         <PlanProgressCard
           activePlan={activePlan}
           workouts={activeWorkouts}
+          overrides={overrides}
           weekStart={selectedWeekStart}
           weekEnd={selectedWeekEnd}
         />

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from 'react'
 import { useAuth } from '@/hooks/useAuth'
+import { useAppData } from '@/contexts/AppDataContext'
 import { fetchPlans } from '@/services/plans'
 import { onHealthWorkoutsSnapshot } from '@/services/healthWorkouts'
 import { autoMatchCrossTrainingSessions } from '@/services/autoMatch'
@@ -24,11 +25,32 @@ import type { HealthWorkout } from '@/types/healthWorkout'
  *  - lastKey skips passes when the same content snapshot fires twice.
  *  - inFlight prevents concurrent matcher invocations on bursty snapshots.
  *  - The matcher itself skips completed + future sessions, so re-running is safe.
+ *
+ * AppDataContext wiring: this component is mounted inside <AppDataProvider>
+ * (see (app)/layout.tsx), so it reaches the shared workoutOverrides map and
+ * refreshPlans through useAppData() — no separate fetch, no new context.
+ *  - `overrides` gates the matcher's candidate pool: an excluded workout must
+ *    never persist `completed: true` onto a plan entry.
+ *  - `refreshPlans()` runs after a successful write so a background match shows
+ *    up on /plans, /dashboard, and /plan-insights without a manual reload.
+ * Both are read through refs so a changing override map or callback identity
+ * never tears down and re-subscribes the snapshot listener.
  */
 export default function AutoMatchRunner() {
   const { user } = useAuth()
+  const { overrides, refreshPlans } = useAppData()
   const inFlight = useRef(false)
   const lastKey = useRef<string | null>(null)
+
+  // Latest-value refs — see the note above on why these are not effect deps.
+  const overridesRef = useRef(overrides)
+  const refreshPlansRef = useRef(refreshPlans)
+  useEffect(() => {
+    overridesRef.current = overrides
+  }, [overrides])
+  useEffect(() => {
+    refreshPlansRef.current = refreshPlans
+  }, [refreshPlans])
 
   useEffect(() => {
     if (!user) return
@@ -40,8 +62,18 @@ export default function AutoMatchRunner() {
       try {
         const plans = await fetchPlans(uid)
 
-        await autoMatchCrossTrainingSessions(uid, plans, workouts)
+        const { result } = await autoMatchCrossTrainingSessions(
+          uid,
+          plans,
+          workouts,
+          overridesRef.current
+        )
         lastKey.current = key
+        // Only refresh shared plan state when the matcher actually persisted
+        // something — a no-op pass shouldn't trigger a plans read.
+        if (result.updatedPlanIds.length > 0) {
+          await refreshPlansRef.current()
+        }
       } catch (err) {
         console.error('[AutoMatchRunner] error:', err)
       } finally {

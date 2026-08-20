@@ -1,5 +1,6 @@
 import { type RunningPlan, type PlannedRunEntry } from "@/types/plan";
 import { type HealthWorkout } from "@/types/healthWorkout";
+import { applyOverride, type WorkoutOverride } from "@/types/workoutOverride";
 
 export type MatchQuality = "full" | "partial";
 
@@ -112,12 +113,27 @@ function pickBestCandidate(
  * matches an entry; match quality ("full" vs "partial") is then decided
  * solely by `meetsCompletionThreshold` (actual ≥ 85% of planned).
  * Returns a map: entryId → PlanMatch | null
+ *
+ * `overrides` (optional, keyed by workoutId) layers user corrections onto each
+ * run via the SAME `applyOverride` helper /runs and /plan-insights display
+ * through — so a `distanceMilesOverride` grades against the corrected mileage
+ * instead of the raw HealthKit value. It does NOT move the 85% threshold, only
+ * the distance the threshold is applied to. Callers that already ran their
+ * workout list through `applyOverride` may omit it (re-applying the same
+ * override is idempotent — it assigns absolute values, never deltas).
+ * `PlanMatch.activity` carries the override-applied workout when overrides are
+ * supplied, so downstream displays show the same effective distance graded.
  */
 export function matchPlanToActual(
   plan: RunningPlan,
-  workouts: HealthWorkout[]
+  workouts: HealthWorkout[],
+  overrides?: Record<string, WorkoutOverride>
 ): Map<string, PlanMatch | null> {
-  const runs = workouts.filter((w) => w.isRunLike);
+  const runs = workouts
+    .filter((w) => w.isRunLike)
+    .map((w) =>
+      overrides ? applyOverride(w, overrides[w.workoutId] ?? null) : w
+    );
   const result = new Map<string, PlanMatch | null>();
   // Global used set — prevents a run from matching entries across different weeks
   const usedGlobal = new Set<string>();

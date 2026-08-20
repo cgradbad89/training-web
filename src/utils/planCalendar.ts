@@ -6,6 +6,7 @@ import {
   type RunEntryStatus,
 } from "@/utils/planMatching";
 import type { HealthWorkout } from "@/types/healthWorkout";
+import type { WorkoutOverride } from "@/types/workoutOverride";
 
 export interface CalendarEvent {
   date: Date;
@@ -58,9 +59,15 @@ function sessionDate(startDate: string, weekIndex: number, dayIndex: number): Da
   return d;
 }
 
+/**
+ * `overrides` is passed straight through to `matchPlanToActual`, so calendar
+ * pills grade against the user's corrected mileage. Callers whose `actualRuns`
+ * were already run through `applyOverride` can omit it.
+ */
 export function buildCalendarEvents(
   plans: (RunningPlan | WorkoutPlan)[],
-  actualRuns: HealthWorkout[] = []
+  actualRuns: HealthWorkout[] = [],
+  overrides?: Record<string, WorkoutOverride>
 ): CalendarEvent[] {
   const events: CalendarEvent[] = [];
 
@@ -96,7 +103,7 @@ export function buildCalendarEvents(
         }
       }
     } else {
-      const matchMap = matchPlanToActual(plan, actualRuns);
+      const matchMap = matchPlanToActual(plan, actualRuns, overrides);
       const counters = new Map<string, number>();
       for (const week of plan.weeks) {
         for (const entry of week.entries) {

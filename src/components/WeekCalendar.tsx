@@ -10,6 +10,7 @@ import type {
 } from "@/types/plan";
 import { isRunningPlan } from "@/types/plan";
 import type { HealthWorkout } from "@/types/healthWorkout";
+import type { WorkoutOverride } from "@/types/workoutOverride";
 import {
   buildCalendarEvents,
   type CalendarEvent,
@@ -98,6 +99,12 @@ export function EventPill({
 interface WeekCalendarProps {
   plans: (RunningPlan | WorkoutPlan)[];
   actualRuns: HealthWorkout[];
+  /**
+   * Raw workoutOverrides map keyed by workoutId. Forwarded to
+   * buildCalendarEvents → matchPlanToActual so a corrected distance grades the
+   * pill. Omit when `actualRuns` is already override-applied.
+   */
+  overrides?: Record<string, WorkoutOverride>;
   /** Optional override for which week to show. Defaults to the current week's Monday. */
   weekStart?: Date;
   /**
@@ -119,6 +126,7 @@ interface WeekCalendarProps {
 export function WeekCalendar({
   plans,
   actualRuns,
+  overrides,
   weekStart,
   onEventClick,
 }: WeekCalendarProps) {
@@ -142,8 +150,8 @@ export function WeekCalendar({
   );
 
   const events = useMemo(
-    () => buildCalendarEvents(plans, actualRuns),
-    [plans, actualRuns]
+    () => buildCalendarEvents(plans, actualRuns, overrides),
+    [plans, actualRuns, overrides]
   );
 
   const today = todayMidnight();
