@@ -23,7 +23,53 @@ export interface UseAggregatedStatsResult {
   error: Error | null;
 }
 
-export async function fetchAndComputeAggregatedStats(
+export interface AggregationLoadingState {
+  workoutsLoading: boolean;
+  settingsLoading: boolean;
+  racesLoading: boolean;
+}
+
+export type AggregationLogEvent =
+  | "start"
+  | "skip-in-flight"
+  | "skip-not-ready"
+  | "complete"
+  | "error";
+
+const aggregationInFlight = new Map<string, Promise<AggregatedStatsDoc>>();
+
+export function getAggregationLockKey(
+  uid: string,
+  latestWorkoutId: string
+): string {
+  return `${uid}:${latestWorkoutId}`;
+}
+
+export function isAggregationReady(
+  uid: string | null,
+  loadingState: AggregationLoadingState
+): uid is string {
+  return (
+    uid !== null &&
+    !loadingState.workoutsLoading &&
+    !loadingState.settingsLoading &&
+    !loadingState.racesLoading
+  );
+}
+
+export function logAggregationEvent(
+  event: AggregationLogEvent,
+  details: Record<string, unknown>
+): void {
+  const payload = { event, ...details };
+  if (event === "error") {
+    console.warn("[aggregated-stats]", payload);
+    return;
+  }
+  console.log("[aggregated-stats]", payload);
+}
+
+async function computeAggregatedStats(
   uid: string,
   workouts: HealthWorkout[],
   maxHr: number,
@@ -118,12 +164,66 @@ export async function fetchAndComputeAggregatedStats(
     races,
   });
 
-  // Fire-and-forget write
-  setDoc(statsRef, stripUndefined(freshStats)).catch((err) => {
-    console.warn("Failed to write aggregatedStats to Firestore:", err);
-  });
+  // The computation is not complete until the cache write is confirmed. A
+  // rejected write propagates to the caller so the in-flight lock can release
+  // and a later trigger can retry instead of treating an unpersisted result as
+  // complete.
+  await setDoc(statsRef, stripUndefined(freshStats));
 
   return freshStats;
+}
+
+export function fetchAndComputeAggregatedStats(
+  uid: string,
+  workouts: HealthWorkout[],
+  maxHr: number,
+  restingHr: number,
+  races: { raceDate: Date | string; distanceMiles: number }[],
+  latestWorkoutId: string
+): Promise<AggregatedStatsDoc> {
+  const lockKey = getAggregationLockKey(uid, latestWorkoutId);
+  const existing = aggregationInFlight.get(lockKey);
+  if (existing) {
+    logAggregationEvent("skip-in-flight", {
+      uid,
+      latestWorkoutId,
+      lockKey,
+    });
+    return existing;
+  }
+
+  logAggregationEvent("start", { uid, latestWorkoutId, lockKey });
+
+  let lockedPromise!: Promise<AggregatedStatsDoc>;
+  lockedPromise = computeAggregatedStats(
+    uid,
+    workouts,
+    maxHr,
+    restingHr,
+    races,
+    latestWorkoutId
+  )
+    .then((result) => {
+      logAggregationEvent("complete", { uid, latestWorkoutId, lockKey });
+      return result;
+    })
+    .catch((error: unknown) => {
+      logAggregationEvent("error", {
+        uid,
+        latestWorkoutId,
+        lockKey,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    })
+    .finally(() => {
+      if (aggregationInFlight.get(lockKey) === lockedPromise) {
+        aggregationInFlight.delete(lockKey);
+      }
+    });
+
+  aggregationInFlight.set(lockKey, lockedPromise);
+  return lockedPromise;
 }
 
 export function useAggregatedStats(
@@ -131,7 +231,8 @@ export function useAggregatedStats(
   workouts: HealthWorkout[],
   maxHr: number,
   restingHr: number,
-  races: { raceDate: Date | string; distanceMiles: number }[]
+  races: { raceDate: Date | string; distanceMiles: number }[],
+  loadingState: AggregationLoadingState
 ): UseAggregatedStatsResult {
   const [data, setData] = useState<AggregatedStatsDoc | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -141,23 +242,27 @@ export function useAggregatedStats(
     (max, w) => Math.max(max, w.startDate.getTime()),
     0
   );
+  const latestWorkoutId =
+    workouts.length > 0
+      ? workouts.reduce((latest, current) =>
+          current.startDate > latest.startDate ? current : latest
+        ).workoutId
+      : "";
 
   useEffect(() => {
-    if (!uid) {
-      setLoading(false);
+    if (!isAggregationReady(uid, loadingState)) {
+      setLoading(uid !== null);
+      logAggregationEvent("skip-not-ready", {
+        uid,
+        latestWorkoutId,
+        ...loadingState,
+      });
       return;
     }
 
     let cancelled = false;
     setLoading(true);
     setError(null);
-
-    const latestWorkoutId =
-      workouts.length > 0
-        ? workouts.reduce((latest, current) =>
-            current.startDate > latest.startDate ? current : latest
-          ).workoutId
-        : "";
 
     fetchAndComputeAggregatedStats(uid, workouts, maxHr, restingHr, races, latestWorkoutId)
       .then((result) => {
@@ -176,7 +281,17 @@ export function useAggregatedStats(
     return () => {
       cancelled = true;
     };
-  }, [uid, latestWorkoutStartTime, maxHr, restingHr, JSON.stringify(races)]);
+  }, [
+    uid,
+    latestWorkoutStartTime,
+    latestWorkoutId,
+    maxHr,
+    restingHr,
+    JSON.stringify(races),
+    loadingState.workoutsLoading,
+    loadingState.settingsLoading,
+    loadingState.racesLoading,
+  ]);
 
   return { data, loading, error };
 }

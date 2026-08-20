@@ -1,8 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fetchAndComputeAggregatedStats } from "../useAggregatedStats";
+import {
+  fetchAndComputeAggregatedStats,
+  getAggregationLockKey,
+  isAggregationReady,
+  logAggregationEvent,
+} from "../useAggregatedStats";
 import * as firestore from "firebase/firestore";
 import { AGGREGATED_STATS_VERSION } from "@/utils/aggregatedStats";
 import { type HealthWorkout } from "@/types/healthWorkout";
+import { getRoutePoints } from "@/utils/routeCache";
 
 // Mock external dependencies
 vi.mock("firebase/firestore", async (importOriginal) => {
@@ -45,7 +51,84 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
   const latestWorkoutId = "workout1";
 
   beforeEach(() => {
+    vi.restoreAllMocks();
     vi.clearAllMocks();
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.mocked(getRoutePoints).mockResolvedValue([]);
+  });
+
+  function mockMissingCache(): void {
+    vi.mocked(firestore.getDoc).mockResolvedValue({
+      exists: () => false,
+      data: () => undefined,
+    } as any);
+    vi.mocked(firestore.getDocs).mockResolvedValue({ docs: [] } as any);
+    vi.mocked(firestore.setDoc).mockResolvedValue(undefined);
+  }
+
+  it("builds a stable lock key from uid and latest workout", () => {
+    expect(getAggregationLockKey("uid-1", "workout-1")).toBe(
+      "uid-1:workout-1"
+    );
+    expect(getAggregationLockKey("uid-1", "workout-1")).toBe(
+      getAggregationLockKey("uid-1", "workout-1")
+    );
+  });
+
+  it("uses a different lock key when either uid or latest workout changes", () => {
+    const original = getAggregationLockKey("uid-1", "workout-1");
+    expect(getAggregationLockKey("uid-2", "workout-1")).not.toBe(original);
+    expect(getAggregationLockKey("uid-1", "workout-2")).not.toBe(original);
+  });
+
+  it("reports ready only after workouts, settings, and races finish loading", () => {
+    expect(
+      isAggregationReady("uid-1", {
+        workoutsLoading: false,
+        settingsLoading: false,
+        racesLoading: false,
+      })
+    ).toBe(true);
+  });
+
+  it("blocks aggregation while auth or any required dependency is not ready", () => {
+    const readyFlags = {
+      workoutsLoading: false,
+      settingsLoading: false,
+      racesLoading: false,
+    };
+    expect(isAggregationReady(null, readyFlags)).toBe(false);
+    expect(
+      isAggregationReady("uid-1", { ...readyFlags, workoutsLoading: true })
+    ).toBe(false);
+    expect(
+      isAggregationReady("uid-1", { ...readyFlags, settingsLoading: true })
+    ).toBe(false);
+    expect(
+      isAggregationReady("uid-1", { ...readyFlags, racesLoading: true })
+    ).toBe(false);
+  });
+
+  it("logs lifecycle events with the greppable prefix", () => {
+    logAggregationEvent("start", {
+      uid: mockUid,
+      latestWorkoutId,
+    });
+    logAggregationEvent("error", {
+      uid: mockUid,
+      latestWorkoutId,
+      error: "boom",
+    });
+
+    expect(console.log).toHaveBeenCalledWith(
+      "[aggregated-stats]",
+      expect.objectContaining({ event: "start", uid: mockUid, latestWorkoutId })
+    );
+    expect(console.warn).toHaveBeenCalledWith(
+      "[aggregated-stats]",
+      expect.objectContaining({ event: "error", error: "boom" })
+    );
   });
 
   it("returns cached data immediately if not stale", async () => {
@@ -172,21 +255,128 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
     expect(firestore.setDoc).toHaveBeenCalledTimes(1);
   });
 
-  it("returns computed data even if firestore setDoc fails", async () => {
-    vi.mocked(firestore.getDoc).mockResolvedValue({
-      exists: () => false,
-      data: () => undefined,
-    } as any);
-    vi.mocked(firestore.getDocs).mockResolvedValue({ docs: [] } as any);
+  it("does not resolve the computation or release its lock until the cache write completes", async () => {
+    mockMissingCache();
+    let resolveWrite!: () => void;
+    const writePending = new Promise<void>((resolve) => {
+      resolveWrite = resolve;
+    });
+    vi.mocked(firestore.setDoc).mockReturnValue(writePending);
 
-    // Mock write failure
-    vi.mocked(firestore.setDoc).mockRejectedValue(new Error("Permission denied"));
+    let settled = false;
+    const first = fetchAndComputeAggregatedStats(
+      mockUid, mockWorkouts, maxHr, restingHr, races, latestWorkoutId
+    ).then((result) => {
+      settled = true;
+      return result;
+    });
 
-    const result = await fetchAndComputeAggregatedStats(
+    await vi.waitFor(() => expect(firestore.setDoc).toHaveBeenCalledTimes(1));
+    const overlapping = fetchAndComputeAggregatedStats(
+      mockUid, mockWorkouts, maxHr, restingHr, races, latestWorkoutId
+    );
+    await Promise.resolve();
+
+    expect(settled).toBe(false);
+    expect(firestore.getDoc).toHaveBeenCalledTimes(1);
+    expect(console.log).toHaveBeenCalledWith(
+      "[aggregated-stats]",
+      expect.objectContaining({ event: "skip-in-flight" })
+    );
+
+    resolveWrite();
+    const [firstResult, overlappingResult] = await Promise.all([
+      first,
+      overlapping,
+    ]);
+    expect(firstResult).toEqual(overlappingResult);
+    expect(settled).toBe(true);
+  });
+
+  it("collapses overlapping triggers into one computation and one route read per workout", async () => {
+    mockMissingCache();
+    let resolveRoute!: (points: []) => void;
+    vi.mocked(getRoutePoints).mockReturnValue(
+      new Promise<[]>((resolve) => {
+        resolveRoute = resolve;
+      })
+    );
+
+    const first = fetchAndComputeAggregatedStats(
+      mockUid, mockWorkouts, maxHr, restingHr, races, latestWorkoutId
+    );
+    const second = fetchAndComputeAggregatedStats(
       mockUid, mockWorkouts, maxHr, restingHr, races, latestWorkoutId
     );
 
-    // Should not throw, and should return valid data
-    expect(result.latestWorkoutId).toBe("workout1");
+    expect(second).toBe(first);
+    expect(firestore.getDoc).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(getRoutePoints).toHaveBeenCalledTimes(1));
+
+    resolveRoute([]);
+    await Promise.all([first, second]);
+    expect(firestore.setDoc).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not deduplicate computations for different latest-workout keys", async () => {
+    mockMissingCache();
+
+    await Promise.all([
+      fetchAndComputeAggregatedStats(
+        mockUid, mockWorkouts, maxHr, restingHr, races, "workout1"
+      ),
+      fetchAndComputeAggregatedStats(
+        mockUid, mockWorkouts, maxHr, restingHr, races, "workout2"
+      ),
+    ]);
+
+    expect(firestore.getDoc).toHaveBeenCalledTimes(2);
+    expect(firestore.setDoc).toHaveBeenCalledTimes(2);
+  });
+
+  it("releases the lock after a successful computation", async () => {
+    mockMissingCache();
+
+    await fetchAndComputeAggregatedStats(
+      mockUid, mockWorkouts, maxHr, restingHr, races, latestWorkoutId
+    );
+    await fetchAndComputeAggregatedStats(
+      mockUid, mockWorkouts, maxHr, restingHr, races, latestWorkoutId
+    );
+
+    expect(firestore.getDoc).toHaveBeenCalledTimes(2);
+    expect(firestore.setDoc).toHaveBeenCalledTimes(2);
+  });
+
+  it("logs a failed cache write, rejects, and releases the lock for retry", async () => {
+    mockMissingCache();
+    vi.mocked(firestore.setDoc)
+      .mockRejectedValueOnce(new Error("Permission denied"))
+      .mockResolvedValueOnce(undefined);
+
+    await expect(
+      fetchAndComputeAggregatedStats(
+        mockUid, mockWorkouts, maxHr, restingHr, races, latestWorkoutId
+      )
+    ).rejects.toThrow("Permission denied");
+
+    expect(console.warn).toHaveBeenCalledWith(
+      "[aggregated-stats]",
+      expect.objectContaining({
+        event: "error",
+        uid: mockUid,
+        latestWorkoutId,
+        error: "Permission denied",
+      })
+    );
+    expect(firestore.setDoc).toHaveBeenCalledTimes(1);
+
+    await expect(
+      fetchAndComputeAggregatedStats(
+        mockUid, mockWorkouts, maxHr, restingHr, races, latestWorkoutId
+      )
+    ).resolves.toEqual(expect.objectContaining({ latestWorkoutId }));
+    expect(firestore.getDoc).toHaveBeenCalledTimes(2);
+    expect(firestore.setDoc).toHaveBeenCalledTimes(2);
   });
 });

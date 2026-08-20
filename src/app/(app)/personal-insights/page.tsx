@@ -1014,6 +1014,8 @@ export default function PersonalInsightsPage() {
     maxHr,
     restingHr,
     workoutsLoading,
+    settingsLoading,
+    racesLoading,
   } = useAppData();
 
   // Apply overrides and drop excluded workouts — same processing the old
@@ -1041,7 +1043,14 @@ export default function PersonalInsightsPage() {
         .filter((r) => r.distanceMiles > 0),
     [races]
   );
-  const stats = useAggregatedStats(uid, workouts, maxHr, restingHr, raceInputs);
+  const stats = useAggregatedStats(
+    uid,
+    workouts,
+    maxHr,
+    restingHr,
+    raceInputs,
+    { workoutsLoading, settingsLoading, racesLoading }
+  );
   const loading = workoutsLoading || stats.loading;
   
   const selectedYear = new Date().getFullYear();
