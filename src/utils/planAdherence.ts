@@ -22,6 +22,7 @@ import {
   isPlanEntryCompleted,
 } from "@/utils/planMatching";
 import { resolveDisplayLoad, DEFAULT_RESTING_HR } from "@/utils/trainingLoad";
+import { parseLocalDate } from "@/utils/dates";
 
 export interface WeekAdherence {
   weekNumber: number; // 1-based
@@ -63,8 +64,13 @@ export function buildPlanAdherence(
   // resolveDisplayLoad needs a concrete resting HR; default matches the app.
   const restingHr = opts.restingHr ?? DEFAULT_RESTING_HR;
 
-  // Same start-date parse the page used (UTC-midnight from "YYYY-MM-DD").
-  const planStart = new Date(plan.startDate);
+  // Plan start as LOCAL midnight (invariant #12) via the canonical
+  // `parseLocalDate` — the same helper `planActualTable.ts` and
+  // `planMatching.ts`'s `planWeekIndexFor` already use. NOT `new Date(...)`,
+  // which parses a date-only string as UTC midnight: west of UTC that lands
+  // on the SUNDAY EVENING before the plan's Monday, which shifted every
+  // per-week window below off the Mon–Sun calendar (see PRD §6 #43).
+  const planStart = parseLocalDate(plan.startDate);
 
   // ±1-day matching engine — applied once across the whole plan.
   const matchMap = matchPlanToActual(plan, runs);
@@ -102,7 +108,9 @@ export function buildPlanAdherence(
       }
     }
 
-    // Week date range (Mon → Sun end-of-day), via weekNumber as the page did.
+    // Week date range (Mon 00:00 → Sun 23:59:59.999 LOCAL), via weekNumber as
+    // the page did. `setDate` on a local-midnight date keeps the wall-clock
+    // time across a DST transition, so mid-plan weeks stay Monday-aligned.
     const ws = new Date(planStart);
     ws.setDate(ws.getDate() + (week.weekNumber - 1) * 7);
     const we = new Date(ws);

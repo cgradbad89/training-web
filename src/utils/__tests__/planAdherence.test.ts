@@ -207,3 +207,139 @@ describe("buildPlanAdherence — throughDate cutoff (Plan Insights parity)", () 
     expect(r.weeks).toHaveLength(3);
   });
 });
+
+// ─── Week-window date parsing (local vs UTC midnight) ────────────────────────
+//
+// A plan week's range is [Mon 00:00 local, Sun 23:59:59.999 local], derived
+// from `plan.startDate` parsed through `parseLocalDate` (invariant #12). It
+// used to be parsed with `new Date("YYYY-MM-DD")` — UTC midnight — which west
+// of UTC lands on the SUNDAY EVENING before the plan's Monday, sliding every
+// week's window off the calendar: it opened Sun ~19:00–20:00 local and closed
+// Sat 23:59:59.999, so the week's own SUNDAY fell into a gap between this
+// week's window and the next one's and was counted in NO week at all.
+//
+// These fixtures build timestamps from LOCAL components so "Sunday morning" is
+// genuinely Sunday morning wherever the suite runs. Planned entries sit on
+// WEDNESDAYS so the extra runs below are ≥3 days from any entry and cannot be
+// claimed by the ±1-day matcher — they exercise the bonus-run window only.
+
+/** 3-week plan starting Mon 2026-01-19, one planned run each Wednesday. */
+function makeWedPlan(weekCount = 3): RunningPlan {
+  return {
+    ...makePlan(),
+    weeks: Array.from({ length: weekCount }, (_, i) => ({
+      weekNumber: i + 1,
+      entries: [runEntry(i, 3, 5, `w${i + 1}-wed`)],
+    })),
+  };
+}
+
+function localRun(
+  y: number,
+  monthIndex: number,
+  day: number,
+  hour: number,
+  minute: number,
+  distanceMiles: number,
+  durationSeconds: number,
+  trainingLoadV2: number | null = null
+): HealthWorkout {
+  return {
+    workoutId: `local-${y}-${monthIndex + 1}-${day}-${hour}:${minute}`,
+    isRunLike: true,
+    startDate: new Date(y, monthIndex, day, hour, minute, 0),
+    distanceMiles,
+    durationSeconds,
+    avgHeartRate: null,
+    trainingLoadV2,
+  } as unknown as HealthWorkout;
+}
+
+const W1 = (r: ReturnType<typeof buildPlanAdherence>) => r.weeks[0];
+const W2 = (r: ReturnType<typeof buildPlanAdherence>) => r.weeks[1];
+
+describe("buildPlanAdherence — week window is Mon→Sun LOCAL (was UTC-midnight shifted)", () => {
+  it("a Sunday bonus run counts toward its own week, not the next one — and is never dropped", () => {
+    // Sun 2026-01-25 is the LAST day of week 1 (Mon 1/19 – Sun 1/25).
+    const sundayBonus = localRun(2026, 0, 25, 9, 0, 4, 4 * 600);
+    const r = buildPlanAdherence(makeWedPlan(), [sundayBonus], { maxHr: 185 });
+
+    expect(W1(r).actualMiles).toBeCloseTo(4, 6);
+    expect(W2(r).actualMiles).toBe(0);
+    // Nothing fell through the cracks: the plan's total equals the run.
+    expect(r.totalActualMiles).toBeCloseTo(4, 6);
+  });
+
+  it("a Sunday run's LOAD and PACE land in its own week too (they were dropped with it)", () => {
+    // The mileage of a Sunday run MATCHED to a planned entry was already
+    // counted through the match path — but runLoad and avgPace come from the
+    // week-window loop, so a shifted window silently lost them.
+    const sundayBonus = localRun(2026, 0, 25, 9, 0, 5, 5 * 600, 250);
+    const r = buildPlanAdherence(makeWedPlan(), [sundayBonus], { maxHr: 185 });
+
+    expect(W1(r).runLoad).toBe(250);
+    expect(W1(r).avgPaceSecPerMile).toBeCloseTo(600, 6);
+    expect(W2(r).runLoad).toBe(0);
+    expect(W2(r).avgPaceSecPerMile).toBeNull();
+  });
+
+  it("a run on the Sunday BEFORE the plan starts is excluded from week 1", () => {
+    // Sun 2026-01-18 20:00 — inside the old UTC-shifted window (which opened
+    // Sun ~19:00), outside the plan entirely under the local Mon-start window.
+    const dayBefore = localRun(2026, 0, 18, 20, 0, 3, 3 * 600, 100);
+    const r = buildPlanAdherence(makeWedPlan(), [dayBefore], { maxHr: 185 });
+
+    expect(W1(r).actualMiles).toBe(0);
+    expect(W1(r).runLoad).toBe(0);
+    expect(r.totalActualMiles).toBe(0);
+  });
+
+  it("both week boundaries are inclusive: Mon 00:00 and Sun 23:59 land in the same week", () => {
+    const weekOpen = localRun(2026, 0, 19, 0, 0, 2, 2 * 600); // Mon 00:00
+    const weekClose = localRun(2026, 0, 25, 23, 59, 3, 3 * 600); // Sun 23:59
+    const r = buildPlanAdherence(makeWedPlan(), [weekOpen, weekClose], {
+      maxHr: 185,
+    });
+
+    expect(W1(r).actualMiles).toBeCloseTo(5, 6);
+    expect(W2(r).actualMiles).toBe(0);
+  });
+
+  it("weeks stay Monday-aligned across a spring-forward DST transition", () => {
+    // US DST starts Sun 2026-03-08. Week 8 of a plan starting Mon 2026-01-19
+    // is Mon 3/9 – Sun 3/15, entirely after the transition.
+    const sundayAfterDst = localRun(2026, 2, 15, 9, 0, 8, 8 * 600, 300);
+    const r = buildPlanAdherence(makeWedPlan(8), [sundayAfterDst], {
+      maxHr: 185,
+    });
+
+    const w8 = r.weeks[7];
+    expect(w8.weekNumber).toBe(8);
+    expect(w8.actualMiles).toBeCloseTo(8, 6);
+    expect(w8.runLoad).toBe(300);
+    expect(r.totalActualMiles).toBeCloseTo(8, 6);
+  });
+
+  it("regression: a typical mid-week bonus run keeps its existing week attribution", () => {
+    // Sat 2026-01-24, nowhere near a week boundary — inside week 1 under both
+    // the old and the new window.
+    const saturdayBonus = localRun(2026, 0, 24, 10, 0, 6, 6 * 600, 180);
+    const r = buildPlanAdherence(makeWedPlan(), [saturdayBonus], { maxHr: 185 });
+
+    expect(W1(r).actualMiles).toBeCloseTo(6, 6);
+    expect(W1(r).runLoad).toBe(180);
+    expect(W2(r).actualMiles).toBe(0);
+  });
+
+  it("regression: the throughDate cutoff still includes a week starting exactly ON the cutoff", () => {
+    // throughDate = Mon 2026-01-26 local midnight — week 2's own start. The
+    // cutoff is `weekStart <= throughDate`, so week 2 is in and week 3 is out;
+    // moving planStart from Sun-evening to Mon-midnight must not flip this.
+    const r = buildPlanAdherence(makeWedPlan(), [], {
+      maxHr: 185,
+      throughDate: new Date(2026, 0, 26),
+    });
+
+    expect(r.weeks.map((w) => w.weekNumber)).toEqual([1, 2]);
+  });
+});
