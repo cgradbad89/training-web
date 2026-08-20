@@ -1,6 +1,6 @@
 # AI Coach Vercel AI Gateway migration
 
-Status: implemented in code; production deployment verification pending.
+Status: implemented and production-verified on 2026-08-20.
 
 ## Architecture and contract
 
@@ -45,25 +45,26 @@ After streaming begins, HTTP status cannot change. A mid-stream failure terminat
 
 ## Rollback and transitional safety
 
-The migration is reversible by reverting its Git commit. Until production verification succeeds:
+The migration is reversible by reverting migration commit `b0a89ab` and the follow-up output-budget fix `f6606a2`. Production verification has succeeded, but the following rollback assets are deliberately retained for a separate cleanup change:
 
 - `@anthropic-ai/sdk` and `@google/genai` remain installed.
 - `GEMINI_API_KEY` and `ANTHROPIC_API_KEY` remain documented and must not be removed from production configuration.
 - The inactive previous provider implementation remains in `src/app/api/coach/coachStream.legacy.ts` and is not imported by the active route.
 
-Do not delete those rollback assets until the production checks below pass.
+Do not delete those rollback assets as part of an unrelated change. Remove them together in a dedicated cleanup after confirming the team no longer needs immediate direct-provider rollback.
 
-## Required production verification
+## Production verification (completed 2026-08-20)
 
-- Confirm the deployed commit contains this migration and the deployment was rebuilt after Gateway authentication was configured.
-- Use the actual authenticated `/coach` UI and verify a question produces normal-quality streamed text.
-- Inspect `/api/coach` runtime logs and confirm no new errors.
-- Inspect AI Gateway logs and confirm the request reached `anthropic/claude-sonnet-5` without 403 entitlement or missing-key/OIDC errors.
-- Confirm `git revert <migration-commit>` restores the direct-provider implementation if rollback is required.
+- Vercel deployment `dpl_2d3jz9AQ9MMR5mP5AC1Fw9eRNJ2d` was built from `main` at commit `f6606a2`, completed successfully, and served through `https://training-web-rho.vercel.app`.
+- The actual authenticated `/coach` UI loaded the user's training context, showed no provider selector, streamed a grounded answer, and returned the Ask control to its ready state.
+- The production `/api/coach` request returned HTTP 200. Runtime logs recorded `finishReason: stop`, 1,800 input tokens, 950 output/text tokens, and zero reasoning tokens; the error-level log scan was clean.
+- AI Gateway request `gen_01M0GCBKG026CKSDKV5WJQVT3Z` returned 200 for `anthropic/claude-sonnet-5`, routed through Claude Platform on AWS in `iad1`, with project authentication shown as `training-web`. There were no 403, entitlement, or missing-key errors.
+- The first smoke test exposed Sonnet 5 adaptive reasoning consuming the 1,024-token response budget. Commit `f6606a2` explicitly disabled reasoning, and the successful request above verified the correction with 950 visible text tokens and zero reasoning tokens.
+- Rollback remains available through the retained legacy implementation and provider dependencies; reverting `f6606a2` and `b0a89ab` restores the previous direct-provider path.
 
-## Cleanup after verification
+## Recommended follow-up cleanup (separate change)
 
 - Delete `coachStream.legacy.ts`.
 - Remove `@anthropic-ai/sdk` and `@google/genai`.
 - Remove `GEMINI_API_KEY` and `ANTHROPIC_API_KEY` from Vercel and local documentation.
-- Update this document and PRD to mark production verification complete.
+- Remove the transitional provider entries from the PRD and this document when the rollback assets are deleted.

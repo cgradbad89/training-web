@@ -468,7 +468,7 @@ Dismissed duplicate workout pairs. Prevents re-surfacing the same duplicate warn
 | Google Auth | User authentication (Google OAuth via Firebase) | Uses Firebase config above |
 | Google Maps | Route draw (Maps JS API + Directions API + WALKING mode + Places Autocomplete) | `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` |
 | Vercel AI Gateway | AI Coach — configured model: `anthropic/claude-sonnet-5` | Vercel OIDC on deployments; `AI_GATEWAY_API_KEY` is the optional static-key alternative for local/CI use |
-| Gemini / Anthropic (transitional rollback only) | Inactive legacy AI Coach implementation in `coachStream.legacy.ts`; retain until production verification | `GEMINI_API_KEY`, `ANTHROPIC_API_KEY` (server-side only, never `NEXT_PUBLIC_`) |
+| Gemini / Anthropic (transitional rollback only) | Inactive legacy AI Coach implementation in `coachStream.legacy.ts`; production verification passed 2026-08-20, with removal deferred to a dedicated cleanup | `GEMINI_API_KEY`, `ANTHROPIC_API_KEY` (server-side only, never `NEXT_PUBLIC_`) |
 | HealthKit iOS sync | Syncs Apple Watch workouts, health metrics, GPS routes to Firestore | iOS repo: `cgradbad89/MEA.git` — do not modify from this repo |
 | Hub App | Sibling app nav links in HubBanner top bar | `NEXT_PUBLIC_HUB_URL` |
 | Open-Meteo | Historical weather for runs (archive API) — fetched client-side, hour-matched to the run start, cached on `healthWorkouts.weather` | none (free, no API key) |
