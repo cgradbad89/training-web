@@ -8,7 +8,6 @@ import {
 import * as firestore from "firebase/firestore";
 import { AGGREGATED_STATS_VERSION } from "@/utils/aggregatedStats";
 import { type HealthWorkout } from "@/types/healthWorkout";
-import { getRoutePoints } from "@/utils/routeCache";
 
 // Mock external dependencies
 vi.mock("firebase/firestore", async (importOriginal) => {
@@ -25,10 +24,6 @@ vi.mock("firebase/firestore", async (importOriginal) => {
     getDocs: vi.fn(),
   };
 });
-
-vi.mock("@/utils/routeCache", () => ({
-  getRoutePoints: vi.fn().mockResolvedValue([]),
-}));
 
 vi.mock("@/utils/mileSplitsCache", () => ({
   getMileSplits: vi.fn().mockResolvedValue([]),
@@ -55,7 +50,6 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
     vi.clearAllMocks();
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "warn").mockImplementation(() => {});
-    vi.mocked(getRoutePoints).mockResolvedValue([]);
   });
 
   function mockMissingCache(): void {
@@ -293,14 +287,8 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
     expect(settled).toBe(true);
   });
 
-  it("collapses overlapping triggers into one computation and one route read per workout", async () => {
+  it("collapses overlapping triggers and performs no route reads", async () => {
     mockMissingCache();
-    let resolveRoute!: (points: []) => void;
-    vi.mocked(getRoutePoints).mockReturnValue(
-      new Promise<[]>((resolve) => {
-        resolveRoute = resolve;
-      })
-    );
 
     const first = fetchAndComputeAggregatedStats(
       mockUid, mockWorkouts, maxHr, restingHr, races, latestWorkoutId
@@ -311,9 +299,6 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
 
     expect(second).toBe(first);
     expect(firestore.getDoc).toHaveBeenCalledTimes(1);
-    await vi.waitFor(() => expect(getRoutePoints).toHaveBeenCalledTimes(1));
-
-    resolveRoute([]);
     await Promise.all([first, second]);
     expect(firestore.setDoc).toHaveBeenCalledTimes(1);
   });

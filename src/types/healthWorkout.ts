@@ -49,7 +49,8 @@ export interface HealthWorkout {
   /** PR badge labels held by this run, e.g. ["5K PR", "1 Mile PR"].
    *  Computed by PRComputerRunner; absent or empty = no PRs. */
   prBadges?: string[];
-  /** Standard-distance best efforts, keyed by distance → timeSeconds | null. */
+  /** Standard-distance best efforts, keyed by distance → timeSeconds | null,
+   *  plus the route-completeness/point-count/version freshness basis. */
   bestEfforts?: BestEffortsMap;
   /** Training Load V2 (Banister HR-reserve) score; null when HR/duration can't
    *  yield a score (UI renders "—"). Written by computeAndStoreTrainingLoad. */

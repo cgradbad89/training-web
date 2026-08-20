@@ -105,3 +105,37 @@ describe("trainingLoadData seedStart bounding is output-neutral", () => {
     expect(lastBound.tsb).toBe(lastFull.tsb);
   });
 });
+
+describe("Personal Insights CTL uses the resolved resting-HR anchor", () => {
+  const day = new Date(2026, 6, 11);
+  const liveWorkout = {
+    workoutId: "live-load",
+    startDate: day,
+    durationSeconds: 3600,
+    avgHeartRate: 150,
+    activityType: "running",
+    isRunLike: true,
+  } as unknown as HealthWorkout;
+
+  it("changes the daily load when restingHr=65 replaces the default 60", () => {
+    const defaultMap = buildDailyLoadMap([liveWorkout], 175);
+    const resolvedMap = buildDailyLoadMap([liveWorkout], 175, 65);
+    expect(resolvedMap.get("2026-07-11")!.totalLoad).not.toBe(
+      defaultMap.get("2026-07-11")!.totalLoad
+    );
+  });
+
+  it("propagates the resting-HR difference into the displayed CTL series", () => {
+    const defaultSeries = buildLoadEwmaSeries(
+      buildDailyLoadMap([liveWorkout], 175),
+      day,
+      day
+    );
+    const resolvedSeries = buildLoadEwmaSeries(
+      buildDailyLoadMap([liveWorkout], 175, 65),
+      day,
+      day
+    );
+    expect(resolvedSeries[0].ctl).not.toBe(defaultSeries[0].ctl);
+  });
+});

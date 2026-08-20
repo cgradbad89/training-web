@@ -123,6 +123,14 @@ describe("RunBucketTable", () => {
     expect(Number(load)).toBeGreaterThan(0);
   });
 
+  it("renders the stored trainingLoadV2 instead of recalculating the row", () => {
+    render([
+      w("stored", "2026-05-11T12:00:00", { trainingLoadV2: 777 }),
+    ]);
+    const cells = Array.from(rows()[0].children).map((c) => c.textContent ?? "");
+    expect(cells[6]).toBe("777");
+  });
+
   it("renders — for a missing pace, without affecting other columns", () => {
     render([w("a", "2026-05-11T12:00:00", { avgPaceSecPerMile: null })]);
     const cells = Array.from(rows()[0].children).map((c) => c.textContent ?? "");

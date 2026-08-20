@@ -52,6 +52,8 @@ import { type UserSettings } from "@/types/userSettings";
 import {
   computeBestEfforts,
   EMPTY_BEST_EFFORTS,
+  withBestEffortsFreshness,
+  type BestEffortKey,
   type BestEffortsMap,
 } from "@/utils/bestEfforts";
 import {
@@ -86,19 +88,32 @@ function stripUndefined<T extends object>(obj: T): T {
   return JSON.parse(JSON.stringify(obj)) as T;
 }
 
-const BEST_EFFORT_KEYS = Object.keys(EMPTY_BEST_EFFORTS) as Array<
-  keyof BestEffortsMap
->;
+const BEST_EFFORT_KEYS = Object.keys(EMPTY_BEST_EFFORTS) as BestEffortKey[];
 
 function parseBestEfforts(value: unknown): BestEffortsMap | undefined {
   if (!value || typeof value !== "object") return undefined;
   const raw = value as Record<string, unknown>;
-  const parsed = { ...EMPTY_BEST_EFFORTS };
+  const parsed: BestEffortsMap = { ...EMPTY_BEST_EFFORTS };
 
   for (const key of BEST_EFFORT_KEYS) {
     const v = raw[key];
     parsed[key] = typeof v === "number" && Number.isFinite(v) ? v : null;
   }
+
+  parsed.computedFromRouteComplete =
+    typeof raw.computedFromRouteComplete === "boolean"
+      ? raw.computedFromRouteComplete
+      : undefined;
+  parsed.computedFromPointCount =
+    typeof raw.computedFromPointCount === "number" &&
+    Number.isFinite(raw.computedFromPointCount)
+      ? raw.computedFromPointCount
+      : undefined;
+  parsed.computationVersion =
+    typeof raw.computationVersion === "number" &&
+    Number.isFinite(raw.computationVersion)
+      ? raw.computationVersion
+      : undefined;
 
   return parsed;
 }
@@ -149,7 +164,12 @@ function bestEffortsEqual(
   b: BestEffortsMap
 ): boolean {
   if (!a) return false;
-  return BEST_EFFORT_KEYS.every((key) => a[key] === b[key]);
+  return (
+    BEST_EFFORT_KEYS.every((key) => a[key] === b[key]) &&
+    a.computedFromRouteComplete === b.computedFromRouteComplete &&
+    a.computedFromPointCount === b.computedFromPointCount &&
+    a.computationVersion === b.computationVersion
+  );
 }
 
 function docToHealthWorkout(
@@ -355,9 +375,14 @@ export function onHealthWorkoutsSnapshot(
 export async function computeAndStoreBestEfforts(
   uid: string,
   workoutId: string,
-  points: RoutePoint[]
+  points: RoutePoint[],
+  routeComplete: boolean
 ): Promise<BestEffortsMap> {
-  const bestEfforts = computeBestEfforts(points);
+  const bestEfforts = withBestEffortsFreshness(
+    computeBestEfforts(points),
+    routeComplete,
+    points.length
+  );
   const ref = doc(db, "users", uid, "healthWorkouts", workoutId);
   const snap = await getDoc(ref);
   const existing = snap.exists()
@@ -813,7 +838,12 @@ export async function backfillBestEfforts(uid: string): Promise<{
       continue;
     }
 
-    await computeAndStoreBestEfforts(uid, workoutDoc.id, points);
+    await computeAndStoreBestEfforts(
+      uid,
+      workoutDoc.id,
+      points,
+      data.routeComplete !== false
+    );
     stats.computed++;
   }
 

@@ -1,12 +1,14 @@
 import { describe, it, expect } from "vitest";
 import {
   AGGREGATED_STATS_VERSION,
+  buildFastestMileFromBestEfforts,
   isAggregatedStatsStale,
   buildAggregatedStats,
   reviveAggregatedStatsDates,
   type AggregatedStatsDoc,
 } from "./aggregatedStats";
 import { type HealthWorkout } from "@/types/healthWorkout";
+import { findBestFastestMileAcrossRuns } from "./fastestMileSegment";
 
 describe("aggregatedStats", () => {
   describe("isAggregatedStatsStale", () => {
@@ -43,7 +45,6 @@ describe("aggregatedStats", () => {
     it("returns safe defaults for empty workouts", () => {
       const result = buildAggregatedStats({
         workouts: [],
-        routePointsByWorkoutId: {},
         mileSplitsByWorkoutId: {},
         healthMetrics: [],
         maxHr: 185,
@@ -78,7 +79,6 @@ describe("aggregatedStats", () => {
 
       const result = buildAggregatedStats({
         workouts: [mockWorkout],
-        routePointsByWorkoutId: {},
         mileSplitsByWorkoutId: {},
         healthMetrics: [
           { id: "metric1", data: { date: "2024-01-01", vo2_max: 50 } },
@@ -94,6 +94,80 @@ describe("aggregatedStats", () => {
       expect(result.personalRecordsByYear.specificPrs.length).toBeGreaterThan(0);
       expect(result.racePredictions.modelFit).toBeNull(); // not enough for riegel fit
       expect(result.paceTrends).toBeDefined();
+    });
+  });
+
+  describe("buildFastestMileFromBestEfforts", () => {
+    function run(
+      id: string,
+      date: Date,
+      oneMile: number | null | undefined,
+      isRunLike = true
+    ): HealthWorkout {
+      return {
+        workoutId: id,
+        startDate: date,
+        isRunLike,
+        bestEfforts:
+          oneMile === undefined
+            ? undefined
+            : {
+                "1mi": oneMile,
+                "5k": null,
+                "10k": null,
+                "10mi": null,
+                half: null,
+              },
+      } as unknown as HealthWorkout;
+    }
+
+    it("is equivalent to the old route-result reducer on fixture values", () => {
+      const workouts = [
+        run("slower", new Date(2026, 2, 1, 12), 480),
+        run("fastest", new Date(2026, 3, 1, 12), 420),
+      ];
+      expect(buildFastestMileFromBestEfforts(workouts, 2026)).toEqual(
+        findBestFastestMileAcrossRuns([
+          { seconds: 480, date: workouts[0].startDate },
+          { seconds: 420, date: workouts[1].startDate },
+        ])
+      );
+    });
+
+    it("filters to the selected local calendar year", () => {
+      const prior = run("prior", new Date(2025, 11, 31, 12), 350);
+      const current = run("current", new Date(2026, 0, 2, 12), 430);
+      expect(buildFastestMileFromBestEfforts([prior, current], 2026)).toEqual({
+        seconds: 430,
+        date: current.startDate,
+      });
+    });
+
+    it("skips null, missing, and non-run values without crashing", () => {
+      const valid = run("valid", new Date(2026, 1, 1, 12), 440);
+      expect(
+        buildFastestMileFromBestEfforts(
+          [
+            run("null", new Date(2026, 1, 2, 12), null),
+            run("missing", new Date(2026, 1, 3, 12), undefined),
+            run("walk", new Date(2026, 1, 4, 12), 300, false),
+            valid,
+          ],
+          2026
+        )
+      ).toEqual({ seconds: 440, date: valid.startDate });
+    });
+
+    it("preserves the 180 < seconds < 1200 validity window", () => {
+      expect(
+        buildFastestMileFromBestEfforts(
+          [
+            run("too-fast", new Date(2026, 1, 1, 12), 180),
+            run("too-slow", new Date(2026, 1, 2, 12), 1200),
+          ],
+          2026
+        )
+      ).toBeNull();
     });
   });
 

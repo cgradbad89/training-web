@@ -1,15 +1,14 @@
-import { type RoutePoint } from "@/services/routes";
 import { type MileSplitDoc } from "@/utils/mileSplitsCache";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { buildVo2History } from "./vo2History";
 import { buildPersonalRecordsByYear } from "./personalRecords";
 import { buildPaceTrendsByDistanceBucket } from "./paceTrends";
 import { buildHrZoneDistribution, type MileSplitSample } from "./hrZoneDistribution";
-import { findBestFastestMileAcrossRuns, fastestMileSegment } from "./fastestMileSegment";
+import { findBestFastestMileAcrossRuns } from "./fastestMileSegment";
 import { buildDailyLoadMap, buildLoadEwmaSeries } from "./trainingLoadSeries";
 import { buildQualifyingEfforts, fitRiegel, predictSeconds, type RiegelFit } from "./riegelFit";
 
-export const AGGREGATED_STATS_VERSION = 1;
+export const AGGREGATED_STATS_VERSION = 2;
 
 export interface AggregatedStatsDoc {
   computationVersion: number;
@@ -80,7 +79,6 @@ export function isAggregatedStatsStale(
 
 export interface BuildAggregatedStatsInputs {
   workouts: HealthWorkout[];
-  routePointsByWorkoutId: Record<string, RoutePoint[]>;
   mileSplitsByWorkoutId: Record<string, MileSplitDoc[]>;
   healthMetrics: { id: string; data: { date?: string; vo2_max?: number } }[];
   maxHr: number;
@@ -89,12 +87,30 @@ export interface BuildAggregatedStatsInputs {
   races: { raceDate: Date | string; distanceMiles: number }[];
 }
 
+/**
+ * Build the current-year fastest mile entirely from persisted parent-workout
+ * best efforts. Missing/corrupt values are skipped; there is deliberately no
+ * route fallback in the aggregation path.
+ */
+export function buildFastestMileFromBestEfforts(
+  workouts: HealthWorkout[],
+  year: number
+): ReturnType<typeof findBestFastestMileAcrossRuns> {
+  const results = workouts.map((run) => {
+    if (!run.isRunLike || run.startDate.getFullYear() !== year) return null;
+    const seconds = run.bestEfforts?.["1mi"];
+    return typeof seconds === "number" && Number.isFinite(seconds)
+      ? { seconds, date: run.startDate }
+      : null;
+  });
+  return findBestFastestMileAcrossRuns(results);
+}
+
 export function buildAggregatedStats(
   inputs: BuildAggregatedStatsInputs
 ): AggregatedStatsDoc {
   const {
     workouts,
-    routePointsByWorkoutId,
     mileSplitsByWorkoutId,
     healthMetrics,
     maxHr,
@@ -236,14 +252,11 @@ export function buildAggregatedStats(
   });
   const hrZoneDistribution = buildHrZoneDistribution(perRunMileSplits, maxHr);
 
-  // 7. Fastest Mile Segment
-  const fastestMileResults = workouts.map(run => {
-    if (run.distanceMiles < 1.0) return null;
-    const points = routePointsByWorkoutId[run.workoutId] || [];
-    const seconds = fastestMileSegment(points);
-    return seconds ? { seconds, date: run.startDate } : null;
-  });
-  const fastestMileSegmentResult = findBestFastestMileAcrossRuns(fastestMileResults);
+  // 7. Fastest Mile Segment — persisted parent-doc value, current year only.
+  const fastestMileSegmentResult = buildFastestMileFromBestEfforts(
+    workouts,
+    now.getFullYear()
+  );
 
   return {
     computationVersion: AGGREGATED_STATS_VERSION,

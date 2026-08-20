@@ -23,7 +23,7 @@ import {
   MAX_VALID_PACE,
   type TrendWindow,
 } from "@/lib/paceRangeTrend";
-import { computeTrainingLoadV2 } from "@/utils/trainingLoad";
+import { resolveDisplayLoad } from "@/utils/trainingLoad";
 import {
   scoreWorkoutsEfficiency,
   type EfficiencyWorkout,
@@ -49,6 +49,9 @@ export interface RunAnalysisWorkout {
   cadenceSPM: number | null;
   /** Raw HealthKit activityType string — selects the Training Load activity factor. */
   activityType: string;
+  /** Persisted V2 value wins for every displayed load; absent/null falls back
+   *  to the live avg-HR calculation through resolveDisplayLoad. */
+  trainingLoadV2?: number | null;
 }
 
 export interface RunAnalysisPoint {
@@ -132,13 +135,7 @@ function metricContribution(
         ? { value: w.avgHeartRate, weight: 1 }
         : null;
     case "load": {
-      const load = computeTrainingLoadV2(
-        w.durationSeconds,
-        w.avgHeartRate,
-        maxHr,
-        restingHr,
-        w.activityType
-      );
+      const load = resolveDisplayLoad(w, maxHr, restingHr);
       return load != null && Number.isFinite(load)
         ? { value: load, weight: 1 }
         : null;
@@ -175,8 +172,9 @@ interface BucketAccum {
  * the FULL passed workout set (so each run's baseline is built from its
  * neighbours), then the distance filter is applied only to bucket membership —
  * exactly as buildEfficiencyTrend does. building_baseline runs are excluded
- * from the average. For load, computeTrainingLoadV2 is evaluated per run and
- * null results are skipped. For pace/cadence/heartRate, null/invalid values are
+ * from the average. For load, resolveDisplayLoad is evaluated per run (stored
+ * V2 wins, then live avg-HR fallback) and null results are skipped. For
+ * pace/cadence/heartRate, null/invalid values are
  * excluded from the average.
  *
  * A bucket with zero qualifying (valid-metric) runs gets value: null so the UI

@@ -1,7 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { fetchHealthWorkout } from "@/services/healthWorkouts";
+import {
+  computeAndStoreBestEfforts,
+  fetchHealthWorkout,
+} from "@/services/healthWorkouts";
 import { getRoutePoints } from "@/utils/routeCache";
 import { getMileSplits } from "@/utils/mileSplitsCache";
 import { fetchWeatherForRun } from "@/lib/weather";
@@ -246,6 +249,16 @@ function cachedWorkout(
     avgPaceSecPerMile: 500,
     gapSecPerMile: 490,
     routeClusterId: "cluster_a", // already assigned → no cluster backfill write
+    bestEfforts: {
+      "1mi": 500,
+      "5k": null,
+      "10k": null,
+      "10mi": null,
+      half: null,
+      computedFromRouteComplete: true,
+      computedFromPointCount: 1000,
+      computationVersion: 1,
+    },
     overlayChartCache: {
       distancesMiles: [0, 1, 2, 3],
       paceSecPerMile: [500, 500, 500, 500],
@@ -343,6 +356,40 @@ describe("RunDetailPage GAP/elevation sublabels", () => {
     expect(getRoutePoints).not.toHaveBeenCalled();
     expect(container.textContent).toContain("flat");
     expect(container.textContent).toContain("Net 0 ft");
+  });
+
+  it("forces one route read when the best-effort computation version is stale", async () => {
+    (fetchHealthWorkout as any).mockResolvedValue(
+      cachedWorkout({
+        gapNetRiseM: 0,
+        gapAggregateGradeFlat: true,
+        bestEfforts: {
+          "1mi": 500,
+          "5k": null,
+          "10k": null,
+          "10mi": null,
+          half: null,
+          computedFromRouteComplete: true,
+          computedFromPointCount: 1000,
+          computationVersion: 0,
+        },
+      })
+    );
+    (getMileSplits as any).mockResolvedValue(CACHED_MILE_DOCS);
+    (getRoutePoints as any).mockResolvedValue([
+      { index: 0, lat: 0, lng: 0, timestamp: "2026-01-01T12:00:00Z" },
+      { index: 1, lat: 0, lng: 0.02, timestamp: "2026-01-01T12:10:00Z" },
+    ]);
+
+    await renderSettled();
+
+    expect(getRoutePoints).toHaveBeenCalledTimes(1);
+    expect(computeAndStoreBestEfforts).toHaveBeenCalledWith(
+      "u1",
+      "workout_123",
+      expect.any(Array),
+      true
+    );
   });
 
   it("falls back to the live GAP computation when the cached sublabel fields are absent", async () => {

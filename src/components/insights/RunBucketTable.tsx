@@ -9,7 +9,7 @@ import {
   type RunAnalysisWorkout,
 } from "@/lib/runAnalysisTrend";
 import { scoreWorkoutsEfficiency } from "@/utils/efficiencyScore";
-import { computeTrainingLoadV2 } from "@/utils/trainingLoad";
+import { resolveDisplayLoad } from "@/utils/trainingLoad";
 
 /** Every cell falls back to this — never "NaN", "null", or a bare 0. */
 const EMPTY = "—";
@@ -129,13 +129,7 @@ export function RunBucketTable({
                 ? `${Math.round(effResult.score)}`
                 : EMPTY;
 
-            const loadValue = computeTrainingLoadV2(
-              run.durationSeconds,
-              run.avgHeartRate,
-              maxHr,
-              restingHr,
-              run.activityType
-            );
+            const loadValue = resolveDisplayLoad(run, maxHr, restingHr);
             const load =
               loadValue != null && Number.isFinite(loadValue)
                 ? `${Math.round(loadValue)}`

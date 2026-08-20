@@ -9,6 +9,10 @@
 
 import { type RoutePoint } from "@/services/routes";
 import { haversineMeters } from "@/utils/mileSplits";
+import {
+  BEST_EFFORTS_COMPUTATION_VERSION,
+  fastestMileSegment,
+} from "@/utils/fastestMileSegment";
 
 export const METERS_PER_MILE = 1609.344;
 
@@ -34,8 +38,19 @@ export interface BestEffort {
   paceSecPerMile: number; // derived
 }
 
+/** Freshness basis persisted alongside the existing distance keys. */
+export interface BestEffortEntry {
+  computedFromRouteComplete: boolean;
+  computedFromPointCount: number;
+  computationVersion: number;
+}
+
 // Stored shape on the workout doc — null when run is shorter than the distance.
-export type BestEffortsMap = Record<BestEffortKey, number | null>; // key → timeSeconds
+// Freshness fields are optional in the read type because legacy Firestore docs
+// do not have them; every new write supplies all three via
+// withBestEffortsFreshness().
+export type BestEffortsMap = Record<BestEffortKey, number | null> &
+  Partial<BestEffortEntry>; // distance key → timeSeconds, plus freshness basis
 
 const BEST_EFFORT_KEYS = Object.keys(
   BEST_EFFORT_DISTANCES_M
@@ -180,7 +195,40 @@ export function computeBestEfforts(points: RoutePoint[]): BestEffortsMap {
     result[key] = timeSeconds;
   }
 
+  // Keep the persisted 1mi value byte-for-byte aligned with the historical
+  // Personal Insights route algorithm. Other standard distances continue to
+  // use the generalized meter-based implementation above.
+  result["1mi"] = fastestMileSegment(points);
+
   return result;
+}
+
+export function withBestEffortsFreshness(
+  efforts: BestEffortsMap,
+  routeComplete: boolean,
+  pointCount: number
+): BestEffortsMap & BestEffortEntry {
+  return {
+    ...efforts,
+    computedFromRouteComplete: routeComplete,
+    computedFromPointCount: pointCount,
+    computationVersion: BEST_EFFORTS_COMPUTATION_VERSION,
+  };
+}
+
+/**
+ * Recompute exactly when the persisted value is absent, was computed from a
+ * partial route that has since completed, or uses an old algorithm version.
+ */
+export function shouldRecomputeBestEfforts(
+  existing: BestEffortsMap | undefined,
+  routeComplete: boolean
+): boolean {
+  if (existing === undefined) return true;
+  if (existing.computationVersion !== BEST_EFFORTS_COMPUTATION_VERSION) {
+    return true;
+  }
+  return existing.computedFromRouteComplete === false && routeComplete;
 }
 
 export function bestEffortToPaceSecPerMile(

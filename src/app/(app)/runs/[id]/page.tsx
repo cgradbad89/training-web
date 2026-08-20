@@ -37,6 +37,7 @@ import {
   saveWeatherForWorkout,
   type RunDetailCacheWrites,
 } from "@/services/healthWorkouts";
+import { shouldRecomputeBestEfforts } from "@/utils/bestEfforts";
 import { type RoutePoint } from "@/services/routes";
 import { getRoutePoints } from "@/utils/routeCache";
 import { hydrateFastFinishSplits } from "@/services/fastFinishSplits";
@@ -460,12 +461,20 @@ export default function RunDetailPage() {
         o?.distanceMilesOverride != null || o?.durationSecondsOverride != null;
       const splitsHaveGap =
         splits != null && cachedGapPerMile(splits, authoritativeMiles) != null;
+      const routeIsComplete = w.routeComplete !== false;
+      const bestEffortsNeedRecompute = shouldRecomputeBestEfforts(
+        w.bestEfforts,
+        routeIsComplete
+      );
 
       // ── Route-fetch gate. Skip the big `route` read only when every
       //    route-derived cache the page renders is present & fresh AND there is
-      //    no basis override. Otherwise fetch once and back-fill the gaps.
+      //    no basis override or stale best-effort basis. Otherwise fetch once
+      //    and back-fill the gaps.
       const needsRoute =
-        basisOverride || !routeCachesComplete(w, { maxHr, thresholdPace, splitsHaveGap });
+        basisOverride ||
+        bestEffortsNeedRecompute ||
+        !routeCachesComplete(w, { maxHr, thresholdPace, splitsHaveGap });
 
       if (!needsRoute) {
         if (splits) {
@@ -519,8 +528,8 @@ export default function RunDetailPage() {
 
       if (isRoutePresent(points.length)) {
         // Natural new-run hook: best efforts computed here (route already read).
-        if (w.bestEfforts === undefined) {
-          computeAndStoreBestEfforts(uid, workoutId, points)
+        if (shouldRecomputeBestEfforts(w.bestEfforts, routeIsComplete)) {
+          computeAndStoreBestEfforts(uid, workoutId, points, routeIsComplete)
             .then((bestEfforts) => {
               if (!cancelled) {
                 setWorkout((current) =>

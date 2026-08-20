@@ -3,7 +3,10 @@ import { type RoutePoint } from "@/services/routes";
 import {
   BEST_EFFORT_DISTANCES_M,
   computeBestEfforts,
+  shouldRecomputeBestEfforts,
+  withBestEffortsFreshness,
 } from "@/utils/bestEfforts";
+import { BEST_EFFORTS_COMPUTATION_VERSION } from "@/utils/fastestMileSegment";
 
 const EARTH_RADIUS_M = 3958.8 * 1609.344;
 const START_MS = Date.UTC(2026, 0, 1, 12, 0, 0);
@@ -119,5 +122,54 @@ describe("computeBestEfforts", () => {
     const efforts = computeBestEfforts(route(samples));
 
     expect(efforts["1mi"]).toBeCloseTo(paceSecPerMile, 2);
+  });
+});
+
+describe("best-effort freshness basis", () => {
+  it("attaches route completeness, point count, and the current algorithm version", () => {
+    const points = route([
+      [0, 0],
+      [BEST_EFFORT_DISTANCES_M["1mi"], 500],
+    ]);
+    const persisted = withBestEffortsFreshness(
+      computeBestEfforts(points),
+      true,
+      points.length
+    );
+
+    expect(persisted.computedFromRouteComplete).toBe(true);
+    expect(persisted.computedFromPointCount).toBe(2);
+    expect(persisted.computationVersion).toBe(
+      BEST_EFFORTS_COMPUTATION_VERSION
+    );
+  });
+
+  it("recomputes when bestEfforts is missing", () => {
+    expect(shouldRecomputeBestEfforts(undefined, true)).toBe(true);
+  });
+
+  it("recomputes exactly when a previously partial route becomes complete", () => {
+    const partial = withBestEffortsFreshness(
+      computeBestEfforts([]),
+      false,
+      20
+    );
+    expect(shouldRecomputeBestEfforts(partial, false)).toBe(false);
+    expect(shouldRecomputeBestEfforts(partial, true)).toBe(true);
+  });
+
+  it("recomputes stale versions but leaves a current complete basis alone", () => {
+    const current = withBestEffortsFreshness(
+      computeBestEfforts([]),
+      true,
+      10
+    );
+    expect(shouldRecomputeBestEfforts(current, true)).toBe(false);
+    expect(
+      shouldRecomputeBestEfforts(
+        { ...current, computationVersion: BEST_EFFORTS_COMPUTATION_VERSION - 1 },
+        true
+      )
+    ).toBe(true);
   });
 });

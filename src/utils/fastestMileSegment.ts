@@ -2,6 +2,13 @@ import { type RoutePoint } from "@/services/routes";
 
 const EARTH_RADIUS_MI = 3958.8;
 
+/**
+ * Persisted best-effort freshness version. Bump this whenever the route-based
+ * fastest-mile algorithm changes so already-computed workout documents are
+ * refreshed once on their next eligible route read/backfill.
+ */
+export const BEST_EFFORTS_COMPUTATION_VERSION = 1;
+
 function toRad(deg: number): number {
   return (deg * Math.PI) / 180;
 }

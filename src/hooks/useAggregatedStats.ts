@@ -8,7 +8,6 @@ import {
   isAggregatedStatsStale,
   reviveAggregatedStatsDates,
 } from "@/utils/aggregatedStats";
-import { getRoutePoints } from "@/utils/routeCache";
 import { getMileSplits } from "@/utils/mileSplitsCache";
 import { vo2HistoryCutoffISO } from "@/utils/vo2History";
 import { collection, query, where, orderBy, getDocs } from "firebase/firestore";
@@ -89,25 +88,7 @@ async function computeAggregatedStats(
 
   // --- Stale path: fetch missing data ---
   
-  // 1. routePoints for up to ~50 runs
-  const yearRunsWithRoute = workouts
-    .filter((r) => r.isRunLike && r.hasRoute && r.distanceMiles >= 1.0)
-    .sort((a, b) => b.startDate.getTime() - a.startDate.getTime())
-    .slice(0, 50);
-
-  const routePointsByWorkoutId: Record<string, any[]> = {};
-  await Promise.all(
-    yearRunsWithRoute.map(async (run) => {
-      try {
-        const points = await getRoutePoints(uid, run.workoutId);
-        routePointsByWorkoutId[run.workoutId] = points;
-      } catch {
-        // Ignore failure for a single run's route points
-      }
-    })
-  );
-
-  // 2. mileSplits for up to ~40 runs
+  // 1. mileSplits for up to ~40 runs (unchanged; HR-zone distribution only)
   const eightWeeksAgo = new Date();
   eightWeeksAgo.setDate(eightWeeksAgo.getDate() - 8 * 7);
 
@@ -138,7 +119,7 @@ async function computeAggregatedStats(
     );
   }
 
-  // 3. healthMetrics for VO2
+  // 2. healthMetrics for VO2
   const cutoffStr = vo2HistoryCutoffISO(new Date());
   const metricsSnap = await getDocs(
     query(
@@ -155,7 +136,6 @@ async function computeAggregatedStats(
   // Compute fresh aggregated stats
   const freshStats = buildAggregatedStats({
     workouts,
-    routePointsByWorkoutId,
     mileSplitsByWorkoutId,
     healthMetrics,
     maxHr,

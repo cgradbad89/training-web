@@ -5,7 +5,7 @@ import {
   type RunAnalysisWorkout,
 } from "./runAnalysisTrend";
 import { computePaceRangeTrend, type PaceRangeRun } from "./paceRangeTrend";
-import { computeTrainingLoadV2 } from "@/utils/trainingLoad";
+import { computeTrainingLoadV2, resolveDisplayLoad } from "@/utils/trainingLoad";
 import { scoreWorkoutsEfficiency } from "@/utils/efficiencyScore";
 
 // Fixed "now" for deterministic windowing — June 1, 2026 (local).
@@ -32,6 +32,7 @@ function w(
     hr?: number | null;
     cadence?: number | null;
     activityType?: string;
+    trainingLoadV2?: number | null;
   } = {}
 ): RunAnalysisWorkout {
   return {
@@ -43,6 +44,7 @@ function w(
     avgHeartRate: opts.hr ?? null,
     cadenceSPM: opts.cadence ?? null,
     activityType: opts.activityType ?? "running",
+    trainingLoadV2: opts.trainingLoadV2,
   };
 }
 
@@ -216,6 +218,26 @@ describe("buildRunAnalysisTrend — load metric", () => {
     expect(pts).toHaveLength(1);
     expect(pts[0].value).toBeNull();
     expect(pts[0].runCount).toBe(2);
+  });
+
+  it("matches resolveDisplayLoad and lets a stored trainingLoadV2 win", () => {
+    const stored = w("stored", iso(2026, 4, 4), 4, 1800, {
+      hr: 150,
+      trainingLoadV2: 777,
+    });
+    expect(resolveDisplayLoad(stored, MAX_HR, RESTING_HR)).toBe(777);
+
+    const pts = buildRunAnalysisTrend(
+      [stored],
+      "load",
+      1,
+      10,
+      "3m",
+      RESTING_HR,
+      MAX_HR,
+      NOW
+    );
+    expect(pts[0].value).toBe(777);
   });
 });
 

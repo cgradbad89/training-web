@@ -29,8 +29,6 @@ import {
   findActiveRunningPlan,
   type RunTitleContext,
 } from "@/utils/runPlanTitle";
-import { type RoutePoint } from "@/services/routes";
-import { getRoutePoints } from "@/utils/routeCache";
 import { getMileSplits } from "@/utils/mileSplitsCache";
 import { applyOverride } from "@/types/workoutOverride";
 import { vo2HistoryCutoffISO } from "@/utils/vo2History";
@@ -71,7 +69,6 @@ import { InfoTooltip } from "@/components/ui/InfoTooltip";
 import { buildPersonalRecordsByYear } from "@/utils/personalRecords";
 import { buildPaceTrendsByDistanceBucket } from "@/utils/paceTrends";
 import { buildHrZoneDistribution } from "@/utils/hrZoneDistribution";
-import { fastestMileSegment, findBestFastestMileAcrossRuns } from "@/utils/fastestMileSegment";
 import { buildVo2History, type Vo2Entry } from "@/utils/vo2History";
 
 // ─── Training Load KPI tooltip copy ───────────────────────────────────────────
@@ -1089,6 +1086,7 @@ export default function PersonalInsightsPage() {
         avgHeartRate: r.avgHeartRate,
         cadenceSPM: r.cadenceSPM,
         activityType: r.activityType,
+        trainingLoadV2: r.trainingLoadV2,
       })),
     [runs]
   );
@@ -1231,7 +1229,7 @@ export default function PersonalInsightsPage() {
     // work. seedStart is 00:00 local of its day, so this boundary matches the
     // walk exactly and leaves CTL/ATL/TSB output unchanged.
     const seedableWorkouts = workouts.filter((w) => w.startDate >= seedStart);
-    const dailyMap = buildDailyLoadMap(seedableWorkouts, maxHr);
+    const dailyMap = buildDailyLoadMap(seedableWorkouts, maxHr, restingHr);
     const fullSeries = buildLoadEwmaSeries(dailyMap, seedStart, today);
 
     // Slice for display
