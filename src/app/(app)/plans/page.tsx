@@ -532,18 +532,28 @@ export default function PlansPage() {
   async function handleCreate() {
     if (!user || !nameInput.trim() || !startDateInput || !endDateInput) return;
     if (!pendingPlanType) return;
-    const numWeeks = weeksForSpan(startDateInput, endDateInput);
     setSaving(true);
     try {
       let plan: Plan;
       if (pendingPlanType === "running") {
+        // RunningPlan.startDate is Monday-normalized by long-standing
+        // contract (see WorkoutPlan below, made consistent as of this
+        // session). The date input is free-form, so a non-Monday pick snaps
+        // back to that week's Monday. Existing plan documents are untouched.
+        const runningStartDate = snapToMonday(startDateInput);
+        // Week count is re-derived from the SNAPPED start, not the raw
+        // input, for the same reason the workout-plan path below does it:
+        // snapping can move the start up to 6 days earlier, and deriving the
+        // week count from the raw input could end the plan before the
+        // chosen end date.
+        const runningWeeks = weeksForSpan(runningStartDate, endDateInput);
         plan = await createPlan<RunningPlan>(user.uid, {
           name: nameInput.trim(),
           planType: "running",
-          startDate: startDateInput,
+          startDate: runningStartDate,
           status: "draft",
           isActive: false,
-          weeks: Array.from({ length: numWeeks }, (_, i) => ({
+          weeks: Array.from({ length: runningWeeks }, (_, i) => ({
             weekNumber: i + 1,
             entries: [],
           })),
@@ -556,8 +566,9 @@ export default function PlansPage() {
         // back to that week's Monday. Existing plan documents are untouched.
         const workoutStartDate = snapToMonday(startDateInput);
         // Week count is re-derived from the SNAPPED start, not the raw input:
-        // snapping moves the start up to 6 days earlier, and reusing the raw
-        // `numWeeks` could end the plan before the end date the user picked.
+        // snapping moves the start up to 6 days earlier, and deriving the
+        // week count from the raw input could end the plan before the end
+        // date the user picked.
         const workoutWeeks = weeksForSpan(workoutStartDate, endDateInput);
         plan = await createPlan<WorkoutPlan>(user.uid, {
           name: nameInput.trim(),

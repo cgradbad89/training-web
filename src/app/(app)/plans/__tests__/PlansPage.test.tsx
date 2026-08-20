@@ -299,14 +299,16 @@ describe("PlansPage — shared AppDataContext wiring", () => {
   });
 });
 
-// ─── WorkoutPlan.startDate Monday normalization ──────────────────────────────
+// ─── Plan.startDate Monday normalization (both plan types) ───────────────────
 //
-// RunningPlan.startDate is Monday-normalized by contract; WorkoutPlan.startDate
-// was not, which could desync the calendar from the week tiles for a
-// non-Monday-start workout plan. New workout plans now snap to the Monday of
-// the week containing the chosen date (via the existing `snapToMonday` helper
-// in planDateEdit.ts — the same one the copy/slide paths already use).
-// Existing plan documents are deliberately NOT migrated.
+// RunningPlan.startDate has long been Monday-normalized by contract; new
+// WorkoutPlans were snapped as of the prior session. This session closes the
+// gap: new RunningPlans now snap too, so BOTH plan types share the same
+// creation-time contract (a non-Monday start previously desynced the
+// calendar from the week tiles). Both paths snap to the Monday of the week
+// containing the chosen date via the existing `snapToMonday` helper in
+// planDateEdit.ts — the same one the copy/slide paths already use.
+// Existing plan documents of EITHER type are deliberately NOT migrated.
 
 /** Drive the create flow: + → plan-type → set dates → Create. */
 async function createPlanViaUI(
@@ -365,7 +367,7 @@ async function createPlanViaUI(
   await flush();
 }
 
-describe("PlansPage — new WorkoutPlan.startDate is Monday-normalized", () => {
+describe("PlansPage — new plan startDate is Monday-normalized (both plan types)", () => {
   it("snaps a Wednesday start back to that week's Monday", async () => {
     await mount();
     // Wed 2026-01-21 → Mon 2026-01-19.
@@ -406,13 +408,24 @@ describe("PlansPage — new WorkoutPlan.startDate is Monday-normalized", () => {
     expect(payload.weeks).toHaveLength(3);
   });
 
-  it("leaves RunningPlan creation untouched (out of scope this session)", async () => {
+  it("snaps a new RunningPlan's Wednesday start back to that week's Monday", async () => {
     await mount();
+    // Wed 2026-01-21 → Mon 2026-01-19 — RunningPlan.startDate is
+    // Monday-normalized by the same contract WorkoutPlan.startDate now is.
     await createPlanViaUI("Running Plan", "2026-01-21", "2026-03-15");
 
     const [, payload] = h.createPlan.mock.calls[0];
     expect(payload.planType).toBe("running");
-    expect(payload.startDate).toBe("2026-01-21");
+    expect(payload.startDate).toBe("2026-01-19");
+  });
+
+  it("is a no-op for a new RunningPlan when the chosen start date is already a Monday", async () => {
+    await mount();
+    await createPlanViaUI("Running Plan", "2026-01-19", "2026-03-15");
+
+    const [, payload] = h.createPlan.mock.calls[0];
+    expect(payload.planType).toBe("running");
+    expect(payload.startDate).toBe("2026-01-19");
   });
 
   it("never rewrites an EXISTING workout plan document — no updatePlan on mount", async () => {

@@ -113,18 +113,22 @@ describe("planWeekIndexFor — index advances one per calendar week", () => {
     });
   });
 
-  // ── Pinned pre-existing limitation, NOT a fix (see PRD §6 #41) ───────────
-  // `Math.floor` on a raw ms difference loses a week after a spring-forward.
-  // These assertions lock in TODAY's behavior so the follow-up Math.round
-  // decision is a deliberate, visible change rather than a silent one.
-  it("under-counts by one week after a US spring-forward (documented limitation)", () => {
+  // ── DST fix (see PRD §6 #41) ──────────────────────────────────────────────
+  // Diffing raw milliseconds and flooring by a fixed week-length used to lose
+  // a week after a spring-forward. `planWeekIndexFor` now diffs whole
+  // calendar days (DST-immune) before flooring, so these dates land on their
+  // correct calendar week. Values below are calendar-verified independently
+  // (Jan 19 2026 is a Monday; Jan 19 + 49 days = Mar 9, + 56 days = Mar 16 —
+  // both exact multiples of 7 — confirmed by direct date-counting, not by
+  // re-running the formula under test).
+  it("lands on the correct calendar week across a US spring-forward", () => {
     // DST starts Sun 2026-03-08 in US zones. Mon 2026-03-09 is calendar week
-    // 7 of a plan that started Mon 2026-01-19 (49 days), but the ms diff is
-    // 49 days MINUS an hour, so the floor yields 6.
+    // 7 of a plan that started Mon 2026-01-19 (49 days) — the old ms-diff
+    // floor under-counted this to 6; the calendar-day floor gets it right.
     withTZ("America/New_York", () => {
       expect(planWeekIndexFor(PLAN_START, localMidnight("2026-03-02"))).toBe(6);
-      expect(planWeekIndexFor(PLAN_START, localMidnight("2026-03-09"))).toBe(6);
-      expect(planWeekIndexFor(PLAN_START, localMidnight("2026-03-16"))).toBe(7);
+      expect(planWeekIndexFor(PLAN_START, localMidnight("2026-03-09"))).toBe(7);
+      expect(planWeekIndexFor(PLAN_START, localMidnight("2026-03-16"))).toBe(8);
     });
   });
 
@@ -148,7 +152,18 @@ describe("planWeekIndexFor — index advances one per calendar week", () => {
 describe("planWeekIndexFor — regression: call sites already parsing locally are unchanged", () => {
   // The dashboard's workout-plan tiles, /plans currentWeekIndex, and
   // PlanEditor's defaultWeekForPlan all used `startDate + "T00:00:00"`.
-  // Their output must be byte-identical after the refactor.
+  // Their output must be byte-identical after the refactor — EXCEPT for the
+  // pairs below, which are the DST fix working as intended: `localWeekIndex`
+  // is the pinned PRE-fix ms-diff floor (still buggy on purpose, see its
+  // comment above), so a pair whose start/ref span crosses exactly one US
+  // spring-forward AND lands on an exact 7-day boundary is now DELIBERATELY
+  // different. Calendar-verified independently (not by re-running the
+  // formula under test): Jan 19 2026 (Mon) + 49 days = Mar 9 2026 (7 weeks
+  // exactly), and Dec 28 2026 − Mar 9 2026 = 294 days = 42 weeks exactly.
+  // Both are affected only in America/New_York — the other pinned zones
+  // either observe no DST (UTC, Asia/Tokyo) or don't hit an exact-week
+  // boundary while crossing exactly one of their own DST transitions within
+  // this date grid (Europe/Berlin).
   const starts = ["2026-01-19", "2026-03-09", "2026-06-29", "2026-12-28"];
   const refs = [
     "2026-01-19",
@@ -160,13 +175,23 @@ describe("planWeekIndexFor — regression: call sites already parsing locally ar
     "2027-01-04",
   ];
 
+  const KNOWN_DST_DIVERGENCES: Record<string, number> = {
+    "America/New_York|2026-01-19|2026-03-09": 7, // was 6 pre-fix
+    "America/New_York|2026-12-28|2026-03-09": -42, // was -43 pre-fix
+  };
+
   for (const tz of ["America/New_York", "Europe/Berlin", "UTC", "Asia/Tokyo"]) {
     it(`matches the previous local-parse formula for every start/reference pair in ${tz}`, () => {
       withTZ(tz, () => {
         for (const start of starts) {
           for (const ref of refs) {
             const at = localMidnight(ref);
-            expect(planWeekIndexFor(start, at)).toBe(localWeekIndex(start, at));
+            const divergence = KNOWN_DST_DIVERGENCES[`${tz}|${start}|${ref}`];
+            if (divergence !== undefined) {
+              expect(planWeekIndexFor(start, at)).toBe(divergence);
+            } else {
+              expect(planWeekIndexFor(start, at)).toBe(localWeekIndex(start, at));
+            }
           }
         }
       });

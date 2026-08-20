@@ -5,7 +5,7 @@ import { parseLocalDate } from "@/utils/dates";
 
 export type MatchQuality = "full" | "partial";
 
-const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 /**
  * Canonical "which plan week is `referenceDate` in" index for a plan whose
@@ -28,23 +28,47 @@ const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
  * The result is unclamped and can be negative (reference date before the plan
  * started) or past the last week; every caller already range-checks it.
  *
- * KNOWN LIMITATION (pre-existing, deliberately preserved — see PRD §6 #41):
- * the `Math.floor` on a raw millisecond difference under-counts by one week
- * for every reference date after a SPRING-FORWARD DST transition inside the
- * plan (49 calendar days becomes 49 days minus an hour = 6.994 weeks → 6).
- * A 13-week plan starting in January hits this from March onward. Fall-back
- * is harmless (the extra hour rounds down to the same index). Switching to
- * `Math.round` fixes it — the dashboard's own page-title week-diff already
- * does exactly that, with a comment saying why — but that changes the
- * displayed week at every call site, so it is left for an explicit decision
- * rather than folded into this parsing unification.
+ * DST FIX (see PRD §6 #41): diffing raw milliseconds and dividing by a
+ * fixed week-length under-counts by one week for every reference date after
+ * a SPRING-FORWARD DST transition inside the plan (49 calendar days becomes
+ * 49 days minus an hour = 6.994 weeks, which used to floor to 6 instead of
+ * the correct 7).
+ *
+ * The dashboard's page-title week-diff fixes this the same class of bug by
+ * rounding a raw ms/week division — but that's only safe there because BOTH
+ * dates it diffs are already Monday-aligned (`getWeekStart()` results), so
+ * the DST hour is the only source of fractional drift. `planWeekIndexFor` is
+ * called with arbitrary, non-aligned reference dates too (`new Date()` "now"
+ * on /plans and PlanEditor) — for those, rounding a raw ms/week fraction
+ * would flip the index a week early as soon as `referenceDate` is more than
+ * 3.5 days into the current week (i.e. every Thu–Sun, regardless of DST).
+ *
+ * The fix that's actually DST-safe without that regression: diff whole
+ * CALENDAR days first (via `Date.UTC` on each date's local Y/M/D components —
+ * same technique as `differenceInCalendarDays` below, which sidesteps DST by
+ * never touching wall-clock time-of-day), THEN floor-divide by 7. Calendar
+ * days are always exact integers, so there is no fractional week to round —
+ * this removes the DST hour distortion at the source instead of rounding it
+ * away, and every non-DST-crossing case is unchanged (day-diff floor === the
+ * old ms-diff floor whenever there's no DST transition in between).
  */
 export function planWeekIndexFor(
   startDate: string,
   referenceDate: Date
 ): number {
   const start = parseLocalDate(startDate);
-  return Math.floor((referenceDate.getTime() - start.getTime()) / MS_PER_WEEK);
+  const startUTC = Date.UTC(
+    start.getFullYear(),
+    start.getMonth(),
+    start.getDate()
+  );
+  const refUTC = Date.UTC(
+    referenceDate.getFullYear(),
+    referenceDate.getMonth(),
+    referenceDate.getDate()
+  );
+  const dayDiff = Math.round((refUTC - startUTC) / MS_PER_DAY);
+  return Math.floor(dayDiff / 7);
 }
 
 export interface PlanMatch {
