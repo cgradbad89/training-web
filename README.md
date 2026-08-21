@@ -30,6 +30,21 @@ warning ceiling, runs the complete Vitest suite, and creates a production
 Next.js build. Pull requests and pushes to `main` must pass the `Quality Gate`
 workflow.
 
+## Local page-load measurements
+
+Health, Personal Insights, and Plans retain a bounded set of page-load samples
+in the current browser only. Samples contain route timing, warm/cold navigation,
+cache source, and deployment SHA; they do not contain health values or user
+identifiers and are never sent to Google Cloud.
+
+During local development, inspect the aggregate median/P75/P95 measurements or
+export the underlying JSON from the browser console:
+
+```js
+window.__TRAINING_PERFORMANCE__.summary()
+window.__TRAINING_PERFORMANCE__.export()
+```
+
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.

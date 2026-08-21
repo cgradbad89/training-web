@@ -33,7 +33,10 @@ import { applyOverride } from "@/types/workoutOverride";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { RACE_DISTANCE_MILES } from "@/types/race";
 import { useAggregatedStats } from "@/hooks/useAggregatedStats";
-import { useClientPerformanceMark } from "@/hooks/useClientPerformanceMark";
+import {
+  useClientPagePerformance,
+  useClientPerformanceMark,
+} from "@/hooks/useClientPerformanceMark";
 import { type AggregatedStatsDoc } from "@/utils/aggregatedStats";
 import { formatPace, formatPaceLabel } from "@/utils/pace";
 import { weekStart as getWeekStart } from "@/utils/dates";
@@ -1264,6 +1267,11 @@ export default function PersonalInsightsPage() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  useClientPagePerformance("/personal-insights");
+  useClientPerformanceMark(
+    "training:personal-insights:shell-visible",
+    true
+  );
 
   // ── Tab state (URL-synced) ────────────────────────────────────────────────
   // Read the initial tab from ?tab=; anything missing/invalid falls back to
@@ -1369,6 +1377,11 @@ export default function PersonalInsightsPage() {
       measureFrom: "training:auth-ready",
       measureName: "training:personal-insights:usable-duration",
     }
+  );
+  useClientPerformanceMark(
+    "training:personal-insights:data-ready",
+    activeTab === "workouts" && !workoutsLoading,
+    { detail: { cacheSource: "app-data" } }
   );
 
   const selectedYear = new Date().getFullYear();

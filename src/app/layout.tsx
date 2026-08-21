@@ -23,11 +23,15 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const deploymentSha = process.env.VERCEL_GIT_COMMIT_SHA ?? "local";
   return (
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
+      <head>
+        <meta name="training-deployment-sha" content={deploymentSha} />
+      </head>
       <body className="min-h-full flex flex-col bg-gray-50 text-gray-900">
         <AuthProvider>{children}</AuthProvider>
       </body>

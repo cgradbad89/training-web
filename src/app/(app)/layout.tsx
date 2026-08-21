@@ -11,6 +11,7 @@ import PRComputerRunner from "@/components/PRComputerRunner";
 import { MobileTabBar } from "@/components/layout/MobileTabBar";
 import { NAV_ITEMS } from "@/components/layout/navItems";
 import { AppDataProvider } from "@/contexts/AppDataContext";
+import { startClientNavigationPerformance } from "@/utils/clientPerformanceStore";
 
 function SideNav() {
   const pathname = usePathname();
@@ -23,6 +24,7 @@ function SideNav() {
           <Link
             key={href}
             href={href}
+            onClick={() => startClientNavigationPerformance(href)}
             className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
               active
                 ? "bg-primary/10 text-primary"

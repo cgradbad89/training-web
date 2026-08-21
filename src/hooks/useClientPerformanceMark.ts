@@ -1,6 +1,12 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import {
+  installClientPerformanceDebugExport,
+  recordClientPerformanceMilestone,
+  startClientPagePerformance,
+  type TrackedPerformanceRoute,
+} from "@/utils/clientPerformanceStore";
 
 export interface ClientPerformanceDetail {
   [key: string]: string | number | boolean | null;
@@ -15,10 +21,23 @@ export function markClientPerformance(
   if (!perf || typeof perf.mark !== "function") return;
   try {
     perf.mark(name, detail ? { detail } : undefined);
+    recordClientPerformanceMilestone(name, detail);
     console.info("[client-performance]", { event: "mark", name, ...detail });
   } catch {
     // Performance instrumentation must never affect the product flow.
   }
+}
+
+export function useClientPagePerformance(
+  route: TrackedPerformanceRoute
+): void {
+  const startedRef = useRef(false);
+  useEffect(() => {
+    if (startedRef.current) return;
+    startedRef.current = true;
+    startClientPagePerformance(route);
+    installClientPerformanceDebugExport();
+  }, [route]);
 }
 
 export function measureClientPerformance(

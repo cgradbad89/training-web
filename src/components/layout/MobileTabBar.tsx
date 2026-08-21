@@ -8,6 +8,7 @@ import {
   PRIMARY_MOBILE_ITEMS,
   SECONDARY_MOBILE_ITEMS,
 } from "@/components/layout/navItems";
+import { startClientNavigationPerformance } from "@/utils/clientPerformanceStore";
 
 // ─── "More" bottom sheet ──────────────────────────────────────────────────────
 // Lists every nav item NOT in the primary tabs. Closes on item tap, backdrop
@@ -65,7 +66,10 @@ function MoreSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
               <Link
                 key={href}
                 href={href}
-                onClick={onClose}
+                onClick={() => {
+                  startClientNavigationPerformance(href);
+                  onClose();
+                }}
                 className={`flex items-center gap-3 px-3 rounded-xl text-sm font-medium transition-colors min-h-[48px] ${
                   active
                     ? "bg-primary/10 text-primary"
@@ -111,6 +115,7 @@ export function MobileTabBar() {
               key={href}
               href={href}
               aria-label={label}
+              onClick={() => startClientNavigationPerformance(href)}
               className={`flex-1 flex flex-col items-center justify-center gap-0.5 min-h-[56px] py-2 transition-colors ${
                 active ? "text-primary" : "text-textSecondary"
               }`}
