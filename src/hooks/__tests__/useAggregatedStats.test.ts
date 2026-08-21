@@ -25,6 +25,8 @@ vi.mock("firebase/firestore", async (importOriginal) => {
     ...actual,
     doc: vi.fn(),
     getDoc: vi.fn(),
+    getDocFromCache: vi.fn(),
+    getDocFromServer: vi.fn(),
     setDoc: vi.fn(),
     collection: vi.fn(),
     query: vi.fn(),
@@ -206,6 +208,8 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
 
     expect(container.textContent).toBe("false");
     expect(firestore.getDoc).not.toHaveBeenCalled();
+    expect(firestore.getDocFromCache).not.toHaveBeenCalled();
+    expect(firestore.getDocFromServer).not.toHaveBeenCalled();
     expect(firestore.getDocs).not.toHaveBeenCalled();
     expect(firestore.setDoc).not.toHaveBeenCalled();
 
@@ -214,10 +218,15 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
 
   it("renders a cached aggregate before larger dependencies finish loading", async () => {
     const cachedDoc = cachedStats();
-    vi.mocked(firestore.getDoc).mockResolvedValue({
+    vi.mocked(firestore.getDocFromCache).mockResolvedValue({
       exists: () => true,
       data: () => cachedDoc,
     } as any);
+    vi.mocked(firestore.getDocFromServer).mockReturnValue(
+      new Promise<
+        Awaited<ReturnType<typeof firestore.getDocFromServer>>
+      >(() => {})
+    );
     const container = document.createElement("div");
     const root = createRoot(container);
 
@@ -249,8 +258,56 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
       expect(container.textContent).toBe(`false:${cachedDoc.computedAt}`)
     );
 
-    expect(firestore.getDoc).toHaveBeenCalledTimes(1);
+    expect(firestore.getDocFromCache).toHaveBeenCalledTimes(1);
+    expect(firestore.getDocFromServer).toHaveBeenCalledTimes(1);
+    expect(firestore.getDoc).not.toHaveBeenCalled();
     expect(firestore.getDocs).not.toHaveBeenCalled();
+    act(() => root.unmount());
+  });
+
+  it("replaces stale local presentation data with the server document", async () => {
+    const localDoc = cachedStats({ computedAt: "2026-08-19T12:00:00.000Z" });
+    const serverDoc = cachedStats({ computedAt: "2026-08-21T12:00:00.000Z" });
+    let resolveServer!: (value: unknown) => void;
+    vi.mocked(firestore.getDocFromCache).mockResolvedValue({
+      exists: () => true,
+      data: () => localDoc,
+    } as Awaited<ReturnType<typeof firestore.getDocFromCache>>);
+    vi.mocked(firestore.getDocFromServer).mockReturnValue(
+      new Promise((resolve) => {
+        resolveServer = resolve;
+      }) as Promise<Awaited<ReturnType<typeof firestore.getDocFromServer>>>
+    );
+    const container = document.createElement("div");
+    const root = createRoot(container);
+
+    function Harness() {
+      const result = useAggregatedStats(
+        mockUid,
+        [],
+        maxHr,
+        restingHr,
+        races,
+        {
+          workoutsLoading: true,
+          settingsLoading: true,
+          racesLoading: true,
+          overridesLoading: true,
+        }
+      );
+      return React.createElement("span", null, result.data?.computedAt ?? "none");
+    }
+
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+    await vi.waitFor(() => expect(container.textContent).toBe(localDoc.computedAt));
+
+    resolveServer({ exists: () => true, data: () => serverDoc });
+    await vi.waitFor(() => expect(container.textContent).toBe(serverDoc.computedAt));
+
+    expect(firestore.getDocFromServer).toHaveBeenCalledTimes(1);
+    expect(firestore.getDoc).not.toHaveBeenCalled();
     act(() => root.unmount());
   });
 
