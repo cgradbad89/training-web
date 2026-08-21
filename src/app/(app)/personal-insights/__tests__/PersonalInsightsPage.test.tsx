@@ -246,7 +246,8 @@ describe("PersonalInsightsPage tabs", () => {
     expect(h.replace).not.toHaveBeenCalled();
   });
 
-  it("writes the URL via router.replace when a tab is clicked", () => {
+  it("writes the URL via the integrated History API when a tab is clicked", () => {
+    const replaceState = vi.spyOn(window.history, "replaceState");
     mount();
     // The three tab buttons are the segmented pill group rendered by
     // InsightsTabsBar — find them by their labels.
@@ -257,9 +258,12 @@ describe("PersonalInsightsPage tabs", () => {
     act(() => {
       tabButton!.click();
     });
-    expect(h.replace).toHaveBeenCalledWith("/personal-insights?tab=performance", {
-      scroll: false,
-    });
+    expect(replaceState).toHaveBeenCalledWith(
+      null,
+      "",
+      "/personal-insights?tab=performance"
+    );
+    expect(h.replace).not.toHaveBeenCalled();
     // The clicked tab's content is now shown.
     expect(hasText("Predicted Race Times")).toBe(true);
   });

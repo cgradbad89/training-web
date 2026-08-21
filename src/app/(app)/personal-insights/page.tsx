@@ -1281,8 +1281,12 @@ export default function PersonalInsightsPage() {
 
   function selectTab(tab: InsightsTab) {
     setActiveTab(tab);
-    // Shallow URL update — no navigation, no reload, no scroll jump.
-    router.replace(`${pathname}?tab=${tab}`, { scroll: false });
+    // This is client-only view state, so use Next's integrated native History
+    // API instead of starting a route navigation. Preserve any unrelated query
+    // parameters while keeping refresh/deep-link behavior deterministic.
+    const nextParams = new URLSearchParams(searchParams.toString());
+    nextParams.set("tab", tab);
+    window.history.replaceState(null, "", `${pathname}?${nextParams}`);
   }
 
   function askCoach(question: string) {
