@@ -18,6 +18,7 @@ import {
 import { getMileSplits } from "@/utils/mileSplitsCache";
 import { buildVo2History, vo2HistoryCutoffISO } from "@/utils/vo2History";
 import { collection, query, where, orderBy, getDocs } from "firebase/firestore";
+import { fetchLatestVo2SampleDate } from "@/services/healthMetrics";
 
 function stripUndefined<T extends object>(obj: T): T {
   return JSON.parse(JSON.stringify(obj)) as T;
@@ -98,32 +99,50 @@ async function computeAggregatedStats(
     ? reviveAggregatedStatsDates(statsSnap.data() as AggregatedStatsDoc)
     : null;
 
-  // The latest VO2 date is not part of AppDataContext, so derive its independent
-  // key from the same bounded healthMetrics query the aggregation already used.
-  // The key helpers themselves are pure and do not perform Firestore reads.
-  const cutoffStr = vo2HistoryCutoffISO(new Date());
-  const metricsSnap = await getDocs(
-    query(
-      collection(db, `users/${uid}/healthMetrics`),
-      where("date", ">=", cutoffStr),
-      orderBy("date")
-    )
-  );
-  const healthMetrics = metricsSnap.docs.map((d) => ({
-    id: d.id,
-    data: d.data() as { date?: string; vo2_max?: number },
-  }));
-  const currentVo2History = buildVo2History(healthMetrics);
-  const currentVo2Key = computeVo2FreshnessKey(
-    currentVo2History.at(-1)?.date ?? null
-  );
+  const latestVo2SampleDate = await fetchLatestVo2SampleDate(uid);
+  const currentVo2Key = computeVo2FreshnessKey(latestVo2SampleDate);
+  const hasStoredVo2Baseline =
+    cached !== null &&
+    Object.prototype.hasOwnProperty.call(cached, "latestVo2SampleDate");
+  const storedVo2Key = hasStoredVo2Baseline
+    ? computeVo2FreshnessKey(cached.latestVo2SampleDate ?? null)
+    : cached?.vo2FreshnessKey;
   const mainStale =
     !cached?.freshnessFingerprint ||
     isFingerprintStale(cached.freshnessFingerprint, currentFingerprint);
   const vo2Stale =
+    !hasStoredVo2Baseline ||
     !cached?.vo2FreshnessKey ||
+    !storedVo2Key ||
+    isVo2Stale(storedVo2Key, currentVo2Key) ||
     isVo2Stale(cached.vo2FreshnessKey, currentVo2Key) ||
     isVo2CacheInconsistent(cached.vo2FreshnessKey, cached.vo2History);
+
+  let healthMetrics: {
+    id: string;
+    data: { date?: string; vo2_max?: number };
+  }[] = [];
+  let currentVo2History = cached?.vo2History ?? [];
+  let observedVo2Key = currentVo2Key;
+
+  if (vo2Stale) {
+    const cutoffStr = vo2HistoryCutoffISO(new Date());
+    const metricsSnap = await getDocs(
+      query(
+        collection(db, `users/${uid}/healthMetrics`),
+        where("date", ">=", cutoffStr),
+        orderBy("date")
+      )
+    );
+    healthMetrics = metricsSnap.docs.map((d) => ({
+      id: d.id,
+      data: d.data() as { date?: string; vo2_max?: number },
+    }));
+    currentVo2History = buildVo2History(healthMetrics);
+    observedVo2Key = computeVo2FreshnessKey(
+      currentVo2History.at(-1)?.date ?? null
+    );
+  }
 
   if (!mainStale && !vo2Stale) {
     return cached;
@@ -134,7 +153,8 @@ async function computeAggregatedStats(
       ...cached,
       computedAt: new Date().toISOString(),
       vo2History: currentVo2History,
-      vo2FreshnessKey: currentVo2Key,
+      vo2FreshnessKey: observedVo2Key,
+      latestVo2SampleDate: observedVo2Key.latestVo2SampleDate,
     };
     await setDoc(statsRef, stripUndefined(vo2OnlyStats));
     return vo2OnlyStats;
@@ -182,7 +202,7 @@ async function computeAggregatedStats(
     now: new Date(),
     races,
     freshnessFingerprint: currentFingerprint,
-    vo2FreshnessKey: currentVo2Key,
+    vo2FreshnessKey: observedVo2Key,
     vo2HistoryOverride: vo2Stale ? undefined : cached?.vo2History,
   });
 

@@ -175,6 +175,8 @@ export interface AggregatedStatsDoc {
   computationVersion: number;
   freshnessFingerprint: AggregatedStatsFreshnessFingerprint;
   vo2FreshnessKey: Vo2FreshnessKey;
+  /** Top-level bounded-check baseline; optional only for legacy cache reads. */
+  latestVo2SampleDate?: string | null;
   computedAt: string; // ISO timestamp
   latestWorkoutId: string;
   latestWorkoutStartDate: string; // ISO date
@@ -286,6 +288,7 @@ export function buildAggregatedStats(
       computationVersion: AGGREGATED_STATS_VERSION,
       freshnessFingerprint,
       vo2FreshnessKey,
+      latestVo2SampleDate: vo2FreshnessKey.latestVo2SampleDate,
       computedAt,
       latestWorkoutId: "",
       latestWorkoutStartDate: "",
@@ -421,6 +424,7 @@ export function buildAggregatedStats(
     computationVersion: AGGREGATED_STATS_VERSION,
     freshnessFingerprint,
     vo2FreshnessKey,
+    latestVo2SampleDate: vo2FreshnessKey.latestVo2SampleDate,
     computedAt,
     latestWorkoutId: latestWorkout.workoutId,
     latestWorkoutStartDate: latestWorkout.startDate.toISOString(),

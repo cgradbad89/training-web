@@ -4,6 +4,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  limit,
   onSnapshot,
   query,
   orderBy,
@@ -32,7 +33,36 @@ export interface HealthMetric {
   sleep_end?: string;
   brush_count?: number;
   brush_avg_duration_mins?: number;
+  vo2_max?: number;
   syncedAt?: string;
+}
+
+/** Small recent-doc window used only to validate the cached VO₂ baseline. */
+export const VO2_FRESHNESS_LOOKUP_LIMIT = 14;
+
+/**
+ * Return the newest qualifying VO₂ sample date from a small, fixed window.
+ * The full 180-day history remains a separate read and runs only when this
+ * check proves the VO₂ cache needs rebuilding.
+ */
+export async function fetchLatestVo2SampleDate(
+  uid: string
+): Promise<string | null> {
+  const snap = await getDocs(
+    query(
+      collection(db, `users/${uid}/healthMetrics`),
+      orderBy("date", "desc"),
+      limit(VO2_FRESHNESS_LOOKUP_LIMIT)
+    )
+  );
+
+  for (const metricDoc of snap.docs) {
+    const metric = metricDoc.data() as Partial<HealthMetric>;
+    if (typeof metric.vo2_max === "number" && metric.vo2_max > 0) {
+      return metric.date ?? metricDoc.id;
+    }
+  }
+  return null;
 }
 
 /** Inclusive local-calendar cutoff used by the rolling metrics query/cache. */

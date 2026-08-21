@@ -28,6 +28,7 @@ vi.mock("firebase/firestore", async (importOriginal) => {
     setDoc: vi.fn(),
     collection: vi.fn(),
     query: vi.fn(),
+    limit: vi.fn(),
     where: vi.fn(),
     orderBy: vi.fn(),
     getDocs: vi.fn(),
@@ -72,10 +73,13 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
   function cachedStats(
     overrides: Partial<AggregatedStatsDoc> = {}
   ): AggregatedStatsDoc {
+    const vo2FreshnessKey =
+      overrides.vo2FreshnessKey ?? computeVo2FreshnessKey(null);
     return {
       computationVersion: AGGREGATED_STATS_VERSION,
       freshnessFingerprint: currentFingerprint(),
-      vo2FreshnessKey: computeVo2FreshnessKey(null),
+      vo2FreshnessKey,
+      latestVo2SampleDate: vo2FreshnessKey.latestVo2SampleDate,
       computedAt: "2026-08-20T12:00:00.000Z",
       latestWorkoutId,
       latestWorkoutStartDate: "2024-01-01T10:00:00.000Z",
@@ -380,6 +384,7 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
 
     expect(result.freshnessFingerprint.maxHr).toBe(maxHr);
     expect(result.vo2History).toEqual(cachedDoc.vo2History);
+    expect(firestore.getDocs).toHaveBeenCalledTimes(1);
     expect(firestore.setDoc).toHaveBeenCalledTimes(1);
   });
 
@@ -481,6 +486,7 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
     );
 
     expect(result).toEqual(cachedDoc);
+    expect(firestore.getDocs).toHaveBeenCalledTimes(1);
     expect(firestore.setDoc).not.toHaveBeenCalled();
   });
 
@@ -516,6 +522,77 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
 
     expect(result.freshnessFingerprint.maxHr).toBe(maxHr);
     expect(result.vo2History).toEqual([{ date: sampleDate, value: 50 }]);
+    expect(firestore.setDoc).toHaveBeenCalledTimes(1);
+  });
+
+  it("persists the observed VO2 date as the top-level baseline on recompute", async () => {
+    const sampleDate = "2026-08-14";
+    mockMissingCache();
+    vi.mocked(firestore.getDocs)
+      .mockResolvedValueOnce({
+        docs: [
+          { id: sampleDate, data: () => ({ date: sampleDate, vo2_max: 50 }) },
+        ],
+      } as any)
+      .mockResolvedValueOnce({
+        docs: [
+          { id: sampleDate, data: () => ({ date: sampleDate, vo2_max: 50 }) },
+        ],
+      } as any);
+
+    const result = await fetchAndComputeAggregatedStats(
+      mockUid,
+      mockWorkouts,
+      maxHr,
+      restingHr,
+      races,
+      currentFingerprint()
+    );
+
+    expect(result.latestVo2SampleDate).toBe(sampleDate);
+    expect(result.vo2FreshnessKey.latestVo2SampleDate).toBe(sampleDate);
+    expect(firestore.getDocs).toHaveBeenCalledTimes(2);
+    expect(firestore.setDoc).toHaveBeenCalledWith(
+      undefined,
+      expect.objectContaining({ latestVo2SampleDate: sampleDate })
+    );
+  });
+
+  it("handles a legacy cache with no top-level VO2 baseline", async () => {
+    const sampleDate = "2026-08-14";
+    const cachedDoc = cachedStats({
+      vo2FreshnessKey: computeVo2FreshnessKey(sampleDate),
+      vo2History: [{ date: sampleDate, value: 50 }],
+    });
+    delete cachedDoc.latestVo2SampleDate;
+    vi.mocked(firestore.getDoc).mockResolvedValue({
+      exists: () => true,
+      data: () => cachedDoc,
+    } as any);
+    vi.mocked(firestore.getDocs)
+      .mockResolvedValueOnce({
+        docs: [
+          { id: sampleDate, data: () => ({ date: sampleDate, vo2_max: 50 }) },
+        ],
+      } as any)
+      .mockResolvedValueOnce({
+        docs: [
+          { id: sampleDate, data: () => ({ date: sampleDate, vo2_max: 50 }) },
+        ],
+      } as any);
+    vi.mocked(firestore.setDoc).mockResolvedValue(undefined);
+
+    const result = await fetchAndComputeAggregatedStats(
+      mockUid,
+      mockWorkouts,
+      maxHr,
+      restingHr,
+      races,
+      currentFingerprint()
+    );
+
+    expect(result.latestVo2SampleDate).toBe(sampleDate);
+    expect(result.vo2History).toEqual(cachedDoc.vo2History);
     expect(firestore.setDoc).toHaveBeenCalledTimes(1);
   });
 
