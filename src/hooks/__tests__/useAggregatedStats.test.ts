@@ -423,6 +423,102 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
     expect(firestore.setDoc).toHaveBeenCalledTimes(1);
   });
 
+  it("self-repairs the production cache shape with a current key and empty history", async () => {
+    const sampleDate = "2026-08-14";
+    const cachedDoc = cachedStats({
+      vo2FreshnessKey: computeVo2FreshnessKey(sampleDate),
+      vo2History: [],
+    });
+    vi.mocked(firestore.getDoc).mockResolvedValue({
+      exists: () => true,
+      data: () => cachedDoc,
+    } as any);
+    vi.mocked(firestore.getDocs).mockResolvedValue({
+      docs: [
+        { id: sampleDate, data: () => ({ date: sampleDate, vo2_max: 50 }) },
+      ],
+    } as any);
+    vi.mocked(firestore.setDoc).mockResolvedValue(undefined);
+
+    const result = await fetchAndComputeAggregatedStats(
+      mockUid,
+      mockWorkouts,
+      maxHr,
+      restingHr,
+      races,
+      currentFingerprint()
+    );
+
+    expect(result.vo2History).toEqual([{ date: sampleDate, value: 50 }]);
+    expect(result.trainingLoad).toEqual(cachedDoc.trainingLoad);
+    expect(mileSplitsCache.getMileSplits).not.toHaveBeenCalled();
+    expect(firestore.setDoc).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not rewrite a consistent VO2 cache when both domains are fresh", async () => {
+    const sampleDate = "2026-08-14";
+    const cachedDoc = cachedStats({
+      vo2FreshnessKey: computeVo2FreshnessKey(sampleDate),
+      vo2History: [{ date: sampleDate, value: 50 }],
+    });
+    vi.mocked(firestore.getDoc).mockResolvedValue({
+      exists: () => true,
+      data: () => cachedDoc,
+    } as any);
+    vi.mocked(firestore.getDocs).mockResolvedValue({
+      docs: [
+        { id: sampleDate, data: () => ({ date: sampleDate, vo2_max: 50 }) },
+      ],
+    } as any);
+
+    const result = await fetchAndComputeAggregatedStats(
+      mockUid,
+      mockWorkouts,
+      maxHr,
+      restingHr,
+      races,
+      currentFingerprint()
+    );
+
+    expect(result).toEqual(cachedDoc);
+    expect(firestore.setDoc).not.toHaveBeenCalled();
+  });
+
+  it("rebuilds poisoned VO2 history while also refreshing the main domain", async () => {
+    const sampleDate = "2026-08-14";
+    const cachedDoc = cachedStats({
+      freshnessFingerprint: {
+        ...currentFingerprint(),
+        maxHr: maxHr - 5,
+      },
+      vo2FreshnessKey: computeVo2FreshnessKey(sampleDate),
+      vo2History: [],
+    });
+    vi.mocked(firestore.getDoc).mockResolvedValue({
+      exists: () => true,
+      data: () => cachedDoc,
+    } as any);
+    vi.mocked(firestore.getDocs).mockResolvedValue({
+      docs: [
+        { id: sampleDate, data: () => ({ date: sampleDate, vo2_max: 50 }) },
+      ],
+    } as any);
+    vi.mocked(firestore.setDoc).mockResolvedValue(undefined);
+
+    const result = await fetchAndComputeAggregatedStats(
+      mockUid,
+      mockWorkouts,
+      maxHr,
+      restingHr,
+      races,
+      currentFingerprint()
+    );
+
+    expect(result.freshnessFingerprint.maxHr).toBe(maxHr);
+    expect(result.vo2History).toEqual([{ date: sampleDate, value: 50 }]);
+    expect(firestore.setDoc).toHaveBeenCalledTimes(1);
+  });
+
   it("does not resolve the computation or release its lock until the cache write completes", async () => {
     mockMissingCache();
     let resolveWrite!: () => void;

@@ -11,6 +11,7 @@ import {
   computeFreshnessFingerprint,
   computeVo2FreshnessKey,
   isFingerprintStale,
+  isVo2CacheInconsistent,
   isVo2Stale,
   reviveAggregatedStatsDates,
 } from "@/utils/aggregatedStats";
@@ -121,7 +122,8 @@ async function computeAggregatedStats(
     isFingerprintStale(cached.freshnessFingerprint, currentFingerprint);
   const vo2Stale =
     !cached?.vo2FreshnessKey ||
-    isVo2Stale(cached.vo2FreshnessKey, currentVo2Key);
+    isVo2Stale(cached.vo2FreshnessKey, currentVo2Key) ||
+    isVo2CacheInconsistent(cached.vo2FreshnessKey, cached.vo2History);
 
   if (!mainStale && !vo2Stale) {
     return cached;

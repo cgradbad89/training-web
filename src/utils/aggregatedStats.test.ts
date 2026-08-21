@@ -7,6 +7,7 @@ import {
   computeWorkoutAggregationRevision,
   computeVo2FreshnessKey,
   isFingerprintStale,
+  isVo2CacheInconsistent,
   isVo2Stale,
   reviveAggregatedStatsDates,
   type AggregatedStatsFreshnessFingerprint,
@@ -186,6 +187,44 @@ describe("aggregatedStats", () => {
     });
   });
 
+  describe("VO2 cache consistency", () => {
+    it("detects the production failure shape with a dated key and empty history", () => {
+      expect(
+        isVo2CacheInconsistent(computeVo2FreshnessKey("2026-08-14"), [])
+      ).toBe(true);
+    });
+
+    it("accepts a history whose latest date matches the freshness key", () => {
+      expect(
+        isVo2CacheInconsistent(computeVo2FreshnessKey("2026-08-14"), [
+          { date: "2026-08-14", value: 50 },
+        ])
+      ).toBe(false);
+    });
+
+    it("detects a nonempty history ending on the wrong date", () => {
+      expect(
+        isVo2CacheInconsistent(computeVo2FreshnessKey("2026-08-14"), [
+          { date: "2026-08-13", value: 49 },
+        ])
+      ).toBe(true);
+    });
+
+    it("accepts an empty history when the freshness key is null", () => {
+      expect(isVo2CacheInconsistent(computeVo2FreshnessKey(null), [])).toBe(
+        false
+      );
+    });
+
+    it("detects populated history when the freshness key is null", () => {
+      expect(
+        isVo2CacheInconsistent(computeVo2FreshnessKey(null), [
+          { date: "2026-08-14", value: 50 },
+        ])
+      ).toBe(true);
+    });
+  });
+
   describe("buildAggregatedStats", () => {
     it("returns safe defaults for empty workouts", () => {
       const result = buildAggregatedStats({
@@ -206,6 +245,42 @@ describe("aggregatedStats", () => {
       expect(result.racePredictions.t5k).toBeNull();
       expect(result.racePredictions.confidenceLevel).toBe("low");
       expect(result.personalRecordsByYear.prs).toEqual([]);
+    });
+
+    it("builds VO2 history from health metrics when there are no workouts", () => {
+      const result = buildAggregatedStats({
+        workouts: [],
+        mileSplitsByWorkoutId: {},
+        healthMetrics: [
+          { id: "2026-08-14", data: { date: "2026-08-14", vo2_max: 50 } },
+        ],
+        maxHr: 185,
+        restingHr: 50,
+        now: new Date("2026-08-20T12:00:00Z"),
+        races: [],
+        freshnessFingerprint: fingerprint(),
+        vo2FreshnessKey: computeVo2FreshnessKey("2026-08-14"),
+      });
+
+      expect(result.vo2History).toEqual([{ date: "2026-08-14", value: 50 }]);
+    });
+
+    it("preserves a VO2 override when there are no workouts", () => {
+      const vo2HistoryOverride = [{ date: "2026-08-14", value: 51 }];
+      const result = buildAggregatedStats({
+        workouts: [],
+        mileSplitsByWorkoutId: {},
+        healthMetrics: [],
+        maxHr: 185,
+        restingHr: 50,
+        now: new Date("2026-08-20T12:00:00Z"),
+        races: [],
+        freshnessFingerprint: fingerprint(),
+        vo2FreshnessKey: computeVo2FreshnessKey("2026-08-14"),
+        vo2HistoryOverride,
+      });
+
+      expect(result.vo2History).toEqual(vo2HistoryOverride);
     });
 
     it("wires dependencies correctly for populated inputs", () => {

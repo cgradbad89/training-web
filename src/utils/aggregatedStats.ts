@@ -144,6 +144,16 @@ export function isVo2Stale(
   return cached.latestVo2SampleDate !== current.latestVo2SampleDate;
 }
 
+export function isVo2CacheInconsistent(
+  cached: Vo2FreshnessKey,
+  cachedHistory: ReturnType<typeof buildVo2History> | null | undefined
+): boolean {
+  return (
+    cached.latestVo2SampleDate !==
+    ((cachedHistory ?? []).at(-1)?.date ?? null)
+  );
+}
+
 /**
  * Narrow compatibility check for the run-detail CTL shortcut, whose caller
  * does not own the full Insights dependency set. Personal Insights uses the
@@ -269,6 +279,7 @@ export function buildAggregatedStats(
   } = inputs;
 
   const computedAt = now.toISOString();
+  const vo2History = vo2HistoryOverride ?? buildVo2History(healthMetrics);
 
   if (workouts.length === 0) {
     return {
@@ -279,7 +290,7 @@ export function buildAggregatedStats(
       latestWorkoutId: "",
       latestWorkoutStartDate: "",
       trainingLoad: { series: [] },
-      vo2History: [],
+      vo2History,
       racePredictions: {
         t5k: null,
         t10: null,
@@ -330,10 +341,7 @@ export function buildAggregatedStats(
       tsb: p.tsb,
     }));
 
-  // 2. VO2 History
-  const vo2History = vo2HistoryOverride ?? buildVo2History(healthMetrics);
-
-  // 3. Race Predictions
+  // 2. Race Predictions
   const runInputs = workouts.map((r) => ({
     workoutId: r.workoutId,
     distanceMiles: r.distanceMiles,
