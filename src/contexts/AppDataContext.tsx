@@ -77,6 +77,8 @@ export interface AppDataContextValue {
   workoutsLoading: boolean;
   /** True during a later background/manual workouts refresh. */
   workoutsRefreshing: boolean;
+  /** True when the latest full read returned fewer than its cap. */
+  workoutsHistoryComplete: boolean;
   refreshWorkouts: () => Promise<void>;
   plans: Plan[];
   plansLoading: boolean;
@@ -112,6 +114,7 @@ export function AppDataProvider({
   const [workouts, setWorkouts] = useState<HealthWorkout[]>([]);
   const [workoutsLoading, setWorkoutsLoading] = useState(true);
   const [workoutsRefreshing, setWorkoutsRefreshing] = useState(false);
+  const [workoutsHistoryComplete, setWorkoutsHistoryComplete] = useState(false);
   const workoutsLoadedRef = useRef(false);
   const workoutsInFlightRef = useRef<Promise<void> | null>(null);
   const workoutsRef = useRef<HealthWorkout[]>([]);
@@ -134,6 +137,7 @@ export function AppDataProvider({
       setWorkouts([]);
       setWorkoutsLoading(false);
       setWorkoutsRefreshing(false);
+      setWorkoutsHistoryComplete(true);
       workoutsLoadedRef.current = true;
       return Promise.resolve();
     }
@@ -144,10 +148,12 @@ export function AppDataProvider({
 
     const promise = (async () => {
       try {
-        setWorkouts(
-          await fetchHealthWorkouts(uid, {
-            limitCount: APP_DATA_WORKOUTS_LIMIT,
-          })
+        const loaded = await fetchHealthWorkouts(uid, {
+          limitCount: APP_DATA_WORKOUTS_LIMIT,
+        });
+        setWorkouts(loaded);
+        setWorkoutsHistoryComplete(
+          loaded.length < APP_DATA_WORKOUTS_LIMIT
         );
         workoutsLoadedRef.current = true;
       } catch (err) {
@@ -297,6 +303,7 @@ export function AppDataProvider({
       workouts,
       workoutsLoading,
       workoutsRefreshing,
+      workoutsHistoryComplete,
       refreshWorkouts,
       plans,
       plansLoading,
@@ -317,6 +324,7 @@ export function AppDataProvider({
       workouts,
       workoutsLoading,
       workoutsRefreshing,
+      workoutsHistoryComplete,
       refreshWorkouts,
       plans,
       plansLoading,

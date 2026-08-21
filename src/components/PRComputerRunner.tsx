@@ -4,15 +4,26 @@ import { useEffect, useRef } from 'react'
 import { writeBatch, doc } from 'firebase/firestore'
 import { db } from '@/lib/firebase'
 import { useAuth } from '@/hooks/useAuth'
+import { useAppData } from '@/contexts/AppDataContext'
 import { fetchHealthWorkouts } from '@/services/healthWorkouts'
 import { computeAllPRs, buildPRBadgeMap } from '@/utils/prComputation'
 
 const PR_THROTTLE_KEY = 'pr_last_computed'
 const PR_THROTTLE_MS = 24 * 60 * 60 * 1000 // once per day
 
+function scheduleWhenIdle(callback: () => void): () => void {
+  if (typeof window.requestIdleCallback === 'function') {
+    const id = window.requestIdleCallback(callback, { timeout: 5000 })
+    return () => window.cancelIdleCallback(id)
+  }
+  const id = window.setTimeout(callback, 1500)
+  return () => window.clearTimeout(id)
+}
+
 /**
  * Silent background runner that:
- *   1. Fetches all of the user's runs (no limit)
+ *   1. Reuses AppData workouts when its bounded read contains full history;
+ *      falls back to an unbounded read only for users who hit that cap
  *   2. Computes PR holders across distance bands + specific distances
  *   3. Diffs each run's prBadges against the new value and writes only the
  *      changes via a single batched commit
@@ -23,10 +34,11 @@ const PR_THROTTLE_MS = 24 * 60 * 60 * 1000 // once per day
  */
 export default function PRComputerRunner() {
   const { user } = useAuth()
+  const { workouts, workoutsLoading, workoutsHistoryComplete } = useAppData()
   const hasRun = useRef(false)
 
   useEffect(() => {
-    if (!user || hasRun.current) return
+    if (!user || workoutsLoading || hasRun.current) return
 
     // Throttle — skip if we already ran in the last 24 hours.
     try {
@@ -46,11 +58,15 @@ export default function PRComputerRunner() {
 
     hasRun.current = true
     const uid = user.uid
+    let cancelled = false
 
     async function run() {
       try {
-        const workouts = await fetchHealthWorkouts(uid, {})
-        const runs = workouts.filter((w) => w.isRunLike)
+        const sourceWorkouts = workoutsHistoryComplete
+          ? workouts
+          : await fetchHealthWorkouts(uid, {})
+        if (cancelled) return
+        const runs = sourceWorkouts.filter((w) => w.isRunLike)
 
         const prResults = computeAllPRs(runs)
         const badgeMap = buildPRBadgeMap(prResults)
@@ -74,10 +90,8 @@ export default function PRComputerRunner() {
 
         if (updateCount > 0) {
           await batch.commit()
-          // eslint-disable-next-line no-console
           console.log(`[PRComputerRunner] updated ${updateCount} runs`)
         } else {
-          // eslint-disable-next-line no-console
           console.log('[PRComputerRunner] no PR changes')
         }
 
@@ -91,8 +105,14 @@ export default function PRComputerRunner() {
       }
     }
 
-    run()
-  }, [user])
+    const cancelIdle = scheduleWhenIdle(() => {
+      void run()
+    })
+    return () => {
+      cancelled = true
+      cancelIdle()
+    }
+  }, [user, workouts, workoutsHistoryComplete, workoutsLoading])
 
   return null
 }

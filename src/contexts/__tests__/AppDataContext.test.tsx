@@ -172,6 +172,19 @@ describe("AppDataProvider", () => {
     expect(h.fetchHealthWorkouts).toHaveBeenCalledWith("u1", {
       limitCount: 1000,
     });
+    expect(latest?.workoutsHistoryComplete).toBe(true);
+  });
+
+  it("marks capped workout history as incomplete for all-time consumers", async () => {
+    h.fetchHealthWorkouts.mockResolvedValue(
+      Array.from({ length: 1000 }, (_, index) => ({
+        workoutId: `w${index}`,
+      }))
+    );
+
+    await mount();
+
+    expect(latest?.workoutsHistoryComplete).toBe(false);
   });
 
   it("refreshWorkouts re-fetches and replaces the workouts array", async () => {
