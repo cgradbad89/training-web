@@ -33,6 +33,7 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { useAuth } from "@/hooks/useAuth";
@@ -58,7 +59,10 @@ export const APP_DATA_WORKOUTS_LIMIT = 1000;
 
 export interface AppDataContextValue {
   workouts: HealthWorkout[];
+  /** True only while the first successful workouts load is pending. */
   workoutsLoading: boolean;
+  /** True during a later background/manual workouts refresh. */
+  workoutsRefreshing: boolean;
   refreshWorkouts: () => Promise<void>;
   plans: Plan[];
   plansLoading: boolean;
@@ -90,6 +94,9 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
 
   const [workouts, setWorkouts] = useState<HealthWorkout[]>([]);
   const [workoutsLoading, setWorkoutsLoading] = useState(true);
+  const [workoutsRefreshing, setWorkoutsRefreshing] = useState(false);
+  const workoutsLoadedRef = useRef(false);
+  const workoutsInFlightRef = useRef<Promise<void> | null>(null);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [plansLoading, setPlansLoading] = useState(true);
   const [races, setRaces] = useState<Race[]>([]);
@@ -103,22 +110,41 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
   // consumer (dashboard, runs, personal-insights, plan-insights, shoes,
   // workouts). Freshness comes from useRefetchOnFocus below plus each
   // consumer's manual refresh control, not a live subscription.
-  const refreshWorkouts = useCallback(async () => {
+  const refreshWorkouts = useCallback((): Promise<void> => {
+    if (workoutsInFlightRef.current) return workoutsInFlightRef.current;
     if (!uid) {
       setWorkouts([]);
       setWorkoutsLoading(false);
-      return;
+      setWorkoutsRefreshing(false);
+      workoutsLoadedRef.current = true;
+      return Promise.resolve();
     }
-    setWorkoutsLoading(true);
-    try {
-      setWorkouts(
-        await fetchHealthWorkouts(uid, { limitCount: APP_DATA_WORKOUTS_LIMIT })
-      );
-    } catch (err) {
-      console.error("[AppData] fetchHealthWorkouts", err);
-    } finally {
-      setWorkoutsLoading(false);
-    }
+
+    const isInitialLoad = !workoutsLoadedRef.current;
+    if (isInitialLoad) setWorkoutsLoading(true);
+    else setWorkoutsRefreshing(true);
+
+    let promise!: Promise<void>;
+    promise = (async () => {
+      try {
+        setWorkouts(
+          await fetchHealthWorkouts(uid, {
+            limitCount: APP_DATA_WORKOUTS_LIMIT,
+          })
+        );
+        workoutsLoadedRef.current = true;
+      } catch (err) {
+        console.error("[AppData] fetchHealthWorkouts", err);
+      } finally {
+        if (isInitialLoad) setWorkoutsLoading(false);
+        else setWorkoutsRefreshing(false);
+        if (workoutsInFlightRef.current === promise) {
+          workoutsInFlightRef.current = null;
+        }
+      }
+    })();
+    workoutsInFlightRef.current = promise;
+    return promise;
   }, [uid]);
 
   useEffect(() => {
@@ -220,6 +246,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     () => ({
       workouts,
       workoutsLoading,
+      workoutsRefreshing,
       refreshWorkouts,
       plans,
       plansLoading,
@@ -239,6 +266,7 @@ export function AppDataProvider({ children }: { children: React.ReactNode }) {
     [
       workouts,
       workoutsLoading,
+      workoutsRefreshing,
       refreshWorkouts,
       plans,
       plansLoading,

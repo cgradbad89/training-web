@@ -46,6 +46,14 @@ function Probe() {
 let container: HTMLDivElement;
 let root: Root;
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
 async function mount() {
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -93,6 +101,20 @@ describe("AppDataProvider", () => {
     expect(h.fetchHealthWorkouts).toHaveBeenCalledTimes(1);
   });
 
+  it("reports workoutsLoading only while the first successful load is pending", async () => {
+    const initial = deferred<Array<{ workoutId: string }>>();
+    h.fetchHealthWorkouts.mockReturnValue(initial.promise);
+    await mount();
+
+    expect(latest?.workoutsLoading).toBe(true);
+    expect(latest?.workoutsRefreshing).toBe(false);
+
+    initial.resolve([{ workoutId: "w1" }]);
+    await act(async () => initial.promise);
+    expect(latest?.workoutsLoading).toBe(false);
+    expect(latest?.workoutsRefreshing).toBe(false);
+  });
+
   it("fetches workouts with the shared 1000 limit", async () => {
     await mount();
     expect(h.fetchHealthWorkouts).toHaveBeenCalledWith("u1", {
@@ -118,6 +140,45 @@ describe("AppDataProvider", () => {
       latest?.workouts.map((w) => (w as { workoutId: string }).workoutId)
     ).toEqual(["w1", "w2"]);
     expect(h.fetchHealthWorkouts).toHaveBeenCalledTimes(2);
+  });
+
+  it("preserves workouts and uses workoutsRefreshing during a background refresh", async () => {
+    h.fetchHealthWorkouts.mockResolvedValue([{ workoutId: "w1" }]);
+    await mount();
+    const background = deferred<Array<{ workoutId: string }>>();
+    h.fetchHealthWorkouts.mockReturnValueOnce(background.promise);
+
+    let refreshPromise!: Promise<void>;
+    act(() => {
+      refreshPromise = latest!.refreshWorkouts();
+    });
+
+    expect(latest?.workoutsLoading).toBe(false);
+    expect(latest?.workoutsRefreshing).toBe(true);
+    expect(latest?.workouts.map((workout) => workout.workoutId)).toEqual(["w1"]);
+
+    background.resolve([{ workoutId: "w2" }]);
+    await act(async () => refreshPromise);
+    expect(latest?.workoutsRefreshing).toBe(false);
+    expect(latest?.workouts.map((workout) => workout.workoutId)).toEqual(["w2"]);
+  });
+
+  it("reuses one in-flight promise for overlapping workout refreshes", async () => {
+    await mount();
+    const background = deferred<Array<{ workoutId: string }>>();
+    h.fetchHealthWorkouts.mockReturnValueOnce(background.promise);
+
+    let first!: Promise<void>;
+    let second!: Promise<void>;
+    act(() => {
+      first = latest!.refreshWorkouts();
+      second = latest!.refreshWorkouts();
+    });
+
+    expect(first).toBe(second);
+    expect(h.fetchHealthWorkouts).toHaveBeenCalledTimes(2);
+    background.resolve([]);
+    await act(async () => first);
   });
 
   it("loads plans, races, overrides, and settings on mount", async () => {

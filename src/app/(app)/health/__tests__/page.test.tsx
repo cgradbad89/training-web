@@ -8,6 +8,9 @@ import * as authHook from "@/hooks/useAuth";
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const localStorageValues = new Map<string, string>();
+const focus = vi.hoisted(() => ({
+  refetch: null as null | (() => Promise<void> | void),
+}));
 Object.defineProperty(window, "localStorage", {
   configurable: true,
   value: {
@@ -40,6 +43,12 @@ vi.mock("@/hooks/useAuth", () => ({
   useAuth: vi.fn(),
 }));
 
+vi.mock("@/hooks/useRefetchOnFocus", () => ({
+  useRefetchOnFocus: (refetch: () => Promise<void> | void) => {
+    focus.refetch = refetch;
+  },
+}));
+
 vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
@@ -54,6 +63,16 @@ const flushPage = async () => {
   await flushPromises();
   await flushPromises();
 };
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
 
 function localIsoDate(date: Date): string {
   const year = date.getFullYear();
@@ -112,6 +131,7 @@ describe("Health Dashboard Page", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    focus.refetch = null;
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -171,6 +191,72 @@ describe("Health Dashboard Page", () => {
     await act(async () => { await flushPromises(); await flushPromises(); await flushPromises(); });
 
     expect(healthMetricsService.fetchHealthMetrics).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows the skeleton only for the initial load and preserves content during a background refresh", async () => {
+    const initial = deferred<healthMetricsService.HealthMetric[]>();
+    vi.mocked(healthMetricsService.fetchHealthMetrics).mockReturnValueOnce(
+      initial.promise
+    );
+
+    await act(async () => root.render(<HealthPage />));
+    expect(container.querySelector("[aria-label='Loading health']")).toBeTruthy();
+
+    initial.resolve([{ date: "2026-07-17", weight_lbs: 160 }]);
+    await act(async () => flushPage());
+    expect(container.textContent).toContain("Health");
+    expect(container.querySelector("[aria-label='Loading health']")).toBeNull();
+
+    const background = deferred<healthMetricsService.HealthMetric[]>();
+    vi.mocked(healthMetricsService.fetchHealthMetrics).mockReturnValueOnce(
+      background.promise
+    );
+    act(() => {
+      void focus.refetch?.();
+    });
+
+    expect(container.textContent).toContain("Health");
+    expect(container.querySelector("[aria-label='Loading health']")).toBeNull();
+    background.resolve([{ date: "2026-07-18", weight_lbs: 161 }]);
+    await act(async () => flushPage());
+  });
+
+  it("reuses the in-flight Health metrics promise for overlapping focus refreshes", async () => {
+    await renderPage(root);
+    const background = deferred<healthMetricsService.HealthMetric[]>();
+    vi.mocked(healthMetricsService.fetchHealthMetrics).mockReturnValueOnce(
+      background.promise
+    );
+
+    let first!: Promise<void> | void;
+    let second!: Promise<void> | void;
+    act(() => {
+      first = focus.refetch?.();
+      second = focus.refetch?.();
+    });
+
+    expect(first).toBe(second);
+    expect(healthMetricsService.fetchHealthMetrics).toHaveBeenCalledTimes(2);
+    background.resolve([]);
+    await act(async () => first);
+  });
+
+  it("keeps existing Health content when a background refresh fails", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await renderPage(root);
+    const background = deferred<healthMetricsService.HealthMetric[]>();
+    vi.mocked(healthMetricsService.fetchHealthMetrics).mockReturnValueOnce(
+      background.promise
+    );
+
+    act(() => {
+      void focus.refetch?.();
+    });
+    background.reject(new Error("temporary refresh failure"));
+    await act(async () => flushPage());
+
+    expect(container.textContent).toContain("Health");
+    expect(container.textContent).not.toContain("Error loading health data");
   });
 
   it("does not fetch a persisted YTD Trends range before Trends is active", async () => {

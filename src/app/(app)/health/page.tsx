@@ -1162,7 +1162,10 @@ export default function HealthPage() {
   const allFetchStatusRef = useRef<LazyRangeFetchStatus>("idle");
   const [hourlyHR, setHourlyHR] = useState<HourlyHeartRate | null>(null);
   const [hourlyHRLoading, setHourlyHRLoading] = useState(true);
-  const [metricsLoading, setMetricsLoading] = useState(true);
+  const [metricsInitialLoading, setMetricsInitialLoading] = useState(true);
+  const [metricsRefreshing, setMetricsRefreshing] = useState(false);
+  const metricsLoadedRef = useRef(false);
+  const metricsInFlightRef = useRef<Promise<void> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [goals, setGoals] = useState<HealthGoals | null>(null);
   const [goalsModalOpen, setGoalsModalOpen] = useState(false);
@@ -1366,26 +1369,48 @@ export default function HealthPage() {
   }, []);
 
   // One-time fetch for last-90-days health metrics
-  const refreshMetrics = useCallback(async () => {
-    if (!userId) return;
-    setMetricsLoading(true);
-    try {
-      const data = await fetchHealthMetrics(userId, 90);
-      setMetrics(data);
-      mergeMetricsIntoCache(
-        {
-          start: healthMetricsCutoffISO(90),
-          // fetchHealthMetrics has no upper-bound predicate, so this read also
-          // establishes that no later-dated docs existed at fetch time.
-          end: ALL_HEALTH_METRICS_RANGE.end,
-        },
-        data
-      );
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setMetricsLoading(false);
+  const refreshMetrics = useCallback((): Promise<void> => {
+    if (metricsInFlightRef.current) return metricsInFlightRef.current;
+    if (!userId) {
+      setMetricsInitialLoading(false);
+      setMetricsRefreshing(false);
+      return Promise.resolve();
     }
+
+    const isInitialLoad = !metricsLoadedRef.current;
+    if (isInitialLoad) setMetricsInitialLoading(true);
+    else setMetricsRefreshing(true);
+
+    let promise!: Promise<void>;
+    promise = (async () => {
+      try {
+        const data = await fetchHealthMetrics(userId, 90);
+        setMetrics(data);
+        mergeMetricsIntoCache(
+          {
+            start: healthMetricsCutoffISO(90),
+            // fetchHealthMetrics has no upper-bound predicate, so this read also
+            // establishes that no later-dated docs existed at fetch time.
+            end: ALL_HEALTH_METRICS_RANGE.end,
+          },
+          data
+        );
+        metricsLoadedRef.current = true;
+        setError(null);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (isInitialLoad) setError(message);
+        else console.error("[health metrics refresh]", err);
+      } finally {
+        if (isInitialLoad) setMetricsInitialLoading(false);
+        else setMetricsRefreshing(false);
+        if (metricsInFlightRef.current === promise) {
+          metricsInFlightRef.current = null;
+        }
+      }
+    })();
+    metricsInFlightRef.current = promise;
+    return promise;
   }, [userId, mergeMetricsIntoCache]);
 
   useEffect(() => {
@@ -1946,7 +1971,7 @@ export default function HealthPage() {
       })
     : null;
 
-  if (metricsLoading) {
+  if (metricsInitialLoading) {
     return <HealthSkeleton />;
   }
 
@@ -1992,12 +2017,14 @@ export default function HealthPage() {
           <button
             type="button"
             onClick={() => void refreshMetrics()}
-            disabled={metricsLoading}
+            disabled={metricsInitialLoading || metricsRefreshing}
             aria-label="Refresh metrics"
             title="Refresh metrics"
             className="flex items-center justify-center w-8 h-8 rounded-lg hover:bg-surface text-textSecondary hover:text-textPrimary transition-colors disabled:opacity-50"
           >
-            <RefreshCw className={`w-4 h-4 ${metricsLoading ? "animate-spin" : ""}`} />
+            <RefreshCw
+              className={`w-4 h-4 ${metricsRefreshing ? "animate-spin" : ""}`}
+            />
           </button>
           {activeTab === "today" && selectedDate && (() => {
             const todayStr = todayISO();
