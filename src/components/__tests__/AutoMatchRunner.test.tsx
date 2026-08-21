@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import AutoMatchRunner from "@/components/AutoMatchRunner";
+import AutoMatchRunner, {
+  AUTO_MATCH_WORKOUT_LISTENER_LIMIT,
+} from "@/components/AutoMatchRunner";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { type WorkoutOverride } from "@/types/workoutOverride";
 import { type WorkoutPlan } from "@/types/plan";
@@ -194,7 +196,11 @@ describe("AutoMatchRunner — AppDataContext wiring", () => {
 
     expect(h.onHealthWorkoutsSnapshot).toHaveBeenCalledWith(
       "u1",
-      { isRunLike: false, startDate: new Date(2020, 0, 6) },
+      {
+        isRunLike: false,
+        startDate: new Date(2020, 0, 6),
+        limitCount: AUTO_MATCH_WORKOUT_LISTENER_LIMIT,
+      },
       expect.any(Function),
       expect.any(Function)
     );
@@ -236,6 +242,55 @@ describe("AutoMatchRunner — AppDataContext wiring", () => {
     });
 
     expect(h.autoMatchCrossTrainingSessions).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-runs when an older workout changes inside the bounded window", async () => {
+    await mount();
+    const newest = nonRunWorkout("w2");
+    const older = nonRunWorkout("w1");
+
+    await act(async () => {
+      emit!([newest, older]);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      emit!([
+        newest,
+        { ...older, activityType: "highIntensityIntervalTraining" },
+      ]);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(h.autoMatchCrossTrainingSessions).toHaveBeenCalledTimes(2);
+  });
+
+  it("reports saturation once while keeping the newest bounded window", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    await mount();
+    const boundedPool = Array.from(
+      { length: AUTO_MATCH_WORKOUT_LISTENER_LIMIT },
+      (_, index) => nonRunWorkout(`w${index}`)
+    );
+
+    await act(async () => {
+      emit!(boundedPool);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      emit!(boundedPool);
+      await Promise.resolve();
+    });
+
+    expect(info).toHaveBeenCalledTimes(1);
+    expect(h.autoMatchCrossTrainingSessions).toHaveBeenCalledWith(
+      "u1",
+      h.plans,
+      boundedPool,
+      h.overrides
+    );
   });
 
   it("preserves the in-flight guard for bursty changed snapshots", async () => {
