@@ -104,6 +104,32 @@ function plannedSessionDate(
   return d;
 }
 
+/**
+ * True when an active workout plan has at least one session the existing
+ * matcher could act on today: a non-rest entry that is incomplete and not in
+ * the future. This is the subscription gate used by AutoMatchRunner; keeping
+ * it beside plannedSessionDate prevents the listener and matcher from
+ * inventing different due-date criteria.
+ */
+export function planNeedsAutoMatch(
+  plan: Plan,
+  today: Date = new Date()
+): boolean {
+  if (!isWorkoutPlan(plan) || plan.status !== "active") return false;
+
+  const todayStart = new Date(today);
+  todayStart.setHours(0, 0, 0, 0);
+  return plan.weeks.some((week) =>
+    week.entries.some(
+      (entry) =>
+        entry.type === "workout" &&
+        entry.completed !== true &&
+        plannedSessionDate(plan.startDate, entry.weekIndex, entry.weekday) <=
+          todayStart
+    )
+  );
+}
+
 // ─── Match result types ─────────────────────────────────────────────────────
 
 export interface AutoMatchResult {

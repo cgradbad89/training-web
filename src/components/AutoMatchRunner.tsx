@@ -5,7 +5,10 @@ import { useAuth } from '@/hooks/useAuth'
 import { useAppData } from '@/contexts/AppDataContext'
 import { fetchPlans } from '@/services/plans'
 import { onHealthWorkoutsSnapshot } from '@/services/healthWorkouts'
-import { autoMatchCrossTrainingSessions } from '@/services/autoMatch'
+import {
+  autoMatchCrossTrainingSessions,
+  planNeedsAutoMatch,
+} from '@/services/autoMatch'
 import type { HealthWorkout } from '@/types/healthWorkout'
 
 /**
@@ -19,6 +22,8 @@ import type { HealthWorkout } from '@/types/healthWorkout'
  * snapshot listener, the late-arriving sync triggers another pass automatically.
  *
  * Gating + idempotence:
+ *  - The listener exists only while an active workout plan has an incomplete,
+ *    due session that the matcher can act on.
  *  - We only invoke the matcher when the pool contains at least one non-run
  *    workout (workout plans match against non-run activities), so empty /
  *    runs-only snapshots short-circuit without burning a fetchPlans call.
@@ -38,9 +43,11 @@ import type { HealthWorkout } from '@/types/healthWorkout'
  */
 export default function AutoMatchRunner() {
   const { user } = useAuth()
-  const { overrides, refreshPlans } = useAppData()
+  const { overrides, refreshPlans, plans, plansLoading } = useAppData()
   const inFlight = useRef(false)
   const lastKey = useRef<string | null>(null)
+  const needsAutoMatch =
+    !plansLoading && plans.some((plan) => planNeedsAutoMatch(plan))
 
   // Latest-value refs — see the note above on why these are not effect deps.
   const overridesRef = useRef(overrides)
@@ -53,8 +60,11 @@ export default function AutoMatchRunner() {
   }, [refreshPlans])
 
   useEffect(() => {
-    if (!user) return
+    if (!user || !needsAutoMatch) return
     const uid = user.uid
+    // A newly activated plan must evaluate the listener's initial snapshot,
+    // even if its workout pool matches the key from a prior subscription.
+    lastKey.current = null
 
     async function runMatcher(workouts: HealthWorkout[], key: string) {
       if (inFlight.current) return
@@ -83,7 +93,7 @@ export default function AutoMatchRunner() {
 
     const unsubscribe = onHealthWorkoutsSnapshot(
       uid,
-      { limitCount: 500 },
+      { isRunLike: false, limitCount: 500 },
       (workouts) => {
         // Workout plans can only match against non-running activities. If the
         // current snapshot has none, skip — saves a fetchPlans + log spam.
@@ -110,7 +120,7 @@ export default function AutoMatchRunner() {
     )
 
     return () => unsubscribe()
-  }, [user])
+  }, [user, needsAutoMatch])
 
   return null
 }
