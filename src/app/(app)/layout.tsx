@@ -39,28 +39,39 @@ function SideNav() {
 }
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  const isHealthRoute =
+    pathname === "/health" || pathname.startsWith("/health/");
+
+  const appShell = (
+    <div className="flex flex-col min-h-screen">
+      <HubBanner />
+      <div className="flex flex-1 overflow-hidden">
+        <SideNav />
+        <main
+          className="flex-1 overflow-y-auto bg-surface p-6 lg:pb-6"
+          style={{
+            paddingBottom: "calc(5rem + env(safe-area-inset-bottom))",
+          }}
+        >
+          {children}
+        </main>
+      </div>
+      <MobileTabBar />
+    </div>
+  );
+
   return (
     <AuthGuard>
-      <AppDataProvider>
-        <AutoMatchRunner />
-        <PRComputerRunner />
-        <div className="flex flex-col min-h-screen">
-          <HubBanner />
-          <div className="flex flex-1 overflow-hidden">
-            <SideNav />
-            <main
-              className="flex-1 overflow-y-auto bg-surface p-6 lg:pb-6"
-              style={{
-                paddingBottom:
-                  "calc(5rem + env(safe-area-inset-bottom))",
-              }}
-            >
-              {children}
-            </main>
-          </div>
-          <MobileTabBar />
-        </div>
-      </AppDataProvider>
+      {isHealthRoute ? (
+        appShell
+      ) : (
+        <AppDataProvider>
+          <AutoMatchRunner />
+          <PRComputerRunner />
+          {appShell}
+        </AppDataProvider>
+      )}
     </AuthGuard>
   );
 }
