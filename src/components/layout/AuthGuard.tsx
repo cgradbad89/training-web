@@ -6,6 +6,7 @@ import { useEffect } from "react";
 import { type User } from "firebase/auth";
 import { useAuth } from "@/hooks";
 import { FullPageLoader } from "@/components/ui/LoadingSpinner";
+import { useClientPerformanceMark } from "@/hooks/useClientPerformanceMark";
 
 interface AuthGuardProps {
   children:
@@ -20,6 +21,7 @@ interface AuthGuardProps {
 export function AuthGuard({ children }: AuthGuardProps) {
   const { user, loading } = useAuth();
   const router = useRouter();
+  useClientPerformanceMark("training:auth-ready", !loading && Boolean(user));
 
   useEffect(() => {
     if (!loading && !user) {

@@ -3,6 +3,7 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useRefetchOnFocus } from "@/hooks/useRefetchOnFocus";
+import { useClientPerformanceMark } from "@/hooks/useClientPerformanceMark";
 import {
   fetchHealthMetrics,
   fetchAllHealthMetrics,
@@ -1381,8 +1382,7 @@ export default function HealthPage() {
     if (isInitialLoad) setMetricsInitialLoading(true);
     else setMetricsRefreshing(true);
 
-    let promise!: Promise<void>;
-    promise = (async () => {
+    const promise = (async () => {
       try {
         const data = await fetchHealthMetrics(userId, 90);
         setMetrics(data);
@@ -1970,6 +1970,15 @@ export default function HealthPage() {
         minute: "2-digit",
       })
     : null;
+
+  useClientPerformanceMark(
+    "training:health:usable",
+    !metricsInitialLoading && error === null,
+    {
+      measureFrom: "training:auth-ready",
+      measureName: "training:health:usable-duration",
+    }
+  );
 
   if (metricsInitialLoading) {
     return <HealthSkeleton />;

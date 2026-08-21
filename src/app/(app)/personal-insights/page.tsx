@@ -33,6 +33,7 @@ import { applyOverride } from "@/types/workoutOverride";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { RACE_DISTANCE_MILES } from "@/types/race";
 import { useAggregatedStats } from "@/hooks/useAggregatedStats";
+import { useClientPerformanceMark } from "@/hooks/useClientPerformanceMark";
 import { type AggregatedStatsDoc } from "@/utils/aggregatedStats";
 import { formatPace, formatPaceLabel } from "@/utils/pace";
 import { weekStart as getWeekStart } from "@/utils/dates";
@@ -1361,6 +1362,14 @@ export default function PersonalInsightsPage() {
   }, [initialLoadPending]);
   const showInitialSkeleton =
     initialLoadPending && !hasCompletedInitialLoad;
+  useClientPerformanceMark(
+    "training:personal-insights:usable",
+    !showInitialSkeleton,
+    {
+      measureFrom: "training:auth-ready",
+      measureName: "training:personal-insights:usable-duration",
+    }
+  );
 
   const selectedYear = new Date().getFullYear();
 

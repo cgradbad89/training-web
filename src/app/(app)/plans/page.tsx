@@ -57,6 +57,7 @@ import {
 import { CalendarView } from "@/components/CalendarView";
 import { GoalsTab } from "@/components/GoalsTab";
 import { useGoals } from "@/hooks/useGoals";
+import { useClientPerformanceMark } from "@/hooks/useClientPerformanceMark";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -463,6 +464,10 @@ export default function PlansPage() {
   }, [user, plansLoading, seeded, initialSelectDone, plans]);
 
   const loading = plansLoading || !seeded || !initialSelectDone;
+  useClientPerformanceMark("training:plans:usable", !loading, {
+    measureFrom: "training:auth-ready",
+    measureName: "training:plans:usable-duration",
+  });
 
   function currentWeekIndex(plan: Plan): number {
     // Inactive / template plans always open at Week 1 — users editing a

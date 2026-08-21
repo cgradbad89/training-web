@@ -41,6 +41,10 @@ import {
   fetchHealthWorkoutsInRange,
 } from "@/services/healthWorkouts";
 import { useRefetchOnFocus } from "@/hooks/useRefetchOnFocus";
+import {
+  markClientPerformance,
+  useClientPerformanceMark,
+} from "@/hooks/useClientPerformanceMark";
 import { fetchPlans } from "@/services/plans";
 import { fetchRaces } from "@/services/races";
 import { fetchAllOverrides } from "@/services/workoutOverrides";
@@ -126,6 +130,20 @@ export function AppDataProvider({
   const [overridesLoading, setOverridesLoading] = useState(true);
   const [userSettings, setUserSettings] = useState<UserSettings | null>(null);
   const [settingsLoading, setSettingsLoading] = useState(true);
+  const appDataReady =
+    !workoutsLoading &&
+    !plansLoading &&
+    !racesLoading &&
+    !overridesLoading &&
+    !settingsLoading;
+
+  useEffect(() => {
+    markClientPerformance("training:app-data:start");
+  }, [uid]);
+  useClientPerformanceMark("training:app-data:ready", appDataReady, {
+    measureFrom: "training:app-data:start",
+    measureName: "training:app-data:duration",
+  });
 
   // One-time workouts fetch — the single shared workouts source for every
   // consumer (dashboard, runs, personal-insights, plan-insights, shoes,

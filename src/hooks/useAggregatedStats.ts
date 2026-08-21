@@ -19,6 +19,10 @@ import { getMileSplits } from "@/utils/mileSplitsCache";
 import { buildVo2History, vo2HistoryCutoffISO } from "@/utils/vo2History";
 import { collection, query, where, orderBy, getDocs } from "firebase/firestore";
 import { fetchLatestVo2SampleDate } from "@/services/healthMetrics";
+import {
+  markClientPerformance,
+  measureClientPerformance,
+} from "@/hooks/useClientPerformanceMark";
 
 function stripUndefined<T extends object>(obj: T): T {
   return JSON.parse(JSON.stringify(obj)) as T;
@@ -245,8 +249,7 @@ export function fetchAndComputeAggregatedStats(
 
   logAggregationEvent("start", { uid, latestWorkoutId, lockKey });
 
-  let lockedPromise!: Promise<AggregatedStatsDoc>;
-  lockedPromise = computeAggregatedStats(
+  const lockedPromise = computeAggregatedStats(
     uid,
     workouts,
     maxHr,
@@ -400,6 +403,9 @@ export function useAggregatedStats(
       cachedStatsRef.current?.uid === uid
         ? cachedStatsRef.current.promise
         : undefined;
+    const validationStartMark = "training:insights-aggregate:start";
+    const validationEndMark = "training:insights-aggregate:ready";
+    markClientPerformance(validationStartMark);
 
     fetchAndComputeAggregatedStats(
       uid,
@@ -411,6 +417,13 @@ export function useAggregatedStats(
       cachedStatsPromise
     )
       .then((result) => {
+        markClientPerformance(validationEndMark, { status: "success" });
+        measureClientPerformance(
+          "training:insights-aggregate:duration",
+          validationStartMark,
+          validationEndMark,
+          { status: "success" }
+        );
         if (!cancelled) {
           setDataState({ uid, data: result });
           setError(null);
@@ -418,6 +431,13 @@ export function useAggregatedStats(
         }
       })
       .catch((err) => {
+        markClientPerformance(validationEndMark, { status: "error" });
+        measureClientPerformance(
+          "training:insights-aggregate:duration",
+          validationStartMark,
+          validationEndMark,
+          { status: "error" }
+        );
         if (!cancelled) {
           setError(err instanceof Error ? err : new Error(String(err)));
           setLoading(false);
