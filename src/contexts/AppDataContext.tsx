@@ -36,7 +36,6 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { useAuth } from "@/hooks/useAuth";
 import { fetchHealthWorkouts } from "@/services/healthWorkouts";
 import { useRefetchOnFocus } from "@/hooks/useRefetchOnFocus";
 import { fetchPlans } from "@/services/plans";
@@ -88,10 +87,13 @@ export interface AppDataContextValue {
 
 const AppDataContext = createContext<AppDataContextValue | null>(null);
 
-export function AppDataProvider({ children }: { children: React.ReactNode }) {
-  const { user } = useAuth();
-  const uid = user?.uid ?? null;
-
+export function AppDataProvider({
+  children,
+  uid,
+}: {
+  children: React.ReactNode;
+  uid: string;
+}) {
   const [workouts, setWorkouts] = useState<HealthWorkout[]>([]);
   const [workoutsLoading, setWorkoutsLoading] = useState(true);
   const [workoutsRefreshing, setWorkoutsRefreshing] = useState(false);

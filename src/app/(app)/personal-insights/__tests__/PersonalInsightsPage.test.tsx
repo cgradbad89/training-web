@@ -32,6 +32,7 @@ const h = vi.hoisted(() => ({
     workoutsLoading: false,
     settingsLoading: false,
     racesLoading: false,
+    overridesLoading: false,
   },
   riegelCalls: 0,
   loadScanCalls: 0,

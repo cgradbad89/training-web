@@ -32,6 +32,7 @@ export interface AggregationLoadingState {
   workoutsLoading: boolean;
   settingsLoading: boolean;
   racesLoading: boolean;
+  overridesLoading: boolean;
 }
 
 export interface UseAggregatedStatsOptions {
@@ -65,7 +66,8 @@ export function isAggregationReady(
     uid !== null &&
     !loadingState.workoutsLoading &&
     !loadingState.settingsLoading &&
-    !loadingState.racesLoading
+    !loadingState.racesLoading &&
+    !loadingState.overridesLoading
   );
 }
 

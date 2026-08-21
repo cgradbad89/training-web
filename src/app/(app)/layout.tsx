@@ -63,15 +63,17 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <AuthGuard>
-      {isHealthRoute ? (
-        appShell
-      ) : (
-        <AppDataProvider>
-          <AutoMatchRunner />
-          <PRComputerRunner />
-          {appShell}
-        </AppDataProvider>
-      )}
+      {({ user }) =>
+        isHealthRoute ? (
+          appShell
+        ) : (
+          <AppDataProvider uid={user.uid}>
+            <AutoMatchRunner />
+            <PRComputerRunner />
+            {appShell}
+          </AppDataProvider>
+        )
+      }
     </AuthGuard>
   );
 }

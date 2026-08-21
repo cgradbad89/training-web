@@ -21,9 +21,6 @@ const h = vi.hoisted(() => ({
   fetchUserSettings: vi.fn(),
 }));
 
-vi.mock("@/hooks/useAuth", () => ({
-  useAuth: () => ({ user: { uid: "u1" }, loading: false }),
-}));
 vi.mock("@/services/healthWorkouts", () => ({
   fetchHealthWorkouts: h.fetchHealthWorkouts,
 }));
@@ -60,7 +57,7 @@ async function mount() {
   await act(async () => {
     root = createRoot(container);
     root.render(
-      <AppDataProvider>
+      <AppDataProvider uid="u1">
         <Probe />
       </AppDataProvider>
     );
@@ -113,6 +110,57 @@ describe("AppDataProvider", () => {
     await act(async () => initial.promise);
     expect(latest?.workoutsLoading).toBe(false);
     expect(latest?.workoutsRefreshing).toBe(false);
+  });
+
+  it("keeps every data domain loading until the resolved user's initial reads finish", async () => {
+    const workouts = deferred<Array<{ workoutId: string }>>();
+    const plans = deferred<never[]>();
+    const races = deferred<never[]>();
+    const overrides = deferred<Record<string, never>>();
+    const settings = deferred<null>();
+    h.fetchHealthWorkouts.mockReturnValue(workouts.promise);
+    h.fetchPlans.mockReturnValue(plans.promise);
+    h.fetchRaces.mockReturnValue(races.promise);
+    h.fetchAllOverrides.mockReturnValue(overrides.promise);
+    h.fetchUserSettings.mockReturnValue(settings.promise);
+
+    await mount();
+
+    expect(latest).toEqual(
+      expect.objectContaining({
+        workoutsLoading: true,
+        plansLoading: true,
+        racesLoading: true,
+        overridesLoading: true,
+        settingsLoading: true,
+      })
+    );
+
+    workouts.resolve([]);
+    plans.resolve([]);
+    races.resolve([]);
+    overrides.resolve({});
+    settings.resolve(null);
+    await act(async () => {
+      await Promise.all([
+        workouts.promise,
+        plans.promise,
+        races.promise,
+        overrides.promise,
+        settings.promise,
+      ]);
+    });
+  });
+
+  it("marks a legitimate zero-workout result loaded for a resolved user", async () => {
+    h.fetchHealthWorkouts.mockResolvedValue([]);
+    await mount();
+
+    expect(h.fetchHealthWorkouts).toHaveBeenCalledWith("u1", {
+      limitCount: 1000,
+    });
+    expect(latest?.workouts).toEqual([]);
+    expect(latest?.workoutsLoading).toBe(false);
   });
 
   it("fetches workouts with the shared 1000 limit", async () => {

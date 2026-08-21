@@ -19,7 +19,19 @@ vi.mock("next/link", () => ({
 }));
 
 vi.mock("@/components/layout/AuthGuard", () => ({
-  AuthGuard: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  AuthGuard: ({
+    children,
+  }: {
+    children:
+      | React.ReactNode
+      | ((auth: { user: { uid: string }; loading: false }) => React.ReactNode);
+  }) => (
+    <>
+      {typeof children === "function"
+        ? children({ user: { uid: "resolved-uid" }, loading: false })
+        : children}
+    </>
+  ),
 }));
 vi.mock("@/components/layout/HubBanner", () => ({
   HubBanner: () => <div data-testid="hub-banner" />,
@@ -28,8 +40,8 @@ vi.mock("@/components/layout/MobileTabBar", () => ({
   MobileTabBar: () => <div data-testid="mobile-tabs" />,
 }));
 vi.mock("@/contexts/AppDataContext", () => ({
-  AppDataProvider: ({ children }: { children: React.ReactNode }) => (
-    <div data-testid="app-data-provider">{children}</div>
+  AppDataProvider: ({ children, uid }: { children: React.ReactNode; uid: string }) => (
+    <div data-testid="app-data-provider" data-uid={uid}>{children}</div>
   ),
 }));
 vi.mock("@/components/AutoMatchRunner", () => ({
@@ -86,6 +98,9 @@ describe("authenticated app layout training-data scope", () => {
     renderAt("/dashboard");
 
     expect(container.querySelector('[data-testid="app-data-provider"]')).toBeTruthy();
+    expect(
+      container.querySelector('[data-testid="app-data-provider"]')?.getAttribute("data-uid")
+    ).toBe("resolved-uid");
     expect(container.querySelector('[data-testid="auto-match-runner"]')).toBeTruthy();
     expect(container.querySelector('[data-testid="pr-computer-runner"]')).toBeTruthy();
   });

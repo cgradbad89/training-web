@@ -139,6 +139,7 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
         workoutsLoading: false,
         settingsLoading: false,
         racesLoading: false,
+        overridesLoading: false,
       })
     ).toBe(true);
   });
@@ -148,6 +149,7 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
       workoutsLoading: false,
       settingsLoading: false,
       racesLoading: false,
+      overridesLoading: false,
     };
     expect(isAggregationReady(null, readyFlags)).toBe(false);
     expect(
@@ -158,6 +160,17 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
     ).toBe(false);
     expect(
       isAggregationReady("uid-1", { ...readyFlags, racesLoading: true })
+    ).toBe(false);
+  });
+
+  it("waits for workout overrides before aggregation is ready", () => {
+    expect(
+      isAggregationReady("uid-1", {
+        workoutsLoading: false,
+        settingsLoading: false,
+        racesLoading: false,
+        overridesLoading: true,
+      })
     ).toBe(false);
   });
 
@@ -176,6 +189,7 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
           workoutsLoading: false,
           settingsLoading: false,
           racesLoading: false,
+          overridesLoading: false,
         },
         { enabled: false }
       );

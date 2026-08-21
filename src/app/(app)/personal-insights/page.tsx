@@ -1301,6 +1301,7 @@ export default function PersonalInsightsPage() {
     workoutsLoading,
     settingsLoading,
     racesLoading,
+    overridesLoading,
   } = useAppData();
 
   // Apply overrides and drop excluded workouts — same processing the old
@@ -1334,7 +1335,7 @@ export default function PersonalInsightsPage() {
     maxHr,
     restingHr,
     raceInputs,
-    { workoutsLoading, settingsLoading, racesLoading },
+    { workoutsLoading, settingsLoading, racesLoading, overridesLoading },
     {
       enabled: activeTab !== "workouts",
       activeRaceId: activeRace?.id ?? null,

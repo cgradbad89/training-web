@@ -3,11 +3,14 @@
 import React from "react";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
+import { type User } from "firebase/auth";
 import { useAuth } from "@/hooks";
 import { FullPageLoader } from "@/components/ui/LoadingSpinner";
 
 interface AuthGuardProps {
-  children: React.ReactNode;
+  children:
+    | React.ReactNode
+    | ((auth: { user: User; loading: false }) => React.ReactNode);
 }
 
 /**
@@ -27,5 +30,11 @@ export function AuthGuard({ children }: AuthGuardProps) {
   if (loading) return <FullPageLoader />;
   if (!user) return null;
 
-  return <>{children}</>;
+  return (
+    <>
+      {typeof children === "function"
+        ? children({ user, loading: false })
+        : children}
+    </>
+  );
 }
