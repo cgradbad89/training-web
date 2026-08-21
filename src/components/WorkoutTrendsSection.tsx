@@ -8,11 +8,11 @@
  *   B. Weight progression by exercise (one chart per exercise)
  *   C. Total weekly workout volume (sets × reps × weight)
  *
- * All Firestore fetching happens inside this component so the parent
- * Personal Insights page stays focused on running insights.
+ * Plans come from AppDataContext, the same shared source already mounted for
+ * Personal Insights. This section performs no independent Firestore reads.
  */
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo } from "react";
 import {
   BarChart,
   Bar,
@@ -29,7 +29,7 @@ import { Dumbbell } from "lucide-react";
 
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { type Plan, isWorkoutPlan, isExerciseItem } from "@/types/plan";
-import { fetchPlans } from "@/services/plans";
+import { useAppData } from "@/contexts/AppDataContext";
 import {
   isPilatesActivity,
   isStrengthLikeActivity,
@@ -311,32 +311,13 @@ function VolumeTooltip({
 // ─── Component ──────────────────────────────────────────────────────────────
 
 interface WorkoutTrendsSectionProps {
-  uid: string;
   workouts: HealthWorkout[];
 }
 
 export function WorkoutTrendsSection({
-  uid,
   workouts,
 }: WorkoutTrendsSectionProps) {
-  const [plans, setPlans] = useState<Plan[]>([]);
-  const [loaded, setLoaded] = useState(false);
-
-  useEffect(() => {
-    if (!uid) return;
-    let cancelled = false;
-    fetchPlans(uid)
-      .then((p) => {
-        if (!cancelled) setPlans(p);
-      })
-      .catch(console.error)
-      .finally(() => {
-        if (!cancelled) setLoaded(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [uid]);
+  const { plans, plansLoading } = useAppData();
 
   const frequencyData = useMemo(
     () => buildFrequencyData(workouts),
@@ -431,7 +412,7 @@ export function WorkoutTrendsSection({
         <h3 className="text-sm font-semibold text-textPrimary mb-3">
           Weight Progression by Exercise
         </h3>
-        {!loaded ? (
+        {plansLoading ? (
           <p className="text-sm text-textSecondary text-center py-6">
             Loading…
           </p>
@@ -546,4 +527,3 @@ export function WorkoutTrendsSection({
     </>
   );
 }
-

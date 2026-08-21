@@ -1655,7 +1655,7 @@ export default function PersonalInsightsPage() {
 
       {/* ── Workout Trends ───────────────────────────────── */}
       {activeTab === "workouts" && uid && (
-        <WorkoutTrendsSection uid={uid} workouts={workouts} />
+        <WorkoutTrendsSection workouts={workouts} />
       )}
     </div>
   );
