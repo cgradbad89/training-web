@@ -29,12 +29,11 @@ import {
   findActiveRunningPlan,
   type RunTitleContext,
 } from "@/utils/runPlanTitle";
-import { getMileSplits } from "@/utils/mileSplitsCache";
 import { applyOverride } from "@/types/workoutOverride";
-import { vo2HistoryCutoffISO } from "@/utils/vo2History";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { RACE_DISTANCE_MILES } from "@/types/race";
 import { useAggregatedStats } from "@/hooks/useAggregatedStats";
+import { type AggregatedStatsDoc } from "@/utils/aggregatedStats";
 import { formatPace, formatPaceLabel } from "@/utils/pace";
 import { weekStart as getWeekStart } from "@/utils/dates";
 import {
@@ -43,7 +42,6 @@ import {
   predictSeconds,
   formatRaceTime,
   formatRacePace,
-  riegelConfidenceLabel,
   type RiegelFit,
 } from "@/utils/riegelFit";
 import {
@@ -66,10 +64,7 @@ import {
   type HRZoneNumber,
 } from "@/utils/trainingLoad";
 import { InfoTooltip } from "@/components/ui/InfoTooltip";
-import { buildPersonalRecordsByYear } from "@/utils/personalRecords";
-import { buildPaceTrendsByDistanceBucket } from "@/utils/paceTrends";
-import { buildHrZoneDistribution } from "@/utils/hrZoneDistribution";
-import { buildVo2History, type Vo2Entry } from "@/utils/vo2History";
+import { type Vo2Entry } from "@/utils/vo2History";
 
 // ─── Training Load KPI tooltip copy ───────────────────────────────────────────
 // Single source of truth so the four KPI cards and any future surfaces stay
@@ -134,14 +129,6 @@ function ratingBand(value: number): { label: string; color: string; index: numbe
   return { label: last.label, color: last.color, index: VO2_NORMS.bands.length - 1 };
 }
 
-import {
-  collection,
-  getDocs,
-  query,
-  orderBy,
-  where,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
 
 // Recharts-backed sections/charts are lazy-loaded (client-only) so this
 // chart-heavy route ships less JS on initial load. Each renders a ChartSkeleton
@@ -969,6 +956,307 @@ function CardioFitnessCard({
 
 // ─── Page ────────────────────────────────────────────────────────────────────
 
+function FitnessInsightsTab({
+  workouts,
+  plans,
+  maxHr,
+  restingHr,
+  statsData,
+}: {
+  workouts: HealthWorkout[];
+  plans: ReturnType<typeof useAppData>["plans"];
+  maxHr: number;
+  restingHr: number;
+  statsData: AggregatedStatsDoc | null;
+}) {
+  const activeRunningPlan = useMemo(
+    () => findActiveRunningPlan(plans),
+    [plans]
+  );
+  const trainingLoadData = useMemo<TrainingLoadSectionData>(() => {
+    const DISPLAY_DAYS = 112;
+    const PEAK_RUN_LOAD_DAYS = 30;
+    const SEED_DAYS = 180;
+
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const displayStart = new Date(today);
+    displayStart.setDate(today.getDate() - (DISPLAY_DAYS - 1));
+
+    const earliestWorkoutTime = workouts.reduce(
+      (min, workout) => Math.min(min, workout.startDate.getTime()),
+      Infinity
+    );
+    const seedFromHistory = Number.isFinite(earliestWorkoutTime)
+      ? new Date(earliestWorkoutTime)
+      : null;
+    const seedFromSeedWindow = new Date(today);
+    seedFromSeedWindow.setDate(today.getDate() - (SEED_DAYS - 1));
+    const seedStart =
+      seedFromHistory && seedFromHistory > seedFromSeedWindow
+        ? new Date(
+            seedFromHistory.getFullYear(),
+            seedFromHistory.getMonth(),
+            seedFromHistory.getDate()
+          )
+        : seedFromSeedWindow;
+
+    const seedableWorkouts = workouts.filter(
+      (workout) => workout.startDate >= seedStart
+    );
+    const dailyMap = buildDailyLoadMap(seedableWorkouts, maxHr, restingHr);
+    const fullSeries = buildLoadEwmaSeries(dailyMap, seedStart, today);
+    const displaySeries = fullSeries.slice(
+      Math.max(0, fullSeries.length - DISPLAY_DAYS)
+    );
+    const last = fullSeries[fullSeries.length - 1] ?? null;
+    const daysOfData = fullSeries.length;
+
+    const peakStart = new Date(today);
+    peakStart.setDate(today.getDate() - (PEAK_RUN_LOAD_DAYS - 1));
+    const peakStartTime = peakStart.getTime();
+    let peakRunLoad = 0;
+    let peakRunDate: Date | null = null;
+    for (const workout of workouts) {
+      if (!workout.isRunLike || workout.startDate.getTime() < peakStartTime) {
+        continue;
+      }
+      const score = resolveDisplayLoad(workout, maxHr, restingHr);
+      if (score == null) continue;
+      if (score > peakRunLoad) {
+        peakRunLoad = score;
+        peakRunDate = workout.startDate;
+      }
+    }
+
+    const SIXMO_DAYS = 180;
+    const sixMonthSeries = fullSeries.slice(
+      Math.max(0, fullSeries.length - SIXMO_DAYS)
+    );
+    const sixMonthCtl = sixMonthSeries.map((point) => point.ctl);
+    const sixMonthAtl = sixMonthSeries.map((point) => point.atl);
+    const ctl4wAgo = valueNWeeksAgo(fullSeries, 4, "ctl");
+    const atl4wAgo = valueNWeeksAgo(fullSeries, 4, "atl");
+
+    const sixMoCutoffMs = today.getTime() - SIXMO_DAYS * 86400 * 1000;
+    const runSessionLoads: number[] = [];
+    const workoutSessionLoads: number[] = [];
+    for (const workout of workouts) {
+      if (workout.startDate.getTime() < sixMoCutoffMs) continue;
+      if (workout.isRunLike) {
+        if (workout.distanceMiles < MIN_RUN_MILES_FOR_AVG) continue;
+      } else if (workout.durationSeconds < MIN_WORKOUT_SECONDS_FOR_AVG) {
+        continue;
+      }
+      const score = resolveDisplayLoad(workout, maxHr, restingHr);
+      if (score == null) continue;
+      if (workout.isRunLike) runSessionLoads.push(score);
+      else workoutSessionLoads.push(score);
+    }
+
+    const weekStartMonday = getWeekStart(today);
+    const weekStartMs = weekStartMonday.getTime();
+    const weekEndMs = weekStartMs + 7 * 86400 * 1000;
+    const thisWeekRuns: number[] = [];
+    const thisWeekWorkouts: number[] = [];
+    for (const workout of workouts) {
+      const timestamp = workout.startDate.getTime();
+      if (timestamp < weekStartMs || timestamp >= weekEndMs) continue;
+      if (workout.isRunLike) {
+        if (workout.distanceMiles < MIN_RUN_MILES_FOR_AVG) continue;
+      } else if (workout.durationSeconds < MIN_WORKOUT_SECONDS_FOR_AVG) {
+        continue;
+      }
+      const score = resolveDisplayLoad(workout, maxHr, restingHr);
+      if (score == null) continue;
+      if (workout.isRunLike) thisWeekRuns.push(score);
+      else thisWeekWorkouts.push(score);
+    }
+    const average = (values: number[]): number | null =>
+      values.length > 0
+        ? values.reduce((sum, value) => sum + value, 0) / values.length
+        : null;
+
+    return {
+      displaySeries,
+      last,
+      daysOfData,
+      peakRunLoad: peakRunDate ? peakRunLoad : null,
+      peakRunDate,
+      sixMonthCtl,
+      sixMonthAtl,
+      ctl4wAgo,
+      atl4wAgo,
+      runSessionLoads,
+      workoutSessionLoads,
+      thisWeekRunAvg: average(thisWeekRuns),
+      thisWeekWorkoutAvg: average(thisWeekWorkouts),
+    };
+  }, [workouts, maxHr, restingHr]);
+  const runTitleMap = useMemo(
+    () => buildRunTitleMap(activeRunningPlan, workouts),
+    [activeRunningPlan, workouts]
+  );
+
+  return (
+    <>
+      <SectionHeader icon={Heart} title="Cardio Fitness (VO₂ max)" />
+      <CardioFitnessCard history={statsData?.vo2History ?? []} loading={false} />
+      <SectionHeader icon={Activity} title="Training Load" />
+      <TrainingLoadSection
+        data={trainingLoadData}
+        workouts={workouts}
+        restingHr={restingHr}
+        runTitleMap={runTitleMap}
+        intensity={statsData?.hrZoneDistribution ?? null}
+        intensityLoading={false}
+        maxHr={maxHr}
+      />
+    </>
+  );
+}
+
+function overallConfidence(
+  _fit5k: RiegelFit | null,
+  fitLong: RiegelFit | null
+): string {
+  if (!fitLong) return "Limited Data";
+  if (fitLong.n >= 6 && fitLong.r2 >= 0.55) return "High";
+  if (fitLong.n >= 4 && fitLong.r2 >= 0.45) return "Moderate";
+  return "Limited Data";
+}
+
+interface PerformanceTabData {
+  fit5k: RiegelFit | null;
+  fitTen: RiegelFit | null;
+  fitHalf: RiegelFit | null;
+  fitMarathon: RiegelFit | null;
+  confidence: string;
+  confidenceLevel: "good" | "ok" | "low";
+  predictions: Array<{ label: string; distance: number; time: number | null }>;
+  runAnalysisWorkouts: RunAnalysisWorkout[];
+  yearRuns: HealthWorkout[];
+  prs: AggregatedStatsDoc["personalRecordsByYear"]["prs"];
+  specificPrs: AggregatedStatsDoc["personalRecordsByYear"]["specificPrs"];
+  paceTrendData: AggregatedStatsDoc["paceTrends"];
+  hasPaceTrend: boolean;
+  fastestMileByYear: Record<number, AggregatedStatsDoc["fastestMileSegment"]>;
+}
+
+const PR_BUCKETS = ["1–3 mi", "3–6 mi", "6–7 mi", "7–10 mi", "10+ mi"];
+const SPECIFIC_DISTANCES = [
+  "5K",
+  "5 Miles",
+  "10K",
+  "15K",
+  "10 Miles",
+  "Half Marathon",
+];
+
+function PerformanceTabScope({
+  workouts,
+  raceInputs,
+  selectedYear,
+  statsData,
+  children,
+}: {
+  workouts: HealthWorkout[];
+  raceInputs: { raceDate: Date | string; distanceMiles: number }[];
+  selectedYear: number;
+  statsData: AggregatedStatsDoc | null;
+  children: (data: PerformanceTabData) => React.ReactNode;
+}) {
+  const runs = useMemo(
+    () => workouts.filter((workout) => workout.isRunLike),
+    [workouts]
+  );
+  const runAnalysisWorkouts = useMemo<RunAnalysisWorkout[]>(
+    () =>
+      runs.map((run) => ({
+        workoutId: run.workoutId,
+        date: run.startDate.toISOString(),
+        distanceMiles: run.distanceMiles,
+        durationSeconds: run.durationSeconds,
+        avgPaceSecPerMile: run.avgPaceSecPerMile,
+        avgHeartRate: run.avgHeartRate,
+        cadenceSPM: run.cadenceSPM,
+        activityType: run.activityType,
+        trainingLoadV2: run.trainingLoadV2,
+      })),
+    [runs]
+  );
+  const runInputs = useMemo(
+    () =>
+      runs.map((run) => ({
+        workoutId: run.workoutId,
+        distanceMiles: run.distanceMiles,
+        durationSeconds: run.durationSeconds,
+        startDate: run.startDate,
+        activityType: run.activityType,
+        sourceName: run.sourceName,
+      })),
+    [runs]
+  );
+  const efforts = useMemo(
+    () => buildQualifyingEfforts(runInputs, 56, { races: raceInputs }),
+    [runInputs, raceInputs]
+  );
+  const fit5k = useMemo(
+    () => fitRiegel(efforts, 3.1069, 0, { min: 0.9, max: 1.3 }),
+    [efforts]
+  );
+  const fitTen = useMemo(
+    () => fitRiegel(efforts, 10.0, 3.0, { min: 1.04, max: 1.10 }),
+    [efforts]
+  );
+  const fitHalf = useMemo(
+    () => fitRiegel(efforts, 13.109, 3.0, { min: 1.04, max: 1.10 }),
+    [efforts]
+  );
+  const fitMarathon = useMemo(
+    () => fitRiegel(efforts, 26.219, 3.0, { min: 1.04, max: 1.10 }),
+    [efforts]
+  );
+  const yearRuns = useMemo(
+    () => runs.filter((run) => run.startDate.getFullYear() === selectedYear),
+    [runs, selectedYear]
+  );
+
+  const confidence = overallConfidence(fit5k, fitHalf);
+  const paceTrendData = statsData?.paceTrends ?? [];
+  const t5k = fit5k ? predictSeconds(fit5k, 3.1069) : null;
+  const t10 = fitTen ? predictSeconds(fitTen, 10.0) : null;
+  const tHalf = fitHalf ? predictSeconds(fitHalf, 13.109) : null;
+  const tMar = fitMarathon ? predictSeconds(fitMarathon, 26.219) : null;
+
+  return children({
+    fit5k,
+    fitTen,
+    fitHalf,
+    fitMarathon,
+    confidence,
+    confidenceLevel:
+      confidence === "High" ? "good" : confidence === "Moderate" ? "ok" : "low",
+    predictions: [
+      { label: "5K", distance: 3.1069, time: t5k },
+      { label: "10 Miler", distance: 10.0, time: t10 },
+      { label: "Half Marathon", distance: 13.109, time: tHalf },
+      { label: "Marathon", distance: 26.219, time: tMar },
+    ],
+    runAnalysisWorkouts,
+    yearRuns,
+    prs: statsData?.personalRecordsByYear.prs ?? [],
+    specificPrs: statsData?.personalRecordsByYear.specificPrs ?? [],
+    paceTrendData,
+    hasPaceTrend: paceTrendData.some(
+      (week) => week.short || week.medium || week.long
+    ),
+    fastestMileByYear: {
+      [selectedYear]: statsData?.fastestMileSegment ?? null,
+    },
+  });
+}
+
 export default function PersonalInsightsPage() {
   const { user } = useAuth();
   const uid = user?.uid ?? null;
@@ -1024,10 +1312,6 @@ export default function PersonalInsightsPage() {
         .filter((w) => !overrides[w.workoutId]?.isExcluded),
     [rawWorkouts, overrides]
   );
-  const activeRunningPlan = useMemo(
-    () => findActiveRunningPlan(plans),
-    [plans]
-  );
   const raceInputs = useMemo(
     () =>
       races
@@ -1046,327 +1330,27 @@ export default function PersonalInsightsPage() {
     maxHr,
     restingHr,
     raceInputs,
-    { workoutsLoading, settingsLoading, racesLoading }
+    { workoutsLoading, settingsLoading, racesLoading },
+    { enabled: activeTab !== "workouts" }
   );
-  const loading = workoutsLoading || stats.loading;
-  
+  const initialLoadPending =
+    workoutsLoading || (activeTab !== "workouts" && stats.loading);
+  const [hasCompletedInitialLoad, setHasCompletedInitialLoad] = useState(
+    () => !initialLoadPending
+  );
+  useEffect(() => {
+    if (initialLoadPending) return;
+    const timer = window.setTimeout(() => setHasCompletedInitialLoad(true), 0);
+    return () => window.clearTimeout(timer);
+  }, [initialLoadPending]);
+  const showInitialSkeleton =
+    initialLoadPending && !hasCompletedInitialLoad;
+
   const selectedYear = new Date().getFullYear();
 
-  const {
-    vo2History: fetchedVo2 = [],
-    hrZoneDistribution,
-    personalRecordsByYear,
-    paceTrends = [],
-    fastestMileSegment,
-  } = stats.data ?? {};
-
-  const intensityData = hrZoneDistribution ?? null;
-  const intensityLoading = false;
-  
-  const vo2History = fetchedVo2;
-  const vo2Loading = false;
-  const fastestMileByYear: Record<number, any> = { [selectedYear]: fastestMileSegment ?? null };
-
-
-  const runs = useMemo(() => workouts.filter((w) => w.isRunLike), [workouts]);
-
-  // Mapping for the "Run Analysis" section. HealthWorkout.startDate is a JS Date;
-  // RunAnalysisWorkout.date is a string, so we serialize via toISOString() — it
-  // round-trips to the identical instant, so local-day bucketing is preserved.
-  // Memoized so the section's internal useMemo stays stable across unrelated
-  // re-renders.
-  const runAnalysisWorkouts = useMemo<RunAnalysisWorkout[]>(
-    () =>
-      runs.map((r) => ({
-        workoutId: r.workoutId,
-        date: r.startDate.toISOString(),
-        distanceMiles: r.distanceMiles,
-        durationSeconds: r.durationSeconds,
-        avgPaceSecPerMile: r.avgPaceSecPerMile,
-        avgHeartRate: r.avgHeartRate,
-        cadenceSPM: r.cadenceSPM,
-        activityType: r.activityType,
-        trainingLoadV2: r.trainingLoadV2,
-      })),
-    [runs]
-  );
-
-
-
-  // ── Riegel Predictions ──────────────────────────────────────────────────────
-
-  const runInputs = useMemo(
-    () =>
-      runs.map((r) => ({
-        workoutId: r.workoutId,
-        distanceMiles: r.distanceMiles,
-        durationSeconds: r.durationSeconds,
-        startDate: r.startDate,
-        activityType: r.activityType,
-        sourceName: r.sourceName,
-      })),
-    [runs]
-  );
-
-
-  const fit5k = useMemo(() => {
-    const efforts = buildQualifyingEfforts(runInputs, 56, { races: raceInputs });
-    return fitRiegel(efforts, 3.1069, 0, { min: 0.9, max: 1.3 });
-  }, [runInputs, raceInputs]);
-
-  // Per-distance long fits — each target is gated independently by
-  // hasRaceAnchor inside fitRiegel, so a half-only race (e.g. 13.37mi) unlocks
-  // the 10mi and half fits but leaves the marathon fit null (its anchor check
-  // demands a race effort ≥26.219mi).
-  // All three reuse the same long-distance args the single `fitLong` used
-  // before: minMilesForFit=3.0, k clamp [1.04, 1.10].
-  const fitTen = useMemo(() => {
-    const efforts = buildQualifyingEfforts(runInputs, 56, { races: raceInputs });
-    return fitRiegel(efforts, 10.0, 3.0, { min: 1.04, max: 1.10 });
-  }, [runInputs, raceInputs]);
-
-  const fitHalf = useMemo(() => {
-    const efforts = buildQualifyingEfforts(runInputs, 56, { races: raceInputs });
-    return fitRiegel(efforts, 13.109, 3.0, { min: 1.04, max: 1.10 });
-  }, [runInputs, raceInputs]);
-
-  const fitMarathon = useMemo(() => {
-    const efforts = buildQualifyingEfforts(runInputs, 56, { races: raceInputs });
-    return fitRiegel(efforts, 26.219, 3.0, { min: 1.04, max: 1.10 });
-  }, [runInputs, raceInputs]);
-
-  const t5k  = fit5k        ? predictSeconds(fit5k,        3.1069) : null;
-  const t10  = fitTen       ? predictSeconds(fitTen,       10.0)   : null;
-  const tHalf = fitHalf     ? predictSeconds(fitHalf,      13.109) : null;
-  const tMar = fitMarathon  ? predictSeconds(fitMarathon,  26.219) : null;
-
-  // Confidence is computed from the half-distance fit — the closest analog to
-  // the original `fitLong` (same target distance), preserving prior semantics.
-  function overallConfidence(f5k: RiegelFit | null, fLong: RiegelFit | null): string {
-    if (!fLong) return "Limited Data";
-    if (fLong.n >= 6 && fLong.r2 >= 0.55) return "High";
-    if (fLong.n >= 4 && fLong.r2 >= 0.45) return "Moderate";
-    return "Limited Data";
-  }
-
-  const confidence = overallConfidence(fit5k, fitHalf);
-  const confidenceLevel: "good" | "ok" | "low" =
-    confidence === "High" ? "good" : confidence === "Moderate" ? "ok" : "low";
-
-  // ── Personal Records by Year ────────────────────────────────────────────────
-
-  const yearRuns = useMemo(
-    () => runs.filter((r) => r.startDate.getFullYear() === selectedYear),
-    [runs, selectedYear]
-  );
-
-  const { prs = [], specificPrs = [] } = personalRecordsByYear ?? {};
-
-  const prBuckets = [
-    { label: "1–3 mi" },
-    { label: "3–6 mi" },
-    { label: "6–7 mi" },
-    { label: "7–10 mi" },
-    { label: "10+ mi" },
-  ];
-
-  const specificDistances = [
-    { label: "5K" },
-    { label: "5 Miles" },
-    { label: "10K" },
-    { label: "15K" },
-    { label: "10 Miles" },
-    { label: "Half Marathon" },
-  ];
-
-  // ── Pace Trends (last 8 weeks) ─────────────────────────────────────────────
-
-  const paceTrendData = paceTrends;
-
-  const hasPaceTrend = paceTrendData.some((w) => w.short || w.medium || w.long);
-
-  // ── Training Load (CTL / ATL / TSB) ────────────────────────────────────────
-
-  const trainingLoadData = useMemo(() => {
-    // Window the user sees on the chart.
-    const DISPLAY_DAYS = 112; // 16 weeks
-    // Peak Run Load has its own (shorter) window — decoupled from the chart
-    // window so we can shrink it without also shrinking the curve/bars.
-    const PEAK_RUN_LOAD_DAYS = 30;
-    // Seed window — 180 days is well past 3× CTL_DAYS (42), so the EWMA has
-    // converged by the time we hit the displayed range.
-    const SEED_DAYS = 180;
-
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const displayStart = new Date(today);
-    displayStart.setDate(today.getDate() - (DISPLAY_DAYS - 1));
-
-    // Determine the earliest day we can safely seed from: prefer the seed
-    // window, but if the user's actual history is shorter, start there.
-    const earliestWorkoutTime = workouts.reduce(
-      (min, w) => Math.min(min, w.startDate.getTime()),
-      Infinity
-    );
-    const seedFromHistory =
-      isFinite(earliestWorkoutTime) ? new Date(earliestWorkoutTime) : null;
-
-    const seedFromSeedWindow = new Date(today);
-    seedFromSeedWindow.setDate(today.getDate() - (SEED_DAYS - 1));
-
-    const seedStart =
-      seedFromHistory && seedFromHistory > seedFromSeedWindow
-        ? new Date(
-            seedFromHistory.getFullYear(),
-            seedFromHistory.getMonth(),
-            seedFromHistory.getDate()
-          )
-        : seedFromSeedWindow;
-
-    // Only bucket workouts the EWMA walk will actually read (startDate >=
-    // seedStart). buildLoadEwmaSeries walks from seedStart's local day forward,
-    // so entries older than seedStart are never read — bucketing them is wasted
-    // work. seedStart is 00:00 local of its day, so this boundary matches the
-    // walk exactly and leaves CTL/ATL/TSB output unchanged.
-    const seedableWorkouts = workouts.filter((w) => w.startDate >= seedStart);
-    const dailyMap = buildDailyLoadMap(seedableWorkouts, maxHr, restingHr);
-    const fullSeries = buildLoadEwmaSeries(dailyMap, seedStart, today);
-
-    // Slice for display
-    const displaySeries = fullSeries.slice(
-      Math.max(0, fullSeries.length - DISPLAY_DAYS)
-    );
-
-    // Latest values from the converged series
-    const last = fullSeries[fullSeries.length - 1] ?? null;
-
-    // Total calendar days in fullSeries == seedStart→today inclusive; a useful
-    // proxy for "days of data" available for baselining.
-    const daysOfData = fullSeries.length;
-
-    // Peak single-run training load over its own 30-day window (separate
-    // from the chart's 112-day display window).
-    const peakStart = new Date(today);
-    peakStart.setDate(today.getDate() - (PEAK_RUN_LOAD_DAYS - 1));
-    const peakStartTime = peakStart.getTime();
-    let peakRunLoad = 0;
-    let peakRunDate: Date | null = null;
-    for (const w of workouts) {
-      if (!w.isRunLike) continue;
-      if (w.startDate.getTime() < peakStartTime) continue;
-      const score = resolveDisplayLoad(w, maxHr, restingHr);
-      if (score == null) continue;
-      if (score > peakRunLoad) {
-        peakRunLoad = score;
-        peakRunDate = w.startDate;
-      }
-    }
-
-    // ── Self-relative context inputs ──
-    // 6-month tail of the converged EWMA for the personal-range bars.
-    const SIXMO_DAYS = 180;
-    const sixMonthSeries = fullSeries.slice(
-      Math.max(0, fullSeries.length - SIXMO_DAYS)
-    );
-    const sixMonthCtl = sixMonthSeries.map((p) => p.ctl);
-    const sixMonthAtl = sixMonthSeries.map((p) => p.atl);
-
-    // CTL/ATL value 4 weeks (28 days) ago, for the trend chips.
-    const ctl4wAgo = valueNWeeksAgo(fullSeries, 4, "ctl");
-    const atl4wAgo = valueNWeeksAgo(fullSeries, 4, "atl");
-
-    // Per-session load distributions over the last 6 months — runs vs
-    // non-run workouts, excluding sessions with no HR (computeTrainingLoad
-    // returns null → not counted as 0).
-    //
-    // Min-activity thresholds match the This Week averages exactly (same
-    // constants, same inclusive >= comparison): sub-1mi runs and sub-15min
-    // workouts are aborted/warmup activities that would drag the typical
-    // and range downward. They still render their individual badges
-    // elsewhere — only this aggregate excludes them.
-    const sixMoCutoffMs = today.getTime() - SIXMO_DAYS * 86400 * 1000;
-    const runSessionLoads: number[] = [];
-    const workoutSessionLoads: number[] = [];
-    for (const w of workouts) {
-      if (w.startDate.getTime() < sixMoCutoffMs) continue;
-      if (w.isRunLike) {
-        if (w.distanceMiles < MIN_RUN_MILES_FOR_AVG) continue;
-      } else {
-        if (w.durationSeconds < MIN_WORKOUT_SECONDS_FOR_AVG) continue;
-      }
-      const score = resolveDisplayLoad(w, maxHr, restingHr);
-      if (score == null) continue;
-      if (w.isRunLike) runSessionLoads.push(score);
-      else workoutSessionLoads.push(score);
-    }
-
-    // This week's avg session load — runs vs non-run workouts.
-    //
-    // Aligned to the dashboard's WeeklyStatsBar exactly so all three surfaces
-    // (Personal Insights typical-vs-current line, This Week stats bar, and
-    // any future consumer) report the same value:
-    //   • Monday-start week via the shared `weekStart()` helper (was: rolling
-    //     trailing 7 days from `today`).
-    //   • Sub-1mi runs and sub-15min workouts excluded — same MIN_* constants
-    //     and inclusive >= semantics the dashboard uses.
-    const weekStartMonday = getWeekStart(today);
-    const weekStartMs = weekStartMonday.getTime();
-    const weekEndMs = weekStartMs + 7 * 86400 * 1000; // exclusive end of Sunday
-    const thisWeekRuns: number[] = [];
-    const thisWeekWorkouts: number[] = [];
-    for (const w of workouts) {
-      const ts = w.startDate.getTime();
-      if (ts < weekStartMs || ts >= weekEndMs) continue;
-      if (w.isRunLike) {
-        if (w.distanceMiles < MIN_RUN_MILES_FOR_AVG) continue;
-      } else {
-        if (w.durationSeconds < MIN_WORKOUT_SECONDS_FOR_AVG) continue;
-      }
-      const score = resolveDisplayLoad(w, maxHr, restingHr);
-      if (score == null) continue;
-      if (w.isRunLike) thisWeekRuns.push(score);
-      else thisWeekWorkouts.push(score);
-    }
-    const avg = (xs: number[]): number | null =>
-      xs.length > 0 ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
-
-    return {
-      dailyMap,
-      displaySeries,
-      last,
-      daysOfData,
-      peakRunLoad: peakRunDate ? peakRunLoad : null,
-      peakRunDate,
-      displayStart,
-      today,
-      sixMonthCtl,
-      sixMonthAtl,
-      ctl4wAgo,
-      atl4wAgo,
-      runSessionLoads,
-      workoutSessionLoads,
-      thisWeekRunAvg: avg(thisWeekRuns),
-      thisWeekWorkoutAvg: avg(thisWeekWorkouts),
-    };
-  }, [workouts, maxHr, restingHr]);
-
-  // workoutId → matched plan-entry title context (priority-1 run label) for the
-  // Weekly Load tile's run rows. Inverts matchPlanToActual once over the set.
-  const runTitleMap = useMemo(
-    () => buildRunTitleMap(activeRunningPlan, workouts),
-    [activeRunningPlan, workouts]
-  );
-
-  if (loading) {
+  if (showInitialSkeleton) {
     return <PersonalInsightsSkeleton />;
   }
-
-  const predictions = [
-    { label: "5K", distance: 3.1069, time: t5k },
-    { label: "10 Miler", distance: 10.0, time: t10 },
-    { label: "Half Marathon", distance: 13.109, time: tHalf },
-    { label: "Marathon", distance: 26.219, time: tMar },
-  ];
 
   return (
     <div className="flex flex-col gap-6 p-6 lg:p-6 max-w-5xl mx-auto">
@@ -1390,29 +1374,39 @@ export default function PersonalInsightsPage() {
 
       {/* ── Fitness & Load ───────────────────────────────── */}
       {activeTab === "fitness" && (
-        <>
-          {/* ── Cardio Fitness (VO₂ max) ─────────────────────── */}
-          <SectionHeader icon={Heart} title="Cardio Fitness (VO₂ max)" />
-
-          <CardioFitnessCard history={vo2History} loading={vo2Loading} />
-
-          {/* ── Training Load ─────────────────────────────────── */}
-          <SectionHeader icon={Activity} title="Training Load" />
-
-          <TrainingLoadSection
-            data={trainingLoadData}
-            workouts={workouts}
-            restingHr={restingHr}
-            runTitleMap={runTitleMap}
-            intensity={intensityData}
-            intensityLoading={intensityLoading}
-            maxHr={maxHr}
-          />
-        </>
+        <FitnessInsightsTab
+          workouts={workouts}
+          plans={plans}
+          maxHr={maxHr}
+          restingHr={restingHr}
+          statsData={stats.data}
+        />
       )}
 
       {/* ── Race Readiness ───────────────────────────────── */}
       {activeTab === "performance" && (
+        <PerformanceTabScope
+          workouts={workouts}
+          raceInputs={raceInputs}
+          selectedYear={selectedYear}
+          statsData={stats.data}
+        >
+          {({
+            fit5k,
+            fitTen,
+            fitHalf,
+            fitMarathon,
+            confidence,
+            confidenceLevel,
+            predictions,
+            runAnalysisWorkouts,
+            yearRuns,
+            prs,
+            specificPrs,
+            paceTrendData,
+            hasPaceTrend,
+            fastestMileByYear,
+          }) => (
         <>
       {/* ── Predicted Race Times ─────────────────────────── */}
       <SectionHeader icon={Timer} title="Predicted Race Times" />
@@ -1571,11 +1565,11 @@ export default function PersonalInsightsPage() {
                 );
               })()}
 
-              {prBuckets.map((bucket, idx) => {
+              {PR_BUCKETS.map((label, idx) => {
                 const pr = prs[idx];
                 return (
-                  <tr key={bucket.label} className="border-b border-border/50">
-                    <td className="py-3 text-textSecondary font-medium">{bucket.label}</td>
+                  <tr key={label} className="border-b border-border/50">
+                    <td className="py-3 text-textSecondary font-medium">{label}</td>
                     {pr ? (
                       <>
                         <td className="py-3 text-right font-semibold text-textPrimary tabular-nums">
@@ -1607,11 +1601,11 @@ export default function PersonalInsightsPage() {
                   </span>
                 </td>
               </tr>
-              {specificDistances.map((dist, idx) => {
+              {SPECIFIC_DISTANCES.map((label, idx) => {
                 const pr = specificPrs[idx];
                 return (
-                  <tr key={dist.label} className="border-b border-border/50">
-                    <td className="py-3 text-textSecondary font-medium">{dist.label}</td>
+                  <tr key={label} className="border-b border-border/50">
+                    <td className="py-3 text-textSecondary font-medium">{label}</td>
                     {pr ? (
                       <>
                         <td className="py-3 text-right font-semibold text-textPrimary tabular-nums">
@@ -1655,6 +1649,8 @@ export default function PersonalInsightsPage() {
       </Card>
 
         </>
+          )}
+        </PerformanceTabScope>
       )}
 
       {/* ── Workout Trends ───────────────────────────────── */}

@@ -28,6 +28,10 @@ export interface AggregationLoadingState {
   racesLoading: boolean;
 }
 
+export interface UseAggregatedStatsOptions {
+  enabled?: boolean;
+}
+
 export type AggregationLogEvent =
   | "start"
   | "skip-in-flight"
@@ -212,24 +216,32 @@ export function useAggregatedStats(
   maxHr: number,
   restingHr: number,
   races: { raceDate: Date | string; distanceMiles: number }[],
-  loadingState: AggregationLoadingState
+  loadingState: AggregationLoadingState,
+  options?: UseAggregatedStatsOptions
 ): UseAggregatedStatsResult {
+  const enabled = options?.enabled ?? true;
   const [data, setData] = useState<AggregatedStatsDoc | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [loading, setLoading] = useState<boolean>(enabled);
   const [error, setError] = useState<Error | null>(null);
 
-  const latestWorkoutStartTime = workouts.reduce(
-    (max, w) => Math.max(max, w.startDate.getTime()),
-    0
-  );
+  const latestWorkoutStartTime = enabled
+    ? workouts.reduce(
+        (max, w) => Math.max(max, w.startDate.getTime()),
+        0
+      )
+    : 0;
   const latestWorkoutId =
-    workouts.length > 0
+    enabled && workouts.length > 0
       ? workouts.reduce((latest, current) =>
           current.startDate > latest.startDate ? current : latest
         ).workoutId
       : "";
 
   useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+
     if (!isAggregationReady(uid, loadingState)) {
       setLoading(uid !== null);
       logAggregationEvent("skip-not-ready", {
@@ -262,6 +274,7 @@ export function useAggregatedStats(
       cancelled = true;
     };
   }, [
+    enabled,
     uid,
     latestWorkoutStartTime,
     latestWorkoutId,
@@ -273,5 +286,9 @@ export function useAggregatedStats(
     loadingState.racesLoading,
   ]);
 
-  return { data, loading, error };
+  return {
+    data,
+    loading: enabled ? loading : false,
+    error: enabled ? error : null,
+  };
 }

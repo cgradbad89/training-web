@@ -1,9 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import React, { act } from "react";
+import { createRoot } from "react-dom/client";
 import {
   fetchAndComputeAggregatedStats,
   getAggregationLockKey,
   isAggregationReady,
   logAggregationEvent,
+  useAggregatedStats,
 } from "../useAggregatedStats";
 import * as firestore from "firebase/firestore";
 import { AGGREGATED_STATS_VERSION } from "@/utils/aggregatedStats";
@@ -28,6 +31,9 @@ vi.mock("firebase/firestore", async (importOriginal) => {
 vi.mock("@/utils/mileSplitsCache", () => ({
   getMileSplits: vi.fn().mockResolvedValue([]),
 }));
+
+(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean })
+  .IS_REACT_ACT_ENVIRONMENT = true;
 
 describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
   const mockUid = "test-uid";
@@ -102,6 +108,39 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
     expect(
       isAggregationReady("uid-1", { ...readyFlags, racesLoading: true })
     ).toBe(false);
+  });
+
+  it("does not fetch or compute when aggregation is disabled", async () => {
+    const container = document.createElement("div");
+    const root = createRoot(container);
+
+    function Harness() {
+      const result = useAggregatedStats(
+        mockUid,
+        mockWorkouts,
+        maxHr,
+        restingHr,
+        races,
+        {
+          workoutsLoading: false,
+          settingsLoading: false,
+          racesLoading: false,
+        },
+        { enabled: false }
+      );
+      return React.createElement("span", null, String(result.loading));
+    }
+
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+
+    expect(container.textContent).toBe("false");
+    expect(firestore.getDoc).not.toHaveBeenCalled();
+    expect(firestore.getDocs).not.toHaveBeenCalled();
+    expect(firestore.setDoc).not.toHaveBeenCalled();
+
+    act(() => root.unmount());
   });
 
   it("logs lifecycle events with the greppable prefix", () => {

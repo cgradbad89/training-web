@@ -11,6 +11,31 @@ const h = vi.hoisted(() => ({
   searchParams: new URLSearchParams(),
   replace: vi.fn(),
   push: vi.fn(),
+  aggregationCalls: [] as unknown[][],
+  aggregatedStats: {
+    loading: false,
+    data: {
+      vo2History: [],
+      hrZoneDistribution: null,
+      personalRecordsByYear: { prs: [], specificPrs: [] },
+      paceTrends: [],
+      fastestMileSegment: null,
+    },
+  },
+  appData: {
+    workouts: [] as unknown[],
+    overrides: {},
+    races: [] as unknown[],
+    plans: [] as unknown[],
+    maxHr: 190,
+    restingHr: 50,
+    workoutsLoading: false,
+    settingsLoading: false,
+    racesLoading: false,
+  },
+  riegelCalls: 0,
+  loadScanCalls: 0,
+  titleMapCalls: 0,
 }));
 
 vi.mock("next/navigation", () => ({
@@ -37,29 +62,50 @@ vi.mock("@/hooks/useAuth", () => ({
 }));
 
 vi.mock("@/contexts/AppDataContext", () => ({
-  useAppData: () => ({
-    workouts: [],
-    overrides: {},
-    races: [],
-    plans: [],
-    maxHr: 190,
-    restingHr: 50,
-    workoutsLoading: false,
-  }),
+  useAppData: () => h.appData,
 }));
 
 vi.mock("@/hooks/useAggregatedStats", () => ({
-  useAggregatedStats: () => ({
-    loading: false,
-    data: {
-      vo2History: [],
-      hrZoneDistribution: null,
-      personalRecordsByYear: { prs: [], specificPrs: [] },
-      paceTrends: [],
-      fastestMileSegment: null,
-    },
-  }),
+  useAggregatedStats: (...args: unknown[]) => {
+    h.aggregationCalls.push(args);
+    return h.aggregatedStats;
+  },
 }));
+
+vi.mock("@/utils/riegelFit", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/utils/riegelFit")>();
+  return {
+    ...actual,
+    fitRiegel: (...args: Parameters<typeof actual.fitRiegel>) => {
+      h.riegelCalls += 1;
+      return actual.fitRiegel(...args);
+    },
+  };
+});
+
+vi.mock("@/utils/trainingLoadSeries", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("@/utils/trainingLoadSeries")
+  >();
+  return {
+    ...actual,
+    buildDailyLoadMap: (...args: Parameters<typeof actual.buildDailyLoadMap>) => {
+      h.loadScanCalls += 1;
+      return actual.buildDailyLoadMap(...args);
+    },
+  };
+});
+
+vi.mock("@/utils/runPlanTitle", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/utils/runPlanTitle")>();
+  return {
+    ...actual,
+    buildRunTitleMap: (...args: Parameters<typeof actual.buildRunTitleMap>) => {
+      h.titleMapCalls += 1;
+      return actual.buildRunTitleMap(...args);
+    },
+  };
+});
 
 // Imported after the mocks are registered.
 import PersonalInsightsPage from "../page";
@@ -84,6 +130,12 @@ beforeEach(() => {
   h.searchParams = new URLSearchParams();
   h.replace.mockClear();
   h.push.mockClear();
+  h.aggregationCalls.length = 0;
+  h.aggregatedStats.loading = false;
+  h.appData.workoutsLoading = false;
+  h.riegelCalls = 0;
+  h.loadScanCalls = 0;
+  h.titleMapCalls = 0;
 });
 
 afterEach(() => {
@@ -120,6 +172,40 @@ describe("PersonalInsightsPage tabs", () => {
     // Neither Fitness nor Race Readiness content is mounted → workouts tab active.
     expect(hasText("Cardio Fitness (VO₂ max)")).toBe(false);
     expect(hasText("Predicted Race Times")).toBe(false);
+    expect(h.aggregationCalls.at(-1)?.at(-1)).toEqual({ enabled: false });
+    expect(h.riegelCalls).toBe(0);
+    expect(h.loadScanCalls).toBe(0);
+    expect(h.titleMapCalls).toBe(0);
+  });
+
+  it("runs Fitness preprocessing only when the Fitness tab is mounted", () => {
+    mount();
+    expect(h.aggregationCalls.at(-1)?.at(-1)).toEqual({ enabled: true });
+    expect(h.loadScanCalls).toBeGreaterThan(0);
+    expect(h.titleMapCalls).toBeGreaterThan(0);
+    expect(h.riegelCalls).toBe(0);
+  });
+
+  it("runs Riegel fits only when Race Readiness is mounted", () => {
+    h.searchParams = new URLSearchParams("tab=performance");
+    mount();
+    expect(h.riegelCalls).toBe(4);
+    expect(h.loadScanCalls).toBe(0);
+    expect(h.titleMapCalls).toBe(0);
+  });
+
+  it("keeps existing tab content rendered during a background refresh", () => {
+    mount();
+    expect(hasText("Cardio Fitness (VO₂ max)")).toBe(true);
+
+    h.appData.workoutsLoading = true;
+    h.aggregatedStats.loading = true;
+    act(() => {
+      root.render(<PersonalInsightsPage />);
+    });
+
+    expect(hasText("Cardio Fitness (VO₂ max)")).toBe(true);
+    expect(hasText("Training Load")).toBe(true);
   });
 
   it("falls back to Fitness & Load when ?tab= is an invalid value", () => {
@@ -145,5 +231,24 @@ describe("PersonalInsightsPage tabs", () => {
     });
     // The clicked tab's content is now shown.
     expect(hasText("Predicted Race Times")).toBe(true);
+  });
+
+  it("disables aggregation without running another tab's preprocessing when switching to Workout Trends", () => {
+    mount();
+    const loadCalls = h.loadScanCalls;
+    const titleCalls = h.titleMapCalls;
+
+    const tabButton = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent === "Workout Trends"
+    );
+    expect(tabButton).toBeTruthy();
+    act(() => {
+      tabButton!.click();
+    });
+
+    expect(h.aggregationCalls.at(-1)?.at(-1)).toEqual({ enabled: false });
+    expect(h.loadScanCalls).toBe(loadCalls);
+    expect(h.titleMapCalls).toBe(titleCalls);
+    expect(h.riegelCalls).toBe(0);
   });
 });
