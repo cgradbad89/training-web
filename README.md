@@ -16,6 +16,20 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
+## Required validation
+
+Before pushing application changes, run the same quality gate used by GitHub
+Actions:
+
+```bash
+npm run validate
+```
+
+This performs the production TypeScript check, enforces the current ESLint
+warning ceiling, runs the complete Vitest suite, and creates a production
+Next.js build. Pull requests and pushes to `main` must pass the `Quality Gate`
+workflow.
+
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.

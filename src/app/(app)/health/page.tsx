@@ -21,6 +21,7 @@ import {
   type CoveredRange,
   type HealthMetricsCache,
 } from "@/utils/healthMetricsCache";
+import { trackInFlightRequest } from "@/utils/inFlightRequest";
 import dynamic from "next/dynamic";
 import { ChartSkeleton } from "@/components/ui/ChartSkeleton";
 import { HealthSkeleton } from "./HealthSkeleton";
@@ -1404,13 +1405,9 @@ export default function HealthPage() {
       } finally {
         if (isInitialLoad) setMetricsInitialLoading(false);
         else setMetricsRefreshing(false);
-        if (metricsInFlightRef.current === promise) {
-          metricsInFlightRef.current = null;
-        }
       }
     })();
-    metricsInFlightRef.current = promise;
-    return promise;
+    return trackInFlightRequest(metricsInFlightRef, promise);
   }, [userId, mergeMetricsIntoCache]);
 
   useEffect(() => {

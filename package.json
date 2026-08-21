@@ -8,7 +8,10 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "lint:ci": "git ls-files -z -- '*.js' '*.jsx' '*.ts' '*.tsx' '*.mjs' '*.cjs' | xargs -0 eslint --max-warnings 162",
+    "typecheck": "tsc --noEmit --pretty false -p tsconfig.build.json",
     "test": "vitest run",
+    "validate": "npm run typecheck && npm run lint:ci && npm test && npm run build",
     "snapshot:export": "SNAPSHOT_EXPORT=1 vitest run scripts/exportFirestoreSnapshot.test.ts",
     "snapshot:import": "SNAPSHOT_IMPORT=1 vitest run scripts/importFirestoreSnapshot.test.ts"
   },

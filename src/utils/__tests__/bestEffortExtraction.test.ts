@@ -344,7 +344,9 @@ describe("buildBestEffortSegments — dual floors", () => {
 
 describe("bestEffortsToEffortPoints", () => {
   it("projects pace, tiers high-weight, and ages from the segment date", () => {
-    const now = new Date("2026-06-20T12:00:00Z");
+    // Use local midnight because source dates are parsed as local calendar
+    // dates. A UTC-noon timestamp made the expected age timezone-dependent.
+    const now = new Date(2026, 5, 20);
     const points = bestEffortsToEffortPoints(
       [
         {
