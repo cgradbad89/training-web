@@ -761,11 +761,15 @@ function filterMetricsByRange(
 function sourceForRange(
   range: TimeRange,
   metrics: HealthMetric[],
-  ytdMetrics: HealthMetric[]
+  ytdMetrics: HealthMetric[],
+  allMetrics: HealthMetric[]
 ): HealthMetric[] {
-  if (range === "ytd" || range === "all") return ytdMetrics;
+  if (range === "ytd") return ytdMetrics;
+  if (range === "all") return allMetrics;
   return metrics;
 }
+
+type LazyRangeFetchStatus = "idle" | "loading" | "success" | "error";
 
 /**
  * Tight [min, max] Y-axis domain with 10% padding around the observed
@@ -1123,7 +1127,9 @@ export default function HealthPage() {
 
   const [metrics, setMetrics] = useState<HealthMetric[]>([]);
   const [ytdMetrics, setYtdMetrics] = useState<HealthMetric[]>([]);
-  const [ytdFetched, setYtdFetched] = useState(false);
+  const [allMetrics, setAllMetrics] = useState<HealthMetric[]>([]);
+  const ytdFetchStatusRef = useRef<LazyRangeFetchStatus>("idle");
+  const allFetchStatusRef = useRef<LazyRangeFetchStatus>("idle");
   const [hourlyHR, setHourlyHR] = useState<HourlyHeartRate | null>(null);
   const [hourlyHRLoading, setHourlyHRLoading] = useState(true);
   const [metricsLoading, setMetricsLoading] = useState(true);
@@ -1370,20 +1376,68 @@ export default function HealthPage() {
 
   useRefetchOnFocus(refreshMetrics);
 
+  const trendRanges = Object.values(chartRanges);
+  const needsTrendYtd =
+    activeTab === "trends" &&
+    (globalRange === "ytd" || trendRanges.some((range) => range === "ytd"));
+  const needsTrendAll =
+    activeTab === "trends" &&
+    (globalRange === "all" || trendRanges.some((range) => range === "all"));
+  // The Today tab's explicit YTD ring selection remains supported, but a
+  // persisted Trends range cannot trigger this fetch until Trends mounts.
   const needsYtd =
-    globalRange === "ytd" ||
-    globalRange === "all" ||
-    ringTimeframe === "ytd" ||
-    Object.values(chartRanges).some((r) => r === "ytd" || r === "all");
+    needsTrendYtd || (activeTab === "today" && ringTimeframe === "ytd");
 
-  // Lazy-load all-time metrics for YTD/All charts
+  // Lazy-load only the current calendar year for YTD consumers. A failed
+  // request remains retryable when the consumer is selected again.
   useEffect(() => {
-    if (!userId || !needsYtd || ytdFetched) return;
-    setYtdFetched(true);
+    if (
+      !userId ||
+      !needsYtd ||
+      ytdFetchStatusRef.current === "loading" ||
+      ytdFetchStatusRef.current === "success"
+    ) {
+      return;
+    }
+
+    ytdFetchStatusRef.current = "loading";
+    const today = localTodayIsoDate();
+    const jan1 = `${today.slice(0, 4)}-01-01`;
+    fetchHealthMetricsRange(userId, jan1, today)
+      .then((data) => {
+        setYtdMetrics(data);
+        ytdFetchStatusRef.current = "success";
+      })
+      .catch((err) => {
+        ytdFetchStatusRef.current = "error";
+        console.error("YTD health metrics error:", err);
+      });
+  }, [userId, needsYtd]);
+
+  // All-time remains the existing unbounded query, activated only by a
+  // visible Trends consumer. Errors can retry after the range/tab is chosen
+  // again because only loading/success are terminal for the current mount.
+  useEffect(() => {
+    if (
+      !userId ||
+      !needsTrendAll ||
+      allFetchStatusRef.current === "loading" ||
+      allFetchStatusRef.current === "success"
+    ) {
+      return;
+    }
+
+    allFetchStatusRef.current = "loading";
     fetchAllHealthMetrics(userId)
-      .then((data) => setYtdMetrics(data))
-      .catch((err) => console.error("YTD health metrics error:", err));
-  }, [userId, needsYtd, ytdFetched, chartRanges]);
+      .then((data) => {
+        setAllMetrics(data);
+        allFetchStatusRef.current = "success";
+      })
+      .catch((err) => {
+        allFetchStatusRef.current = "error";
+        console.error("All-time health metrics error:", err);
+      });
+  }, [userId, needsTrendAll]);
 
   // One-time fetch for hourly heart rate averages
   useEffect(() => {
@@ -1480,7 +1534,7 @@ export default function HealthPage() {
   }, [ringTimeframe, anchorDate]);
 
   // Docs inside the ring range. The 90-day listener covers Today/7D/30D;
-  // YTD reads from the all-time listener that already powers trend charts.
+  // YTD reads from the bounded current-year cache shared with trend charts.
   const tfDocs = useMemo(() => {
     const src = ringTimeframe === "ytd" ? ytdMetrics : metrics;
     return src.filter(
@@ -1623,13 +1677,13 @@ export default function HealthPage() {
       range: TimeRange;
     } => {
       const range = rangeFor(key);
-      const src = sourceForRange(range, metrics, ytdMetrics);
+      const src = sourceForRange(range, metrics, ytdMetrics, allMetrics);
       const filtered = filterMetricsByRange(src, range);
       const data = filtered.map((m) => ({ date: m.date, value: accessor(m) }));
       const domain = tightDomain(data.map((d) => d.value));
       return { data, domain, range };
     },
-    [rangeFor, metrics, ytdMetrics]
+    [rangeFor, metrics, ytdMetrics, allMetrics]
   );
 
   // Chart slices — one per selectable KPI. Sleep analytics uses the sleep
@@ -1651,19 +1705,19 @@ export default function HealthPage() {
   const sleepAnalyticsMetrics = useMemo(() => {
     const range = rangeFor("sleep_total_hours");
     return filterMetricsByRange(
-      sourceForRange(range, metrics, ytdMetrics),
+      sourceForRange(range, metrics, ytdMetrics, allMetrics),
       range
     );
-  }, [rangeFor, metrics, ytdMetrics]);
+  }, [rangeFor, metrics, ytdMetrics, allMetrics]);
 
   // Sleep summary tile has its own independent range override.
   const sleepSummaryMetrics = useMemo(() => {
     const range = rangeFor("sleep_summary");
     return filterMetricsByRange(
-      sourceForRange(range, metrics, ytdMetrics),
+      sourceForRange(range, metrics, ytdMetrics, allMetrics),
       range
     );
-  }, [rangeFor, metrics, ytdMetrics]);
+  }, [rangeFor, metrics, ytdMetrics, allMetrics]);
 
   // Hourly HR chart data
   const hourlyHRChartData = useMemo(() => {
