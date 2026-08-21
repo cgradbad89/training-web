@@ -11,6 +11,20 @@ import {
 } from '@/services/autoMatch'
 import type { HealthWorkout } from '@/types/healthWorkout'
 
+export const AUTO_MATCH_WORKOUT_LISTENER_LIMIT = 250
+
+export function autoMatchWorkoutPoolKey(workouts: HealthWorkout[]): string {
+  return workouts
+    .map((workout) =>
+      [
+        workout.workoutId,
+        workout.startDate.getTime(),
+        workout.activityType,
+      ].join(':')
+    )
+    .join('|')
+}
+
 /**
  * Subscribes to healthWorkouts via a realtime listener and re-runs the
  * cross-training auto-matcher whenever the non-running workout pool changes.
@@ -29,6 +43,9 @@ import type { HealthWorkout } from '@/types/healthWorkout'
  *    runs-only snapshots short-circuit without burning a fetchPlans call.
  *  - lastKey skips passes when the same content snapshot fires twice.
  *  - inFlight prevents concurrent matcher invocations on bursty snapshots.
+ *  - The listener reads at most the newest 250 eligible workouts. If that
+ *    safety cap is reached, matching remains deterministic over that newest
+ *    window and emits a one-time diagnostic instead of expanding the query.
  *  - The matcher itself skips completed + future sessions, so re-running is safe.
  *
  * AppDataContext wiring: this component is mounted inside <AppDataProvider>
@@ -46,6 +63,7 @@ export default function AutoMatchRunner() {
   const { overrides, refreshPlans, plans, plansLoading } = useAppData()
   const inFlight = useRef(false)
   const lastKey = useRef<string | null>(null)
+  const limitReported = useRef(false)
   const matchWindowStart = !plansLoading
     ? autoMatchWindowStart(plans)
     : null
@@ -67,6 +85,7 @@ export default function AutoMatchRunner() {
     // A newly activated plan must evaluate the listener's initial snapshot,
     // even if its workout pool matches the key from a prior subscription.
     lastKey.current = null
+    limitReported.current = false
 
     async function runMatcher(workouts: HealthWorkout[], key: string) {
       if (inFlight.current) return
@@ -95,7 +114,11 @@ export default function AutoMatchRunner() {
 
     const unsubscribe = onHealthWorkoutsSnapshot(
       uid,
-      { isRunLike: false, startDate: new Date(matchWindowStartMs) },
+      {
+        isRunLike: false,
+        startDate: new Date(matchWindowStartMs),
+        limitCount: AUTO_MATCH_WORKOUT_LISTENER_LIMIT,
+      },
       (workouts) => {
         // Workout plans can only match against non-running activities. If the
         // current snapshot has none, skip — saves a fetchPlans + log spam.
@@ -105,15 +128,23 @@ export default function AutoMatchRunner() {
         const nonRunWorkouts = workouts.filter((w) => !w.isRunLike)
         if (nonRunWorkouts.length === 0) return
 
-        // Content-derived key — only re-run on a meaningful pool change.
-        // length + most-recent workoutId + most-recent startDate ms is
-        // sufficient to detect "a new sync arrived" without hashing the array.
-        const key =
-          nonRunWorkouts.length +
-          ':' +
-          (nonRunWorkouts[0]?.workoutId ?? '') +
-          ':' +
-          (nonRunWorkouts[0]?.startDate?.getTime() ?? 0)
+        if (
+          nonRunWorkouts.length >= AUTO_MATCH_WORKOUT_LISTENER_LIMIT &&
+          !limitReported.current
+        ) {
+          limitReported.current = true
+          console.info(
+            `[AutoMatchRunner] newest ${AUTO_MATCH_WORKOUT_LISTENER_LIMIT} ` +
+              'eligible workouts loaded; older candidates remain outside the safety window.'
+          )
+        } else if (nonRunWorkouts.length < AUTO_MATCH_WORKOUT_LISTENER_LIMIT) {
+          limitReported.current = false
+        }
+
+        // Content-derived key — catches new syncs and edits to older workouts
+        // within the bounded listener window without re-running for identical
+        // Firestore snapshots.
+        const key = autoMatchWorkoutPoolKey(nonRunWorkouts)
         if (key === lastKey.current) return
 
         void runMatcher(workouts, key)

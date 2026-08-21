@@ -63,6 +63,14 @@ import { type UserSettings } from "@/types/userSettings";
  *  heavy-run user's non-run history could fall outside the shared top-N
  *  window that used to be reserved for non-runs alone. */
 export const APP_DATA_WORKOUTS_LIMIT = 1000;
+export const WORKOUT_DELTA_OVERLAP_DAYS = 7;
+
+export function workoutDeltaStartDate(latestWorkoutDate: Date): Date {
+  return new Date(
+    latestWorkoutDate.getTime() -
+      WORKOUT_DELTA_OVERLAP_DAYS * 24 * 60 * 60 * 1000
+  );
+}
 
 export function mergeWorkoutDelta(
   current: HealthWorkout[],
@@ -191,9 +199,10 @@ export function AppDataProvider({
 
   workoutsRef.current = workouts;
 
-  // Focus recovery only asks for documents at or after the newest workout we
-  // already hold, then merges by ID. Manual refreshWorkouts remains a full
-  // bounded replacement for callers that explicitly need reconciliation.
+  // Focus recovery overlaps the newest workout by seven days before merging by
+  // ID. The overlap captures delayed Apple Health inserts and edits whose
+  // workout date predates the newest item without returning to a full-history
+  // read. Manual refreshWorkouts remains the explicit reconciliation path.
   const refreshRecentWorkouts = useCallback((): Promise<void> => {
     if (workoutsInFlightRef.current) return workoutsInFlightRef.current;
     const latestWorkout = workoutsRef.current[0];
@@ -206,7 +215,7 @@ export function AppDataProvider({
       try {
         const delta = await fetchHealthWorkoutsInRange(
           uid,
-          latestWorkout.startDate
+          workoutDeltaStartDate(latestWorkout.startDate)
         );
         setWorkouts((current) => mergeWorkoutDelta(current, delta));
       } catch (err) {

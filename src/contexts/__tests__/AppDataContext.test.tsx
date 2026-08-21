@@ -3,6 +3,7 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import {
   AppDataProvider,
+  workoutDeltaStartDate,
   useAppData,
   type AppDataContextValue,
 } from "@/contexts/AppDataContext";
@@ -246,7 +247,7 @@ describe("AppDataProvider", () => {
     await act(async () => first);
   });
 
-  it("merges only recent workout changes when a background tab regains focus", async () => {
+  it("merges recent changes and delayed backfills when a tab regains focus", async () => {
     const newest = new Date("2026-08-20T12:00:00.000Z");
     const older = new Date("2026-08-19T12:00:00.000Z");
     h.fetchHealthWorkouts.mockResolvedValue([
@@ -260,6 +261,10 @@ describe("AppDataProvider", () => {
     h.fetchHealthWorkoutsInRange.mockResolvedValue([
       { workoutId: "w2", startDate: new Date("2026-08-21T12:00:00.000Z") },
       { workoutId: "w1", startDate: newest, name: "updated" },
+      {
+        workoutId: "backfill",
+        startDate: new Date("2026-08-15T12:00:00.000Z"),
+      },
     ]);
     vi.mocked(Date.now).mockReturnValue(32_000);
 
@@ -270,11 +275,15 @@ describe("AppDataProvider", () => {
     });
 
     expect(h.fetchHealthWorkouts).toHaveBeenCalledTimes(1);
-    expect(h.fetchHealthWorkoutsInRange).toHaveBeenCalledWith("u1", newest);
+    expect(h.fetchHealthWorkoutsInRange).toHaveBeenCalledWith(
+      "u1",
+      workoutDeltaStartDate(newest)
+    );
     expect(latest?.workouts.map((workout) => workout.workoutId)).toEqual([
       "w2",
       "w1",
       "w0",
+      "backfill",
     ]);
     expect(latest?.workouts[1]?.name).toBe("updated");
   });
