@@ -15,6 +15,7 @@ import { selectActiveWorkouts } from "@/utils/selectActiveWorkouts";
 // fetch results and inspect what each mock was called with.
 const h = vi.hoisted(() => ({
   fetchHealthWorkouts: vi.fn(),
+  fetchHealthWorkoutsInRange: vi.fn(),
   fetchPlans: vi.fn(),
   fetchRaces: vi.fn(),
   fetchAllOverrides: vi.fn(),
@@ -23,6 +24,7 @@ const h = vi.hoisted(() => ({
 
 vi.mock("@/services/healthWorkouts", () => ({
   fetchHealthWorkouts: h.fetchHealthWorkouts,
+  fetchHealthWorkoutsInRange: h.fetchHealthWorkoutsInRange,
 }));
 vi.mock("@/services/plans", () => ({ fetchPlans: h.fetchPlans }));
 vi.mock("@/services/races", () => ({ fetchRaces: h.fetchRaces }));
@@ -71,6 +73,7 @@ async function mount() {
 beforeEach(() => {
   latest = null;
   h.fetchHealthWorkouts.mockReset().mockResolvedValue([]);
+  h.fetchHealthWorkoutsInRange.mockReset().mockResolvedValue([]);
   h.fetchPlans.mockResolvedValue([]);
   h.fetchRaces.mockResolvedValue([]);
   h.fetchAllOverrides.mockResolvedValue({});
@@ -82,6 +85,7 @@ afterEach(() => {
     root?.unmount();
   });
   container?.remove();
+  vi.restoreAllMocks();
 });
 
 describe("AppDataProvider", () => {
@@ -227,6 +231,39 @@ describe("AppDataProvider", () => {
     expect(h.fetchHealthWorkouts).toHaveBeenCalledTimes(2);
     background.resolve([]);
     await act(async () => first);
+  });
+
+  it("merges only recent workout changes when a background tab regains focus", async () => {
+    const newest = new Date("2026-08-20T12:00:00.000Z");
+    const older = new Date("2026-08-19T12:00:00.000Z");
+    h.fetchHealthWorkouts.mockResolvedValue([
+      { workoutId: "w1", startDate: newest, name: "original" },
+      { workoutId: "w0", startDate: older },
+    ]);
+    vi.spyOn(Date, "now").mockReturnValue(1_000);
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    await mount();
+
+    h.fetchHealthWorkoutsInRange.mockResolvedValue([
+      { workoutId: "w2", startDate: new Date("2026-08-21T12:00:00.000Z") },
+      { workoutId: "w1", startDate: newest, name: "updated" },
+    ]);
+    vi.mocked(Date.now).mockReturnValue(32_000);
+
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(h.fetchHealthWorkouts).toHaveBeenCalledTimes(1);
+    expect(h.fetchHealthWorkoutsInRange).toHaveBeenCalledWith("u1", newest);
+    expect(latest?.workouts.map((workout) => workout.workoutId)).toEqual([
+      "w2",
+      "w1",
+      "w0",
+    ]);
+    expect(latest?.workouts[1]?.name).toBe("updated");
   });
 
   it("loads plans, races, overrides, and settings on mount", async () => {

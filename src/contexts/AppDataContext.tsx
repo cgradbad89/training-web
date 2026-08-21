@@ -36,7 +36,10 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { fetchHealthWorkouts } from "@/services/healthWorkouts";
+import {
+  fetchHealthWorkouts,
+  fetchHealthWorkoutsInRange,
+} from "@/services/healthWorkouts";
 import { useRefetchOnFocus } from "@/hooks/useRefetchOnFocus";
 import { fetchPlans } from "@/services/plans";
 import { fetchRaces } from "@/services/races";
@@ -55,6 +58,18 @@ import { type UserSettings } from "@/types/userSettings";
  *  heavy-run user's non-run history could fall outside the shared top-N
  *  window that used to be reserved for non-runs alone. */
 export const APP_DATA_WORKOUTS_LIMIT = 1000;
+
+export function mergeWorkoutDelta(
+  current: HealthWorkout[],
+  incoming: HealthWorkout[],
+  limitCount: number = APP_DATA_WORKOUTS_LIMIT
+): HealthWorkout[] {
+  const byId = new Map(current.map((workout) => [workout.workoutId, workout]));
+  for (const workout of incoming) byId.set(workout.workoutId, workout);
+  return [...byId.values()]
+    .sort((a, b) => b.startDate.getTime() - a.startDate.getTime())
+    .slice(0, limitCount);
+}
 
 export interface AppDataContextValue {
   workouts: HealthWorkout[];
@@ -99,6 +114,7 @@ export function AppDataProvider({
   const [workoutsRefreshing, setWorkoutsRefreshing] = useState(false);
   const workoutsLoadedRef = useRef(false);
   const workoutsInFlightRef = useRef<Promise<void> | null>(null);
+  const workoutsRef = useRef<HealthWorkout[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [plansLoading, setPlansLoading] = useState(true);
   const [races, setRaces] = useState<Race[]>([]);
@@ -126,8 +142,7 @@ export function AppDataProvider({
     if (isInitialLoad) setWorkoutsLoading(true);
     else setWorkoutsRefreshing(true);
 
-    let promise!: Promise<void>;
-    promise = (async () => {
+    const promise = (async () => {
       try {
         setWorkouts(
           await fetchHealthWorkouts(uid, {
@@ -153,7 +168,40 @@ export function AppDataProvider({
     void refreshWorkouts();
   }, [refreshWorkouts]);
 
-  useRefetchOnFocus(refreshWorkouts);
+  workoutsRef.current = workouts;
+
+  // Focus recovery only asks for documents at or after the newest workout we
+  // already hold, then merges by ID. Manual refreshWorkouts remains a full
+  // bounded replacement for callers that explicitly need reconciliation.
+  const refreshRecentWorkouts = useCallback((): Promise<void> => {
+    if (workoutsInFlightRef.current) return workoutsInFlightRef.current;
+    const latestWorkout = workoutsRef.current[0];
+    if (!workoutsLoadedRef.current || !latestWorkout) {
+      return refreshWorkouts();
+    }
+
+    setWorkoutsRefreshing(true);
+    const promise = (async () => {
+      try {
+        const delta = await fetchHealthWorkoutsInRange(
+          uid,
+          latestWorkout.startDate
+        );
+        setWorkouts((current) => mergeWorkoutDelta(current, delta));
+      } catch (err) {
+        console.error("[AppData] refreshRecentWorkouts", err);
+      } finally {
+        setWorkoutsRefreshing(false);
+        if (workoutsInFlightRef.current === promise) {
+          workoutsInFlightRef.current = null;
+        }
+      }
+    })();
+    workoutsInFlightRef.current = promise;
+    return promise;
+  }, [uid, refreshWorkouts]);
+
+  useRefetchOnFocus(refreshRecentWorkouts);
 
   const refreshPlans = useCallback(async () => {
     if (!uid) {
