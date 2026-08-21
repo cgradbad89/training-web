@@ -62,6 +62,11 @@ function localIsoDate(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+function shiftIsoDate(date: string, days: number): string {
+  const [year, month, day] = date.split("-").map(Number);
+  return localIsoDate(new Date(year, month - 1, day + days));
+}
+
 function buttonWithText(container: HTMLElement, text: string): HTMLButtonElement {
   const button = [...container.querySelectorAll("button")].find(
     (candidate) => candidate.textContent?.trim() === text
@@ -90,6 +95,15 @@ async function clickButton(container: HTMLElement, text: string) {
   await act(async () => {
     await flushPage();
   });
+}
+
+async function clickAriaLabel(container: HTMLElement, label: string) {
+  const button = container.querySelector<HTMLButtonElement>(
+    `button[aria-label='${label}']`
+  );
+  if (!button) throw new Error(`Button not found: ${label}`);
+  await act(async () => button.click());
+  await act(async () => flushPage());
 }
 
 describe("Health Dashboard Page", () => {
@@ -173,10 +187,11 @@ describe("Health Dashboard Page", () => {
     await renderPage(root);
     await clickButton(container, "Trends");
 
+    const cutoff = healthMetricsService.healthMetricsCutoffISO(90);
     expect(healthMetricsService.fetchHealthMetricsRange).toHaveBeenCalledWith(
       "test-user-123",
       `${today.slice(0, 4)}-01-01`,
-      today
+      shiftIsoDate(cutoff, -1)
     );
     expect(healthMetricsService.fetchAllHealthMetrics).not.toHaveBeenCalled();
   });
@@ -231,5 +246,64 @@ describe("Health Dashboard Page", () => {
     await clickButton(container, "Trends");
 
     expect(healthMetricsService.fetchAllHealthMetrics).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not fetch Calendar dates already covered by the rolling metrics query", async () => {
+    await renderPage(root);
+    await clickButton(container, "Calendar");
+    await clickButton(container, "Month");
+
+    expect(healthMetricsService.fetchHealthMetricsRange).not.toHaveBeenCalled();
+  });
+
+  it("fetches only the uncovered start of a partially covered Calendar month", async () => {
+    await renderPage(root);
+    await clickButton(container, "Calendar");
+    await clickButton(container, "Month");
+
+    const now = new Date();
+    const cutoff = healthMetricsService.healthMetricsCutoffISO(90);
+    const [cutoffYear, cutoffMonth] = cutoff.split("-").map(Number);
+    const monthsBack =
+      now.getFullYear() * 12 + now.getMonth() -
+      (cutoffYear * 12 + cutoffMonth - 1);
+    for (let index = 0; index < monthsBack; index += 1) {
+      await clickAriaLabel(container, "Previous month");
+    }
+
+    expect(healthMetricsService.fetchHealthMetricsRange).toHaveBeenLastCalledWith(
+      "test-user-123",
+      `${cutoff.slice(0, 7)}-01`,
+      shiftIsoDate(cutoff, -1)
+    );
+  });
+
+  it("fetches a fully uncovered Calendar month as one whole-month gap", async () => {
+    await renderPage(root);
+    await clickButton(container, "Calendar");
+    await clickButton(container, "Month");
+
+    const now = new Date();
+    const cutoff = healthMetricsService.healthMetricsCutoffISO(90);
+    const [cutoffYear, cutoffMonth] = cutoff.split("-").map(Number);
+    const monthsBack =
+      now.getFullYear() * 12 + now.getMonth() -
+      (cutoffYear * 12 + cutoffMonth - 1);
+    for (let index = 0; index < monthsBack; index += 1) {
+      await clickAriaLabel(container, "Previous month");
+    }
+    vi.mocked(healthMetricsService.fetchHealthMetricsRange).mockClear();
+
+    await clickAriaLabel(container, "Previous month");
+    const previousMonth = new Date(cutoffYear, cutoffMonth - 2, 1);
+    const previousMonthStart = localIsoDate(previousMonth);
+    const previousMonthEnd = localIsoDate(
+      new Date(previousMonth.getFullYear(), previousMonth.getMonth() + 1, 0)
+    );
+    expect(healthMetricsService.fetchHealthMetricsRange).toHaveBeenCalledWith(
+      "test-user-123",
+      previousMonthStart,
+      previousMonthEnd
+    );
   });
 });

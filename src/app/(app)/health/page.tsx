@@ -7,12 +7,19 @@ import {
   fetchHealthMetrics,
   fetchAllHealthMetrics,
   fetchHealthMetricsRange,
+  healthMetricsCutoffISO,
   fetchHourlyHeartRate,
   fetchHealthGoals,
   type HealthGoals,
   type HealthMetric,
   type HourlyHeartRate,
 } from "@/services/healthMetrics";
+import {
+  getUncoveredGaps,
+  mergeCoveredRange,
+  type CoveredRange,
+  type HealthMetricsCache,
+} from "@/utils/healthMetricsCache";
 import dynamic from "next/dynamic";
 import { ChartSkeleton } from "@/components/ui/ChartSkeleton";
 import { HealthSkeleton } from "./HealthSkeleton";
@@ -120,6 +127,25 @@ function shiftISODate(dateStr: string, days: number): string {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+const ALL_HEALTH_METRICS_RANGE: CoveredRange = {
+  start: "0001-01-01",
+  end: "9999-12-31",
+};
+
+function emptyHealthMetricsCache(): HealthMetricsCache {
+  return { entries: new Map(), coveredRanges: [] };
+}
+
+function metricsInCacheRange(
+  cache: HealthMetricsCache,
+  range: CoveredRange
+): HealthMetric[] {
+  return [...cache.entries.values()]
+    .filter((entry) => entry.date >= range.start && entry.date <= range.end)
+    .map((entry) => entry.metrics)
+    .sort((a, b) => a.date.localeCompare(b.date));
 }
 
 function ordinalSuffix(n: number): string {
@@ -1126,6 +1152,10 @@ export default function HealthPage() {
   const userId = user?.uid ?? "";
 
   const [metrics, setMetrics] = useState<HealthMetric[]>([]);
+  const [metricsCache, setMetricsCache] = useState<HealthMetricsCache>(
+    emptyHealthMetricsCache
+  );
+  const metricsCacheRef = useRef<HealthMetricsCache>(metricsCache);
   const [ytdMetrics, setYtdMetrics] = useState<HealthMetric[]>([]);
   const [allMetrics, setAllMetrics] = useState<HealthMetric[]>([]);
   const ytdFetchStatusRef = useRef<LazyRangeFetchStatus>("idle");
@@ -1231,73 +1261,52 @@ export default function HealthPage() {
   const sectionAnyActive = (fields: readonly string[]) =>
     fields.some((f) => selectedKpis.has(f));
 
-  // ── Calendar tab: month-cached healthMetrics fetches ────────────────────
-  // The RingCalendar reports its visible range; we fetch whole months that
-  // haven't been fetched yet (one getDocs per month, matching the existing
-  // range-fetch pattern) and cache them so flipping views/months back never
-  // refetches. metrics's live docs are overlaid so recent days stay fresh.
-  const [calendarMetrics, setCalendarMetrics] = useState<
-    Map<string, HealthMetric>
-  >(new Map());
-  const fetchedCalMonthsRef = useRef<Set<string>>(new Set());
+  const mergeMetricsIntoCache = useCallback(
+    (range: CoveredRange, docs: HealthMetric[]) => {
+      const next = mergeCoveredRange(
+        metricsCacheRef.current,
+        range,
+        docs.map((metrics) => ({ date: metrics.date, metrics }))
+      );
+      metricsCacheRef.current = next;
+      setMetricsCache(next);
+      return next;
+    },
+    []
+  );
+
+  // ── Calendar tab: shared covered-range healthMetrics cache ──────────────
+  // The RingCalendar reports its visible range. Only uncovered gaps are read;
+  // the initial rolling window and Trends ranges seed the same cache.
+  const calendarInFlightRef = useRef<Set<string>>(new Set());
 
   const handleCalendarRange = useCallback(
     (start: string, end: string) => {
       if (!userId) return;
-      // Month keys ("YYYY-MM") spanned by [start..end].
-      const months: string[] = [];
-      let y = Number(start.slice(0, 4));
-      let m = Number(start.slice(5, 7));
-      const endKey = end.slice(0, 7);
-      let key = start.slice(0, 7);
-      while (key <= endKey) {
-        months.push(key);
-        m += 1;
-        if (m > 12) {
-          m = 1;
-          y += 1;
-        }
-        key = `${y}-${String(m).padStart(2, "0")}`;
+      const gaps = getUncoveredGaps(metricsCacheRef.current, { start, end });
+      for (const gap of gaps) {
+        const key = `${gap.start}:${gap.end}`;
+        if (calendarInFlightRef.current.has(key)) continue;
+        calendarInFlightRef.current.add(key);
+        fetchHealthMetricsRange(userId, gap.start, gap.end)
+          .then((docs) => mergeMetricsIntoCache(gap, docs))
+          .catch((err) => {
+            console.error("[health calendar] range fetch error:", err);
+          })
+          .finally(() => calendarInFlightRef.current.delete(key));
       }
-      const missing = months.filter(
-        (k) => !fetchedCalMonthsRef.current.has(k)
-      );
-      if (missing.length === 0) return;
-      for (const k of missing) fetchedCalMonthsRef.current.add(k);
-      Promise.all(
-        missing.map((k) => {
-          const [yy, mm] = k.split("-").map(Number);
-          const monthEnd = new Date(yy, mm, 0).getDate();
-          return fetchHealthMetricsRange(
-            userId,
-            `${k}-01`,
-            `${k}-${String(monthEnd).padStart(2, "0")}`
-          );
-        })
-      )
-        .then((results) => {
-          setCalendarMetrics((prev) => {
-            const next = new Map(prev);
-            for (const docs of results)
-              for (const d of docs) next.set(d.date, d);
-            return next;
-          });
-        })
-        .catch((err) => {
-          console.error("[health calendar] range fetch error:", err);
-          // Un-mark so the next view change can retry.
-          for (const k of missing) fetchedCalMonthsRef.current.delete(k);
-        });
     },
-    [userId]
+    [userId, mergeMetricsIntoCache]
   );
 
-  // Cached months + live last-90-days docs (live wins for overlapping dates).
+  // Adapt the shared cache's entry wrapper to RingCalendar's existing map prop.
   const calendarMetricsLive = useMemo(() => {
-    const merged = new Map(calendarMetrics);
-    for (const m of metrics) merged.set(m.date, m);
-    return merged;
-  }, [calendarMetrics, metrics]);
+    const byDate = new Map<string, HealthMetric>();
+    for (const [date, entry] of metricsCache.entries) {
+      byDate.set(date, entry.metrics);
+    }
+    return byDate;
+  }, [metricsCache]);
 
   // Ring / KPI-card click → Trends tab, with the metric's chart selected
   // and scrolled into view once it has rendered.
@@ -1363,12 +1372,21 @@ export default function HealthPage() {
     try {
       const data = await fetchHealthMetrics(userId, 90);
       setMetrics(data);
+      mergeMetricsIntoCache(
+        {
+          start: healthMetricsCutoffISO(90),
+          // fetchHealthMetrics has no upper-bound predicate, so this read also
+          // establishes that no later-dated docs existed at fetch time.
+          end: ALL_HEALTH_METRICS_RANGE.end,
+        },
+        data
+      );
     } catch (err: any) {
       setError(err.message);
     } finally {
       setMetricsLoading(false);
     }
-  }, [userId]);
+  }, [userId, mergeMetricsIntoCache]);
 
   useEffect(() => {
     void refreshMetrics();
@@ -1400,19 +1418,36 @@ export default function HealthPage() {
       return;
     }
 
-    ytdFetchStatusRef.current = "loading";
     const today = localTodayIsoDate();
     const jan1 = `${today.slice(0, 4)}-01-01`;
-    fetchHealthMetricsRange(userId, jan1, today)
-      .then((data) => {
-        setYtdMetrics(data);
+    const requested = { start: jan1, end: today };
+    const gaps = getUncoveredGaps(metricsCacheRef.current, requested);
+    if (gaps.length === 0) {
+      setYtdMetrics(metricsInCacheRange(metricsCacheRef.current, requested));
+      ytdFetchStatusRef.current = "success";
+      return;
+    }
+
+    ytdFetchStatusRef.current = "loading";
+    Promise.all(
+      gaps.map(async (gap) => ({
+        gap,
+        docs: await fetchHealthMetricsRange(userId, gap.start, gap.end),
+      }))
+    )
+      .then((results) => {
+        let next = metricsCacheRef.current;
+        for (const { gap, docs } of results) {
+          next = mergeMetricsIntoCache(gap, docs);
+        }
+        setYtdMetrics(metricsInCacheRange(next, requested));
         ytdFetchStatusRef.current = "success";
       })
       .catch((err) => {
         ytdFetchStatusRef.current = "error";
         console.error("YTD health metrics error:", err);
       });
-  }, [userId, needsYtd]);
+  }, [userId, needsYtd, mergeMetricsIntoCache]);
 
   // All-time remains the existing unbounded query, activated only by a
   // visible Trends consumer. Errors can retry after the range/tab is chosen
@@ -1431,13 +1466,14 @@ export default function HealthPage() {
     fetchAllHealthMetrics(userId)
       .then((data) => {
         setAllMetrics(data);
+        mergeMetricsIntoCache(ALL_HEALTH_METRICS_RANGE, data);
         allFetchStatusRef.current = "success";
       })
       .catch((err) => {
         allFetchStatusRef.current = "error";
         console.error("All-time health metrics error:", err);
       });
-  }, [userId, needsTrendAll]);
+  }, [userId, needsTrendAll, mergeMetricsIntoCache]);
 
   // One-time fetch for hourly heart rate averages
   useEffect(() => {
@@ -1453,7 +1489,7 @@ export default function HealthPage() {
   // first render (pre-mount, selectedDate is null to avoid hydration drift).
   const anchorDate = selectedDate ?? todayISO();
 
-  // Stats for the selected day. The 90-day listener covers the 30-day-back
+  // Stats for the selected day. The rolling 90-day query covers the 30-day-back
   // navigation cap, so we filter from cached data — no extra query needed.
   const today = metrics.find((m) => m.date === anchorDate) ?? null;
   const windowStart7 = shiftISODate(anchorDate, -6);
@@ -1533,7 +1569,7 @@ export default function HealthPage() {
     return { start: anchorDate, end: anchorDate };
   }, [ringTimeframe, anchorDate]);
 
-  // Docs inside the ring range. The 90-day listener covers Today/7D/30D;
+  // Docs inside the ring range. The rolling query covers Today/7D/30D;
   // YTD reads from the bounded current-year cache shared with trend charts.
   const tfDocs = useMemo(() => {
     const src = ringTimeframe === "ytd" ? ytdMetrics : metrics;

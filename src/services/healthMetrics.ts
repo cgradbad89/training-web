@@ -35,13 +35,27 @@ export interface HealthMetric {
   syncedAt?: string;
 }
 
+/** Inclusive local-calendar cutoff used by the rolling metrics query/cache. */
+export function healthMetricsCutoffISO(
+  days: number,
+  now = new Date()
+): string {
+  const cutoff = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate() - days
+  );
+  const year = cutoff.getFullYear();
+  const month = String(cutoff.getMonth() + 1).padStart(2, "0");
+  const day = String(cutoff.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 export async function fetchHealthMetrics(
   uid: string,
   days = 90
 ): Promise<HealthMetric[]> {
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - days);
-  const cutoffStr = cutoff.toISOString().split("T")[0];
+  const cutoffStr = healthMetricsCutoffISO(days);
 
   const snap = await getDocs(
     query(
