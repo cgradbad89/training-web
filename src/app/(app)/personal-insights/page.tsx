@@ -1324,6 +1324,10 @@ export default function PersonalInsightsPage() {
         .filter((r) => r.distanceMiles > 0),
     [races]
   );
+  const activeRace = useMemo(
+    () => races.find((race) => race.isActive) ?? null,
+    [races]
+  );
   const stats = useAggregatedStats(
     uid,
     workouts,
@@ -1331,7 +1335,12 @@ export default function PersonalInsightsPage() {
     restingHr,
     raceInputs,
     { workoutsLoading, settingsLoading, racesLoading },
-    { enabled: activeTab !== "workouts" }
+    {
+      enabled: activeTab !== "workouts",
+      activeRaceId: activeRace?.id ?? null,
+      activeRaceDate: activeRace?.raceDate.slice(0, 10) ?? null,
+      overrides,
+    }
   );
   const initialLoadPending =
     workoutsLoading || (activeTab !== "workouts" && stats.loading);

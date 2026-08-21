@@ -1,43 +1,188 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import {
   AGGREGATED_STATS_VERSION,
   buildFastestMileFromBestEfforts,
-  isAggregatedStatsStale,
   buildAggregatedStats,
+  computeFreshnessFingerprint,
+  computeWorkoutAggregationRevision,
+  computeVo2FreshnessKey,
+  isFingerprintStale,
+  isVo2Stale,
   reviveAggregatedStatsDates,
+  type AggregatedStatsFreshnessFingerprint,
   type AggregatedStatsDoc,
 } from "./aggregatedStats";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { findBestFastestMileAcrossRuns } from "./fastestMileSegment";
 
 describe("aggregatedStats", () => {
-  describe("isAggregatedStatsStale", () => {
-    it("returns true for null cache", () => {
-      expect(isAggregatedStatsStale(null, "workout1")).toBe(true);
+  const fingerprintInputs = {
+    latestWorkoutId: "workout1",
+    computationVersion: AGGREGATED_STATS_VERSION,
+    maxHr: 185,
+    restingHr: 50,
+    activeRaceId: "race-1",
+    activeRaceDate: "2026-10-04",
+    overrides: {
+      workout1: { updatedAt: "2026-08-20T10:00:00Z", isExcluded: false },
+    },
+  };
+
+  function fingerprint(): AggregatedStatsFreshnessFingerprint {
+    return computeFreshnessFingerprint(fingerprintInputs);
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  describe("freshness domains", () => {
+    it("does not report stale for an unrelated rerender or object key order", () => {
+      const cached = fingerprint();
+      const current = computeFreshnessFingerprint({
+        ...fingerprintInputs,
+        overrides: {
+          workout1: { isExcluded: false, updatedAt: "2026-08-20T10:00:00Z" },
+        },
+      });
+      expect(isFingerprintStale(cached, current)).toBe(false);
     });
 
-    it("returns true for version mismatch", () => {
-      const cached = {
-        computationVersion: AGGREGATED_STATS_VERSION - 1,
-        latestWorkoutId: "workout1",
-      } as AggregatedStatsDoc;
-      expect(isAggregatedStatsStale(cached, "workout1")).toBe(true);
+    it("detects max-HR changes", () => {
+      expect(
+        isFingerprintStale(
+          fingerprint(),
+          computeFreshnessFingerprint({ ...fingerprintInputs, maxHr: 190 })
+        )
+      ).toBe(true);
     });
 
-    it("returns true for different latestWorkoutId", () => {
-      const cached = {
-        computationVersion: AGGREGATED_STATS_VERSION,
-        latestWorkoutId: "workout1",
-      } as AggregatedStatsDoc;
-      expect(isAggregatedStatsStale(cached, "workout2")).toBe(true);
+    it("detects resting-HR changes", () => {
+      expect(
+        isFingerprintStale(
+          fingerprint(),
+          computeFreshnessFingerprint({ ...fingerprintInputs, restingHr: 47 })
+        )
+      ).toBe(true);
     });
 
-    it("returns false for same version and latestWorkoutId", () => {
-      const cached = {
-        computationVersion: AGGREGATED_STATS_VERSION,
-        latestWorkoutId: "workout1",
-      } as AggregatedStatsDoc;
-      expect(isAggregatedStatsStale(cached, "workout1")).toBe(false);
+    it("detects aggregation computation-version changes", () => {
+      expect(
+        isFingerprintStale(
+          fingerprint(),
+          computeFreshnessFingerprint({
+            ...fingerprintInputs,
+            computationVersion: AGGREGATED_STATS_VERSION + 1,
+          })
+        )
+      ).toBe(true);
+    });
+
+    it("detects active race identity and date changes", () => {
+      const cached = fingerprint();
+      expect(
+        isFingerprintStale(
+          cached,
+          computeFreshnessFingerprint({ ...fingerprintInputs, activeRaceId: "race-2" })
+        )
+      ).toBe(true);
+      expect(
+        isFingerprintStale(
+          cached,
+          computeFreshnessFingerprint({ ...fingerprintInputs, activeRaceDate: "2026-10-11" })
+        )
+      ).toBe(true);
+    });
+
+    it("detects override changes without reading Firestore", () => {
+      expect(
+        isFingerprintStale(
+          fingerprint(),
+          computeFreshnessFingerprint({
+            ...fingerprintInputs,
+            overrides: {
+              workout1: { updatedAt: "2026-08-20T10:00:00Z", isExcluded: true },
+            },
+          })
+        )
+      ).toBe(true);
+    });
+
+    it("revises same-ID workouts when persisted best efforts or load changes", () => {
+      const workout = {
+        workoutId: "workout1",
+        startDate: new Date("2026-08-20T10:00:00Z"),
+        endDate: new Date("2026-08-20T11:00:00Z"),
+        syncedAt: new Date("2026-08-20T11:01:00Z"),
+        durationSeconds: 3600,
+        distanceMiles: 6,
+        activityType: "Running",
+        sourceName: "Apple Watch",
+        isRunLike: true,
+        hasRoute: true,
+        avgHeartRate: 150,
+        bestEfforts: { "1mi": 420 },
+        trainingLoadV2: 72,
+      } as HealthWorkout;
+      const cached = computeWorkoutAggregationRevision([workout]);
+
+      expect(computeWorkoutAggregationRevision([{ ...workout }])).toBe(cached);
+      expect(
+        computeWorkoutAggregationRevision([
+          { ...workout, bestEfforts: { ...workout.bestEfforts!, "1mi": 410 } },
+        ])
+      ).not.toBe(cached);
+      expect(
+        computeWorkoutAggregationRevision([{ ...workout, trainingLoadV2: 80 }])
+      ).not.toBe(cached);
+    });
+
+    it("detects a local day rollover", () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(2026, 7, 20, 23, 59));
+      const cached = fingerprint();
+      vi.setSystemTime(new Date(2026, 7, 21, 0, 1));
+      expect(isFingerprintStale(cached, fingerprint())).toBe(true);
+    });
+
+    it("detects a local year rollover", () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(2026, 11, 31, 23, 59));
+      const cached = fingerprint();
+      vi.setSystemTime(new Date(2027, 0, 1, 0, 1));
+      const current = fingerprint();
+      expect(current.localCalendarYear).toBe(2027);
+      expect(isFingerprintStale(cached, current)).toBe(true);
+    });
+
+    it("keeps VO2 freshness independent when the latest sample is unchanged", () => {
+      expect(
+        isVo2Stale(
+          computeVo2FreshnessKey("2026-08-19"),
+          computeVo2FreshnessKey("2026-08-19")
+        )
+      ).toBe(false);
+    });
+
+    it("marks only the VO2 domain stale when its latest sample date changes", () => {
+      const main = fingerprint();
+      expect(isFingerprintStale(main, fingerprint())).toBe(false);
+      expect(
+        isVo2Stale(
+          computeVo2FreshnessKey("2026-08-19"),
+          computeVo2FreshnessKey("2026-08-20")
+        )
+      ).toBe(true);
+    });
+
+    it("creates pure serializable keys without invoking any data source", () => {
+      expect(fingerprint()).toEqual(
+        expect.objectContaining({
+          latestWorkoutId: "workout1",
+          overridesRevision: expect.any(String),
+        })
+      );
+      expect(computeVo2FreshnessKey(null)).toEqual({ latestVo2SampleDate: null });
     });
   });
 
@@ -51,6 +196,8 @@ describe("aggregatedStats", () => {
         restingHr: 50,
         now: new Date("2024-01-01T12:00:00Z"),
         races: [],
+        freshnessFingerprint: fingerprint(),
+        vo2FreshnessKey: computeVo2FreshnessKey(null),
       });
 
       expect(result.computationVersion).toBe(AGGREGATED_STATS_VERSION);
@@ -87,6 +234,8 @@ describe("aggregatedStats", () => {
         restingHr: 50,
         now,
         races: [{ raceDate: "2024-01-10T10:00:00Z", distanceMiles: 13.1 }],
+        freshnessFingerprint: fingerprint(),
+        vo2FreshnessKey: computeVo2FreshnessKey("2024-01-01"),
       });
 
       expect(result.latestWorkoutId).toBe("workout1");
@@ -178,6 +327,8 @@ describe("aggregatedStats", () => {
     function firestoreShapedDoc(): AggregatedStatsDoc {
       return {
         computationVersion: AGGREGATED_STATS_VERSION,
+        freshnessFingerprint: fingerprint(),
+        vo2FreshnessKey: computeVo2FreshnessKey(null),
         computedAt: "2024-01-01T12:00:00.000Z",
         latestWorkoutId: "workout1",
         latestWorkoutStartDate: "2024-01-01T10:00:00.000Z",

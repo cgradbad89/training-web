@@ -8,10 +8,163 @@ import { findBestFastestMileAcrossRuns } from "./fastestMileSegment";
 import { buildDailyLoadMap, buildLoadEwmaSeries } from "./trainingLoadSeries";
 import { buildQualifyingEfforts, fitRiegel, predictSeconds, type RiegelFit } from "./riegelFit";
 
-export const AGGREGATED_STATS_VERSION = 2;
+export const AGGREGATED_STATS_VERSION = 3;
+
+export interface AggregatedStatsFreshnessFingerprint {
+  latestWorkoutId: string | null;
+  computationVersion: number;
+  maxHr: number;
+  restingHr: number;
+  activeRaceId: string | null;
+  activeRaceDate: string | null;
+  overridesRevision: string;
+  localCalendarDate: string;
+  localCalendarYear: number;
+}
+
+export interface Vo2FreshnessKey {
+  latestVo2SampleDate: string | null;
+}
+
+function stableSerialize(value: unknown): string {
+  if (value instanceof Date) {
+    return JSON.stringify(value.toISOString());
+  }
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value) ?? String(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(stableSerialize).join(",")}]`;
+  }
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableSerialize(record[key])}`)
+    .join(",")}}`;
+}
+
+function stableRevision(value: unknown): string {
+  const serialized = stableSerialize(value);
+  let hash = 2166136261;
+  for (let index = 0; index < serialized.length; index += 1) {
+    hash ^= serialized.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function overridesRevision(overrides: unknown): string {
+  const count = Array.isArray(overrides)
+    ? overrides.length
+    : overrides && typeof overrides === "object"
+      ? Object.keys(overrides).length
+      : 0;
+  return `${count}:${stableRevision(overrides)}`;
+}
+
+export function computeWorkoutAggregationRevision(
+  workouts: HealthWorkout[]
+): string {
+  return stableRevision(
+    workouts.map((workout) => ({
+      workoutId: workout.workoutId,
+      startDate: workout.startDate,
+      endDate: workout.endDate,
+      syncedAt: workout.syncedAt,
+      durationSeconds: workout.durationSeconds,
+      distanceMiles: workout.distanceMiles,
+      activityType: workout.activityType,
+      sourceName: workout.sourceName,
+      isRunLike: workout.isRunLike,
+      hasRoute: workout.hasRoute,
+      avgHeartRate: workout.avgHeartRate,
+      bestEfforts: workout.bestEfforts,
+      trainingLoadV2: workout.trainingLoadV2,
+    }))
+  );
+}
+
+function localCalendarDate(now: Date): string {
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+export function computeFreshnessFingerprint(inputs: {
+  latestWorkoutId: string | null;
+  computationVersion: number;
+  maxHr: number;
+  restingHr: number;
+  activeRaceId: string | null;
+  activeRaceDate: string | null;
+  overrides: unknown;
+}): AggregatedStatsFreshnessFingerprint {
+  const now = new Date();
+  return {
+    latestWorkoutId: inputs.latestWorkoutId,
+    computationVersion: inputs.computationVersion,
+    maxHr: inputs.maxHr,
+    restingHr: inputs.restingHr,
+    activeRaceId: inputs.activeRaceId,
+    activeRaceDate: inputs.activeRaceDate,
+    overridesRevision: overridesRevision(inputs.overrides),
+    localCalendarDate: localCalendarDate(now),
+    localCalendarYear: now.getFullYear(),
+  };
+}
+
+export function isFingerprintStale(
+  cached: AggregatedStatsFreshnessFingerprint,
+  current: AggregatedStatsFreshnessFingerprint
+): boolean {
+  return (
+    cached.latestWorkoutId !== current.latestWorkoutId ||
+    cached.computationVersion !== current.computationVersion ||
+    cached.maxHr !== current.maxHr ||
+    cached.restingHr !== current.restingHr ||
+    cached.activeRaceId !== current.activeRaceId ||
+    cached.activeRaceDate !== current.activeRaceDate ||
+    cached.overridesRevision !== current.overridesRevision ||
+    cached.localCalendarDate !== current.localCalendarDate ||
+    cached.localCalendarYear !== current.localCalendarYear
+  );
+}
+
+export function computeVo2FreshnessKey(
+  latestVo2SampleDate: string | null
+): Vo2FreshnessKey {
+  return { latestVo2SampleDate };
+}
+
+export function isVo2Stale(
+  cached: Vo2FreshnessKey,
+  current: Vo2FreshnessKey
+): boolean {
+  return cached.latestVo2SampleDate !== current.latestVo2SampleDate;
+}
+
+/**
+ * Narrow compatibility check for the run-detail CTL shortcut, whose caller
+ * does not own the full Insights dependency set. Personal Insights uses the
+ * complete fingerprint checks above.
+ */
+export function isAggregatedStatsStale(
+  cached: AggregatedStatsDoc | null,
+  latestWorkoutId: string | null
+): boolean {
+  if (!cached?.freshnessFingerprint) return true;
+  return (
+    cached.freshnessFingerprint.computationVersion !==
+      AGGREGATED_STATS_VERSION ||
+    cached.freshnessFingerprint.latestWorkoutId !== latestWorkoutId
+  );
+}
 
 export interface AggregatedStatsDoc {
   computationVersion: number;
+  freshnessFingerprint: AggregatedStatsFreshnessFingerprint;
+  vo2FreshnessKey: Vo2FreshnessKey;
   computedAt: string; // ISO timestamp
   latestWorkoutId: string;
   latestWorkoutStartDate: string; // ISO date
@@ -67,16 +220,6 @@ export function reviveAggregatedStatsDates(
   };
 }
 
-export function isAggregatedStatsStale(
-  cached: AggregatedStatsDoc | null,
-  latestWorkoutId: string
-): boolean {
-  if (cached === null) return true;
-  if (cached.computationVersion !== AGGREGATED_STATS_VERSION) return true;
-  if (cached.latestWorkoutId !== latestWorkoutId) return true;
-  return false;
-}
-
 export interface BuildAggregatedStatsInputs {
   workouts: HealthWorkout[];
   mileSplitsByWorkoutId: Record<string, MileSplitDoc[]>;
@@ -85,6 +228,9 @@ export interface BuildAggregatedStatsInputs {
   restingHr: number;
   now: Date;
   races: { raceDate: Date | string; distanceMiles: number }[];
+  freshnessFingerprint: AggregatedStatsFreshnessFingerprint;
+  vo2FreshnessKey: Vo2FreshnessKey;
+  vo2HistoryOverride?: ReturnType<typeof buildVo2History>;
 }
 
 /**
@@ -117,6 +263,9 @@ export function buildAggregatedStats(
     restingHr,
     now,
     races,
+    freshnessFingerprint,
+    vo2FreshnessKey,
+    vo2HistoryOverride,
   } = inputs;
 
   const computedAt = now.toISOString();
@@ -124,6 +273,8 @@ export function buildAggregatedStats(
   if (workouts.length === 0) {
     return {
       computationVersion: AGGREGATED_STATS_VERSION,
+      freshnessFingerprint,
+      vo2FreshnessKey,
       computedAt,
       latestWorkoutId: "",
       latestWorkoutStartDate: "",
@@ -180,7 +331,7 @@ export function buildAggregatedStats(
     }));
 
   // 2. VO2 History
-  const vo2History = buildVo2History(healthMetrics);
+  const vo2History = vo2HistoryOverride ?? buildVo2History(healthMetrics);
 
   // 3. Race Predictions
   const runInputs = workouts.map((r) => ({
@@ -260,6 +411,8 @@ export function buildAggregatedStats(
 
   return {
     computationVersion: AGGREGATED_STATS_VERSION,
+    freshnessFingerprint,
+    vo2FreshnessKey,
     computedAt,
     latestWorkoutId: latestWorkout.workoutId,
     latestWorkoutStartDate: latestWorkout.startDate.toISOString(),

@@ -9,7 +9,13 @@ import {
   useAggregatedStats,
 } from "../useAggregatedStats";
 import * as firestore from "firebase/firestore";
-import { AGGREGATED_STATS_VERSION } from "@/utils/aggregatedStats";
+import * as mileSplitsCache from "@/utils/mileSplitsCache";
+import {
+  AGGREGATED_STATS_VERSION,
+  computeFreshnessFingerprint,
+  computeVo2FreshnessKey,
+  type AggregatedStatsDoc,
+} from "@/utils/aggregatedStats";
 import { type HealthWorkout } from "@/types/healthWorkout";
 
 // Mock external dependencies
@@ -51,11 +57,56 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
   const races: any[] = [];
   const latestWorkoutId = "workout1";
 
+  function currentFingerprint(overrides: unknown = {}) {
+    return computeFreshnessFingerprint({
+      latestWorkoutId,
+      computationVersion: AGGREGATED_STATS_VERSION,
+      maxHr,
+      restingHr,
+      activeRaceId: null,
+      activeRaceDate: null,
+      overrides,
+    });
+  }
+
+  function cachedStats(
+    overrides: Partial<AggregatedStatsDoc> = {}
+  ): AggregatedStatsDoc {
+    return {
+      computationVersion: AGGREGATED_STATS_VERSION,
+      freshnessFingerprint: currentFingerprint(),
+      vo2FreshnessKey: computeVo2FreshnessKey(null),
+      computedAt: "2026-08-20T12:00:00.000Z",
+      latestWorkoutId,
+      latestWorkoutStartDate: "2024-01-01T10:00:00.000Z",
+      trainingLoad: { series: [] },
+      vo2History: [],
+      racePredictions: {
+        t5k: 1200,
+        t10: null,
+        tHalf: null,
+        tMar: null,
+        confidenceLevel: "low",
+        modelFit: null,
+      },
+      personalRecordsByYear: { prs: [], specificPrs: [] },
+      paceTrends: [],
+      hrZoneDistribution: {
+        runsCounted: 0,
+        totalMiles: 0,
+        zoneMiles: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+      },
+      fastestMileSegment: null,
+      ...overrides,
+    };
+  }
+
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.clearAllMocks();
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.mocked(firestore.getDocs).mockResolvedValue({ docs: [] } as any);
   });
 
   function mockMissingCache(): void {
@@ -165,14 +216,7 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
   });
 
   it("returns cached data immediately if not stale", async () => {
-    const cachedDoc = {
-      computationVersion: AGGREGATED_STATS_VERSION,
-      latestWorkoutId: "workout1",
-      racePredictions: { t5k: 1200 }, // mock data
-      // Revival normalizes these two; include them so equality holds.
-      fastestMileSegment: null,
-      personalRecordsByYear: { prs: [], specificPrs: [] },
-    };
+    const cachedDoc = cachedStats();
 
     vi.mocked(firestore.getDoc).mockResolvedValue({
       exists: () => true,
@@ -180,19 +224,17 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
     } as any);
 
     const result = await fetchAndComputeAggregatedStats(
-      mockUid, mockWorkouts, maxHr, restingHr, races, latestWorkoutId
+      mockUid, mockWorkouts, maxHr, restingHr, races, currentFingerprint()
     );
 
     expect(result).toEqual(cachedDoc);
-    expect(firestore.getDocs).not.toHaveBeenCalled(); // no heavy fetches
+    expect(firestore.getDocs).toHaveBeenCalledTimes(1);
+    expect(firestore.setDoc).not.toHaveBeenCalled();
   });
 
   it("revives string dates to Date instances on the cache-hit path (regression)", async () => {
     // Shaped like real Firestore output: dates round-tripped to ISO strings.
-    const cachedDoc = {
-      computationVersion: AGGREGATED_STATS_VERSION,
-      latestWorkoutId: "workout1",
-      racePredictions: { t5k: 1200 },
+    const cachedDoc = cachedStats({
       fastestMileSegment: { seconds: 360, date: "2024-01-07T10:00:00.000Z" },
       personalRecordsByYear: {
         prs: [{ pace: 480, miles: 2, date: "2024-01-05T10:00:00.000Z" }, null],
@@ -206,7 +248,7 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
           null,
         ],
       },
-    };
+    } as unknown as Partial<AggregatedStatsDoc>);
 
     vi.mocked(firestore.getDoc).mockResolvedValue({
       exists: () => true,
@@ -214,7 +256,7 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
     } as any);
 
     const result = await fetchAndComputeAggregatedStats(
-      mockUid, mockWorkouts, maxHr, restingHr, races, latestWorkoutId
+      mockUid, mockWorkouts, maxHr, restingHr, races, currentFingerprint()
     );
 
     expect(result.fastestMileSegment!.date instanceof Date).toBe(true);
@@ -224,7 +266,8 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
     ).toBe(true);
     // Null entries survive without throwing or fabricating a date.
     expect(result.personalRecordsByYear.prs[1]).toBeNull();
-    expect(firestore.getDocs).not.toHaveBeenCalled();
+    expect(firestore.getDocs).toHaveBeenCalledTimes(1);
+    expect(firestore.setDoc).not.toHaveBeenCalled();
   });
 
   it("computes fresh data if cache is missing", async () => {
@@ -240,7 +283,7 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
     vi.mocked(firestore.setDoc).mockResolvedValue(undefined);
 
     const result = await fetchAndComputeAggregatedStats(
-      mockUid, mockWorkouts, maxHr, restingHr, races, latestWorkoutId
+      mockUid, mockWorkouts, maxHr, restingHr, races, currentFingerprint()
     );
 
     expect(result).not.toBeNull();
@@ -261,7 +304,7 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
     vi.mocked(firestore.setDoc).mockResolvedValue(undefined);
 
     const result = await fetchAndComputeAggregatedStats(
-      mockUid, mockWorkouts, maxHr, restingHr, races, latestWorkoutId
+      mockUid, mockWorkouts, maxHr, restingHr, races, currentFingerprint()
     );
 
     expect(result.computationVersion).toBe(AGGREGATED_STATS_VERSION);
@@ -269,10 +312,13 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
   });
 
   it("computes fresh data if latestWorkoutId mismatched", async () => {
-    const cachedDoc = {
-      computationVersion: AGGREGATED_STATS_VERSION,
+    const cachedDoc = cachedStats({
       latestWorkoutId: "old-workout",
-    };
+      freshnessFingerprint: {
+        ...currentFingerprint(),
+        latestWorkoutId: "old-workout",
+      },
+    });
     vi.mocked(firestore.getDoc).mockResolvedValue({
       exists: () => true,
       data: () => cachedDoc,
@@ -281,10 +327,85 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
     vi.mocked(firestore.setDoc).mockResolvedValue(undefined);
 
     const result = await fetchAndComputeAggregatedStats(
-      mockUid, mockWorkouts, maxHr, restingHr, races, latestWorkoutId
+      mockUid, mockWorkouts, maxHr, restingHr, races, currentFingerprint()
     );
 
     expect(result.latestWorkoutId).toBe("workout1");
+    expect(firestore.setDoc).toHaveBeenCalledTimes(1);
+  });
+
+  it("recomputes the main domain without rebuilding unchanged VO2 history", async () => {
+    const sampleDate = "2026-08-19";
+    const cachedDoc = cachedStats({
+      freshnessFingerprint: {
+        ...currentFingerprint(),
+        maxHr: maxHr - 5,
+      },
+      vo2FreshnessKey: computeVo2FreshnessKey(sampleDate),
+      vo2History: [{ date: sampleDate, value: 44 }],
+    });
+    vi.mocked(firestore.getDoc).mockResolvedValue({
+      exists: () => true,
+      data: () => cachedDoc,
+    } as any);
+    vi.mocked(firestore.getDocs).mockResolvedValue({
+      docs: [
+        { id: sampleDate, data: () => ({ date: sampleDate, vo2_max: 55 }) },
+      ],
+    } as any);
+    vi.mocked(firestore.setDoc).mockResolvedValue(undefined);
+
+    const result = await fetchAndComputeAggregatedStats(
+      mockUid,
+      mockWorkouts,
+      maxHr,
+      restingHr,
+      races,
+      currentFingerprint()
+    );
+
+    expect(result.freshnessFingerprint.maxHr).toBe(maxHr);
+    expect(result.vo2History).toEqual(cachedDoc.vo2History);
+    expect(firestore.setDoc).toHaveBeenCalledTimes(1);
+  });
+
+  it("updates only VO2 fields when the main fingerprint is still fresh", async () => {
+    const cachedDoc = cachedStats({
+      vo2FreshnessKey: computeVo2FreshnessKey("2026-08-18"),
+      vo2History: [{ date: "2026-08-18", value: 44 }],
+      trainingLoad: {
+        series: [{ date: "2026-08-18", ctl: 10, atl: 12, tsb: -2 }],
+      },
+    });
+    vi.mocked(firestore.getDoc).mockResolvedValue({
+      exists: () => true,
+      data: () => cachedDoc,
+    } as any);
+    vi.mocked(firestore.getDocs).mockResolvedValue({
+      docs: [
+        {
+          id: "2026-08-20",
+          data: () => ({ date: "2026-08-20", vo2_max: 51 }),
+        },
+      ],
+    } as any);
+    vi.mocked(firestore.setDoc).mockResolvedValue(undefined);
+
+    const result = await fetchAndComputeAggregatedStats(
+      mockUid,
+      mockWorkouts,
+      maxHr,
+      restingHr,
+      races,
+      currentFingerprint()
+    );
+
+    expect(result.vo2History).toEqual([{ date: "2026-08-20", value: 51 }]);
+    expect(result.vo2FreshnessKey).toEqual({
+      latestVo2SampleDate: "2026-08-20",
+    });
+    expect(result.trainingLoad).toEqual(cachedDoc.trainingLoad);
+    expect(mileSplitsCache.getMileSplits).not.toHaveBeenCalled();
     expect(firestore.setDoc).toHaveBeenCalledTimes(1);
   });
 
@@ -298,7 +419,7 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
 
     let settled = false;
     const first = fetchAndComputeAggregatedStats(
-      mockUid, mockWorkouts, maxHr, restingHr, races, latestWorkoutId
+      mockUid, mockWorkouts, maxHr, restingHr, races, currentFingerprint()
     ).then((result) => {
       settled = true;
       return result;
@@ -306,7 +427,7 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
 
     await vi.waitFor(() => expect(firestore.setDoc).toHaveBeenCalledTimes(1));
     const overlapping = fetchAndComputeAggregatedStats(
-      mockUid, mockWorkouts, maxHr, restingHr, races, latestWorkoutId
+      mockUid, mockWorkouts, maxHr, restingHr, races, currentFingerprint()
     );
     await Promise.resolve();
 
@@ -330,10 +451,10 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
     mockMissingCache();
 
     const first = fetchAndComputeAggregatedStats(
-      mockUid, mockWorkouts, maxHr, restingHr, races, latestWorkoutId
+      mockUid, mockWorkouts, maxHr, restingHr, races, currentFingerprint()
     );
     const second = fetchAndComputeAggregatedStats(
-      mockUid, mockWorkouts, maxHr, restingHr, races, latestWorkoutId
+      mockUid, mockWorkouts, maxHr, restingHr, races, currentFingerprint()
     );
 
     expect(second).toBe(first);
@@ -347,10 +468,15 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
 
     await Promise.all([
       fetchAndComputeAggregatedStats(
-        mockUid, mockWorkouts, maxHr, restingHr, races, "workout1"
+        mockUid, mockWorkouts, maxHr, restingHr, races, currentFingerprint()
       ),
       fetchAndComputeAggregatedStats(
-        mockUid, mockWorkouts, maxHr, restingHr, races, "workout2"
+        mockUid,
+        mockWorkouts,
+        maxHr,
+        restingHr,
+        races,
+        { ...currentFingerprint(), latestWorkoutId: "workout2" }
       ),
     ]);
 
@@ -362,10 +488,10 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
     mockMissingCache();
 
     await fetchAndComputeAggregatedStats(
-      mockUid, mockWorkouts, maxHr, restingHr, races, latestWorkoutId
+      mockUid, mockWorkouts, maxHr, restingHr, races, currentFingerprint()
     );
     await fetchAndComputeAggregatedStats(
-      mockUid, mockWorkouts, maxHr, restingHr, races, latestWorkoutId
+      mockUid, mockWorkouts, maxHr, restingHr, races, currentFingerprint()
     );
 
     expect(firestore.getDoc).toHaveBeenCalledTimes(2);
@@ -380,7 +506,7 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
 
     await expect(
       fetchAndComputeAggregatedStats(
-        mockUid, mockWorkouts, maxHr, restingHr, races, latestWorkoutId
+        mockUid, mockWorkouts, maxHr, restingHr, races, currentFingerprint()
       )
     ).rejects.toThrow("Permission denied");
 
@@ -397,7 +523,7 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
 
     await expect(
       fetchAndComputeAggregatedStats(
-        mockUid, mockWorkouts, maxHr, restingHr, races, latestWorkoutId
+        mockUid, mockWorkouts, maxHr, restingHr, races, currentFingerprint()
       )
     ).resolves.toEqual(expect.objectContaining({ latestWorkoutId }));
     expect(firestore.getDoc).toHaveBeenCalledTimes(2);

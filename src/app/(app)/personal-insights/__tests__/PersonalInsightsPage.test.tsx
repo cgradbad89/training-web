@@ -133,6 +133,8 @@ beforeEach(() => {
   h.aggregationCalls.length = 0;
   h.aggregatedStats.loading = false;
   h.appData.workoutsLoading = false;
+  h.appData.overrides = {};
+  h.appData.races = [];
   h.riegelCalls = 0;
   h.loadScanCalls = 0;
   h.titleMapCalls = 0;
@@ -172,7 +174,12 @@ describe("PersonalInsightsPage tabs", () => {
     // Neither Fitness nor Race Readiness content is mounted → workouts tab active.
     expect(hasText("Cardio Fitness (VO₂ max)")).toBe(false);
     expect(hasText("Predicted Race Times")).toBe(false);
-    expect(h.aggregationCalls.at(-1)?.at(-1)).toEqual({ enabled: false });
+    expect(h.aggregationCalls.at(-1)?.at(-1)).toEqual({
+      enabled: false,
+      activeRaceId: null,
+      activeRaceDate: null,
+      overrides: {},
+    });
     expect(h.riegelCalls).toBe(0);
     expect(h.loadScanCalls).toBe(0);
     expect(h.titleMapCalls).toBe(0);
@@ -180,7 +187,12 @@ describe("PersonalInsightsPage tabs", () => {
 
   it("runs Fitness preprocessing only when the Fitness tab is mounted", () => {
     mount();
-    expect(h.aggregationCalls.at(-1)?.at(-1)).toEqual({ enabled: true });
+    expect(h.aggregationCalls.at(-1)?.at(-1)).toEqual({
+      enabled: true,
+      activeRaceId: null,
+      activeRaceDate: null,
+      overrides: {},
+    });
     expect(h.loadScanCalls).toBeGreaterThan(0);
     expect(h.titleMapCalls).toBeGreaterThan(0);
     expect(h.riegelCalls).toBe(0);
@@ -192,6 +204,24 @@ describe("PersonalInsightsPage tabs", () => {
     expect(h.riegelCalls).toBe(4);
     expect(h.loadScanCalls).toBe(0);
     expect(h.titleMapCalls).toBe(0);
+  });
+
+  it("passes already-loaded active-race and override inputs to cache freshness", () => {
+    h.appData.races = [
+      { id: "race-1", raceDate: "2026-10-04", isActive: true },
+    ];
+    h.appData.overrides = {
+      workout1: { workoutId: "workout1", updatedAt: "2026-08-20T10:00:00Z" },
+    };
+
+    mount();
+
+    expect(h.aggregationCalls.at(-1)?.at(-1)).toEqual({
+      enabled: true,
+      activeRaceId: "race-1",
+      activeRaceDate: "2026-10-04",
+      overrides: h.appData.overrides,
+    });
   });
 
   it("keeps existing tab content rendered during a background refresh", () => {
@@ -246,7 +276,12 @@ describe("PersonalInsightsPage tabs", () => {
       tabButton!.click();
     });
 
-    expect(h.aggregationCalls.at(-1)?.at(-1)).toEqual({ enabled: false });
+    expect(h.aggregationCalls.at(-1)?.at(-1)).toEqual({
+      enabled: false,
+      activeRaceId: null,
+      activeRaceDate: null,
+      overrides: {},
+    });
     expect(h.loadScanCalls).toBe(loadCalls);
     expect(h.titleMapCalls).toBe(titleCalls);
     expect(h.riegelCalls).toBe(0);
