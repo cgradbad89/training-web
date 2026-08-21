@@ -189,12 +189,12 @@ describe("AutoMatchRunner — AppDataContext wiring", () => {
     );
   });
 
-  it("subscribes to non-run workouts only", async () => {
+  it("subscribes only to non-run workouts in the actionable plan window", async () => {
     await mount();
 
     expect(h.onHealthWorkoutsSnapshot).toHaveBeenCalledWith(
       "u1",
-      { isRunLike: false, limitCount: 500 },
+      { isRunLike: false, startDate: new Date(2020, 0, 6) },
       expect.any(Function),
       expect.any(Function)
     );

@@ -7,7 +7,7 @@ import { fetchPlans } from '@/services/plans'
 import { onHealthWorkoutsSnapshot } from '@/services/healthWorkouts'
 import {
   autoMatchCrossTrainingSessions,
-  planNeedsAutoMatch,
+  autoMatchWindowStart,
 } from '@/services/autoMatch'
 import type { HealthWorkout } from '@/types/healthWorkout'
 
@@ -46,8 +46,10 @@ export default function AutoMatchRunner() {
   const { overrides, refreshPlans, plans, plansLoading } = useAppData()
   const inFlight = useRef(false)
   const lastKey = useRef<string | null>(null)
-  const needsAutoMatch =
-    !plansLoading && plans.some((plan) => planNeedsAutoMatch(plan))
+  const matchWindowStart = !plansLoading
+    ? autoMatchWindowStart(plans)
+    : null
+  const matchWindowStartMs = matchWindowStart?.getTime() ?? null
 
   // Latest-value refs — see the note above on why these are not effect deps.
   const overridesRef = useRef(overrides)
@@ -60,7 +62,7 @@ export default function AutoMatchRunner() {
   }, [refreshPlans])
 
   useEffect(() => {
-    if (!user || !needsAutoMatch) return
+    if (!user || matchWindowStartMs === null) return
     const uid = user.uid
     // A newly activated plan must evaluate the listener's initial snapshot,
     // even if its workout pool matches the key from a prior subscription.
@@ -93,7 +95,7 @@ export default function AutoMatchRunner() {
 
     const unsubscribe = onHealthWorkoutsSnapshot(
       uid,
-      { isRunLike: false, limitCount: 500 },
+      { isRunLike: false, startDate: new Date(matchWindowStartMs) },
       (workouts) => {
         // Workout plans can only match against non-running activities. If the
         // current snapshot has none, skip — saves a fetchPlans + log spam.
@@ -120,7 +122,7 @@ export default function AutoMatchRunner() {
     )
 
     return () => unsubscribe()
-  }, [user, needsAutoMatch])
+  }, [user, matchWindowStartMs])
 
   return null
 }

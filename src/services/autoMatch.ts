@@ -115,19 +115,38 @@ export function planNeedsAutoMatch(
   plan: Plan,
   today: Date = new Date()
 ): boolean {
-  if (!isWorkoutPlan(plan) || plan.status !== "active") return false;
+  return autoMatchWindowStart([plan], today) !== null;
+}
+
+/**
+ * Earliest incomplete, due workout-session date across active workout plans.
+ * AutoMatchRunner uses this as both its subscription gate and Firestore lower
+ * bound so old, already-completed history is never part of the live query.
+ */
+export function autoMatchWindowStart(
+  plans: Plan[],
+  today: Date = new Date()
+): Date | null {
+  let earliest: Date | null = null;
 
   const todayStart = new Date(today);
   todayStart.setHours(0, 0, 0, 0);
-  return plan.weeks.some((week) =>
-    week.entries.some(
-      (entry) =>
-        entry.type === "workout" &&
-        entry.completed !== true &&
-        plannedSessionDate(plan.startDate, entry.weekIndex, entry.weekday) <=
-          todayStart
-    )
-  );
+  for (const plan of plans) {
+    if (!isWorkoutPlan(plan) || plan.status !== "active") continue;
+    for (const week of plan.weeks) {
+      for (const entry of week.entries) {
+        if (entry.type !== "workout" || entry.completed === true) continue;
+        const sessionDate = plannedSessionDate(
+          plan.startDate,
+          entry.weekIndex,
+          entry.weekday
+        );
+        if (sessionDate > todayStart) continue;
+        if (!earliest || sessionDate < earliest) earliest = sessionDate;
+      }
+    }
+  }
+  return earliest;
 }
 
 // ─── Match result types ─────────────────────────────────────────────────────

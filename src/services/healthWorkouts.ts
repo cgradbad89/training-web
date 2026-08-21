@@ -341,14 +341,18 @@ export async function fetchHealthWorkout(
  */
 export function onHealthWorkoutsSnapshot(
   uid: string,
-  opts: { limitCount?: number; isRunLike?: boolean },
+  opts: { limitCount?: number; isRunLike?: boolean; startDate?: Date },
   onData: (workouts: HealthWorkout[]) => void,
   onError?: (error: Error) => void
 ): Unsubscribe {
-  const constraints: QueryConstraint[] = [orderBy("startDate", "desc")];
+  const constraints: QueryConstraint[] = [];
   if (opts.isRunLike !== undefined) {
     constraints.push(where("isRunLike", "==", opts.isRunLike));
   }
+  if (opts.startDate) {
+    constraints.push(where("startDate", ">=", opts.startDate));
+  }
+  constraints.push(orderBy("startDate", "desc"));
   if (opts.limitCount) constraints.push(limit(opts.limitCount));
 
   const q = query(
