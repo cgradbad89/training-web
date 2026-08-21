@@ -292,10 +292,11 @@ export default function PlansPage() {
 
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [selectedWeekIndex, setSelectedWeekIndex] = useState(0);
-  // Seed/migration (once per mount, after plans load) + initial plan
-  // selection (once, after seeding settles) — see the effects below.
+  // Seed/migration runs once per mount after the primary plans query. It is
+  // deliberately not a rendering gate: existing plans remain usable while
+  // background maintenance finishes, and empty accounts can use the shell
+  // while their defaults are created.
   const [seeded, setSeeded] = useState(false);
-  const [initialSelectDone, setInitialSelectDone] = useState(false);
   const [saving, setSaving] = useState(false);
   const [mobileView, setMobileView] = useState<"list" | "detail">("list");
   const [pageView, setPageView] = useState<"plans" | "calendar" | "goals">(
@@ -449,21 +450,20 @@ export default function PlansPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, plansLoading, seeded]);
 
-  // Initial plan selection — once, after seeding/migration has settled, mirror
-  // the old loadAll()'s "select active plan (or first) on load" behavior.
-  // Guarded so it never re-fires on later plans changes (e.g. after a user
-  // edit's refreshPlans()), which would yank the user back to another plan.
+  // Select as soon as the primary plans query provides a plan. Do not wait for
+  // background seed/migration work, and never replace an existing selection.
+  // Empty accounts naturally select their first seeded plan after
+  // refreshPlans() updates context.
   useEffect(() => {
-    if (!user || plansLoading || !seeded || initialSelectDone) return;
+    if (!user || plansLoading || selectedPlanId !== null) return;
     const active = plans.find((p) => p.status === "active") ?? plans[0];
     if (active) {
       setSelectedPlanId(active.id);
       setSelectedWeekIndex(currentWeekIndex(active));
     }
-    setInitialSelectDone(true);
-  }, [user, plansLoading, seeded, initialSelectDone, plans]);
+  }, [user, plansLoading, plans, selectedPlanId]);
 
-  const loading = plansLoading || !seeded || !initialSelectDone;
+  const loading = plansLoading;
   useClientPerformanceMark("training:plans:usable", !loading, {
     measureFrom: "training:auth-ready",
     measureName: "training:plans:usable-duration",

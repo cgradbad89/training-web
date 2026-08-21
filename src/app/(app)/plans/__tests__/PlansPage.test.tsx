@@ -316,6 +316,31 @@ describe("PlansPage — shared AppDataContext wiring", () => {
     expect(container.querySelector('[data-testid="running-plan-detail"]')).toBeTruthy();
     expect(h.fetchRaces).not.toHaveBeenCalled();
   });
+
+  it("renders the page shell and existing plan before migration finishes", async () => {
+    let resolveMigration!: () => void;
+    h.buildSeptTravelMigration.mockImplementation(() => ({
+      ...buildSeptPlan(),
+      name: "Sept 2026 Half Marathon Sub 9:30 Migrated",
+    }));
+    h.updatePlan.mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolveMigration = resolve;
+      })
+    );
+
+    await mount();
+
+    expect(h.updatePlan).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain("Plans & Goals");
+    expect(container.textContent).toContain("Calendar");
+    expect(container.querySelector('[data-testid="running-plan-detail"]')).toBeTruthy();
+
+    resolveMigration();
+    await flush();
+    await flush();
+    expect(h.refreshPlans).toHaveBeenCalledTimes(1);
+  });
 });
 
 // ─── Plan.startDate Monday normalization (both plan types) ───────────────────

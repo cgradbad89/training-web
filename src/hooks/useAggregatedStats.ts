@@ -1,5 +1,11 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { doc, getDoc, setDoc } from "firebase/firestore";
+import {
+  doc,
+  getDoc,
+  getDocFromCache,
+  getDocFromServer,
+  setDoc,
+} from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import {
@@ -299,43 +305,68 @@ export function useAggregatedStats(
   const [error, setError] = useState<Error | null>(null);
   const [cacheResolvedUid, setCacheResolvedUid] = useState<string | null>(null);
   const data = dataState?.uid === uid ? dataState.data : null;
-  const cachedStatsRef = useRef<{
+  const serverStatsRef = useRef<{
     uid: string;
     promise: Promise<AggregatedStatsDoc | null>;
   } | null>(null);
 
-  // Start the presentation read as soon as auth is available. Validation still
-  // waits for workouts/settings/races/overrides, but a previously-computed
-  // aggregate can render while those larger collections are loading. The same
-  // promise is passed into validation so this does not duplicate getDoc reads.
+  // Hydrate from IndexedDB as soon as auth is available, then replace it with
+  // the server document in the background. Validation still waits for
+  // workouts/settings/races/overrides and reuses that same server promise, so
+  // the cache-first presentation path adds no billable Firestore read.
   useEffect(() => {
     if (!enabled || !uid) {
-      cachedStatsRef.current = null;
+      serverStatsRef.current = null;
       return;
     }
 
     let cancelled = false;
+    let serverSettled = false;
+    queueMicrotask(() => {
+      if (!cancelled) {
+        setLoading(true);
+        setError(null);
+      }
+    });
 
     const statsRef = doc(db, `users/${uid}/insights/aggregatedStats`);
-    const promise = getDoc(statsRef).then((statsSnap) =>
+    const serverPromise = getDocFromServer(statsRef).then((statsSnap) =>
       statsSnap.exists()
         ? reviveAggregatedStatsDates(statsSnap.data() as AggregatedStatsDoc)
         : null
     );
-    cachedStatsRef.current = { uid, promise };
+    serverStatsRef.current = { uid, promise: serverPromise };
 
-    promise
+    getDocFromCache(statsRef)
       .then((cached) => {
+        if (cancelled || serverSettled || !cached.exists()) return;
+        const cachedData = reviveAggregatedStatsDates(
+          cached.data() as AggregatedStatsDoc
+        );
+        setCacheResolvedUid(uid);
+        setDataState({ uid, data: cachedData });
+        setLoading(false);
+      })
+      .catch(() => {
+        // Cache misses, unsupported IndexedDB, and corrupt local documents are
+        // presentation misses only. The authoritative server path below still
+        // handles first-time and recovery loads.
+      });
+
+    serverPromise
+      .then((serverData) => {
+        serverSettled = true;
         if (cancelled) return;
         setCacheResolvedUid(uid);
-        if (cached) {
-          setDataState({ uid, data: cached });
+        if (serverData) {
+          setDataState({ uid, data: serverData });
           setLoading(false);
         } else {
           setLoading(true);
         }
       })
       .catch((err) => {
+        serverSettled = true;
         if (!cancelled) {
           setCacheResolvedUid(uid);
           setError(err instanceof Error ? err : new Error(String(err)));
@@ -400,8 +431,8 @@ export function useAggregatedStats(
     let cancelled = false;
 
     const cachedStatsPromise =
-      cachedStatsRef.current?.uid === uid
-        ? cachedStatsRef.current.promise
+      serverStatsRef.current?.uid === uid
+        ? serverStatsRef.current.promise
         : undefined;
     const validationStartMark = "training:insights-aggregate:start";
     const validationEndMark = "training:insights-aggregate:ready";
