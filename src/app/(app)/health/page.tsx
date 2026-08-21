@@ -3,7 +3,10 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { useRefetchOnFocus } from "@/hooks/useRefetchOnFocus";
-import { useClientPerformanceMark } from "@/hooks/useClientPerformanceMark";
+import {
+  useClientPagePerformance,
+  useClientPerformanceMark,
+} from "@/hooks/useClientPerformanceMark";
 import {
   fetchHealthMetrics,
   fetchAllHealthMetrics,
@@ -1152,6 +1155,8 @@ function SectionActions({
 export default function HealthPage() {
   const { user } = useAuth();
   const userId = user?.uid ?? "";
+  useClientPagePerformance("/health");
+  useClientPerformanceMark("training:health:shell-visible", true);
 
   const [metrics, setMetrics] = useState<HealthMetric[]>([]);
   const [metricsCache, setMetricsCache] = useState<HealthMetricsCache>(
@@ -1975,6 +1980,11 @@ export default function HealthPage() {
       measureFrom: "training:auth-ready",
       measureName: "training:health:usable-duration",
     }
+  );
+  useClientPerformanceMark(
+    "training:health:data-ready",
+    !metricsInitialLoading && error === null,
+    { detail: { cacheSource: "server" } }
   );
 
   if (metricsInitialLoading) {

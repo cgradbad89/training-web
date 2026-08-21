@@ -309,6 +309,9 @@ export function useAggregatedStats(
     uid: string;
     promise: Promise<AggregatedStatsDoc | null>;
   } | null>(null);
+  const cachePresentedRef = useRef<{ uid: string; presented: boolean } | null>(
+    null
+  );
 
   // Hydrate from IndexedDB as soon as auth is available, then replace it with
   // the server document in the background. Validation still waits for
@@ -322,6 +325,7 @@ export function useAggregatedStats(
 
     let cancelled = false;
     let serverSettled = false;
+    cachePresentedRef.current = { uid, presented: false };
     queueMicrotask(() => {
       if (!cancelled) {
         setLoading(true);
@@ -343,6 +347,10 @@ export function useAggregatedStats(
         const cachedData = reviveAggregatedStatsDates(
           cached.data() as AggregatedStatsDoc
         );
+        cachePresentedRef.current = { uid, presented: true };
+        markClientPerformance("training:personal-insights:cache-visible", {
+          cacheSource: "local-cache",
+        });
         setCacheResolvedUid(uid);
         setDataState({ uid, data: cachedData });
         setLoading(false);
@@ -456,6 +464,13 @@ export function useAggregatedStats(
           { status: "success" }
         );
         if (!cancelled) {
+          markClientPerformance("training:personal-insights:data-ready", {
+            cacheSource:
+              cachePresentedRef.current?.uid === uid &&
+              cachePresentedRef.current.presented
+                ? "local-cache"
+                : "server",
+          });
           setDataState({ uid, data: result });
           setError(null);
           setLoading(false);

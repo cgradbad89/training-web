@@ -57,7 +57,10 @@ import {
 import { CalendarView } from "@/components/CalendarView";
 import { GoalsTab } from "@/components/GoalsTab";
 import { useGoals } from "@/hooks/useGoals";
-import { useClientPerformanceMark } from "@/hooks/useClientPerformanceMark";
+import {
+  useClientPagePerformance,
+  useClientPerformanceMark,
+} from "@/hooks/useClientPerformanceMark";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -266,6 +269,8 @@ function Modal({
 export default function PlansPage() {
   const { user } = useAuth();
   const router = useRouter();
+  useClientPagePerformance("/plans");
+  useClientPerformanceMark("training:plans:shell-visible", true);
 
   // Shared cross-page data now comes from AppDataContext
   // instead of this page's own fetchPlans/fetchHealthWorkouts calls, so
@@ -467,6 +472,9 @@ export default function PlansPage() {
   useClientPerformanceMark("training:plans:usable", !loading, {
     measureFrom: "training:auth-ready",
     measureName: "training:plans:usable-duration",
+  });
+  useClientPerformanceMark("training:plans:data-ready", !loading, {
+    detail: { cacheSource: "app-data" },
   });
 
   function currentWeekIndex(plan: Plan): number {
