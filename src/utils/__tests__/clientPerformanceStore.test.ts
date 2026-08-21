@@ -73,6 +73,7 @@ describe("clientPerformanceStore", () => {
     addDeploymentMeta();
     let now = 20;
     vi.spyOn(window.performance, "now").mockImplementation(() => now);
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
 
     startClientPagePerformance("/personal-insights", "cold");
     recordClientPerformanceMilestone(
@@ -100,6 +101,14 @@ describe("clientPerformanceStore", () => {
         dataReadyMs: 240,
       }),
     ]);
+    const serialized = info.mock.calls.at(-1)?.[1];
+    expect(typeof serialized).toBe("string");
+    expect(JSON.parse(serialized as string)).toEqual(
+      expect.objectContaining({
+        route: "/personal-insights",
+        dataReadyMs: 240,
+      })
+    );
   });
 
   it("stores no sample until data is ready and ignores late duplicate marks", () => {

@@ -259,7 +259,10 @@ export function recordClientPerformanceMilestone(
     dataReadyMs: duration,
   };
   persistSample(sample);
-  console.info("[client-performance] local-sample", sample);
+  console.info(
+    "[client-performance] local-sample",
+    JSON.stringify(sample)
+  );
   activePages.delete(milestone.route);
 }
 
