@@ -23,8 +23,6 @@ import {
   snapToMonday,
 } from "@/utils/planDateEdit";
 import { applyOverride } from "@/types/workoutOverride";
-import { fetchRaces } from "@/services/races";
-import { type Race } from "@/types/race";
 import {
   DEFAULT_HALF_MARATHON_PLAN,
   seedSeptHMPlan,
@@ -268,15 +266,15 @@ export default function PlansPage() {
   const { user } = useAuth();
   const router = useRouter();
 
-  // Shared cross-page data (plans / workouts) now comes from AppDataContext
+  // Shared cross-page data now comes from AppDataContext
   // instead of this page's own fetchPlans/fetchHealthWorkouts calls, so
   // exclusions, field overrides, and post-edit freshness match /dashboard.
   const {
     plans,
     plansLoading,
     workouts: rawWorkouts,
-    workoutsLoading,
     overrides,
+    races,
     refreshPlans,
   } = useAppData();
 
@@ -291,8 +289,6 @@ export default function PlansPage() {
     [rawWorkouts, overrides]
   );
 
-  const [races, setRaces] = useState<Race[]>([]);
-  const [racesLoading, setRacesLoading] = useState(true);
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [selectedWeekIndex, setSelectedWeekIndex] = useState(0);
   // Seed/migration (once per mount, after plans load) + initial plan
@@ -359,16 +355,9 @@ export default function PlansPage() {
   );
 
   // ── Load ──────────────────────────────────────────────────────────────────
-  // Plans + workouts come from AppDataContext (fetched once at the (app)
-  // layout). Races stay a page-local fetch — out of this refactor's scope.
-
-  useEffect(() => {
-    if (!user) return;
-    setRacesLoading(true);
-    fetchRaces(user.uid)
-      .then(setRaces)
-      .finally(() => setRacesLoading(false));
-  }, [user]);
+  // Plans, workouts, and races come from AppDataContext (fetched once at the
+  // app layout). The plan shell can render before workout/race enrichment is
+  // ready; those arrays update the selected detail progressively.
 
   // One-time seed / migration pass, run once per mount after the shared
   // `plans` array has loaded from context. Same conditions as the old
@@ -473,8 +462,7 @@ export default function PlansPage() {
     setInitialSelectDone(true);
   }, [user, plansLoading, seeded, initialSelectDone, plans]);
 
-  const loading =
-    plansLoading || workoutsLoading || racesLoading || !seeded || !initialSelectDone;
+  const loading = plansLoading || !seeded || !initialSelectDone;
 
   function currentWeekIndex(plan: Plan): number {
     // Inactive / template plans always open at Week 1 — users editing a

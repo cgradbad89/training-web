@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { type WorkoutOverride } from "@/types/workoutOverride";
 import { type RunningPlan, type Plan } from "@/types/plan";
+import { type Race } from "@/types/race";
 
 // React 19 requires this flag for act() to flush effects/microtasks in tests.
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -37,6 +38,8 @@ const h = vi.hoisted(() => ({
     workouts: [] as HealthWorkout[],
     workoutsLoading: false,
     overrides: {} as Record<string, WorkoutOverride>,
+    races: [] as Race[],
+    racesLoading: false,
   },
   setPlanCompletion: vi.fn(),
   createPlan: vi.fn(),
@@ -60,6 +63,8 @@ vi.mock("@/contexts/AppDataContext", () => ({
     workouts: h.useAppDataReturn.workouts,
     workoutsLoading: h.useAppDataReturn.workoutsLoading,
     overrides: h.useAppDataReturn.overrides,
+    races: h.useAppDataReturn.races,
+    racesLoading: h.useAppDataReturn.racesLoading,
     refreshPlans: h.refreshPlans,
   }),
 }));
@@ -231,6 +236,8 @@ beforeEach(() => {
   h.useAppDataReturn.workouts = [];
   h.useAppDataReturn.workoutsLoading = false;
   h.useAppDataReturn.overrides = {};
+  h.useAppDataReturn.races = [];
+  h.useAppDataReturn.racesLoading = false;
 });
 
 afterEach(() => {
@@ -296,6 +303,18 @@ describe("PlansPage — shared AppDataContext wiring", () => {
     expect(
       container.querySelector('[data-testid="plan-name"]')?.textContent
     ).toBe("Sept 2026 Half Marathon Sub 9:30");
+  });
+
+  it("renders plans while shared workouts and races are still loading", async () => {
+    h.useAppDataReturn.workoutsLoading = true;
+    h.useAppDataReturn.racesLoading = true;
+
+    await mount();
+
+    expect(container.textContent).toContain("Plans & Goals");
+    expect(container.textContent).toContain("Sept 2026 Half Marathon Sub 9:30");
+    expect(container.querySelector('[data-testid="running-plan-detail"]')).toBeTruthy();
+    expect(h.fetchRaces).not.toHaveBeenCalled();
   });
 });
 
