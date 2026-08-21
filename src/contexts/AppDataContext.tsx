@@ -50,6 +50,7 @@ import { fetchRaces } from "@/services/races";
 import { fetchAllOverrides } from "@/services/workoutOverrides";
 import { fetchUserSettings } from "@/services/userSettings";
 import { resolveMaxHr, resolveRestingHr } from "@/utils/trainingLoad";
+import { trackInFlightRequest } from "@/utils/inFlightRequest";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { type Plan } from "@/types/plan";
 import { type Race } from "@/types/race";
@@ -179,13 +180,9 @@ export function AppDataProvider({
       } finally {
         if (isInitialLoad) setWorkoutsLoading(false);
         else setWorkoutsRefreshing(false);
-        if (workoutsInFlightRef.current === promise) {
-          workoutsInFlightRef.current = null;
-        }
       }
     })();
-    workoutsInFlightRef.current = promise;
-    return promise;
+    return trackInFlightRequest(workoutsInFlightRef, promise);
   }, [uid]);
 
   useEffect(() => {
@@ -216,13 +213,9 @@ export function AppDataProvider({
         console.error("[AppData] refreshRecentWorkouts", err);
       } finally {
         setWorkoutsRefreshing(false);
-        if (workoutsInFlightRef.current === promise) {
-          workoutsInFlightRef.current = null;
-        }
       }
     })();
-    workoutsInFlightRef.current = promise;
-    return promise;
+    return trackInFlightRequest(workoutsInFlightRef, promise);
   }, [uid, refreshWorkouts]);
 
   useRefetchOnFocus(refreshRecentWorkouts);
