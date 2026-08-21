@@ -1348,7 +1348,9 @@ export default function PersonalInsightsPage() {
     }
   );
   const initialLoadPending =
-    workoutsLoading || (activeTab !== "workouts" && stats.loading);
+    activeTab === "workouts"
+      ? workoutsLoading
+      : stats.loading && stats.data === null;
   const [hasCompletedInitialLoad, setHasCompletedInitialLoad] = useState(
     () => !initialLoadPending
   );

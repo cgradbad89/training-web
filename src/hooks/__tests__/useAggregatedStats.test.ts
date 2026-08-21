@@ -212,6 +212,48 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
     act(() => root.unmount());
   });
 
+  it("renders a cached aggregate before larger dependencies finish loading", async () => {
+    const cachedDoc = cachedStats();
+    vi.mocked(firestore.getDoc).mockResolvedValue({
+      exists: () => true,
+      data: () => cachedDoc,
+    } as any);
+    const container = document.createElement("div");
+    const root = createRoot(container);
+
+    function Harness() {
+      const result = useAggregatedStats(
+        mockUid,
+        [],
+        maxHr,
+        restingHr,
+        races,
+        {
+          workoutsLoading: true,
+          settingsLoading: true,
+          racesLoading: true,
+          overridesLoading: true,
+        }
+      );
+      return React.createElement(
+        "span",
+        null,
+        `${result.loading}:${result.data?.computedAt ?? "none"}`
+      );
+    }
+
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+    await vi.waitFor(() =>
+      expect(container.textContent).toBe(`false:${cachedDoc.computedAt}`)
+    );
+
+    expect(firestore.getDoc).toHaveBeenCalledTimes(1);
+    expect(firestore.getDocs).not.toHaveBeenCalled();
+    act(() => root.unmount());
+  });
+
   it("logs lifecycle events with the greppable prefix", () => {
     logAggregationEvent("start", {
       uid: mockUid,
@@ -248,6 +290,40 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
     expect(result).toEqual(cachedDoc);
     expect(firestore.getDocs).toHaveBeenCalledTimes(1);
     expect(firestore.setDoc).not.toHaveBeenCalled();
+  });
+
+  it("starts the aggregate and VO2 freshness reads in parallel", async () => {
+    const cachedDoc = cachedStats();
+    let resolveCache!: (value: any) => void;
+    let resolveVo2!: (value: any) => void;
+    vi.mocked(firestore.getDoc).mockReturnValue(
+      new Promise((resolve) => {
+        resolveCache = resolve;
+      }) as any
+    );
+    vi.mocked(firestore.getDocs).mockReturnValue(
+      new Promise((resolve) => {
+        resolveVo2 = resolve;
+      }) as any
+    );
+
+    const pending = fetchAndComputeAggregatedStats(
+      mockUid,
+      mockWorkouts,
+      maxHr,
+      restingHr,
+      races,
+      currentFingerprint()
+    );
+
+    await vi.waitFor(() => {
+      expect(firestore.getDoc).toHaveBeenCalledTimes(1);
+      expect(firestore.getDocs).toHaveBeenCalledTimes(1);
+    });
+
+    resolveCache({ exists: () => true, data: () => cachedDoc });
+    resolveVo2({ docs: [] });
+    await expect(pending).resolves.toEqual(cachedDoc);
   });
 
   it("revives string dates to Date instances on the cache-hit path (regression)", async () => {

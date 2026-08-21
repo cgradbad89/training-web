@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { type HealthWorkout } from "@/types/healthWorkout";
@@ -91,15 +91,22 @@ async function computeAggregatedStats(
   maxHr: number,
   restingHr: number,
   races: { raceDate: Date | string; distanceMiles: number }[],
-  currentFingerprint: AggregatedStatsFreshnessFingerprint
+  currentFingerprint: AggregatedStatsFreshnessFingerprint,
+  cachedStatsPromise?: Promise<AggregatedStatsDoc | null>
 ): Promise<AggregatedStatsDoc> {
   const statsRef = doc(db, `users/${uid}/insights/aggregatedStats`);
-  const statsSnap = await getDoc(statsRef);
-  const cached = statsSnap.exists()
-    ? reviveAggregatedStatsDates(statsSnap.data() as AggregatedStatsDoc)
-    : null;
-
-  const latestVo2SampleDate = await fetchLatestVo2SampleDate(uid);
+  const loadCachedStats = async (): Promise<AggregatedStatsDoc | null> => {
+    const statsSnap = await getDoc(statsRef);
+    return statsSnap.exists()
+      ? reviveAggregatedStatsDates(statsSnap.data() as AggregatedStatsDoc)
+      : null;
+  };
+  // These reads are independent. Starting them together removes one network
+  // round-trip from every cold validation without adding Firestore reads.
+  const [cached, latestVo2SampleDate] = await Promise.all([
+    cachedStatsPromise ?? loadCachedStats(),
+    fetchLatestVo2SampleDate(uid),
+  ]);
   const currentVo2Key = computeVo2FreshnessKey(latestVo2SampleDate);
   const hasStoredVo2Baseline =
     cached !== null &&
@@ -221,7 +228,8 @@ export function fetchAndComputeAggregatedStats(
   maxHr: number,
   restingHr: number,
   races: { raceDate: Date | string; distanceMiles: number }[],
-  currentFingerprint: AggregatedStatsFreshnessFingerprint
+  currentFingerprint: AggregatedStatsFreshnessFingerprint,
+  cachedStatsPromise?: Promise<AggregatedStatsDoc | null>
 ): Promise<AggregatedStatsDoc> {
   const latestWorkoutId = currentFingerprint.latestWorkoutId;
   const lockKey = getAggregationLockKey(uid, JSON.stringify(currentFingerprint));
@@ -244,7 +252,8 @@ export function fetchAndComputeAggregatedStats(
     maxHr,
     restingHr,
     races,
-    currentFingerprint
+    currentFingerprint,
+    cachedStatsPromise
   )
     .then((result) => {
       logAggregationEvent("complete", { uid, latestWorkoutId, lockKey });
@@ -279,9 +288,62 @@ export function useAggregatedStats(
   options?: UseAggregatedStatsOptions
 ): UseAggregatedStatsResult {
   const enabled = options?.enabled ?? true;
-  const [data, setData] = useState<AggregatedStatsDoc | null>(null);
+  const [dataState, setDataState] = useState<{
+    uid: string;
+    data: AggregatedStatsDoc;
+  } | null>(null);
   const [loading, setLoading] = useState<boolean>(enabled);
   const [error, setError] = useState<Error | null>(null);
+  const [cacheResolvedUid, setCacheResolvedUid] = useState<string | null>(null);
+  const data = dataState?.uid === uid ? dataState.data : null;
+  const cachedStatsRef = useRef<{
+    uid: string;
+    promise: Promise<AggregatedStatsDoc | null>;
+  } | null>(null);
+
+  // Start the presentation read as soon as auth is available. Validation still
+  // waits for workouts/settings/races/overrides, but a previously-computed
+  // aggregate can render while those larger collections are loading. The same
+  // promise is passed into validation so this does not duplicate getDoc reads.
+  useEffect(() => {
+    if (!enabled || !uid) {
+      cachedStatsRef.current = null;
+      return;
+    }
+
+    let cancelled = false;
+
+    const statsRef = doc(db, `users/${uid}/insights/aggregatedStats`);
+    const promise = getDoc(statsRef).then((statsSnap) =>
+      statsSnap.exists()
+        ? reviveAggregatedStatsDates(statsSnap.data() as AggregatedStatsDoc)
+        : null
+    );
+    cachedStatsRef.current = { uid, promise };
+
+    promise
+      .then((cached) => {
+        if (cancelled) return;
+        setCacheResolvedUid(uid);
+        if (cached) {
+          setDataState({ uid, data: cached });
+          setLoading(false);
+        } else {
+          setLoading(true);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setCacheResolvedUid(uid);
+          setError(err instanceof Error ? err : new Error(String(err)));
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, uid]);
 
   const latestWorkoutStartTime = enabled
     ? workouts.reduce(
@@ -324,7 +386,6 @@ export function useAggregatedStats(
     }
 
     if (!isAggregationReady(uid, loadingState)) {
-      setLoading(uid !== null);
       logAggregationEvent("skip-not-ready", {
         uid,
         latestWorkoutId,
@@ -334,8 +395,11 @@ export function useAggregatedStats(
     }
 
     let cancelled = false;
-    setLoading(true);
-    setError(null);
+
+    const cachedStatsPromise =
+      cachedStatsRef.current?.uid === uid
+        ? cachedStatsRef.current.promise
+        : undefined;
 
     fetchAndComputeAggregatedStats(
       uid,
@@ -343,11 +407,13 @@ export function useAggregatedStats(
       maxHr,
       restingHr,
       races,
-      currentFingerprint
+      currentFingerprint,
+      cachedStatsPromise
     )
       .then((result) => {
         if (!cancelled) {
-          setData(result);
+          setDataState({ uid, data: result });
+          setError(null);
           setLoading(false);
         }
       })
@@ -372,11 +438,15 @@ export function useAggregatedStats(
     loadingState.workoutsLoading,
     loadingState.settingsLoading,
     loadingState.racesLoading,
+    loadingState.overridesLoading,
   ]);
 
   return {
     data,
-    loading: enabled ? loading : false,
+    loading:
+      enabled && uid !== null
+        ? cacheResolvedUid !== uid || loading
+        : false,
     error: enabled ? error : null,
   };
 }
