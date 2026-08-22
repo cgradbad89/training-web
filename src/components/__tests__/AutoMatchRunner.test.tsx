@@ -256,6 +256,28 @@ describe("AutoMatchRunner — AppDataContext wiring", () => {
     );
   });
 
+  it("uses the earliest of multiple due incomplete session dates as the lower bound", async () => {
+    const later = workoutPlan({ startDate: "2020-02-03" });
+    const earlier = {
+      ...workoutPlan({ startDate: "2020-01-06" }),
+      id: "wp-earlier",
+    };
+    h.plans = [later, earlier];
+
+    await mount();
+
+    expect(h.onHealthWorkoutsSnapshot).toHaveBeenCalledWith(
+      "u1",
+      {
+        isRunLike: false,
+        startDate: new Date(2020, 0, 6),
+        limitCount: AUTO_MATCH_WORKOUT_LISTENER_LIMIT,
+      },
+      expect.any(Function),
+      expect.any(Function)
+    );
+  });
+
   it("does not subscribe when there is no active workout plan", async () => {
     h.plans = [workoutPlan({ status: "draft" })];
     await mount();

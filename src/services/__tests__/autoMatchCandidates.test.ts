@@ -95,25 +95,62 @@ describe("fetchAutoMatchCandidatesThroughDate", () => {
     expect(h.getDocs).not.toHaveBeenCalled();
   });
 
-  it("does not page when a full first page has already crossed before due-day midnight", async () => {
-    const firstPage = workoutPage(
-      "recent",
-      AUTO_MATCH_CANDIDATE_PAGE_SIZE,
-      new Date(2026, 7, 2, 12)
-    );
-    firstPage[firstPage.length - 1] = workout(
-      "before-boundary",
-      new Date(2026, 6, 31, 23, 59)
-    );
+  it.each([
+    { total: 250, expectedQueries: 2 },
+    { total: 500, expectedQueries: 3 },
+    { total: 750, expectedQueries: 4 },
+  ])(
+    "returns exactly $total candidates and proves exhaustion with $expectedQueries queries",
+    async ({ total, expectedQueries }) => {
+      const documents = Array.from({ length: total }, (_, index) =>
+        firestoreDocument(
+          `candidate-${index}`,
+          new Date(dueDay.getTime() + (total - index) * 60_000)
+        )
+      );
+      const fullPages = Array.from(
+        { length: total / AUTO_MATCH_CANDIDATE_PAGE_SIZE },
+        (_, index) =>
+          documents.slice(
+            index * AUTO_MATCH_CANDIDATE_PAGE_SIZE,
+            (index + 1) * AUTO_MATCH_CANDIDATE_PAGE_SIZE
+          )
+      );
+      for (const page of fullPages) {
+        h.getDocs.mockResolvedValueOnce({ docs: page });
+      }
+      h.getDocs.mockResolvedValueOnce({ docs: [] });
 
-    const result = await fetchAutoMatchCandidatesThroughDate("u1", dueDay, {
-      initialCandidates: firstPage,
-      initialCursor: { id: "last" } as never,
-    });
+      const result = await fetchAutoMatchCandidatesThroughDate("u1", dueDay);
 
-    expect(result).toEqual(firstPage);
-    expect(h.getDocs).not.toHaveBeenCalled();
-  });
+      expect(h.getDocs).toHaveBeenCalledTimes(expectedQueries);
+      expect(result).toHaveLength(total);
+      expect(new Set(result.map((candidate) => candidate.workoutId)).size).toBe(
+        total
+      );
+      expect(result.map((candidate) => candidate.workoutId)).toEqual(
+        documents.map((document) => document.id)
+      );
+      expect(firestore.startAfter).toHaveBeenCalledTimes(fullPages.length);
+      fullPages.forEach((page, index) => {
+        expect(firestore.startAfter).toHaveBeenNthCalledWith(
+          index + 1,
+          page.at(-1)
+        );
+      });
+      expect(firestore.where).toHaveBeenCalledWith(
+        "startDate",
+        ">=",
+        dueDay
+      );
+      expect(
+        documents.every(
+          (document) =>
+            (document.data().startDate as Date).getTime() >= dueDay.getTime()
+        )
+      ).toBe(true);
+    }
+  );
 
   it("finds a due-day candidate hidden behind 250 newer workouts", async () => {
     const firstPage = workoutPage(
