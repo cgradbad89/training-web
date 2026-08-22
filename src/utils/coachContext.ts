@@ -10,6 +10,7 @@ import { weekStart as getWeekStart, parseLocalDate, daysUntil } from '@/utils/da
 import { resolveActivityTitle } from '@/utils/resolveActivityTitle'
 import { buildRunTitleMap } from '@/utils/runPlanTitle'
 import { planWeekIndexFor } from '@/utils/planMatching'
+import { weekHitsMileageTarget } from '@/utils/planAdherence'
 import {
   resolveDisplayLoad,
   DEFAULT_MAX_HR,
@@ -183,12 +184,13 @@ export function buildCoachContext(
       ? planWeeks[weekIndex].weekNumber
       : planWeeks.length
 
-    // Adherence — weeks where actual >= 80% of planned
+    // Adherence — route the weekly mileage decision through the same canonical
+    // domain rule as Plan Insights while preserving Coach's completed-week set.
     const completedWeeks = weekSummaries.filter(
       w => w.weekNumber < currentWeekNum
     )
-    const weeksHitTarget = completedWeeks.filter(
-      w => w.plannedMiles > 0 && w.actualMiles >= w.plannedMiles * 0.8
+    const weeksHitTarget = completedWeeks.filter(w =>
+      weekHitsMileageTarget(w.actualMiles, w.plannedMiles)
     ).length
     const adherencePct = completedWeeks.length > 0
       ? Math.round((weeksHitTarget / completedWeeks.length) * 100)

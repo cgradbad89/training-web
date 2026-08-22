@@ -47,6 +47,19 @@ export interface PlanAdherenceResult {
   overallAvgPaceSecPerMile: number | null;
 }
 
+const WEEKLY_MILEAGE_TARGET_RATIO = 0.85;
+
+/**
+ * Canonical weekly mileage-target rule shared by every adherence consumer.
+ * This aggregate is intentionally independent from per-entry completion.
+ */
+export function weekHitsMileageTarget(
+  actualMiles: number,
+  plannedMiles: number
+): boolean {
+  return plannedMiles > 0 && actualMiles >= plannedMiles * WEEKLY_MILEAGE_TARGET_RATIO;
+}
+
 interface BuildOpts {
   maxHr: number;
   restingHr?: number;
@@ -161,8 +174,8 @@ export function buildPlanAdherence(
   const totalActualMiles = weeks.reduce((s, w) => s + w.actualMiles, 0);
   const totalPlannedRuns = weeks.reduce((s, w) => s + w.plannedRuns, 0);
   const totalCompletedRuns = weeks.reduce((s, w) => s + w.completedRuns, 0);
-  const weeksHitTarget = weeks.filter(
-    (w) => w.plannedMiles > 0 && w.actualMiles >= w.plannedMiles * 0.85
+  const weeksHitTarget = weeks.filter((w) =>
+    weekHitsMileageTarget(w.actualMiles, w.plannedMiles)
   ).length;
 
   return {
