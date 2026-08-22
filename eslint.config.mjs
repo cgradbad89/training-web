@@ -7,7 +7,7 @@ const eslintConfig = defineConfig([
   ...nextTs,
   {
     // These rules predate the quality gate and currently account for the
-    // repository's 162-warning baseline. lint:ci caps that baseline so new
+    // repository's 104-warning baseline. lint:ci caps that baseline so new
     // warnings fail CI while the existing debt remains visible in the logs.
     rules: {
       "@typescript-eslint/no-explicit-any": "warn",

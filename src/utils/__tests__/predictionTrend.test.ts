@@ -6,7 +6,6 @@ import {
   predictSeconds,
   buildQualifyingEfforts,
   tierWeight,
-  PLANNED_QUALITY_PACE_THRESHOLD_SEC_PER_MILE,
 } from "@/utils/riegelFit";
 import {
   predictRaceTime,

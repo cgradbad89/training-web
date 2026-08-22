@@ -37,10 +37,7 @@ import {
   Pencil,
   Trash2,
   Trophy,
-  X,
-  Check,
   Star,
-  Link,
 } from "lucide-react";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -269,7 +266,6 @@ function EmptyState({ message }: { message: string }) {
 
 interface RaceCardProps {
   race: Race;
-  linkedActivity?: HealthWorkout;
   isPast: boolean;
   onEdit: (race: Race) => void;
   onDelete: (race: Race) => void;
@@ -280,7 +276,6 @@ interface RaceCardProps {
 
 function RaceCard({
   race,
-  linkedActivity,
   isPast,
   onEdit,
   onDelete,
@@ -946,13 +941,6 @@ export default function RacesPage() {
         parseLocalDate(b.raceDate).getTime() - parseLocalDate(a.raceDate).getTime()
     );
 
-  function linkedActivity(race: Race): HealthWorkout | undefined {
-    if (!race.linkedStravaActivityId) return undefined;
-    return activities.find(
-      (a) => a.workoutId === race.linkedStravaActivityId
-    );
-  }
-
   // ── Actions ───────────────────────────────────────────────────────────────
 
   function openCreate() {
@@ -1077,7 +1065,6 @@ export default function RacesPage() {
                 <RaceCard
                   key={race.id}
                   race={race}
-                  linkedActivity={linkedActivity(race)}
                   isPast={false}
                   onEdit={openEdit}
                   onDelete={setDeletingRace}
@@ -1103,7 +1090,6 @@ export default function RacesPage() {
                 <RaceCard
                   key={race.id}
                   race={race}
-                  linkedActivity={linkedActivity(race)}
                   isPast={true}
                   onEdit={openEdit}
                   onDelete={setDeletingRace}

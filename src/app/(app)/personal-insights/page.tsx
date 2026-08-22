@@ -4,8 +4,6 @@ import React, { useState, useEffect, useMemo } from "react";
 import dynamic from "next/dynamic";
 import { ChartSkeleton } from "@/components/ui/ChartSkeleton";
 import {
-  ChevronLeft,
-  ChevronRight,
   Timer,
   Trophy,
   TrendingUp,
@@ -38,7 +36,7 @@ import {
   useClientPerformanceMark,
 } from "@/hooks/useClientPerformanceMark";
 import { type AggregatedStatsDoc } from "@/utils/aggregatedStats";
-import { formatPace, formatPaceLabel } from "@/utils/pace";
+import { formatPaceLabel } from "@/utils/pace";
 import { weekStart as getWeekStart } from "@/utils/dates";
 import {
   buildQualifyingEfforts,
@@ -61,7 +59,6 @@ import {
 } from "@/utils/trainingLoadSeries";
 import {
   resolveDisplayLoad,
-  classifyHrZone,
   HR_ZONES,
   MIN_RUN_MILES_FOR_AVG,
   MIN_WORKOUT_SECONDS_FOR_AVG,

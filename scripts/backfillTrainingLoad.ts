@@ -37,7 +37,6 @@ import {
   resolveMaxHr,
   resolveRestingHr,
   DEFAULT_RESTING_HR,
-  STREAMED_HR_COVERAGE_MIN,
   MIN_HRSTREAM_SAMPLES,
 } from "@/utils/trainingLoad";
 import { type UserSettings } from "@/types/userSettings";

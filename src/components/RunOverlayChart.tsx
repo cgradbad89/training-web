@@ -18,7 +18,6 @@ import { formatPace, mpsToSecPerMile } from "@/utils/pace";
 import { computePaceAxisDomain, nullifyOutliers } from "@/utils/paceAxisDomain";
 import { rollingAverage, SMOOTH_WINDOW_SEC } from "@/utils/smoothSeries";
 
-const METERS_PER_MILE = 1609.344;
 const EARTH_RADIUS_MI = 3958.8;
 const METERS_TO_FEET = 3.28084;
 

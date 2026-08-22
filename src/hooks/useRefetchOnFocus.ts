@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 /**
  * Re-runs `refetchFn` when the tab regains visibility, unless the last
@@ -9,9 +9,9 @@ export function useRefetchOnFocus(
   refetchFn: () => Promise<void> | void,
   minIntervalMs: number = 30000
 ): void {
-  const refetchRef = useRef(refetchFn);
-  refetchRef.current = refetchFn;
-  const lastRunRef = useRef<number>(Date.now());
+  const refetch = useEffectEvent(refetchFn);
+  const [initialRunAt] = useState(Date.now);
+  const lastRunRef = useRef(initialRunAt);
 
   useEffect(() => {
     function onVisibilityChange() {
@@ -19,7 +19,7 @@ export function useRefetchOnFocus(
       const now = Date.now();
       if (now - lastRunRef.current < minIntervalMs) return;
       lastRunRef.current = now;
-      void refetchRef.current();
+      void refetch();
     }
 
     document.addEventListener("visibilitychange", onVisibilityChange);

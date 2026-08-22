@@ -3,14 +3,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { X } from "lucide-react";
-import {
-  collection,
-  getDocs,
-  orderBy,
-  query,
-} from "firebase/firestore";
-
-import { db } from "@/lib/firebase";
 import { useAuth } from "@/hooks/useAuth";
 import { type PlannedRunEntry } from "@/types/plan";
 import { type HealthWorkout } from "@/types/healthWorkout";

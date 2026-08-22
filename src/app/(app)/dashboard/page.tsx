@@ -126,30 +126,12 @@ function getWorkoutLocalDate(w: HealthWorkout): Date {
   return w.startDate;
 }
 
-function isSameLocalDay(workoutDate: Date, weekMondayDate: Date, dayOffset: number): boolean {
-  const target = new Date(weekMondayDate);
-  target.setDate(weekMondayDate.getDate() + dayOffset);
-  return (
-    workoutDate.getFullYear() === target.getFullYear() &&
-    workoutDate.getMonth() === target.getMonth() &&
-    workoutDate.getDate() === target.getDate()
-  );
-}
-
 function isInWeek(w: HealthWorkout, wStart: Date, wEnd: Date): boolean {
   const d = getWorkoutLocalDate(w);
   return d >= wStart && d <= wEnd;
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
-
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <p className="text-xs font-semibold uppercase tracking-widest text-textSecondary mb-3">
-      {children}
-    </p>
-  );
-}
 
 function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
@@ -1221,13 +1203,12 @@ function TrainingLoadCard({ workouts, weekStart, weekEnd }: TrainingLoadCardProp
   const ratio = chronic > 0 ? acute / chronic : 0;
   const loadLevel = chronic > 0 ? trainingLoadLevel(ratio) : null;
 
-  const daysOfData = useMemo(() => {
-    if (runs.length === 0) return 0;
-    const oldest = runs
-      .map((w) => getWorkoutLocalDate(w).getTime())
-      .reduce((min, t) => Math.min(min, t), Infinity);
-    return Math.round((now.getTime() - oldest) / (1000 * 60 * 60 * 24));
-  }, [runs]);
+  const daysOfData = runs.length === 0
+    ? 0
+    : Math.round(
+        (now.getTime() - Math.min(...runs.map((w) => getWorkoutLocalDate(w).getTime()))) /
+          (1000 * 60 * 60 * 24)
+      );
 
   const loadBadge = (level: ReturnType<typeof trainingLoadLevel>) => {
     const map: Record<

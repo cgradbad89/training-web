@@ -69,8 +69,9 @@ export function evaluateBMIGoal(
   min: number,
   max: number,
   warningPct: number = 5,
-  _dangerPct: number = 15
+  dangerPct: number = 15
 ): GoalStatus {
+  void dangerPct;
   if (!isFinite(current) || !isFinite(min) || !isFinite(max)) return "neutral";
   if (current >= min && current <= max) return "success";
   const midpoint = (min + max) / 2;

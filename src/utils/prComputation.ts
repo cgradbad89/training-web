@@ -113,7 +113,6 @@ export function computeAllPRs(runs: HealthWorkout[]): PRResult[] {
     );
     const pace = paceFor(best);
     if (pace == null) continue;
-    // eslint-disable-next-line no-console
     console.log(`[prComputation] ${category.id} winner:`, {
       workoutId: best.workoutId,
       distanceMiles: best.distanceMiles,
@@ -141,7 +140,6 @@ export function computeAllPRs(runs: HealthWorkout[]): PRResult[] {
     );
     const pace = paceFor(best);
     if (pace == null) continue;
-    // eslint-disable-next-line no-console
     console.log(`[prComputation] ${category.id} winner:`, {
       workoutId: best.workoutId,
       distanceMiles: best.distanceMiles,
