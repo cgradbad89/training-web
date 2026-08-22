@@ -9,8 +9,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/hooks";
 import { signOut } from "@/lib/auth";
-
-const OWNER_EMAIL = "folstromjohn@gmail.com";
+import { isAuthorizedTrainingUser } from "@/lib/trainingAuthorization";
 
 const HUB_NAV_LINKS = [
   { label: "Hub", href: process.env.NEXT_PUBLIC_HUB_URL ?? "#" },
@@ -40,7 +39,7 @@ export function HubBanner() {
     <div className="bg-card border-b border-border h-10 flex items-center justify-between px-6 shrink-0">
       {/* Left: nav links (Hub links only visible to owner) */}
       <div className="flex items-center gap-6">
-        {user?.email === OWNER_EMAIL &&
+        {isAuthorizedTrainingUser(user?.email, user?.emailVerified) &&
           HUB_NAV_LINKS.map((link) => (
             <a
               key={link.label}

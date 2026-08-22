@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CLIENT_PERFORMANCE_SCHEMA_VERSION,
   CLIENT_PERFORMANCE_STORAGE_KEY,
+  clearClientPerformanceSamples,
   MAX_CLIENT_PERFORMANCE_SAMPLES_PER_ROUTE,
   exportClientPerformance,
   installClientPerformanceDebugExport,
@@ -181,6 +182,20 @@ describe("clientPerformanceStore", () => {
       CLIENT_PERFORMANCE_STORAGE_KEY,
       JSON.stringify([{ ...sample(), schemaVersion: 99 }, { private: true }])
     );
+    expect(readClientPerformanceSamples()).toEqual([]);
+  });
+
+  it("clears stored samples and active identity-adjacent tracking state", () => {
+    window.localStorage.setItem(
+      CLIENT_PERFORMANCE_STORAGE_KEY,
+      JSON.stringify([sample()])
+    );
+    startClientPagePerformance("/health", "warm");
+
+    clearClientPerformanceSamples();
+    recordClientPerformanceMilestone("training:health:data-ready");
+
+    expect(window.localStorage.getItem(CLIENT_PERFORMANCE_STORAGE_KEY)).toBeNull();
     expect(readClientPerformanceSamples()).toEqual([]);
   });
 

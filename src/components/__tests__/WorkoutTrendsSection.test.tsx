@@ -9,6 +9,7 @@ import { type Plan, type WorkoutPlan } from "@/types/plan";
 const h = vi.hoisted(() => ({
   plans: [] as Plan[],
   plansLoading: false,
+  plansResolution: "success" as "loading" | "success" | "error",
   fetchPlans: vi.fn(),
 }));
 
@@ -16,6 +17,7 @@ vi.mock("@/contexts/AppDataContext", () => ({
   useAppData: () => ({
     plans: h.plans,
     plansLoading: h.plansLoading,
+    plansResolution: h.plansResolution,
   }),
 }));
 
@@ -118,6 +120,7 @@ beforeEach(() => {
   root = createRoot(container);
   h.plans = [];
   h.plansLoading = false;
+  h.plansResolution = "success";
   h.fetchPlans.mockClear();
 });
 
@@ -137,10 +140,26 @@ describe("WorkoutTrendsSection shared plans", () => {
 
   it("shows the existing loading state while context plans are loading", () => {
     h.plansLoading = true;
+    h.plansResolution = "loading";
     render();
 
     expect(container.textContent).toContain("Loading…");
     expect(h.fetchPlans).not.toHaveBeenCalled();
+  });
+
+  it("does not present a failed plans read as empty workout-plan history", () => {
+    h.plansResolution = "error";
+    render();
+
+    expect(container.textContent).toContain(
+      "Workout-plan trends are unavailable because plans could not be loaded."
+    );
+    expect(container.textContent).not.toContain(
+      "Complete workout sessions to see weight progression"
+    );
+    expect(container.textContent).not.toContain(
+      "Complete at least 2 weeks of workouts to see volume trends"
+    );
   });
 
   it("does not fetch plans when the section unmounts and mounts again", () => {

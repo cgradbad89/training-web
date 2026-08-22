@@ -59,14 +59,17 @@ async function mount() {
   document.body.appendChild(container);
   await act(async () => {
     root = createRoot(container);
-    root.render(
-      <AppDataProvider uid="u1">
-        <Probe />
-      </AppDataProvider>
-    );
+    root.render(<AppDataProvider uid="u1"><Probe /></AppDataProvider>);
   });
   // Extra flush so post-await setState in the fetch effects settles.
   await act(async () => {
+    await Promise.resolve();
+  });
+}
+
+async function renderUid(uid: string) {
+  await act(async () => {
+    root.render(<AppDataProvider uid={uid}><Probe /></AppDataProvider>);
     await Promise.resolve();
   });
 }
@@ -139,6 +142,7 @@ describe("AppDataProvider", () => {
       expect.objectContaining({
         workoutsLoading: true,
         plansLoading: true,
+        plansResolution: "loading",
         racesLoading: true,
         overridesLoading: true,
         settingsLoading: true,
@@ -585,11 +589,13 @@ describe("AppDataProvider", () => {
     expect(latest?.maxHr).toBe(190);
     expect(latest?.restingHr).toBe(50);
     expect(latest?.plansLoading).toBe(false);
+    expect(latest?.plansResolution).toBe("success");
     expect(latest?.racesLoading).toBe(false);
     expect(latest?.overridesLoading).toBe(false);
     expect(latest?.settingsLoading).toBe(false);
     expect(latest).toEqual(
       expect.objectContaining({
+        plansResolution: "success",
         racesResolution: "success",
         overridesResolution: "success",
         settingsResolution: "success",
@@ -653,6 +659,198 @@ describe("AppDataProvider", () => {
       await latest?.refreshPlans();
     });
     expect(latest?.plans).toEqual([{ id: "p1" }, { id: "p2" }]);
+    expect(latest?.plansResolution).toBe("success");
+  });
+
+  it("treats a successful empty plans read as authoritative success", async () => {
+    h.fetchPlans.mockResolvedValue([]);
+    await mount();
+
+    expect(latest).toEqual(
+      expect.objectContaining({
+        plans: [],
+        plansLoading: false,
+        plansResolution: "success",
+      })
+    );
+  });
+
+  it("marks a failed initial plans read as error instead of authoritative empty", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    h.fetchPlans.mockRejectedValueOnce(new Error("plans unavailable"));
+    await mount();
+
+    expect(latest).toEqual(
+      expect.objectContaining({
+        plans: [],
+        plansLoading: false,
+        plansResolution: "error",
+      })
+    );
+  });
+
+  it("preserves valid plans on refresh failure and recovers error to success", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    h.fetchPlans.mockResolvedValueOnce([{ id: "p1" }]);
+    await mount();
+
+    h.fetchPlans.mockRejectedValueOnce(new Error("temporary plans failure"));
+    await act(async () => {
+      await latest?.refreshPlans();
+    });
+    expect(latest).toEqual(
+      expect.objectContaining({
+        plans: [{ id: "p1" }],
+        plansLoading: false,
+        plansResolution: "error",
+      })
+    );
+
+    h.fetchPlans.mockResolvedValueOnce([{ id: "p2" }]);
+    await act(async () => {
+      await latest?.refreshPlans();
+    });
+    expect(latest).toEqual(
+      expect.objectContaining({
+        plans: [{ id: "p2" }],
+        plansResolution: "success",
+      })
+    );
+  });
+
+  it("isolates every async source and workout request state across a direct A-to-B UID transition", async () => {
+    const aWorkouts = deferred<Array<{ workoutId: string }>>();
+    const aPlans = deferred<Array<{ id: string }>>();
+    const aRaces = deferred<Array<{ id: string }>>();
+    const aOverrides = deferred<Record<string, { workoutId: string }>>();
+    const aSettings = deferred<{ maxHeartRate: number } | null>();
+
+    h.fetchHealthWorkouts
+      .mockReturnValueOnce(aWorkouts.promise)
+      .mockResolvedValueOnce([{ workoutId: "b-workout" }]);
+    h.fetchPlans
+      .mockReturnValueOnce(aPlans.promise)
+      .mockResolvedValueOnce([{ id: "b-plan" }]);
+    h.fetchRaces
+      .mockReturnValueOnce(aRaces.promise)
+      .mockResolvedValueOnce([{ id: "b-race" }]);
+    h.fetchAllOverrides
+      .mockReturnValueOnce(aOverrides.promise)
+      .mockResolvedValueOnce({
+        "b-workout": { workoutId: "b-workout" },
+      });
+    h.fetchUserSettings
+      .mockReturnValueOnce(aSettings.promise)
+      .mockResolvedValueOnce({ maxHeartRate: 177 });
+
+    await mount();
+    expect(h.fetchHealthWorkouts).toHaveBeenCalledWith("u1", {
+      limitCount: 1000,
+    });
+
+    await renderUid("u2");
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(h.fetchHealthWorkouts).toHaveBeenCalledWith("u2", {
+      limitCount: 1000,
+    });
+    expect(h.fetchPlans).toHaveBeenCalledWith("u2");
+    expect(h.fetchRaces).toHaveBeenCalledWith("u2");
+    expect(h.fetchAllOverrides).toHaveBeenCalledWith("u2");
+    expect(h.fetchUserSettings).toHaveBeenCalledWith("u2");
+    expect(latest).toEqual(
+      expect.objectContaining({
+        workouts: [{ workoutId: "b-workout" }],
+        plans: [{ id: "b-plan" }],
+        races: [{ id: "b-race" }],
+        overrides: { "b-workout": { workoutId: "b-workout" } },
+        maxHr: 177,
+        workoutsFullReconciliationVersion: 1,
+      })
+    );
+
+    aWorkouts.resolve([{ workoutId: "a-workout" }]);
+    aPlans.resolve([{ id: "a-plan" }]);
+    aRaces.resolve([{ id: "a-race" }]);
+    aOverrides.resolve({ "a-workout": { workoutId: "a-workout" } });
+    aSettings.resolve({ maxHeartRate: 199 });
+    await act(async () => {
+      await Promise.all([
+        aWorkouts.promise,
+        aPlans.promise,
+        aRaces.promise,
+        aOverrides.promise,
+        aSettings.promise,
+      ]);
+      await Promise.resolve();
+    });
+
+    expect(latest).toEqual(
+      expect.objectContaining({
+        workouts: [{ workoutId: "b-workout" }],
+        plans: [{ id: "b-plan" }],
+        races: [{ id: "b-race" }],
+        overrides: { "b-workout": { workoutId: "b-workout" } },
+        maxHr: 177,
+        workoutsFullReconciliationVersion: 1,
+      })
+    );
+  });
+
+  it("does not promote user A's queued full refresh after user B becomes current", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 7, 20, 12));
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    const userAWorkout = {
+      workoutId: "a-workout",
+      startDate: new Date(2026, 7, 20, 10),
+    };
+    const userBWorkout = {
+      workoutId: "b-workout",
+      startDate: new Date(2026, 7, 20, 11),
+    };
+    h.fetchHealthWorkouts.mockResolvedValueOnce([userAWorkout]);
+    await mount();
+
+    const userADelta = deferred<Array<typeof userAWorkout>>();
+    h.fetchHealthWorkoutsInRange.mockReturnValueOnce(userADelta.promise);
+    vi.setSystemTime(new Date(2026, 7, 20, 12, 1));
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    let userAQueuedFull!: Promise<void>;
+    act(() => {
+      userAQueuedFull = latest!.refreshWorkouts();
+    });
+    expect(h.fetchHealthWorkouts).toHaveBeenCalledTimes(1);
+
+    h.fetchHealthWorkouts.mockResolvedValueOnce([userBWorkout]);
+    await renderUid("u2");
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(h.fetchHealthWorkouts).toHaveBeenCalledTimes(2);
+    expect(h.fetchHealthWorkouts).toHaveBeenLastCalledWith("u2", {
+      limitCount: 1000,
+    });
+
+    userADelta.resolve([]);
+    await act(async () => {
+      await userADelta.promise;
+      await userAQueuedFull;
+      await Promise.resolve();
+    });
+
+    expect(h.fetchHealthWorkouts).toHaveBeenCalledTimes(2);
+    expect(latest?.workouts.map((workout) => workout.workoutId)).toEqual([
+      "b-workout",
+    ]);
+    expect(latest?.workoutsFullReconciliationVersion).toBe(1);
   });
 
   it("refreshOverrides and refreshSettings re-fetch", async () => {

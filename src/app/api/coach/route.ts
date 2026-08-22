@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { createTextStreamResponse } from 'ai'
 import { getCoachResponseStream } from './coachStream'
+import { isAuthorizedTrainingUser } from '@/lib/trainingAuthorization'
 
 export async function POST(req: NextRequest) {
   // Verify Firebase Auth token
@@ -16,7 +17,13 @@ export async function POST(req: NextRequest) {
 
   try {
     const { getAuth } = await import('@/lib/firebaseAdmin')
-    await getAuth().verifyIdToken(token)
+    const decoded = await getAuth().verifyIdToken(token)
+    if (!isAuthorizedTrainingUser(decoded.email, decoded.email_verified)) {
+      return new Response(
+        JSON.stringify({ error: 'Forbidden' }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } }
+      )
+    }
   } catch {
     return new Response(
       JSON.stringify({ error: 'Invalid token' }),

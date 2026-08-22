@@ -10,21 +10,36 @@ const h = vi.hoisted(() => ({
   listener: null as ((user: User | null) => void) | null,
   unsubscribe: vi.fn(),
   onAuthChange: vi.fn(),
+  signOut: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({
   onAuthChange: h.onAuthChange,
+  signOut: h.signOut,
 }));
 
 import { AuthProvider, useAuthContext } from "@/contexts/AuthContext";
 
 function Probe({ name }: { name: string }) {
-  const { user, loading } = useAuthContext();
+  const { user, loading, authorizationStatus, authorizationError } =
+    useAuthContext();
   return (
     <div data-testid={name}>
-      {loading ? "loading" : user?.uid ?? "signed-out"}
+      {loading ? "loading" : user?.uid ?? authorizationStatus}
+      {authorizationError ? `:${authorizationError}` : ""}
     </div>
   );
+}
+
+function authUser(
+  overrides: Partial<User> = {}
+): User {
+  return {
+    uid: "resolved-uid",
+    email: "folstromjohn@gmail.com",
+    emailVerified: true,
+    ...overrides,
+  } as User;
 }
 
 describe("AuthProvider", () => {
@@ -38,6 +53,7 @@ describe("AuthProvider", () => {
       h.listener = listener;
       return h.unsubscribe;
     });
+    h.signOut.mockReset().mockResolvedValue(undefined);
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -61,11 +77,55 @@ describe("AuthProvider", () => {
     expect(h.onAuthChange).toHaveBeenCalledTimes(1);
     expect(container.textContent).toBe("loadingloading");
 
-    act(() => h.listener?.({ uid: "resolved-uid" } as User));
+    act(() => h.listener?.(authUser()));
     expect(container.textContent).toBe("resolved-uidresolved-uid");
 
     act(() => h.listener?.(null));
     expect(container.textContent).toBe("signed-outsigned-out");
+  });
+
+  it.each([
+    authUser({ email: "wrong@example.com" }),
+    authUser({ emailVerified: false }),
+  ])("never exposes and signs out an unauthorized Firebase user", async (candidate) => {
+    act(() => {
+      root.render(
+        <AuthProvider>
+          <Probe name="private" />
+        </AuthProvider>
+      );
+    });
+
+    await act(async () => {
+      h.listener?.(candidate);
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("unauthorized");
+    expect(container.textContent).not.toContain(candidate.uid);
+    expect(container.textContent).toContain(
+      "This account is not authorized to use Training Web."
+    );
+    expect(h.signOut).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves the unauthorized login error when Firebase emits signed-out", async () => {
+    act(() => {
+      root.render(
+        <AuthProvider>
+          <Probe name="private" />
+        </AuthProvider>
+      );
+    });
+
+    await act(async () => {
+      h.listener?.(authUser({ email: "wrong@example.com" }));
+      h.listener?.(null);
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("unauthorized");
+    expect(container.textContent).toContain("not authorized");
   });
 
   it("unsubscribes the root observer when the provider unmounts", () => {

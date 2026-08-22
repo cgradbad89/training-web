@@ -4,7 +4,7 @@
 
 - **Branch**: Work directly on `main`. If a branch is created automatically, merge it into `main` before pushing.
 - **Build**: Run `npm run build` after all changes. On failure, fix and retry. Stop after 3 consecutive failures — output the full error log and make no further changes.
-- **Test**: Run `npm test` after a passing build (`vitest run`, 1,423 tests across 132 files — 1,411 passed, 12 skipped; as of the 2026-08-22 AutoMatch completeness / delayed-workout reconciliation session). Note the suite is only fully timezone-clean at US-Eastern; `bestEffortExtraction.test.ts` fails at other offsets and `paceTrends`/`personalRecords` fail at UTC-11 — pre-existing, unrelated to plan matching. This number drifts — always trust a fresh `vitest run` over this doc, and correct this line when it does. Also watch for stray `.claude/worktrees/*` checkouts inflating the count (vitest's exclude only covers `node_modules`/`.git`); run `git worktree list` if the total looks off.
+- **Test**: Run `npm test` after a passing build (`vitest run`, 1,451 tests across 135 files — 1,439 passed, 12 skipped; as of the 2026-08-22 single-owner authorization / AppData UID-isolation session). Note the suite is only fully timezone-clean at US-Eastern; `bestEffortExtraction.test.ts` fails at other offsets and `paceTrends`/`personalRecords` fail at UTC-11 — pre-existing, unrelated to plan matching. This number drifts — always trust a fresh `vitest run` over this doc, and correct this line when it does. Also watch for stray `.claude/worktrees/*` checkouts inflating the count (vitest's exclude only covers `node_modules`/`.git`); run `git worktree list` if the total looks off.
 - **Commit**: Stage files by explicit path (`git add PRD.md src/...`). Never use `git add -A`. Commit and push only after build + tests pass.
 - **No broken commits**: Do not commit if `npm run build` or `npm test` fail.
 
@@ -57,6 +57,7 @@ Deferred:         [anything not completed, or "none"]
 
 | Item | Value |
 |---|---|
+| Training Web authorization | Single owner only: normalized `folstromjohn@gmail.com` with verified Firebase email; authentication alone is insufficient |
 | Firebase project | malignant-metro |
 | Vercel project ID | prj_4SL79DFdWu56fzRrLSzxCQeA8fRd |
 | Vercel team ID | team_tsBCiUJBISkxn8eXQuT6EXkx |

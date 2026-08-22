@@ -222,6 +222,7 @@ export default function PlanInsightsPage() {
     maxHr,
     restingHr,
     workoutsLoading,
+    plansResolution,
   } = useAppData();
 
   // Apply overrides and drop excluded workouts — same processing the old
@@ -234,7 +235,7 @@ export default function PlanInsightsPage() {
     [rawWorkouts, overrides]
   );
   const plans = useMemo(() => allPlans.filter(isRunningPlan), [allPlans]);
-  const loading = workoutsLoading;
+  const loading = workoutsLoading || plansResolution === "loading";
   // Runs with fast-finish `mileSplits` hydrated (route-derived pace + per-mile
   // HR), for the HR-gated best-effort pipeline. Null until the async hydration
   // resolves; the segments fall back to the full-run-only path meanwhile.
@@ -895,6 +896,16 @@ export default function PlanInsightsPage() {
 
   if (loading) {
     return <PlanInsightsSkeleton />;
+  }
+
+  if (plansResolution === "error") {
+    return (
+      <div className="p-6 max-w-5xl mx-auto">
+        <p className="text-sm text-danger" role="alert">
+          Plan insights are unavailable because plans could not be loaded.
+        </p>
+      </div>
+    );
   }
 
   const raceDistanceLabel = activeRace

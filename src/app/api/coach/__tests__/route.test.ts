@@ -66,7 +66,11 @@ function textStream(...chunks: string[]): ReadableStream<string> {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  h.verifyIdToken.mockResolvedValue({ uid: 'u1' })
+  h.verifyIdToken.mockResolvedValue({
+    uid: 'u1',
+    email: 'folstromjohn@gmail.com',
+    email_verified: true,
+  })
   h.getCoachResponseStream.mockResolvedValue({
     stream: textStream('Coach ', 'answer'),
   })
@@ -90,6 +94,38 @@ describe('POST /api/coach', () => {
 
     expect(response.status).toBe(401)
     await expect(response.json()).resolves.toEqual({ error: 'Invalid token' })
+  })
+
+  it('rejects a verified wrong-email Firebase identity with 403', async () => {
+    h.verifyIdToken.mockResolvedValue({
+      uid: 'u2',
+      email: 'wrong@example.com',
+      email_verified: true,
+    })
+
+    const response = await POST(
+      request({ question: 'Q', context: CONTEXT }, { token: 'valid' })
+    )
+
+    expect(response.status).toBe(403)
+    await expect(response.json()).resolves.toEqual({ error: 'Forbidden' })
+    expect(h.getCoachResponseStream).not.toHaveBeenCalled()
+  })
+
+  it('rejects an unverified owner-email Firebase identity with 403', async () => {
+    h.verifyIdToken.mockResolvedValue({
+      uid: 'u1',
+      email: 'folstromjohn@gmail.com',
+      email_verified: false,
+    })
+
+    const response = await POST(
+      request({ question: 'Q', context: CONTEXT }, { token: 'valid' })
+    )
+
+    expect(response.status).toBe(403)
+    await expect(response.json()).resolves.toEqual({ error: 'Forbidden' })
+    expect(h.getCoachResponseStream).not.toHaveBeenCalled()
   })
 
   it('rejects malformed and incomplete request bodies with JSON errors', async () => {
