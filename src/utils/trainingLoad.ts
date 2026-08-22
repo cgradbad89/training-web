@@ -485,7 +485,7 @@ export function resolveDisplayLoad(
 /** The minimal HealthWorkout shape `shouldEnrichLoad` reads. */
 export interface EnrichableWorkout {
   trainingLoadV2?: number | null;
-  trainingLoadMethod?: "streamed" | "avg-hr-fallback";
+  trainingLoadMethod?: "streamed" | "avg-hr-fallback" | "none";
   hasRoute?: boolean;
   hasHRStream?: boolean;
   avgHeartRate?: number | null;
@@ -652,7 +652,7 @@ export function enrichBasisKey(
 
 export interface LoadExplainerInputs {
   /** Stored method, if any. Absent → treated as a live avg-HR estimate. */
-  trainingLoadMethod?: "streamed" | "avg-hr-fallback" | null;
+  trainingLoadMethod?: "streamed" | "avg-hr-fallback" | "none" | null;
   score: number | null;
   avgHeartRate?: number | null;
   durationSeconds?: number | null;

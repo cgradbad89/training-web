@@ -114,9 +114,15 @@ function seedMixedList(): HealthWorkout[] {
 
 describe("enrichTrainingLoads — selects and writes only the matching subset", () => {
   it("writes exactly the store + upgrade matches; skips streamed and no-HR", async () => {
-    const count = await enrichTrainingLoads("uid", seedMixedList(), null);
+    const results = await enrichTrainingLoads("uid", seedMixedList(), null);
 
-    expect(count).toBe(4);
+    expect(results).toHaveLength(4);
+    expect(results.map((result) => result.workoutId)).toEqual([
+      "store-route-run",
+      "store-hiit-stream",
+      "store-strength-avg",
+      "upgrade-to-stream",
+    ]);
     expect(setDocMock).toHaveBeenCalledTimes(4);
 
     const writtenIds = setDocMock.mock.calls.map(
@@ -152,7 +158,7 @@ describe("enrichTrainingLoads — selects and writes only the matching subset", 
   });
 
   it("returns 0 and writes nothing for an empty or all-converged list", async () => {
-    expect(await enrichTrainingLoads("uid", [], null)).toBe(0);
+    expect(await enrichTrainingLoads("uid", [], null)).toEqual([]);
 
     const converged = [
       mk({
@@ -169,7 +175,30 @@ describe("enrichTrainingLoads — selects and writes only the matching subset", 
       }),
       mk({ workoutId: "c", avgHeartRate: null }),
     ];
-    expect(await enrichTrainingLoads("uid", converged, null)).toBe(0);
+    expect(await enrichTrainingLoads("uid", converged, null)).toEqual([]);
     expect(setDocMock).not.toHaveBeenCalled();
+  });
+
+  it("returns only persisted successes when one Firestore write fails", async () => {
+    seedMixedList();
+    setDocMock
+      .mockRejectedValueOnce(new Error("write failed"))
+      .mockResolvedValue(undefined);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const results = await enrichTrainingLoads("uid", seedMixedList(), null);
+
+    expect(results.map((result) => result.workoutId)).toEqual([
+      "store-hiit-stream",
+      "store-strength-avg",
+      "upgrade-to-stream",
+    ]);
+    expect(results).not.toContainEqual(
+      expect.objectContaining({ workoutId: "store-route-run" })
+    );
+    expect(consoleError).toHaveBeenCalledWith(
+      "[enrichTrainingLoads] store-route-run failed",
+      expect.any(Error)
+    );
   });
 });

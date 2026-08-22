@@ -15,7 +15,6 @@ import {
   DEFAULT_MAX_HR,
   DEFAULT_RESTING_HR,
 } from '@/utils/trainingLoad'
-import type { WorkoutOverride } from '@/types/workoutOverride'
 
 const RACE_MILES: Record<Exclude<RaceDistance, 'custom'>, number> = {
   '5K':         3.107,
@@ -56,7 +55,6 @@ export function buildCoachContext(
   allRuns: HealthWorkout[],
   activePlan: RunningPlan | null,
   activeRace: Race | null,
-  overrides: Record<string, WorkoutOverride>,
   healthMetrics: HealthMetric[] = [],
   maxHr: number = DEFAULT_MAX_HR,
   restingHr: number = DEFAULT_RESTING_HR
@@ -64,11 +62,10 @@ export function buildCoachContext(
   const now = Date.now()
   const thirtyDaysAgo = now - 30 * 86400000
 
-  // Filter to last 30 days, exclude excluded
+  // The caller supplies the canonical effective workout projection. Filter only
+  // by recency here; exclusions and field overrides have already settled.
   const recentRuns = allRuns
     .filter(r => {
-      const ov = overrides[r.workoutId]
-      if (ov?.isExcluded) return false
       const d = new Date(r.startDate)
       return d.getTime() >= thirtyDaysAgo
     })
@@ -168,8 +165,6 @@ export function buildCoachContext(
 
       const actualMiles = allRuns
         .filter(r => {
-          const ov = overrides[r.workoutId]
-          if (ov?.isExcluded) return false
           const d = new Date(r.startDate)
           return d >= ws && d < we
         })
@@ -236,11 +231,10 @@ export function buildCoachContext(
     // Predicted time via Riegel — race-anchored: the active race's planned
     // date/distance feed the race-match so the actual race run (if already
     // recorded) dominates the fit while fresh.
-    const nonExcludedRuns = allRuns.filter(r => !overrides[r.workoutId]?.isExcluded)
     const raceInputs = distanceMiles
       ? [{ raceDate: activeRace.raceDate, distanceMiles }]
       : []
-    const efforts = buildQualifyingEfforts(nonExcludedRuns, 56, { races: raceInputs })
+    const efforts = buildQualifyingEfforts(allRuns, 56, { races: raceInputs })
     const fit = distanceMiles
       ? fitRiegel(efforts, distanceMiles, 3.0, { min: 1.04, max: 1.10 })
       : null
@@ -327,6 +321,7 @@ export function buildCoachContext(
       avgPace,
       avgHR,
       maxHeartRate: maxHr,
+      restingHeartRate: restingHr,
       longestRun,
       longRunCount,
       mediumRunCount,

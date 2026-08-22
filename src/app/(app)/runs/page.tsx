@@ -56,6 +56,7 @@ import { excludeWorkout } from "@/services/workoutOverrides";
 import { ExcludedItemsModal } from "@/components/ExcludedItemsModal";
 import { ExportModal } from "@/components/ExportModal";
 import { applyOverride } from "@/types/workoutOverride";
+import { selectEffectiveWorkouts } from "@/utils/selectActiveWorkouts";
 import {
   detectDuplicatePairs,
   type DuplicatePair,
@@ -755,14 +756,20 @@ export default function RunsPage() {
     overrides,
     plans,
     userSettings,
+    settingsResolution,
     maxHr,
     restingHr,
     workoutsLoading,
     patchOverrides,
+    patchTrainingLoad,
     refreshWorkouts,
   } = useAppData();
 
-  const allRuns = useMemo(() => workouts.filter((w) => w.isRunLike), [workouts]);
+  const rawRuns = useMemo(() => workouts.filter((w) => w.isRunLike), [workouts]);
+  const allRuns = useMemo(
+    () => selectEffectiveWorkouts(rawRuns, overrides),
+    [rawRuns, overrides]
+  );
   const activeRunningPlan = useMemo<RunningPlan | null>(
     () => findActiveRunningPlan(plans),
     [plans]
@@ -849,8 +856,14 @@ export default function RunsPage() {
 
   // Auto-store Training Load V2 for the runs this page loads (the Workouts page
   // covers non-runs). Stores a missing load / upgrades an avg-HR value once a
-  // route or stream arrives. Runs after paint; writes flow back via the snapshot.
-  useEnrichTrainingLoads(uid, allRuns, userSettings);
+  // route or stream arrives. Enrichment operates on raw source fields; each
+  // successful persisted result is patched into shared AppData immediately.
+  useEnrichTrainingLoads(
+    uid,
+    rawRuns,
+    settingsResolution === "success" ? userSettings : undefined,
+    patchTrainingLoad
+  );
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -937,20 +950,14 @@ export default function RunsPage() {
     return years;
   }, [allRuns, currentYear]);
 
-  // Separate excluded from visible runs, apply overrides for display
+  // Visible runs already use the canonical effective projection. Keep a
+  // separately shaped list only for the explicit Excluded-items modal.
   const { visibleRuns, excludedRuns } = useMemo(() => {
-    const visible: HealthWorkout[] = [];
-    const excluded: HealthWorkout[] = [];
-    for (const r of allRuns) {
-      const displayed = applyOverride(r, overrides[r.workoutId] ?? null);
-      if (overrides[r.workoutId]?.isExcluded) {
-        excluded.push(displayed);
-      } else {
-        visible.push(displayed);
-      }
-    }
-    return { visibleRuns: visible, excludedRuns: excluded };
-  }, [allRuns, overrides]);
+    const excluded = rawRuns
+      .filter((r) => overrides[r.workoutId]?.isExcluded === true)
+      .map((r) => applyOverride(r, overrides[r.workoutId] ?? null));
+    return { visibleRuns: allRuns, excludedRuns: excluded };
+  }, [allRuns, rawRuns, overrides]);
 
   const filteredRuns = useMemo(
     () => visibleRuns.filter((r) => getLocalDate(r).getFullYear() === selectedYear),

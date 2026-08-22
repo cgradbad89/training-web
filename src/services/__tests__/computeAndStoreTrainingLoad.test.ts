@@ -68,7 +68,7 @@ describe("computeAndStoreTrainingLoad — 3-tier method selection", () => {
 
     const result = await computeAndStoreTrainingLoad("uid", "w1", null);
 
-    expect(result?.method).toBe("streamed");
+    expect(result?.trainingLoadMethod).toBe("streamed");
     expect(fetchRoutePointsMock).toHaveBeenCalledTimes(1);
     expect(fetchHRStreamMock).not.toHaveBeenCalled();
     // Stored method matches; route not flagged partial → basis recorded complete.
@@ -90,7 +90,7 @@ describe("computeAndStoreTrainingLoad — 3-tier method selection", () => {
 
     const result = await computeAndStoreTrainingLoad("uid", "w2", null);
 
-    expect(result?.method).toBe("streamed");
+    expect(result?.trainingLoadMethod).toBe("streamed");
     expect(fetchHRStreamMock).toHaveBeenCalledTimes(1);
     expect(fetchRoutePointsMock).not.toHaveBeenCalled();
     expect(setDocMock.mock.calls[0][1]).toMatchObject({
@@ -109,7 +109,7 @@ describe("computeAndStoreTrainingLoad — 3-tier method selection", () => {
 
     const result = await computeAndStoreTrainingLoad("uid", "w3", null);
 
-    expect(result?.method).toBe("avg-hr-fallback");
+    expect(result?.trainingLoadMethod).toBe("avg-hr-fallback");
     expect(fetchRoutePointsMock).not.toHaveBeenCalled();
     expect(fetchHRStreamMock).not.toHaveBeenCalled();
     expect(setDocMock.mock.calls[0][1]).toMatchObject({
@@ -160,7 +160,7 @@ describe("computeAndStoreTrainingLoad — 3-tier method selection", () => {
 
     const result = await computeAndStoreTrainingLoad("uid", "w4", null);
 
-    expect(result?.method).toBe("avg-hr-fallback");
+    expect(result?.trainingLoadMethod).toBe("avg-hr-fallback");
     expect(fetchHRStreamMock).toHaveBeenCalledTimes(1);
     expect(setDocMock.mock.calls[0][1]).toMatchObject({
       trainingLoadMethod: "avg-hr-fallback",

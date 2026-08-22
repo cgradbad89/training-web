@@ -50,7 +50,10 @@ import { fetchAllOverrides } from "@/services/workoutOverrides";
 import { fetchUserSettings } from "@/services/userSettings";
 import { resolveMaxHr, resolveRestingHr } from "@/utils/trainingLoad";
 import { toLocalIsoDate } from "@/utils/dates";
-import { type HealthWorkout } from "@/types/healthWorkout";
+import {
+  type HealthWorkout,
+  type TrainingLoadFields,
+} from "@/types/healthWorkout";
 import { type Plan } from "@/types/plan";
 import { type Race } from "@/types/race";
 import { type WorkoutOverride } from "@/types/workoutOverride";
@@ -129,6 +132,12 @@ export interface AppDataContextValue {
    *  per-page `setOverrides((prev) => ...)` calls. */
   patchOverrides: (
     updater: (prev: Record<string, WorkoutOverride>) => Record<string, WorkoutOverride>
+  ) => void;
+  /** Local-only targeted publication after the matching enrichment merge write
+   *  succeeds. Raw source identity, ordering, and all unrelated fields remain. */
+  patchTrainingLoad: (
+    workoutId: string,
+    patch: TrainingLoadFields
   ) => void;
 }
 
@@ -489,6 +498,23 @@ function AppDataProviderGeneration({
     [isCurrentRequest, uid]
   );
 
+  const patchTrainingLoad = useCallback(
+    (workoutId: string, patch: TrainingLoadFields) => {
+      const generation = requestGenerationRef.current;
+      if (!isCurrentRequest(uid, generation)) return;
+      setWorkouts((current) => {
+        const index = current.findIndex(
+          (workout) => workout.workoutId === workoutId
+        );
+        if (index < 0) return current;
+        return current.map((workout, workoutIndex) =>
+          workoutIndex === index ? { ...workout, ...patch } : workout
+        );
+      });
+    },
+    [isCurrentRequest, uid]
+  );
+
   const maxHr = resolveMaxHr(userSettings);
   const restingHr = resolveRestingHr(userSettings);
 
@@ -520,6 +546,7 @@ function AppDataProviderGeneration({
       refreshOverrides,
       refreshSettings,
       patchOverrides,
+      patchTrainingLoad,
     }),
     [
       workouts,
@@ -548,6 +575,7 @@ function AppDataProviderGeneration({
       refreshOverrides,
       refreshSettings,
       patchOverrides,
+      patchTrainingLoad,
     ]
   );
 

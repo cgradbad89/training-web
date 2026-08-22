@@ -1,5 +1,8 @@
 import { useEffect, useRef } from "react";
-import { type HealthWorkout } from "@/types/healthWorkout";
+import {
+  type HealthWorkout,
+  type TrainingLoadFields,
+} from "@/types/healthWorkout";
 import { type UserSettings } from "@/types/userSettings";
 import { enrichTrainingLoads } from "@/services/healthWorkouts";
 import {
@@ -20,12 +23,12 @@ import {
  * is computed + stored, and an avg-HR value is re-computed once a route/stream
  * arrives (→ "streamed").
  *
- * Never blocks render — it runs in an effect, after paint. The writes flow back
- * through the page's own onSnapshot listener, which re-renders the displayed values
- * via resolveDisplayLoad. No UI change.
+ * Never blocks render — it runs in an effect, after paint. Each successful merge
+ * write returns its final load fields, which are patched into shared AppData so
+ * resolveDisplayLoad sees them immediately without a full workout refresh.
  *
- * LOOP SAFETY — the snapshot listener re-fires when enrichment writes, so this
- * effect re-runs on its own output. Two guards converge it:
+ * LOOP SAFETY — the AppData patch re-renders this hook on its own output. Two
+ * guards converge it:
  *   - `attemptedRef` records each workout's BASIS key (id + hasRoute + hasHRStream)
  *     the moment it is queued, so the same (workout, basis) is never enriched twice.
  *     This is what stops a compute that legitimately yields null (no usable HR yet,
@@ -44,7 +47,11 @@ import {
 export function useEnrichTrainingLoads(
   uid: string | null,
   workouts: HealthWorkout[],
-  settings: UserSettings | null | undefined
+  settings: UserSettings | null | undefined,
+  patchTrainingLoad: (
+    workoutId: string,
+    patch: TrainingLoadFields
+  ) => void
 ): void {
   const attemptedRef = useRef<Set<string>>(new Set());
   const inFlightRef = useRef(false);
@@ -67,17 +74,26 @@ export function useEnrichTrainingLoads(
     );
     if (fresh.length === 0) return;
 
-    // Record the basis up front so a snapshot re-fire mid-pass can't re-queue these.
+    // Record the basis up front so an AppData re-render can't re-queue these.
     for (const w of fresh)
       attemptedRef.current.add(enrichBasisKey(w, maxHr, restingHr));
 
     inFlightRef.current = true;
     enrichTrainingLoads(uid, fresh, settings)
+      .then((results) => {
+        for (const result of results) {
+          patchTrainingLoad(result.workoutId, {
+            trainingLoadV2: result.trainingLoadV2,
+            trainingLoadMethod: result.trainingLoadMethod,
+            trainingLoadBasisComplete: result.trainingLoadBasisComplete,
+          });
+        }
+      })
       .catch((err) =>
         console.error("[useEnrichTrainingLoads] enrich failed", err)
       )
       .finally(() => {
         inFlightRef.current = false;
       });
-  }, [uid, workouts, settings]);
+  }, [uid, workouts, settings, patchTrainingLoad]);
 }

@@ -49,7 +49,11 @@ import {
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { toDate } from "@/utils/dates";
-import { type HealthWorkout } from "@/types/healthWorkout";
+import {
+  type HealthWorkout,
+  type TrainingLoadMethod,
+  type TrainingLoadFields,
+} from "@/types/healthWorkout";
 import { type WeatherSnapshot } from "@/types/weather";
 import { type UserSettings } from "@/types/userSettings";
 import {
@@ -228,7 +232,8 @@ function docToHealthWorkout(
           : undefined,
     trainingLoadMethod:
       data.trainingLoadMethod === "streamed" ||
-      data.trainingLoadMethod === "avg-hr-fallback"
+      data.trainingLoadMethod === "avg-hr-fallback" ||
+      data.trainingLoadMethod === "none"
         ? data.trainingLoadMethod
         : undefined,
     trainingLoadBasisComplete:
@@ -554,11 +559,18 @@ export async function saveWeatherForWorkout(
  * An empty/too-sparse hrStream despite hasHRStream falls through to tier 3
  * (defensive — never errors).
  */
+export interface EnrichedTrainingLoadResult extends TrainingLoadFields {
+  workoutId: string;
+  trainingLoadV2: number | null;
+  trainingLoadMethod: TrainingLoadMethod;
+  trainingLoadBasisComplete: boolean;
+}
+
 export async function computeAndStoreTrainingLoad(
   uid: string,
   workoutId: string,
   settings: UserSettings | null | undefined
-): Promise<{ load: number | null; method: string } | null> {
+): Promise<EnrichedTrainingLoadResult | null> {
   const ref = doc(db, "users", uid, "healthWorkouts", workoutId);
   const snap = await getDoc(ref);
   if (!snap.exists()) return null;
@@ -649,7 +661,12 @@ export async function computeAndStoreTrainingLoad(
     { merge: true }
   );
 
-  return { load, method };
+  return {
+    workoutId,
+    trainingLoadV2: load,
+    trainingLoadMethod: method,
+    trainingLoadBasisComplete: basisComplete,
+  };
 }
 
 /**
@@ -686,7 +703,7 @@ export async function backfillTrainingLoad(
       continue;
     }
     stats.processed++;
-    if (result.method === "streamed") stats.streamed++;
+    if (result.trainingLoadMethod === "streamed") stats.streamed++;
     else stats.fallback++;
   }
 
@@ -750,7 +767,7 @@ export async function recomputeAllTrainingLoad(
       continue;
     }
     stats.processed++;
-    if (result.method === "streamed") stats.streamed++;
+    if (result.trainingLoadMethod === "streamed") stats.streamed++;
     else stats.fallback++;
   }
 
@@ -766,28 +783,37 @@ export async function recomputeAllTrainingLoad(
  * Reuses computeAndStoreTrainingLoad VERBATIM (the same 3-tier writer the admin
  * backfill and the Settings recompute call) so there is exactly one load model and
  * no new math. Sequential (concurrency 1) to avoid a write burst on first load;
- * idempotent and safe to run on every snapshot — the caller's per-basis guard
- * (useEnrichTrainingLoads) keeps the snapshot→write→snapshot cycle from repeating
- * work. Returns the number of workouts actually written.
+ * idempotent and safe to run after every shared-data update — the caller's
+ * per-basis guard keeps the AppData patch→render cycle from repeating work.
+ * Returns the exact successfully persisted fields for targeted local
+ * AppData patching. One failed workout is logged and skipped without hiding
+ * successful writes for the rest of the sequential batch.
  */
 export async function enrichTrainingLoads(
   uid: string,
   workouts: HealthWorkout[],
   settings: UserSettings | null | undefined
-): Promise<number> {
+): Promise<EnrichedTrainingLoadResult[]> {
   // Resolve HR anchors once (same source as the writer) so shouldEnrichLoad's
   // branch (d) avg-HR reference matches what computeAndStoreTrainingLoad will use.
   const maxHr = resolveMaxHr(settings);
   const restingHr = resolveRestingHr(settings);
-  let enriched = 0;
+  const enriched: EnrichedTrainingLoadResult[] = [];
   for (const workout of workouts) {
     if (!shouldEnrichLoad(workout, maxHr, restingHr)) continue;
-    const result = await computeAndStoreTrainingLoad(
-      uid,
-      workout.workoutId,
-      settings
-    );
-    if (result) enriched++;
+    try {
+      const result = await computeAndStoreTrainingLoad(
+        uid,
+        workout.workoutId,
+        settings
+      );
+      if (result) enriched.push(result);
+    } catch (err) {
+      console.error(
+        `[enrichTrainingLoads] ${workout.workoutId} failed`,
+        err
+      );
+    }
   }
   return enriched;
 }

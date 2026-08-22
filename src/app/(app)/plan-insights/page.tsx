@@ -9,7 +9,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { MetricBadge } from "@/components/ui/MetricBadge";
 import { useAuth } from "@/hooks/useAuth";
 import { useAppData } from "@/contexts/AppDataContext";
-import { applyOverride } from "@/types/workoutOverride";
+import { selectEffectiveWorkouts } from "@/utils/selectActiveWorkouts";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { type RunningPlan, type PlanRunType, isRunningPlan } from "@/types/plan";
 import {
@@ -228,10 +228,7 @@ export default function PlanInsightsPage() {
   // Apply overrides and drop excluded workouts — same processing the old
   // per-page fetch did inline before setting local state.
   const workouts = useMemo(
-    () =>
-      rawWorkouts
-        .map((w) => applyOverride(w, overrides[w.workoutId] ?? null))
-        .filter((w) => !overrides[w.workoutId]?.isExcluded),
+    () => selectEffectiveWorkouts(rawWorkouts, overrides),
     [rawWorkouts, overrides]
   );
   const plans = useMemo(() => allPlans.filter(isRunningPlan), [allPlans]);
