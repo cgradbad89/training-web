@@ -75,10 +75,10 @@ beforeEach(() => {
   latest = null;
   h.fetchHealthWorkouts.mockReset().mockResolvedValue([]);
   h.fetchHealthWorkoutsInRange.mockReset().mockResolvedValue([]);
-  h.fetchPlans.mockResolvedValue([]);
-  h.fetchRaces.mockResolvedValue([]);
-  h.fetchAllOverrides.mockResolvedValue({});
-  h.fetchUserSettings.mockResolvedValue(null);
+  h.fetchPlans.mockReset().mockResolvedValue([]);
+  h.fetchRaces.mockReset().mockResolvedValue([]);
+  h.fetchAllOverrides.mockReset().mockResolvedValue({});
+  h.fetchUserSettings.mockReset().mockResolvedValue(null);
 });
 
 afterEach(() => {
@@ -95,6 +95,7 @@ describe("AppDataProvider", () => {
     await mount();
 
     expect(latest?.workoutsLoading).toBe(false);
+    expect(latest?.workoutsResolution).toBe("success");
     expect(
       latest?.workouts.map((w) => (w as { workoutId: string }).workoutId)
     ).toEqual(["w1"]);
@@ -109,12 +110,14 @@ describe("AppDataProvider", () => {
     await mount();
 
     expect(latest?.workoutsLoading).toBe(true);
+    expect(latest?.workoutsResolution).toBe("loading");
     expect(latest?.workoutsRefreshing).toBe(false);
 
     initial.resolve([{ workoutId: "w1" }]);
     await act(async () => initial.promise);
     expect(latest?.workoutsLoading).toBe(false);
     expect(latest?.workoutsRefreshing).toBe(false);
+    expect(latest?.workoutsResolution).toBe("success");
   });
 
   it("keeps every data domain loading until the resolved user's initial reads finish", async () => {
@@ -166,6 +169,36 @@ describe("AppDataProvider", () => {
     });
     expect(latest?.workouts).toEqual([]);
     expect(latest?.workoutsLoading).toBe(false);
+    expect(latest?.workoutsResolution).toBe("success");
+  });
+
+  it("marks a failed workouts read as failed after loading finishes", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    h.fetchHealthWorkouts.mockRejectedValueOnce(new Error("workouts unavailable"));
+
+    await mount();
+
+    expect(latest?.workouts).toEqual([]);
+    expect(latest?.workoutsLoading).toBe(false);
+    expect(latest?.workoutsResolution).toBe("error");
+  });
+
+  it("recovers a failed workouts source after a successful refresh", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    h.fetchHealthWorkouts
+      .mockRejectedValueOnce(new Error("workouts unavailable"))
+      .mockResolvedValueOnce([{ workoutId: "recovered" }]);
+    await mount();
+    expect(latest?.workoutsResolution).toBe("error");
+
+    await act(async () => {
+      await latest?.refreshWorkouts();
+    });
+
+    expect(latest?.workoutsResolution).toBe("success");
+    expect(latest?.workouts.map((workout) => workout.workoutId)).toEqual([
+      "recovered",
+    ]);
   });
 
   it("fetches workouts with the shared 1000 limit", async () => {
@@ -305,6 +338,51 @@ describe("AppDataProvider", () => {
     expect(latest?.racesLoading).toBe(false);
     expect(latest?.overridesLoading).toBe(false);
     expect(latest?.settingsLoading).toBe(false);
+    expect(latest).toEqual(
+      expect.objectContaining({
+        racesResolution: "success",
+        overridesResolution: "success",
+        settingsResolution: "success",
+      })
+    );
+  });
+
+  it("tracks failed settings, races, and overrides independently and recovers on refresh", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    h.fetchRaces.mockRejectedValueOnce(new Error("races unavailable"));
+    h.fetchAllOverrides.mockRejectedValueOnce(new Error("overrides unavailable"));
+    h.fetchUserSettings.mockRejectedValueOnce(new Error("settings unavailable"));
+    await mount();
+
+    expect(latest).toEqual(
+      expect.objectContaining({
+        racesLoading: false,
+        racesResolution: "error",
+        overridesLoading: false,
+        overridesResolution: "error",
+        settingsLoading: false,
+        settingsResolution: "error",
+      })
+    );
+
+    h.fetchRaces.mockResolvedValueOnce([]);
+    h.fetchAllOverrides.mockResolvedValueOnce({});
+    h.fetchUserSettings.mockResolvedValueOnce(null);
+    await act(async () => {
+      await Promise.all([
+        latest?.refreshRaces(),
+        latest?.refreshOverrides(),
+        latest?.refreshSettings(),
+      ]);
+    });
+
+    expect(latest).toEqual(
+      expect.objectContaining({
+        racesResolution: "success",
+        overridesResolution: "success",
+        settingsResolution: "success",
+      })
+    );
   });
 
   it("falls back to default HR anchors when settings are absent", async () => {

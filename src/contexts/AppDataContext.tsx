@@ -65,6 +65,8 @@ import { type UserSettings } from "@/types/userSettings";
 export const APP_DATA_WORKOUTS_LIMIT = 1000;
 export const WORKOUT_DELTA_OVERLAP_DAYS = 7;
 
+export type AppDataResolution = "loading" | "success" | "error";
+
 export function workoutDeltaStartDate(latestWorkoutDate: Date): Date {
   return new Date(
     latestWorkoutDate.getTime() -
@@ -88,6 +90,7 @@ export interface AppDataContextValue {
   workouts: HealthWorkout[];
   /** True only while the first successful workouts load is pending. */
   workoutsLoading: boolean;
+  workoutsResolution: AppDataResolution;
   /** True during a later background/manual workouts refresh. */
   workoutsRefreshing: boolean;
   /** True when the latest full read returned fewer than its cap. */
@@ -97,15 +100,19 @@ export interface AppDataContextValue {
   plansLoading: boolean;
   races: Race[];
   racesLoading: boolean;
+  racesResolution: AppDataResolution;
   /** Raw override map keyed by workoutId. Pages apply via applyOverride. */
   overrides: Record<string, WorkoutOverride>;
   overridesLoading: boolean;
+  overridesResolution: AppDataResolution;
   /** Raw settings doc — needed by useEnrichTrainingLoads (runs/workouts). */
   userSettings: UserSettings | null;
   maxHr: number;
   restingHr: number;
   settingsLoading: boolean;
+  settingsResolution: AppDataResolution;
   refreshPlans: () => Promise<void>;
+  refreshRaces: () => Promise<void>;
   refreshOverrides: () => Promise<void>;
   refreshSettings: () => Promise<void>;
   /** Optimistic local override mutation (post-write UX), mirrors the old
@@ -126,6 +133,8 @@ export function AppDataProvider({
 }) {
   const [workouts, setWorkouts] = useState<HealthWorkout[]>([]);
   const [workoutsLoading, setWorkoutsLoading] = useState(true);
+  const [workoutsResolution, setWorkoutsResolution] =
+    useState<AppDataResolution>("loading");
   const [workoutsRefreshing, setWorkoutsRefreshing] = useState(false);
   const [workoutsHistoryComplete, setWorkoutsHistoryComplete] = useState(false);
   const workoutsLoadedRef = useRef(false);
@@ -135,10 +144,16 @@ export function AppDataProvider({
   const [plansLoading, setPlansLoading] = useState(true);
   const [races, setRaces] = useState<Race[]>([]);
   const [racesLoading, setRacesLoading] = useState(true);
+  const [racesResolution, setRacesResolution] =
+    useState<AppDataResolution>("loading");
   const [overrides, setOverrides] = useState<Record<string, WorkoutOverride>>({});
   const [overridesLoading, setOverridesLoading] = useState(true);
+  const [overridesResolution, setOverridesResolution] =
+    useState<AppDataResolution>("loading");
   const [userSettings, setUserSettings] = useState<UserSettings | null>(null);
   const [settingsLoading, setSettingsLoading] = useState(true);
+  const [settingsResolution, setSettingsResolution] =
+    useState<AppDataResolution>("loading");
   const appDataReady =
     !workoutsLoading &&
     !plansLoading &&
@@ -165,6 +180,7 @@ export function AppDataProvider({
       setWorkoutsLoading(false);
       setWorkoutsRefreshing(false);
       setWorkoutsHistoryComplete(true);
+      setWorkoutsResolution("success");
       workoutsLoadedRef.current = true;
       return Promise.resolve();
     }
@@ -172,6 +188,7 @@ export function AppDataProvider({
     const isInitialLoad = !workoutsLoadedRef.current;
     if (isInitialLoad) setWorkoutsLoading(true);
     else setWorkoutsRefreshing(true);
+    setWorkoutsResolution("loading");
 
     const promise = (async () => {
       try {
@@ -182,8 +199,10 @@ export function AppDataProvider({
         setWorkoutsHistoryComplete(
           loaded.length < APP_DATA_WORKOUTS_LIMIT
         );
+        setWorkoutsResolution("success");
         workoutsLoadedRef.current = true;
       } catch (err) {
+        setWorkoutsResolution("error");
         console.error("[AppData] fetchHealthWorkouts", err);
       } finally {
         if (isInitialLoad) setWorkoutsLoading(false);
@@ -211,6 +230,7 @@ export function AppDataProvider({
     }
 
     setWorkoutsRefreshing(true);
+    setWorkoutsResolution("loading");
     const promise = (async () => {
       try {
         const delta = await fetchHealthWorkoutsInRange(
@@ -218,7 +238,9 @@ export function AppDataProvider({
           workoutDeltaStartDate(latestWorkout.startDate)
         );
         setWorkouts((current) => mergeWorkoutDelta(current, delta));
+        setWorkoutsResolution("success");
       } catch (err) {
+        setWorkoutsResolution("error");
         console.error("[AppData] refreshRecentWorkouts", err);
       } finally {
         setWorkoutsRefreshing(false);
@@ -249,12 +271,16 @@ export function AppDataProvider({
     if (!uid) {
       setRaces([]);
       setRacesLoading(false);
+      setRacesResolution("success");
       return;
     }
     setRacesLoading(true);
+    setRacesResolution("loading");
     try {
       setRaces(await fetchRaces(uid));
+      setRacesResolution("success");
     } catch (err) {
+      setRacesResolution("error");
       console.error("[AppData] fetchRaces", err);
     } finally {
       setRacesLoading(false);
@@ -265,12 +291,16 @@ export function AppDataProvider({
     if (!uid) {
       setOverrides({});
       setOverridesLoading(false);
+      setOverridesResolution("success");
       return;
     }
     setOverridesLoading(true);
+    setOverridesResolution("loading");
     try {
       setOverrides(await fetchAllOverrides(uid));
+      setOverridesResolution("success");
     } catch (err) {
+      setOverridesResolution("error");
       console.error("[AppData] fetchAllOverrides", err);
     } finally {
       setOverridesLoading(false);
@@ -281,12 +311,16 @@ export function AppDataProvider({
     if (!uid) {
       setUserSettings(null);
       setSettingsLoading(false);
+      setSettingsResolution("success");
       return;
     }
     setSettingsLoading(true);
+    setSettingsResolution("loading");
     try {
       setUserSettings((await fetchUserSettings(uid)) ?? null);
+      setSettingsResolution("success");
     } catch (err) {
+      setSettingsResolution("error");
       console.error("[AppData] fetchUserSettings", err);
     } finally {
       setSettingsLoading(false);
@@ -322,6 +356,7 @@ export function AppDataProvider({
     () => ({
       workouts,
       workoutsLoading,
+      workoutsResolution,
       workoutsRefreshing,
       workoutsHistoryComplete,
       refreshWorkouts,
@@ -329,13 +364,17 @@ export function AppDataProvider({
       plansLoading,
       races,
       racesLoading,
+      racesResolution,
       overrides,
       overridesLoading,
+      overridesResolution,
       userSettings,
       maxHr,
       restingHr,
       settingsLoading,
+      settingsResolution,
       refreshPlans,
+      refreshRaces,
       refreshOverrides,
       refreshSettings,
       patchOverrides,
@@ -343,6 +382,7 @@ export function AppDataProvider({
     [
       workouts,
       workoutsLoading,
+      workoutsResolution,
       workoutsRefreshing,
       workoutsHistoryComplete,
       refreshWorkouts,
@@ -350,13 +390,17 @@ export function AppDataProvider({
       plansLoading,
       races,
       racesLoading,
+      racesResolution,
       overrides,
       overridesLoading,
+      overridesResolution,
       userSettings,
       maxHr,
       restingHr,
       settingsLoading,
+      settingsResolution,
       refreshPlans,
+      refreshRaces,
       refreshOverrides,
       refreshSettings,
       patchOverrides,
