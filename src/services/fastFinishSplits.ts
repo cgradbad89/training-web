@@ -16,8 +16,6 @@
  * dedup), so a run whose route was already read elsewhere on the page is free.
  */
 
-import { collection, getDocs, orderBy, query } from "firebase/firestore";
-import { db } from "@/lib/firebase";
 import { getRoutePoints } from "@/utils/routeCache";
 import { getMileSplits } from "@/utils/mileSplitsCache";
 import { computeMileSplits, type MileSplit } from "@/utils/mileSplits";

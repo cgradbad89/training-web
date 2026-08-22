@@ -17,7 +17,7 @@ import {
   RACE_DISTANCE_LABELS,
   HALF_MARATHON_MILES,
 } from "@/types/race";
-import { formatPace, formatMiles } from "@/utils/pace";
+import { formatPace } from "@/utils/pace";
 import {
   resolveDisplayLoad,
   MIN_RUN_MILES_FOR_AVG,
@@ -115,14 +115,6 @@ function Card({ children, className = "" }: { children: React.ReactNode; classNa
   );
 }
 
-function CardTitle({ children }: { children: React.ReactNode }) {
-  return (
-    <h2 className="text-sm font-semibold uppercase tracking-widest text-textSecondary mb-4">
-      {children}
-    </h2>
-  );
-}
-
 function SectionHeader({ icon: Icon, title }: { icon: React.ComponentType<{ size?: number; className?: string }>; title: string }) {
   return (
     <div className="flex items-center gap-2 mb-4">
@@ -143,7 +135,6 @@ interface PredictionCardProps {
 
 function PredictionCard({ label, distanceMiles, fit, targetPace }: PredictionCardProps) {
   const predicted = fit ? predictSeconds(fit, distanceMiles) : null;
-  const predictedPace = predicted && distanceMiles > 0 ? predicted / distanceMiles : null;
   const confidence = fit ? riegelConfidenceLabel(fit) : null;
 
   const vsTarget = predicted && targetPace && targetPace > 0
@@ -297,7 +288,6 @@ export default function PlanInsightsPage() {
   // when the Actual Performance tile is missing. Remove once verified.
   useEffect(() => {
     if (activeRace?.name?.includes("PNC")) {
-      // eslint-disable-next-line no-console
       console.log("[PlanInsights] PNC race data:", {
         isPastRace,
         actualRunId: activeRace.actualRunId,

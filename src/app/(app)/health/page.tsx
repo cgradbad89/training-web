@@ -1718,16 +1718,6 @@ export default function HealthPage() {
     [ringStats, showAvg]
   );
 
-  // Chart data — last 90 days ascending
-  const chartData = useMemo(() => [...metrics].reverse(), [metrics]);
-
-  function toChartSeries(key: keyof HealthMetric) {
-    return chartData.map((m) => ({
-      date: m.date,
-      value: m[key] as number | undefined,
-    }));
-  }
-
   // Per-chart data slice: given the effective range + an accessor, build
   // the Recharts {date, value}[] series + tight Y-axis domain.
   const buildSlice = useCallback(

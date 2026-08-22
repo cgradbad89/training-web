@@ -278,7 +278,6 @@ export function computeRunGap(
   // run still produces a GAP (we just can't tell stops from motion via time).
   const useDerivedMovingTime = derivedMovingTimeSec >= MIN_DERIVED_MOVING_SEC;
   if (!useDerivedMovingTime) {
-    // eslint-disable-next-line no-console
     console.warn(
       `[computeRunGap] derived moving time ${derivedMovingTimeSec.toFixed(
         1

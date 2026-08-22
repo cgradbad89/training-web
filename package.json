@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "lint:ci": "git ls-files -z -- '*.js' '*.jsx' '*.ts' '*.tsx' '*.mjs' '*.cjs' | xargs -0 eslint --max-warnings 162",
+    "lint:ci": "git ls-files -z -- '*.js' '*.jsx' '*.ts' '*.tsx' '*.mjs' '*.cjs' | xargs -0 eslint --max-warnings 104",
     "typecheck": "tsc --noEmit --pretty false -p tsconfig.build.json",
     "test": "vitest run",
     "validate": "npm run typecheck && npm run lint:ci && npm test && npm run build",

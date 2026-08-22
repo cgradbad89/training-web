@@ -110,7 +110,6 @@ import {
   computeRunImpact,
   computeCtlImpact,
   computeCtlImpactFromCache,
-  CTL_IMPACT_SEED_DAYS,
   type CtlImpact,
 } from "@/utils/runImpact";
 import {

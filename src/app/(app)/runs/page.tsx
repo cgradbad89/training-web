@@ -46,7 +46,6 @@ import {
   classifyRun,
   RUN_TAG_STYLES,
   RUN_TAG_LABELS,
-  type RunTag,
 } from "@/utils/activityTypes";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { type RunningShoe } from "@/types/shoe";

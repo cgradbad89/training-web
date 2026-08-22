@@ -119,7 +119,7 @@ export async function importTrainingWebSnapshot(inputPath: string): Promise<void
 
     for (const route of workout.route) {
       const routeId = (route.__id as string) || db.collection('dummy').doc().id;
-      const { __id, ...data } = route;
+      const data = Object.fromEntries(Object.entries(route).filter(([key]) => key !== "__id"));
       queueSet(db.doc(`users/${uid}/healthWorkouts/${workout.id}/route/${routeId}`), data);
       counts.route++;
       await commitBatchIfNeeded();
@@ -127,7 +127,7 @@ export async function importTrainingWebSnapshot(inputPath: string): Promise<void
 
     for (const ms of workout.mileSplits) {
       const msId = (ms.__id as string) || db.collection('dummy').doc().id;
-      const { __id, ...data } = ms;
+      const data = Object.fromEntries(Object.entries(ms).filter(([key]) => key !== "__id"));
       queueSet(db.doc(`users/${uid}/healthWorkouts/${workout.id}/mileSplits/${msId}`), data);
       counts.mileSplits++;
       await commitBatchIfNeeded();
@@ -135,7 +135,7 @@ export async function importTrainingWebSnapshot(inputPath: string): Promise<void
 
     for (const hs of workout.hrStream) {
       const hsId = (hs.__id as string) || db.collection('dummy').doc().id;
-      const { __id, ...data } = hs;
+      const data = Object.fromEntries(Object.entries(hs).filter(([key]) => key !== "__id"));
       queueSet(db.doc(`users/${uid}/healthWorkouts/${workout.id}/hrStream/${hsId}`), data);
       counts.hrStream++;
       await commitBatchIfNeeded();

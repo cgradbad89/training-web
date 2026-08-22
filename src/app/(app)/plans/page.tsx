@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CrossTrainingPlanDetail } from "@/components/CrossTrainingPlanDetail";
 import { RunningPlanDetail } from "@/components/RunningPlanDetail";
@@ -34,21 +34,15 @@ import {
   type RunningPlan,
   type WorkoutPlan,
   type LegacyPilatesPlan,
-  type PlanRunType,
   isRunningPlan,
   isWorkoutPlan,
   isLegacyPilatesPlan,
   groupPlansByStatus,
 } from "@/types/plan";
-import { useRouter } from "next/navigation";
 import {
-  CheckCircle,
-  Circle,
   ChevronRight,
   Plus,
-  Pencil,
   Trash2,
-  Copy,
   Check,
   AlertCircle,
   Dumbbell,
@@ -81,34 +75,6 @@ function nextMonday(): string {
 // the span math has a single tested source (see PRD §5 item 22).
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-
-const RUN_TYPE_STYLES: Record<
-  PlanRunType,
-  { bg: string; text: string; label: string }
-> = {
-  outdoor:   { bg: "bg-green-100",  text: "text-green-700",  label: "Outdoor"   },
-  treadmill: { bg: "bg-blue-100",   text: "text-blue-700",   label: "Treadmill" },
-  otf:       { bg: "bg-orange-100", text: "text-orange-700", label: "OTF"       },
-  longRun:   { bg: "bg-purple-100", text: "text-purple-700", label: "Long Run"  },
-  rest:      { bg: "bg-gray-100",   text: "text-gray-400",   label: "Rest"      },
-};
-
-const DAY_ABBREVS = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
-
-const WEEKDAY_LABELS = ["", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
-// ─── Sub-components ───────────────────────────────────────────────────────────
-
-function RunTypeBadge({ type }: { type: PlanRunType }) {
-  const s = RUN_TYPE_STYLES[type];
-  return (
-    <span
-      className={`text-xs font-medium px-2 py-0.5 rounded-full ${s.bg} ${s.text}`}
-    >
-      {s.label}
-    </span>
-  );
-}
 
 // ─── Sidebar plan item ───────────────────────────────────────────────────────
 
@@ -268,7 +234,6 @@ function Modal({
 
 export default function PlansPage() {
   const { user } = useAuth();
-  const router = useRouter();
   useClientPagePerformance("/plans");
   useClientPerformanceMark("training:plans:shell-visible", true);
 
@@ -331,7 +296,6 @@ export default function PlansPage() {
   // Calendar (.ics) export modal — lifted here since `plans` lives on the page.
   const [showExportModal, setShowExportModal] = useState(false);
 
-  const weekTabsRef = useRef<HTMLDivElement>(null);
 
   const selectedPlan = plans.find((p) => p.id === selectedPlanId) ?? null;
   const selectedRunningPlan =
@@ -594,12 +558,6 @@ export default function PlansPage() {
     } finally {
       setSaving(false);
     }
-  }
-
-  function openCopyRunningPlanModal() {
-    if (!selectedPlan || !isRunningPlan(selectedPlan)) return;
-    setCopyRunningPlanName(`${selectedPlan.name} (copy)`);
-    setShowCopyRunningPlanModal(true);
   }
 
   async function handleCopyRunningPlan() {

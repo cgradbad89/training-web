@@ -1,6 +1,6 @@
 import React from "react";
 import { type StravaActivity } from "@/types";
-import { formatMiles, formatDuration, formatPace } from "@/utils";
+import { formatMiles, formatDuration } from "@/utils";
 import { activityTypeLabel } from "@/utils";
 
 interface ActivityCardProps {

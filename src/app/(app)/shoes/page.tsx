@@ -75,34 +75,6 @@ function buildRuleDescription(rule: ShoeAutoAssignRule, shoeName: string): strin
   return `Assign ${shoeName} to ${scopeText}${distText}${dateText}`;
 }
 
-function newShoeDefaults(): Omit<RunningShoe, "id" | "addedAt"> {
-  return {
-    name: "",
-    brand: "",
-    model: "",
-    colorway: "",
-    purchaseDate: "",
-    startMileageOffset: 0,
-    retirementMileageTarget: undefined,
-    notes: "",
-    isRetired: false,
-    autoAssignRules: [],
-  };
-}
-
-function newRuleDefaults(shoeId: string): ShoeAutoAssignRule {
-  return {
-    id: crypto.randomUUID(),
-    shoeId,
-    isEnabled: true,
-    scope: "any",
-    minDistance: undefined,
-    maxDistance: undefined,
-    startDate: undefined,
-    endDate: undefined,
-  };
-}
-
 // ─── Mileage Bar ─────────────────────────────────────────────────────────────
 
 interface MileageBarProps {
@@ -356,7 +328,7 @@ function AddEditShoeModal({
   const isDirty = JSON.stringify(form) !== JSON.stringify(initialForm);
   useUnsavedChanges(isDirty);
 
-  const [saving, setSaving] = useState(false);
+  const [, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   function set(field: keyof ShoeFormState, value: string | boolean) {
@@ -589,7 +561,7 @@ function AddEditRuleModal({
   useUnsavedChanges(isDirty);
 
   const [error, setError] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [, setSaving] = useState(false);
 
   function set<K extends keyof RuleFormState>(field: K, value: RuleFormState[K]) {
     setForm((f) => ({ ...f, [field]: value }));
@@ -773,7 +745,6 @@ interface AggregatedRule {
 
 interface AutoAssignRulesSectionProps {
   shoes: RunningShoe[];
-  activeShoes: RunningShoe[];
   onAddRule: () => void;
   onEditRule: (r: AggregatedRule) => void;
   onDeleteRule: (r: AggregatedRule) => void;
@@ -782,7 +753,6 @@ interface AutoAssignRulesSectionProps {
 
 function AutoAssignRulesSection({
   shoes,
-  activeShoes,
   onAddRule,
   onEditRule,
   onDeleteRule,
@@ -1374,7 +1344,6 @@ export default function ShoesPage() {
       {/* Auto-assignment rules */}
       <AutoAssignRulesSection
         shoes={shoes}
-        activeShoes={activeShoes}
         onAddRule={() => setEditingRule({ rule: null, shoe: null })}
         onEditRule={({ rule, shoe }) => setEditingRule({ rule, shoe })}
         onDeleteRule={({ rule, shoe }) => setDeleteRuleConfirm({ rule, shoe })}
