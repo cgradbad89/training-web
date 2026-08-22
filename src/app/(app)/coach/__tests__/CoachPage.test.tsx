@@ -206,6 +206,12 @@ describe('CoachPage provider behavior', () => {
 
     await flush()
     expect(h.fetch).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      root.render(<CoachPage />)
+    })
+    await flush()
+    expect(h.fetch).toHaveBeenCalledTimes(1)
   })
 
   it('auto-submits once with intentional defaults after a successful null settings result', async () => {

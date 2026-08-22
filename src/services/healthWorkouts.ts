@@ -390,10 +390,11 @@ function autoMatchPageCoversDueBoundary(
  *
  * The live listener supplies the recent first page and its last-document
  * cursor. A saturated page is followed with the same filtered query plus
- * startAfter(lastDocument). Paging stops as soon as the oldest result is before
- * the due day's local midnight or Firestore returns a short page. The current
- * lower bound is that same midnight, so exhaustion normally proves coverage
- * without scanning any earlier, unrelated workout history.
+ * startAfter(lastDocument). The production query cannot return a candidate
+ * before its due-day-midnight lower bound, so normal exhaustion is proved only
+ * when Firestore returns fewer than 250 documents. An exact multiple therefore
+ * requires one final empty read. The oldest-before-boundary check is retained
+ * only as a defensive guard for a caller-supplied initial page.
  */
 export async function fetchAutoMatchCandidatesThroughDate(
   uid: string,
