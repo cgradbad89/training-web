@@ -317,7 +317,7 @@ interface WorkoutTrendsSectionProps {
 export function WorkoutTrendsSection({
   workouts,
 }: WorkoutTrendsSectionProps) {
-  const { plans, plansLoading } = useAppData();
+  const { plans, plansLoading, plansResolution } = useAppData();
 
   const frequencyData = useMemo(
     () => buildFrequencyData(workouts),
@@ -412,9 +412,13 @@ export function WorkoutTrendsSection({
         <h3 className="text-sm font-semibold text-textPrimary mb-3">
           Weight Progression by Exercise
         </h3>
-        {plansLoading ? (
+        {plansLoading || plansResolution === "loading" ? (
           <p className="text-sm text-textSecondary text-center py-6">
             Loading…
+          </p>
+        ) : plansResolution === "error" ? (
+          <p className="text-sm text-danger text-center py-6" role="alert">
+            Workout-plan trends are unavailable because plans could not be loaded.
           </p>
         ) : exerciseProgressions.length === 0 ? (
           <p className="text-sm text-textSecondary text-center py-6">
@@ -481,7 +485,15 @@ export function WorkoutTrendsSection({
         <h3 className="text-sm font-semibold text-textPrimary mb-3">
           Weekly Workout Volume (lbs)
         </h3>
-        {hasVolumeData ? (
+        {plansLoading || plansResolution === "loading" ? (
+          <p className="text-sm text-textSecondary text-center py-6">
+            Loading…
+          </p>
+        ) : plansResolution === "error" ? (
+          <p className="text-sm text-danger text-center py-6" role="alert">
+            Workout-plan trends are unavailable because plans could not be loaded.
+          </p>
+        ) : hasVolumeData ? (
           <ResponsiveContainer width="100%" height={220}>
             <LineChart
               data={volumeData}

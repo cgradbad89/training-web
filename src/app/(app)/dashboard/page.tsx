@@ -1646,6 +1646,7 @@ export default function DashboardPage() {
     restingHr,
     workoutsLoading,
     plansLoading,
+    plansResolution,
     settingsLoading,
     patchOverrides,
     refreshWorkouts,
@@ -1683,7 +1684,7 @@ export default function DashboardPage() {
   // card must wait for these too (else an unloaded plan flashes a false
   // perfect score via the zero-denominator → 100% rule). Now derived from the
   // shared context's loading flags.
-  const plansLoaded = !plansLoading;
+  const plansLoaded = !plansLoading && plansResolution === "success";
   const settingsLoaded = !settingsLoading;
 
   // Active running / workout plan for the selected week's cards — derived from

@@ -6,7 +6,16 @@ import { createRoot, type Root } from "react-dom/client";
   .IS_REACT_ACT_ENVIRONMENT = true;
 
 const h = vi.hoisted(() => ({
-  auth: { user: null as { uid: string } | null, loading: true },
+  auth: {
+    user: null as { uid: string } | null,
+    loading: true,
+    authorizationStatus: "loading" as
+      | "loading"
+      | "authorized"
+      | "unauthorized"
+      | "signed-out",
+    authorizationError: null as string | null,
+  },
   replace: vi.fn(),
 }));
 
@@ -27,7 +36,12 @@ describe("AuthGuard resolved-auth handoff", () => {
   let root: Root;
 
   beforeEach(() => {
-    h.auth = { user: null, loading: true };
+    h.auth = {
+      user: null,
+      loading: true,
+      authorizationStatus: "loading",
+      authorizationError: null,
+    };
     h.replace.mockClear();
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -56,7 +70,12 @@ describe("AuthGuard resolved-auth handoff", () => {
   });
 
   it("hands the resolved authenticated user to its render child", () => {
-    h.auth = { user: { uid: "resolved-uid" }, loading: false };
+    h.auth = {
+      user: { uid: "resolved-uid" },
+      loading: false,
+      authorizationStatus: "authorized",
+      authorizationError: null,
+    };
     act(() => {
       root.render(
         <AuthGuard>
@@ -71,7 +90,33 @@ describe("AuthGuard resolved-auth handoff", () => {
   });
 
   it("does not render protected content for a resolved signed-out user", () => {
-    h.auth = { user: null, loading: false };
+    h.auth = {
+      user: null,
+      loading: false,
+      authorizationStatus: "signed-out",
+      authorizationError: null,
+    };
+    act(() => {
+      root.render(
+        <AuthGuard>
+          {() => <div data-testid="protected-provider" />}
+        </AuthGuard>
+      );
+    });
+
+    expect(
+      container.querySelector('[data-testid="protected-provider"]')
+    ).toBeNull();
+    expect(h.replace).toHaveBeenCalledWith("/login");
+  });
+
+  it("never renders protected content for an unauthorized authenticated identity", () => {
+    h.auth = {
+      user: null,
+      loading: false,
+      authorizationStatus: "unauthorized",
+      authorizationError: "This account is not authorized to use Training Web.",
+    };
     act(() => {
       root.render(
         <AuthGuard>

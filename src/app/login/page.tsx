@@ -7,9 +7,10 @@ import { useAuth } from "@/hooks";
 import { signInWithGoogle } from "@/lib/auth";
 
 export default function LoginPage() {
-  const { user, loading } = useAuth();
+  const { user, loading, authorizationError } = useAuth();
   const router = useRouter();
   const [signingIn, setSigningIn] = useState(false);
+  const [signInError, setSignInError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!loading && user) {
@@ -19,11 +20,15 @@ export default function LoginPage() {
 
   async function handleSignIn() {
     setSigningIn(true);
+    setSignInError(null);
     try {
       await signInWithGoogle();
-      router.push("/dashboard");
+      // AuthContext performs application authorization before exposing a user.
+      // Its resolved owner state drives the redirect effect above.
     } catch (err) {
       console.error("Sign-in failed:", err);
+      setSignInError("Sign-in failed. Please try again.");
+    } finally {
       setSigningIn(false);
     }
   }
@@ -49,6 +54,15 @@ export default function LoginPage() {
         <p className="text-sm text-textSecondary mt-2 text-center">
           Your runs, plans, and races — all in one place
         </p>
+
+        {(authorizationError || signInError) && (
+          <p
+            role="alert"
+            className="mt-4 text-sm text-danger text-center"
+          >
+            {authorizationError ?? signInError}
+          </p>
+        )}
 
         {/* Google sign-in button */}
         <button

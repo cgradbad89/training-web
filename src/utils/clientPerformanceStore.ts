@@ -109,6 +109,20 @@ export function readClientPerformanceSamples(
   }
 }
 
+/** Clears identity-adjacent local telemetry without storing a UID or email. */
+export function clearClientPerformanceSamples(
+  storage: Storage | null = safeStorage()
+): void {
+  activePages.clear();
+  claimedInitialRoutes.clear();
+  if (!storage) return;
+  try {
+    storage.removeItem(CLIENT_PERFORMANCE_STORAGE_KEY);
+  } catch {
+    // Auth/sign-out must continue even when browser storage is unavailable.
+  }
+}
+
 function isClientPerformanceSample(
   value: unknown
 ): value is ClientPerformanceSample {

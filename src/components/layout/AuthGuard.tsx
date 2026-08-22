@@ -19,18 +19,19 @@ interface AuthGuardProps {
  * Redirects to /login if the user is not signed in.
  */
 export function AuthGuard({ children }: AuthGuardProps) {
-  const { user, loading } = useAuth();
+  const { user, loading, authorizationStatus } = useAuth();
   const router = useRouter();
-  useClientPerformanceMark("training:auth-ready", !loading && Boolean(user));
+  const authorized = authorizationStatus === "authorized" && Boolean(user);
+  useClientPerformanceMark("training:auth-ready", !loading && authorized);
 
   useEffect(() => {
-    if (!loading && !user) {
+    if (!loading && !authorized) {
       router.replace("/login");
     }
-  }, [user, loading, router]);
+  }, [authorized, loading, router]);
 
   if (loading) return <FullPageLoader />;
-  if (!user) return null;
+  if (!authorized || !user) return null;
 
   return (
     <>

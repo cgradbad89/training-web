@@ -82,14 +82,14 @@ export default function AutoMatchRunner() {
     overrides,
     refreshPlans,
     plans,
-    plansLoading,
+    plansResolution,
     workoutsFullReconciliationVersion,
   } = useAppData()
   const inFlight = useRef(false)
   const pendingRequest = useRef<AutoMatchRequest | null>(null)
   const lastKey = useRef<string | null>(null)
   const listenerGeneration = useRef(0)
-  const matchWindowStart = !plansLoading
+  const matchWindowStart = plansResolution === "success"
     ? autoMatchWindowStart(plans)
     : null
   const matchWindowStartMs = matchWindowStart?.getTime() ?? null

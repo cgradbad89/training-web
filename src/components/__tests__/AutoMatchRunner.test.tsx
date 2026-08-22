@@ -20,6 +20,7 @@ const h = vi.hoisted(() => ({
   overrides: {} as Record<string, WorkoutOverride>,
   plans: [] as WorkoutPlan[],
   plansLoading: false,
+  plansResolution: "success" as "loading" | "success" | "error",
   workoutsFullReconciliationVersion: 0,
 }));
 
@@ -48,6 +49,7 @@ vi.mock("@/contexts/AppDataContext", () => ({
     refreshPlans: h.refreshPlans,
     plans: h.plans,
     plansLoading: h.plansLoading,
+    plansResolution: h.plansResolution,
     workoutsFullReconciliationVersion:
       h.workoutsFullReconciliationVersion,
   }),
@@ -122,6 +124,7 @@ describe("AutoMatchRunner — AppDataContext wiring", () => {
     h.overrides = {};
     h.plans = [workoutPlan()];
     h.plansLoading = false;
+    h.plansResolution = "success";
     h.workoutsFullReconciliationVersion = 0;
     h.fetchPlans.mockReset().mockImplementation(async () => h.plans);
     h.fetchAutoMatchCandidatesThroughDate
@@ -270,6 +273,24 @@ describe("AutoMatchRunner — AppDataContext wiring", () => {
 
   it("does not subscribe for an active plan whose entries are all future", async () => {
     h.plans = [workoutPlan({ startDate: "2999-01-04" })];
+    await mount();
+
+    expect(h.onHealthWorkoutsSnapshot).not.toHaveBeenCalled();
+  });
+
+  it.each(["loading", "error"] as const)(
+    "does not subscribe while plans resolution is %s",
+    async (resolution) => {
+      h.plansResolution = resolution;
+      await mount();
+
+      expect(h.onHealthWorkoutsSnapshot).not.toHaveBeenCalled();
+    }
+  );
+
+  it("treats successfully empty plans as a normal no-listener state", async () => {
+    h.plans = [];
+    h.plansResolution = "success";
     await mount();
 
     expect(h.onHealthWorkoutsSnapshot).not.toHaveBeenCalled();

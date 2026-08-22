@@ -69,7 +69,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         isHealthRoute ? (
           appShell
         ) : (
-          <AppDataProvider uid={user.uid}>
+          <AppDataProvider key={user.uid} uid={user.uid}>
             <AutoMatchRunner />
             <PRComputerRunner />
             {appShell}

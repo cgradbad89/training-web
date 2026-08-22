@@ -35,6 +35,7 @@ const h = vi.hoisted(() => ({
   useAppDataReturn: {
     plans: [] as Plan[],
     plansLoading: false,
+    plansResolution: "success" as "loading" | "success" | "error",
     workouts: [] as HealthWorkout[],
     workoutsLoading: false,
     overrides: {} as Record<string, WorkoutOverride>,
@@ -60,6 +61,7 @@ vi.mock("@/contexts/AppDataContext", () => ({
   useAppData: () => ({
     plans: h.useAppDataReturn.plans,
     plansLoading: h.useAppDataReturn.plansLoading,
+    plansResolution: h.useAppDataReturn.plansResolution,
     workouts: h.useAppDataReturn.workouts,
     workoutsLoading: h.useAppDataReturn.workoutsLoading,
     overrides: h.useAppDataReturn.overrides,
@@ -233,6 +235,7 @@ beforeEach(() => {
   h.runningPlanDetailProps.length = 0;
   h.useAppDataReturn.plans = [buildSeptPlan()];
   h.useAppDataReturn.plansLoading = false;
+  h.useAppDataReturn.plansResolution = "success";
   h.useAppDataReturn.workouts = [];
   h.useAppDataReturn.workoutsLoading = false;
   h.useAppDataReturn.overrides = {};
@@ -340,6 +343,18 @@ describe("PlansPage — shared AppDataContext wiring", () => {
     await flush();
     await flush();
     expect(h.refreshPlans).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not seed, migrate, or present empty plans after a failed plans read", async () => {
+    h.useAppDataReturn.plans = [];
+    h.useAppDataReturn.plansResolution = "error";
+
+    await mount();
+
+    expect(container.textContent).toContain("Plans could not be loaded");
+    expect(h.createPlan).not.toHaveBeenCalled();
+    expect(h.seedSeptHMPlan).not.toHaveBeenCalled();
+    expect(h.updatePlan).not.toHaveBeenCalled();
   });
 });
 

@@ -107,6 +107,7 @@ export interface AppDataContextValue {
   refreshWorkouts: () => Promise<void>;
   plans: Plan[];
   plansLoading: boolean;
+  plansResolution: AppDataResolution;
   races: Race[];
   racesLoading: boolean;
   racesResolution: AppDataResolution;
@@ -140,6 +141,25 @@ export function AppDataProvider({
   children: React.ReactNode;
   uid: string;
 }) {
+  return (
+    <AppDataProviderGeneration key={uid} uid={uid}>
+      {children}
+    </AppDataProviderGeneration>
+  );
+}
+
+/**
+ * One generation owns one UID. The outer keyed boundary makes the invariant
+ * hold even when a caller forgets to key the provider itself; the app layout
+ * also keys AppDataProvider explicitly as the primary lifecycle boundary.
+ */
+function AppDataProviderGeneration({
+  children,
+  uid,
+}: {
+  children: React.ReactNode;
+  uid: string;
+}) {
   const [workouts, setWorkouts] = useState<HealthWorkout[]>([]);
   const [workoutsLoading, setWorkoutsLoading] = useState(true);
   const [workoutsResolution, setWorkoutsResolution] =
@@ -157,6 +177,8 @@ export function AppDataProvider({
   const workoutsRef = useRef<HealthWorkout[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [plansLoading, setPlansLoading] = useState(true);
+  const [plansResolution, setPlansResolution] =
+    useState<AppDataResolution>("loading");
   const [races, setRaces] = useState<Race[]>([]);
   const [racesLoading, setRacesLoading] = useState(true);
   const [racesResolution, setRacesResolution] =
@@ -169,12 +191,32 @@ export function AppDataProvider({
   const [settingsLoading, setSettingsLoading] = useState(true);
   const [settingsResolution, setSettingsResolution] =
     useState<AppDataResolution>("loading");
+  const requestGenerationRef = useRef(0);
+  const activeUidRef = useRef<string | null>(uid);
+
+  const isCurrentRequest = useCallback(
+    (requestUid: string, generation: number): boolean =>
+      activeUidRef.current === requestUid &&
+      requestGenerationRef.current === generation,
+    []
+  );
+
+  useEffect(() => {
+    return () => {
+      activeUidRef.current = null;
+      requestGenerationRef.current += 1;
+      workoutsInFlightRef.current = null;
+      workoutsQueuedFullRef.current = null;
+      lastSuccessfulFullDateRef.current = null;
+      workoutsRef.current = [];
+    };
+  }, []);
   const appDataReady =
-    !workoutsLoading &&
-    !plansLoading &&
-    !racesLoading &&
-    !overridesLoading &&
-    !settingsLoading;
+    workoutsResolution === "success" &&
+    plansResolution === "success" &&
+    racesResolution === "success" &&
+    overridesResolution === "success" &&
+    settingsResolution === "success";
 
   useEffect(() => {
     markClientPerformance("training:app-data:start");
@@ -188,6 +230,10 @@ export function AppDataProvider({
 
   const startWorkoutRefresh = useCallback(
     (mode: WorkoutRefreshMode): Promise<void> => {
+      const requestUid = uid;
+      const generation = requestGenerationRef.current;
+      if (!isCurrentRequest(requestUid, generation)) return Promise.resolve();
+
       if (!uid) {
         setWorkouts([]);
         setWorkoutsLoading(false);
@@ -206,9 +252,10 @@ export function AppDataProvider({
       const promise = (async () => {
         try {
           if (mode === "full") {
-            const loaded = await fetchHealthWorkouts(uid, {
+            const loaded = await fetchHealthWorkouts(requestUid, {
               limitCount: APP_DATA_WORKOUTS_LIMIT,
             });
+            if (!isCurrentRequest(requestUid, generation)) return;
             setWorkouts(loaded);
             setWorkoutsHistoryComplete(
               loaded.length < APP_DATA_WORKOUTS_LIMIT
@@ -219,13 +266,15 @@ export function AppDataProvider({
           } else {
             const latestWorkout = workoutsRef.current[0];
             const delta = await fetchHealthWorkoutsInRange(
-              uid,
+              requestUid,
               workoutDeltaStartDate(latestWorkout?.startDate ?? new Date())
             );
+            if (!isCurrentRequest(requestUid, generation)) return;
             setWorkouts((current) => mergeWorkoutDelta(current, delta));
           }
           setWorkoutsResolution("success");
         } catch (err) {
+          if (!isCurrentRequest(requestUid, generation)) return;
           setWorkoutsResolution("error");
           console.error(
             mode === "full"
@@ -234,6 +283,7 @@ export function AppDataProvider({
             err
           );
         } finally {
+          if (!isCurrentRequest(requestUid, generation)) return;
           if (isInitialLoad) setWorkoutsLoading(false);
           else setWorkoutsRefreshing(false);
         }
@@ -249,7 +299,7 @@ export function AppDataProvider({
       void promise.then(clearRequest, clearRequest);
       return promise;
     },
-    [uid]
+    [isCurrentRequest, uid]
   );
 
   const requestWorkoutRefresh = useCallback(
@@ -266,7 +316,12 @@ export function AppDataProvider({
         return workoutsQueuedFullRef.current;
       }
 
-      const queued = active.promise.then(() => startWorkoutRefresh("full"));
+      const requestUid = uid;
+      const generation = requestGenerationRef.current;
+      const queued = active.promise.then(() => {
+        if (!isCurrentRequest(requestUid, generation)) return;
+        return startWorkoutRefresh("full");
+      });
       workoutsQueuedFullRef.current = queued;
       const clearQueued = () => {
         if (workoutsQueuedFullRef.current === queued) {
@@ -276,7 +331,7 @@ export function AppDataProvider({
       void queued.then(clearQueued, clearQueued);
       return queued;
     },
-    [startWorkoutRefresh]
+    [isCurrentRequest, startWorkoutRefresh, uid]
   );
 
   // Public/manual action: always reconcile the authoritative shared top 1000.
@@ -302,22 +357,36 @@ export function AppDataProvider({
   useRefetchOnFocus(refreshWorkoutsOnFocus);
 
   const refreshPlans = useCallback(async () => {
+    const requestUid = uid;
+    const generation = requestGenerationRef.current;
+    if (!isCurrentRequest(requestUid, generation)) return;
     if (!uid) {
       setPlans([]);
       setPlansLoading(false);
+      setPlansResolution("success");
       return;
     }
     setPlansLoading(true);
+    setPlansResolution("loading");
     try {
-      setPlans(await fetchPlans(uid));
+      const loaded = await fetchPlans(requestUid);
+      if (!isCurrentRequest(requestUid, generation)) return;
+      setPlans(loaded);
+      setPlansResolution("success");
     } catch (err) {
+      if (!isCurrentRequest(requestUid, generation)) return;
+      setPlansResolution("error");
       console.error("[AppData] fetchPlans", err);
     } finally {
+      if (!isCurrentRequest(requestUid, generation)) return;
       setPlansLoading(false);
     }
-  }, [uid]);
+  }, [isCurrentRequest, uid]);
 
   const refreshRaces = useCallback(async () => {
+    const requestUid = uid;
+    const generation = requestGenerationRef.current;
+    if (!isCurrentRequest(requestUid, generation)) return;
     if (!uid) {
       setRaces([]);
       setRacesLoading(false);
@@ -327,17 +396,24 @@ export function AppDataProvider({
     setRacesLoading(true);
     setRacesResolution("loading");
     try {
-      setRaces(await fetchRaces(uid));
+      const loaded = await fetchRaces(requestUid);
+      if (!isCurrentRequest(requestUid, generation)) return;
+      setRaces(loaded);
       setRacesResolution("success");
     } catch (err) {
+      if (!isCurrentRequest(requestUid, generation)) return;
       setRacesResolution("error");
       console.error("[AppData] fetchRaces", err);
     } finally {
+      if (!isCurrentRequest(requestUid, generation)) return;
       setRacesLoading(false);
     }
-  }, [uid]);
+  }, [isCurrentRequest, uid]);
 
   const refreshOverrides = useCallback(async () => {
+    const requestUid = uid;
+    const generation = requestGenerationRef.current;
+    if (!isCurrentRequest(requestUid, generation)) return;
     if (!uid) {
       setOverrides({});
       setOverridesLoading(false);
@@ -347,17 +423,24 @@ export function AppDataProvider({
     setOverridesLoading(true);
     setOverridesResolution("loading");
     try {
-      setOverrides(await fetchAllOverrides(uid));
+      const loaded = await fetchAllOverrides(requestUid);
+      if (!isCurrentRequest(requestUid, generation)) return;
+      setOverrides(loaded);
       setOverridesResolution("success");
     } catch (err) {
+      if (!isCurrentRequest(requestUid, generation)) return;
       setOverridesResolution("error");
       console.error("[AppData] fetchAllOverrides", err);
     } finally {
+      if (!isCurrentRequest(requestUid, generation)) return;
       setOverridesLoading(false);
     }
-  }, [uid]);
+  }, [isCurrentRequest, uid]);
 
   const refreshSettings = useCallback(async () => {
+    const requestUid = uid;
+    const generation = requestGenerationRef.current;
+    if (!isCurrentRequest(requestUid, generation)) return;
     if (!uid) {
       setUserSettings(null);
       setSettingsLoading(false);
@@ -367,15 +450,19 @@ export function AppDataProvider({
     setSettingsLoading(true);
     setSettingsResolution("loading");
     try {
-      setUserSettings((await fetchUserSettings(uid)) ?? null);
+      const loaded = await fetchUserSettings(requestUid);
+      if (!isCurrentRequest(requestUid, generation)) return;
+      setUserSettings(loaded ?? null);
       setSettingsResolution("success");
     } catch (err) {
+      if (!isCurrentRequest(requestUid, generation)) return;
       setSettingsResolution("error");
       console.error("[AppData] fetchUserSettings", err);
     } finally {
+      if (!isCurrentRequest(requestUid, generation)) return;
       setSettingsLoading(false);
     }
-  }, [uid]);
+  }, [isCurrentRequest, uid]);
 
   useEffect(() => {
     void refreshPlans();
@@ -395,8 +482,11 @@ export function AppDataProvider({
       updater: (
         prev: Record<string, WorkoutOverride>
       ) => Record<string, WorkoutOverride>
-    ) => setOverrides(updater),
-    []
+    ) => {
+      const generation = requestGenerationRef.current;
+      if (isCurrentRequest(uid, generation)) setOverrides(updater);
+    },
+    [isCurrentRequest, uid]
   );
 
   const maxHr = resolveMaxHr(userSettings);
@@ -413,6 +503,7 @@ export function AppDataProvider({
       refreshWorkouts,
       plans,
       plansLoading,
+      plansResolution,
       races,
       racesLoading,
       racesResolution,
@@ -440,6 +531,7 @@ export function AppDataProvider({
       refreshWorkouts,
       plans,
       plansLoading,
+      plansResolution,
       races,
       racesLoading,
       racesResolution,

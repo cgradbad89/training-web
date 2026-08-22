@@ -278,6 +278,7 @@ export default function PlansPage() {
   const {
     plans,
     plansLoading,
+    plansResolution,
     workouts: rawWorkouts,
     overrides,
     races,
@@ -372,7 +373,7 @@ export default function PlansPage() {
   // half marathon plan, then run buildSeptTravelMigration on it. Any write
   // triggers a single refreshPlans() so context (and /dashboard) picks it up.
   useEffect(() => {
-    if (!user || plansLoading || seeded) return;
+    if (!user || plansResolution !== "success" || seeded) return;
     let cancelled = false;
 
     async function runSeedAndMigration() {
@@ -453,27 +454,28 @@ export default function PlansPage() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, plansLoading, seeded]);
+  }, [user, plansResolution, seeded]);
 
   // Select as soon as the primary plans query provides a plan. Do not wait for
   // background seed/migration work, and never replace an existing selection.
   // Empty accounts naturally select their first seeded plan after
   // refreshPlans() updates context.
   useEffect(() => {
-    if (!user || plansLoading || selectedPlanId !== null) return;
+    if (!user || plansResolution !== "success" || selectedPlanId !== null) return;
     const active = plans.find((p) => p.status === "active") ?? plans[0];
     if (active) {
       setSelectedPlanId(active.id);
       setSelectedWeekIndex(currentWeekIndex(active));
     }
-  }, [user, plansLoading, plans, selectedPlanId]);
+  }, [user, plansResolution, plans, selectedPlanId]);
 
-  const loading = plansLoading;
-  useClientPerformanceMark("training:plans:usable", !loading, {
+  const loading = plansLoading || plansResolution === "loading";
+  const plansReady = plansResolution === "success";
+  useClientPerformanceMark("training:plans:usable", plansReady, {
     measureFrom: "training:auth-ready",
     measureName: "training:plans:usable-duration",
   });
-  useClientPerformanceMark("training:plans:data-ready", !loading, {
+  useClientPerformanceMark("training:plans:data-ready", plansReady, {
     detail: { cacheSource: "app-data" },
   });
 
@@ -730,6 +732,23 @@ export default function PlansPage() {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (plansResolution === "error") {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 gap-3">
+        <p className="text-sm text-danger" role="alert">
+          Plans could not be loaded.
+        </p>
+        <button
+          type="button"
+          onClick={() => void refreshPlans()}
+          className="text-sm font-medium text-primary"
+        >
+          Try again
+        </button>
       </div>
     );
   }

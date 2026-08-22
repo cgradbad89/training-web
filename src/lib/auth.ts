@@ -6,6 +6,7 @@ import {
   type User,
 } from "firebase/auth";
 import { auth } from "./firebase";
+import { clearClientPerformanceSamples } from "@/utils/clientPerformanceStore";
 
 const provider = new GoogleAuthProvider();
 
@@ -15,6 +16,7 @@ export async function signInWithGoogle(): Promise<User> {
 }
 
 export async function signOut(): Promise<void> {
+  clearClientPerformanceSamples();
   await firebaseSignOut(auth);
 }
 
