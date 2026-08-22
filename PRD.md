@@ -19,7 +19,7 @@
 
 | Layer | Technology | Version |
 |---|---|---|
-| Framework | Next.js (App Router) | 16.2.1 |
+| Framework | Next.js (App Router) | 16.3.2 |
 | Runtime | Node.js / Vercel serverless | — |
 | Language | TypeScript | ^5 |
 | UI | React | 19.2.4 |

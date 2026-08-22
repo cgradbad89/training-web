@@ -9,6 +9,10 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: repositoryRoot,
   },
+  // Keep Next's production build aligned with the repository typecheck gate.
+  typescript: {
+    tsconfigPath: "tsconfig.build.json",
+  },
 };
 
 export default nextConfig;
