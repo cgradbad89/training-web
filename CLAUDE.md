@@ -8,13 +8,15 @@
 - **Commit**: Stage files by explicit path (`git add PRD.md src/...`). Never use `git add -A`. Commit and push only after build + tests pass.
 - **No broken commits**: Do not commit if `npm run build` or `npm test` fail.
 
-## Deploying Firestore Rules
+## Firestore Security Rules — Console Is Authoritative
 
-- `firestore.rules` at the repo root is the **canonical source** — never edit rules in the Firebase console without mirroring the change back into the repo and committing it.
-- Deploy command (CLI configured via `firebase.json` + `.firebaserc`):
-  `firebase deploy --only firestore:rules --project malignant-metro`
-- Requires a one-time `firebase login` (the CLI is a global tool, not an app dependency).
-- Editing `firestore.rules` does nothing until deployed. Deploys are manual and only happen when a task explicitly authorizes them.
+Firebase Console is the production source of truth for Firestore security rules. The repository `firestore.rules` file is a non-authoritative historical/reference snapshot and may be stale; it must never be used to infer deployed production permissions.
+
+Only the product owner changes production Firestore rules, manually in Firebase Console. Agents must never run `firebase deploy`, `firebase deploy --only firestore:rules`, or any other command that changes Firebase rules or indexes.
+
+If a code change needs a rule update, inspect the current owner-supplied Console rules, report the exact required Console snippet, explain where it belongs and why, and do not apply or deploy it.
+
+**NOT APPLIED — PRODUCT OWNER MUST MAKE THIS CHANGE MANUALLY IN FIREBASE CONSOLE.**
 
 ## Local Development
 
@@ -64,7 +66,7 @@ Deferred:         [anything not completed, or "none"]
 | Production URL | https://training-web-rho.vercel.app |
 | Local repo | /Users/johnfolstrom/Desktop/training-web |
 | iOS sync repo | cgradbad89/MEA.git — do not modify from this repo |
-| Firestore rules | Do not modify without explicit task instruction |
+| Firestore rules | Firebase Console is authoritative; only the product owner may change production rules manually. Agents may inspect/report Console rules but never edit or deploy them. |
 | API keys | `GEMINI_API_KEY` and `ANTHROPIC_API_KEY` are server-only — never `NEXT_PUBLIC_*`. Gemini is the default AI Coach provider. |
 
 ## Architecture Quick Reference
