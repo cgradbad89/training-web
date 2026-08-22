@@ -70,7 +70,7 @@ export function isSameWeek(a: Date, b: Date): boolean {
 }
 
 /** Format a Date as a local "YYYY-MM-DD" string (no UTC drift). */
-function toLocalIsoDate(d: Date): string {
+export function toLocalIsoDate(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");

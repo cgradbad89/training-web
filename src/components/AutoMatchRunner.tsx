@@ -1,17 +1,32 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import { useAppData } from '@/contexts/AppDataContext'
 import { fetchPlans } from '@/services/plans'
-import { onHealthWorkoutsSnapshot } from '@/services/healthWorkouts'
+import {
+  AUTO_MATCH_CANDIDATE_PAGE_SIZE,
+  fetchAutoMatchCandidatesThroughDate,
+  onHealthWorkoutsSnapshot,
+  type HealthWorkoutQueryCursor,
+} from '@/services/healthWorkouts'
 import {
   autoMatchCrossTrainingSessions,
   autoMatchWindowStart,
 } from '@/services/autoMatch'
 import type { HealthWorkout } from '@/types/healthWorkout'
 
-export const AUTO_MATCH_WORKOUT_LISTENER_LIMIT = 250
+export const AUTO_MATCH_WORKOUT_LISTENER_LIMIT =
+  AUTO_MATCH_CANDIDATE_PAGE_SIZE
+
+interface AutoMatchRequest {
+  uid: string
+  generation: number
+  earliestDueDate: Date
+  firstPage: HealthWorkout[]
+  firstPageCursor?: HealthWorkoutQueryCursor
+  contentKey: string
+}
 
 export function autoMatchWorkoutPoolKey(workouts: HealthWorkout[]): string {
   return workouts
@@ -42,10 +57,12 @@ export function autoMatchWorkoutPoolKey(workouts: HealthWorkout[]): string {
  *    workout (workout plans match against non-run activities), so empty /
  *    runs-only snapshots short-circuit without burning a fetchPlans call.
  *  - lastKey skips passes when the same content snapshot fires twice.
- *  - inFlight prevents concurrent matcher invocations on bursty snapshots.
- *  - The listener reads at most the newest 250 eligible workouts. If that
- *    safety cap is reached, matching remains deterministic over that newest
- *    window and emits a one-time diagnostic instead of expanding the query.
+ *  - inFlight prevents concurrent matcher invocations on bursty snapshots;
+ *    one latest changed snapshot is queued so it is not silently lost.
+ *  - The listener keeps only the newest 250 eligible workouts live. A
+ *    saturated first page is paged backward through the entire earliest due
+ *    local day before the matcher runs; 250 is a per-read page size, not a
+ *    total correctness cap.
  *  - The matcher itself skips completed + future sessions, so re-running is safe.
  *
  * AppDataContext wiring: this component is mounted inside <AppDataProvider>
@@ -60,10 +77,18 @@ export function autoMatchWorkoutPoolKey(workouts: HealthWorkout[]): string {
  */
 export default function AutoMatchRunner() {
   const { user } = useAuth()
-  const { overrides, refreshPlans, plans, plansLoading } = useAppData()
+  const userUid = user?.uid ?? null
+  const {
+    overrides,
+    refreshPlans,
+    plans,
+    plansLoading,
+    workoutsFullReconciliationVersion,
+  } = useAppData()
   const inFlight = useRef(false)
+  const pendingRequest = useRef<AutoMatchRequest | null>(null)
   const lastKey = useRef<string | null>(null)
-  const limitReported = useRef(false)
+  const listenerGeneration = useRef(0)
   const matchWindowStart = !plansLoading
     ? autoMatchWindowStart(plans)
     : null
@@ -79,38 +104,73 @@ export default function AutoMatchRunner() {
     refreshPlansRef.current = refreshPlans
   }, [refreshPlans])
 
+  const processRequestRef = useRef<
+    (request: AutoMatchRequest) => Promise<void>
+  >(async () => {})
+  const processRequest = useCallback(async (request: AutoMatchRequest) => {
+    if (request.generation !== listenerGeneration.current) return
+    if (inFlight.current) {
+      pendingRequest.current = request
+      return
+    }
+
+    inFlight.current = true
+    try {
+      const candidates = await fetchAutoMatchCandidatesThroughDate(
+        request.uid,
+        request.earliestDueDate,
+        {
+          initialCandidates: request.firstPage,
+          initialCursor: request.firstPageCursor,
+        }
+      )
+      if (request.generation !== listenerGeneration.current) return
+
+      const currentPlans = await fetchPlans(request.uid)
+      if (request.generation !== listenerGeneration.current) return
+
+      const { result } = await autoMatchCrossTrainingSessions(
+        request.uid,
+        currentPlans,
+        candidates,
+        overridesRef.current
+      )
+      if (request.generation === listenerGeneration.current) {
+        lastKey.current = request.contentKey
+      }
+      // Only refresh shared plan state when the matcher actually persisted
+      // something — a no-op pass shouldn't trigger a plans read.
+      if (result.updatedPlanIds.length > 0) {
+        await refreshPlansRef.current()
+      }
+    } catch (err) {
+      console.error('[AutoMatchRunner] error:', err)
+    } finally {
+      inFlight.current = false
+      const pending = pendingRequest.current
+      pendingRequest.current = null
+      if (
+        pending &&
+        pending.generation === listenerGeneration.current &&
+        pending.contentKey !== lastKey.current
+      ) {
+        void processRequestRef.current(pending)
+      }
+    }
+  }, [])
   useEffect(() => {
-    if (!user || matchWindowStartMs === null) return
-    const uid = user.uid
+    processRequestRef.current = processRequest
+  }, [processRequest])
+
+  useEffect(() => {
+    const generation = listenerGeneration.current + 1
+    listenerGeneration.current = generation
+    pendingRequest.current = null
+    if (!userUid || matchWindowStartMs === null) return
+    const uid = userUid
     // A newly activated plan must evaluate the listener's initial snapshot,
     // even if its workout pool matches the key from a prior subscription.
     lastKey.current = null
-    limitReported.current = false
-
-    async function runMatcher(workouts: HealthWorkout[], key: string) {
-      if (inFlight.current) return
-      inFlight.current = true
-      try {
-        const plans = await fetchPlans(uid)
-
-        const { result } = await autoMatchCrossTrainingSessions(
-          uid,
-          plans,
-          workouts,
-          overridesRef.current
-        )
-        lastKey.current = key
-        // Only refresh shared plan state when the matcher actually persisted
-        // something — a no-op pass shouldn't trigger a plans read.
-        if (result.updatedPlanIds.length > 0) {
-          await refreshPlansRef.current()
-        }
-      } catch (err) {
-        console.error('[AutoMatchRunner] error:', err)
-      } finally {
-        inFlight.current = false
-      }
-    }
 
     const unsubscribe = onHealthWorkoutsSnapshot(
       uid,
@@ -119,7 +179,7 @@ export default function AutoMatchRunner() {
         startDate: new Date(matchWindowStartMs),
         limitCount: AUTO_MATCH_WORKOUT_LISTENER_LIMIT,
       },
-      (workouts) => {
+      (workouts, firstPageCursor) => {
         // Workout plans can only match against non-running activities. If the
         // current snapshot has none, skip — saves a fetchPlans + log spam.
         // A genuinely empty pool (truly no workouts yet) and a not-yet-synced
@@ -128,32 +188,32 @@ export default function AutoMatchRunner() {
         const nonRunWorkouts = workouts.filter((w) => !w.isRunLike)
         if (nonRunWorkouts.length === 0) return
 
-        if (
-          nonRunWorkouts.length >= AUTO_MATCH_WORKOUT_LISTENER_LIMIT &&
-          !limitReported.current
-        ) {
-          limitReported.current = true
-          console.info(
-            `[AutoMatchRunner] newest ${AUTO_MATCH_WORKOUT_LISTENER_LIMIT} ` +
-              'eligible workouts loaded; older candidates remain outside the safety window.'
-          )
-        } else if (nonRunWorkouts.length < AUTO_MATCH_WORKOUT_LISTENER_LIMIT) {
-          limitReported.current = false
-        }
-
         // Content-derived key — catches new syncs and edits to older workouts
         // within the bounded listener window without re-running for identical
         // Firestore snapshots.
         const key = autoMatchWorkoutPoolKey(nonRunWorkouts)
         if (key === lastKey.current) return
 
-        void runMatcher(workouts, key)
+        void processRequestRef.current({
+          uid,
+          generation,
+          earliestDueDate: new Date(matchWindowStartMs),
+          firstPage: nonRunWorkouts,
+          firstPageCursor,
+          contentKey: key,
+        })
       },
       (err) => console.error('[AutoMatchRunner] snapshot error:', err)
     )
 
-    return () => unsubscribe()
-  }, [user, matchWindowStartMs])
+    return () => {
+      unsubscribe()
+      if (listenerGeneration.current === generation) {
+        listenerGeneration.current += 1
+        pendingRequest.current = null
+      }
+    }
+  }, [userUid, matchWindowStartMs, workoutsFullReconciliationVersion])
 
   return null
 }

@@ -145,4 +145,22 @@ describe("autoMatchCrossTrainingSessions — excluded workouts never write compl
     );
     expect(result.matched).toBe(1);
   });
+
+  it("preserves category matching and does not complete strength from yoga", async () => {
+    const date = yesterday();
+    const yoga = {
+      ...strengthWorkout(date, "yoga-1"),
+      activityType: "yoga",
+    };
+
+    const { plans, result } = await autoMatchCrossTrainingSessions(
+      "u1",
+      [workoutPlan(date)],
+      [yoga]
+    );
+
+    expect(result.matched).toBe(0);
+    expect(sessionOf(plans).completed).toBeUndefined();
+    expect(h.updatePlan).not.toHaveBeenCalled();
+  });
 });
