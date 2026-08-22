@@ -19,7 +19,8 @@ import {
   isFingerprintStale,
   isVo2CacheInconsistent,
   isVo2Stale,
-  reviveAggregatedStatsDates,
+  reviveCompatibleAggregatedStats,
+  reviveStoredAggregatedStats,
 } from "@/utils/aggregatedStats";
 import { getMileSplits } from "@/utils/mileSplitsCache";
 import { buildVo2History, vo2HistoryCutoffISO } from "@/utils/vo2History";
@@ -40,11 +41,16 @@ export interface UseAggregatedStatsResult {
   error: Error | null;
 }
 
-export interface AggregationLoadingState {
-  workoutsLoading: boolean;
-  settingsLoading: boolean;
-  racesLoading: boolean;
-  overridesLoading: boolean;
+export type AggregationPrerequisiteResolution =
+  | "loading"
+  | "success"
+  | "error";
+
+export interface AggregationPrerequisiteState {
+  workouts: AggregationPrerequisiteResolution;
+  settings: AggregationPrerequisiteResolution;
+  races: AggregationPrerequisiteResolution;
+  overrides: AggregationPrerequisiteResolution;
 }
 
 export interface UseAggregatedStatsOptions {
@@ -72,14 +78,14 @@ export function getAggregationLockKey(
 
 export function isAggregationReady(
   uid: string | null,
-  loadingState: AggregationLoadingState
+  prerequisiteState: AggregationPrerequisiteState
 ): uid is string {
   return (
     uid !== null &&
-    !loadingState.workoutsLoading &&
-    !loadingState.settingsLoading &&
-    !loadingState.racesLoading &&
-    !loadingState.overridesLoading
+    prerequisiteState.workouts === "success" &&
+    prerequisiteState.settings === "success" &&
+    prerequisiteState.races === "success" &&
+    prerequisiteState.overrides === "success"
   );
 }
 
@@ -108,7 +114,7 @@ async function computeAggregatedStats(
   const loadCachedStats = async (): Promise<AggregatedStatsDoc | null> => {
     const statsSnap = await getDoc(statsRef);
     return statsSnap.exists()
-      ? reviveAggregatedStatsDates(statsSnap.data() as AggregatedStatsDoc)
+      ? reviveStoredAggregatedStats(statsSnap.data())
       : null;
   };
   // These reads are independent. Starting them together removes one network
@@ -293,7 +299,7 @@ export function useAggregatedStats(
   maxHr: number,
   restingHr: number,
   races: { raceDate: Date | string; distanceMiles: number }[],
-  loadingState: AggregationLoadingState,
+  prerequisiteState: AggregationPrerequisiteState,
   options?: UseAggregatedStatsOptions
 ): UseAggregatedStatsResult {
   const enabled = options?.enabled ?? true;
@@ -336,7 +342,7 @@ export function useAggregatedStats(
     const statsRef = doc(db, `users/${uid}/insights/aggregatedStats`);
     const serverPromise = getDocFromServer(statsRef).then((statsSnap) =>
       statsSnap.exists()
-        ? reviveAggregatedStatsDates(statsSnap.data() as AggregatedStatsDoc)
+        ? reviveStoredAggregatedStats(statsSnap.data())
         : null
     );
     serverStatsRef.current = { uid, promise: serverPromise };
@@ -344,9 +350,8 @@ export function useAggregatedStats(
     getDocFromCache(statsRef)
       .then((cached) => {
         if (cancelled || serverSettled || !cached.exists()) return;
-        const cachedData = reviveAggregatedStatsDates(
-          cached.data() as AggregatedStatsDoc
-        );
+        const cachedData = reviveCompatibleAggregatedStats(cached.data());
+        if (!cachedData) return;
         cachePresentedRef.current = { uid, presented: true };
         markClientPerformance("training:personal-insights:cache-visible", {
           cacheSource: "local-cache",
@@ -366,10 +371,14 @@ export function useAggregatedStats(
         serverSettled = true;
         if (cancelled) return;
         setCacheResolvedUid(uid);
-        if (serverData) {
-          setDataState({ uid, data: serverData });
+        const compatibleServerData =
+          serverData?.computationVersion === AGGREGATED_STATS_VERSION
+            ? serverData
+            : null;
+        if (compatibleServerData) {
+          setDataState({ uid, data: compatibleServerData });
           setLoading(false);
-        } else {
+        } else if (!cachePresentedRef.current?.presented) {
           setLoading(true);
         }
       })
@@ -427,11 +436,11 @@ export function useAggregatedStats(
       return;
     }
 
-    if (!isAggregationReady(uid, loadingState)) {
+    if (!isAggregationReady(uid, prerequisiteState)) {
       logAggregationEvent("skip-not-ready", {
         uid,
         latestWorkoutId,
-        ...loadingState,
+        ...prerequisiteState,
       });
       return;
     }
@@ -501,10 +510,10 @@ export function useAggregatedStats(
     maxHr,
     restingHr,
     JSON.stringify(races),
-    loadingState.workoutsLoading,
-    loadingState.settingsLoading,
-    loadingState.racesLoading,
-    loadingState.overridesLoading,
+    prerequisiteState.workouts,
+    prerequisiteState.settings,
+    prerequisiteState.races,
+    prerequisiteState.overrides,
   ]);
 
   return {

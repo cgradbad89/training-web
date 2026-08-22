@@ -7,12 +7,14 @@ import {
   isAggregationReady,
   logAggregationEvent,
   useAggregatedStats,
+  type AggregationPrerequisiteState,
 } from "../useAggregatedStats";
 import * as firestore from "firebase/firestore";
 import * as mileSplitsCache from "@/utils/mileSplitsCache";
 import {
   AGGREGATED_STATS_VERSION,
   computeFreshnessFingerprint,
+  computeWorkoutAggregationRevision,
   computeVo2FreshnessKey,
   type AggregatedStatsDoc,
 } from "@/utils/aggregatedStats";
@@ -59,6 +61,18 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
   const restingHr = 50;
   const races: any[] = [];
   const latestWorkoutId = "workout1";
+  const successfulPrerequisites: AggregationPrerequisiteState = {
+    workouts: "success",
+    settings: "success",
+    races: "success",
+    overrides: "success",
+  };
+  const loadingPrerequisites: AggregationPrerequisiteState = {
+    workouts: "loading",
+    settings: "loading",
+    races: "loading",
+    overrides: "loading",
+  };
 
   function currentFingerprint(overrides: unknown = {}) {
     return computeFreshnessFingerprint({
@@ -70,6 +84,23 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
       activeRaceDate: null,
       overrides,
     });
+  }
+
+  function hookFingerprint(
+    workouts: HealthWorkout[],
+    overrides: unknown = {}
+  ) {
+    const base = currentFingerprint(overrides);
+    return {
+      ...base,
+      latestWorkoutId:
+        workouts.length === 0
+          ? null
+          : workouts.reduce((latest, current) =>
+              current.startDate > latest.startDate ? current : latest
+            ).workoutId,
+      overridesRevision: `${base.overridesRevision}:${computeWorkoutAggregationRevision(workouts)}`,
+    };
   }
 
   function cachedStats(
@@ -139,45 +170,46 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
     expect(getAggregationLockKey("uid-1", "workout-2")).not.toBe(original);
   });
 
-  it("reports ready only after workouts, settings, and races finish loading", () => {
-    expect(
-      isAggregationReady("uid-1", {
-        workoutsLoading: false,
-        settingsLoading: false,
-        racesLoading: false,
-        overridesLoading: false,
-      })
-    ).toBe(true);
+  it("reports ready only after every prerequisite resolves successfully", () => {
+    expect(isAggregationReady("uid-1", successfulPrerequisites)).toBe(true);
   });
 
-  it("blocks aggregation while auth or any required dependency is not ready", () => {
-    const readyFlags = {
-      workoutsLoading: false,
-      settingsLoading: false,
-      racesLoading: false,
-      overridesLoading: false,
-    };
-    expect(isAggregationReady(null, readyFlags)).toBe(false);
+  it("blocks aggregation while auth or any required dependency is loading", () => {
+    expect(isAggregationReady(null, successfulPrerequisites)).toBe(false);
     expect(
-      isAggregationReady("uid-1", { ...readyFlags, workoutsLoading: true })
+      isAggregationReady("uid-1", {
+        ...successfulPrerequisites,
+        workouts: "loading",
+      })
     ).toBe(false);
     expect(
-      isAggregationReady("uid-1", { ...readyFlags, settingsLoading: true })
+      isAggregationReady("uid-1", {
+        ...successfulPrerequisites,
+        settings: "loading",
+      })
     ).toBe(false);
     expect(
-      isAggregationReady("uid-1", { ...readyFlags, racesLoading: true })
+      isAggregationReady("uid-1", {
+        ...successfulPrerequisites,
+        races: "loading",
+      })
     ).toBe(false);
   });
 
-  it("waits for workout overrides before aggregation is ready", () => {
-    expect(
-      isAggregationReady("uid-1", {
-        workoutsLoading: false,
-        settingsLoading: false,
-        racesLoading: false,
-        overridesLoading: true,
-      })
-    ).toBe(false);
+  it("does not treat any failed prerequisite as ready", () => {
+    for (const source of [
+      "workouts",
+      "settings",
+      "races",
+      "overrides",
+    ] as const) {
+      expect(
+        isAggregationReady("uid-1", {
+          ...successfulPrerequisites,
+          [source]: "error",
+        })
+      ).toBe(false);
+    }
   });
 
   it("does not fetch or compute when aggregation is disabled", async () => {
@@ -191,12 +223,7 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
         maxHr,
         restingHr,
         races,
-        {
-          workoutsLoading: false,
-          settingsLoading: false,
-          racesLoading: false,
-          overridesLoading: false,
-        },
+        successfulPrerequisites,
         { enabled: false }
       );
       return React.createElement("span", null, String(result.loading));
@@ -237,12 +264,7 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
         maxHr,
         restingHr,
         races,
-        {
-          workoutsLoading: true,
-          settingsLoading: true,
-          racesLoading: true,
-          overridesLoading: true,
-        }
+        loadingPrerequisites
       );
       return React.createElement(
         "span",
@@ -288,12 +310,7 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
         maxHr,
         restingHr,
         races,
-        {
-          workoutsLoading: true,
-          settingsLoading: true,
-          racesLoading: true,
-          overridesLoading: true,
-        }
+        loadingPrerequisites
       );
       return React.createElement("span", null, result.data?.computedAt ?? "none");
     }
@@ -308,6 +325,312 @@ describe("useAggregatedStats / fetchAndComputeAggregatedStats", () => {
 
     expect(firestore.getDocFromServer).toHaveBeenCalledTimes(1);
     expect(firestore.getDoc).not.toHaveBeenCalled();
+    act(() => root.unmount());
+  });
+
+  it("does not publish a structurally incomplete current-version local cache", async () => {
+    vi.mocked(firestore.getDocFromCache).mockResolvedValue({
+      exists: () => true,
+      data: () => ({ computationVersion: AGGREGATED_STATS_VERSION }),
+    } as Awaited<ReturnType<typeof firestore.getDocFromCache>>);
+    vi.mocked(firestore.getDocFromServer).mockReturnValue(
+      new Promise<
+        Awaited<ReturnType<typeof firestore.getDocFromServer>>
+      >(() => {})
+    );
+    const container = document.createElement("div");
+    const root = createRoot(container);
+
+    function Harness() {
+      const result = useAggregatedStats(
+        mockUid,
+        [],
+        maxHr,
+        restingHr,
+        races,
+        loadingPrerequisites
+      );
+      return React.createElement(
+        "span",
+        null,
+        `${result.loading}:${result.data?.computedAt ?? "none"}`
+      );
+    }
+
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+    await vi.waitFor(() =>
+      expect(firestore.getDocFromCache).toHaveBeenCalledTimes(1)
+    );
+
+    expect(container.textContent).toBe("true:none");
+    expect(firestore.setDoc).not.toHaveBeenCalled();
+    act(() => root.unmount());
+  });
+
+  it("rejects an old-version local cache before presentation, then recomputes after successful readiness", async () => {
+    const oldDoc = cachedStats({
+      computationVersion: AGGREGATED_STATS_VERSION - 1,
+      freshnessFingerprint: {
+        ...hookFingerprint(mockWorkouts),
+        computationVersion: AGGREGATED_STATS_VERSION - 1,
+      },
+    });
+    vi.mocked(firestore.getDocFromCache).mockResolvedValue({
+      exists: () => true,
+      data: () => oldDoc,
+    } as Awaited<ReturnType<typeof firestore.getDocFromCache>>);
+    vi.mocked(firestore.getDocFromServer).mockResolvedValue({
+      exists: () => true,
+      data: () => oldDoc,
+    } as Awaited<ReturnType<typeof firestore.getDocFromServer>>);
+    let resolveWrite!: () => void;
+    vi.mocked(firestore.setDoc).mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolveWrite = resolve;
+      })
+    );
+    const container = document.createElement("div");
+    const root = createRoot(container);
+
+    function Harness() {
+      const result = useAggregatedStats(
+        mockUid,
+        mockWorkouts,
+        maxHr,
+        restingHr,
+        races,
+        successfulPrerequisites
+      );
+      return React.createElement(
+        "span",
+        null,
+        `${result.loading}:${result.data?.computationVersion ?? "none"}`
+      );
+    }
+
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+    await vi.waitFor(() => expect(firestore.setDoc).toHaveBeenCalledTimes(1));
+    expect(container.textContent).toBe("true:none");
+
+    await act(async () => resolveWrite());
+    await vi.waitFor(() =>
+      expect(container.textContent).toBe(`false:${AGGREGATED_STATS_VERSION}`)
+    );
+    act(() => root.unmount());
+  });
+
+  it.each(["workouts", "settings", "races", "overrides"] as const)(
+    "retains a compatible hydrated cache and never writes when %s later fails",
+    async (source) => {
+      const cachedDoc = cachedStats();
+      vi.mocked(firestore.getDocFromCache).mockResolvedValue({
+        exists: () => true,
+        data: () => cachedDoc,
+      } as Awaited<ReturnType<typeof firestore.getDocFromCache>>);
+      vi.mocked(firestore.getDocFromServer).mockReturnValue(
+        new Promise<
+          Awaited<ReturnType<typeof firestore.getDocFromServer>>
+        >(() => {})
+      );
+      const container = document.createElement("div");
+      const root = createRoot(container);
+
+      function Harness({
+        prerequisites,
+      }: {
+        prerequisites: AggregationPrerequisiteState;
+      }) {
+        const result = useAggregatedStats(
+          mockUid,
+          [],
+          maxHr,
+          restingHr,
+          races,
+          prerequisites
+        );
+        return React.createElement(
+          "span",
+          null,
+          `${result.loading}:${result.data?.computedAt ?? "none"}`
+        );
+      }
+
+      await act(async () => {
+        root.render(
+          React.createElement(Harness, {
+            prerequisites: loadingPrerequisites,
+          })
+        );
+      });
+      await vi.waitFor(() =>
+        expect(container.textContent).toBe(`false:${cachedDoc.computedAt}`)
+      );
+
+      await act(async () => {
+        root.render(
+          React.createElement(Harness, {
+            prerequisites: {
+              ...successfulPrerequisites,
+              [source]: "error",
+            },
+          })
+        );
+      });
+
+      expect(container.textContent).toBe(`false:${cachedDoc.computedAt}`);
+      expect(firestore.getDocs).not.toHaveBeenCalled();
+      expect(firestore.setDoc).not.toHaveBeenCalled();
+      act(() => root.unmount());
+    }
+  );
+
+  it("replaces a compatible stale cache through the existing compute/write path after readiness", async () => {
+    const staleDoc = cachedStats({
+      computedAt: "2026-08-19T12:00:00.000Z",
+      freshnessFingerprint: {
+        ...hookFingerprint(mockWorkouts),
+        maxHr: maxHr - 1,
+      },
+    });
+    let resolveServer!: (value: unknown) => void;
+    vi.mocked(firestore.getDocFromCache).mockResolvedValue({
+      exists: () => true,
+      data: () => staleDoc,
+    } as Awaited<ReturnType<typeof firestore.getDocFromCache>>);
+    vi.mocked(firestore.getDocFromServer).mockReturnValue(
+      new Promise((resolve) => {
+        resolveServer = resolve;
+      }) as Promise<Awaited<ReturnType<typeof firestore.getDocFromServer>>>
+    );
+    vi.mocked(firestore.setDoc).mockResolvedValue(undefined);
+    const container = document.createElement("div");
+    const root = createRoot(container);
+
+    function Harness({
+      prerequisites,
+    }: {
+      prerequisites: AggregationPrerequisiteState;
+    }) {
+      const result = useAggregatedStats(
+        mockUid,
+        mockWorkouts,
+        maxHr,
+        restingHr,
+        races,
+        prerequisites
+      );
+      return React.createElement(
+        "span",
+        null,
+        `${result.data?.computedAt ?? "none"}:${result.data?.freshnessFingerprint.maxHr ?? "none"}`
+      );
+    }
+
+    await act(async () => {
+      root.render(
+        React.createElement(Harness, {
+          prerequisites: loadingPrerequisites,
+        })
+      );
+    });
+    await vi.waitFor(() =>
+      expect(container.textContent).toBe(`${staleDoc.computedAt}:${maxHr - 1}`)
+    );
+
+    await act(async () => {
+      resolveServer({ exists: () => true, data: () => staleDoc });
+      root.render(
+        React.createElement(Harness, {
+          prerequisites: successfulPrerequisites,
+        })
+      );
+    });
+    await vi.waitFor(() => expect(firestore.setDoc).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(container.textContent).toContain(`:${maxHr}`));
+    expect(container.textContent).not.toContain(staleDoc.computedAt);
+    act(() => root.unmount());
+  });
+
+  it("reuses a compatible fresh cache without an unnecessary write after readiness", async () => {
+    const freshDoc = cachedStats({
+      freshnessFingerprint: hookFingerprint(mockWorkouts),
+    });
+    vi.mocked(firestore.getDocFromCache).mockResolvedValue({
+      exists: () => true,
+      data: () => freshDoc,
+    } as Awaited<ReturnType<typeof firestore.getDocFromCache>>);
+    vi.mocked(firestore.getDocFromServer).mockResolvedValue({
+      exists: () => true,
+      data: () => freshDoc,
+    } as Awaited<ReturnType<typeof firestore.getDocFromServer>>);
+    const container = document.createElement("div");
+    const root = createRoot(container);
+
+    function Harness() {
+      const result = useAggregatedStats(
+        mockUid,
+        mockWorkouts,
+        maxHr,
+        restingHr,
+        races,
+        successfulPrerequisites
+      );
+      return React.createElement("span", null, result.data?.computedAt ?? "none");
+    }
+
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+    await vi.waitFor(() => expect(container.textContent).toBe(freshDoc.computedAt));
+    await vi.waitFor(() => expect(firestore.getDocs).toHaveBeenCalledTimes(1));
+    expect(firestore.setDoc).not.toHaveBeenCalled();
+    act(() => root.unmount());
+  });
+
+  it("treats successful zero workouts as ready and preserves independent VO2 data", async () => {
+    const sampleDate = "2026-08-20";
+    const sampleDoc = {
+      id: sampleDate,
+      data: () => ({ date: sampleDate, vo2_max: 51 }),
+    };
+    vi.mocked(firestore.getDocFromCache).mockResolvedValue({
+      exists: () => false,
+    } as Awaited<ReturnType<typeof firestore.getDocFromCache>>);
+    vi.mocked(firestore.getDocFromServer).mockResolvedValue({
+      exists: () => false,
+    } as Awaited<ReturnType<typeof firestore.getDocFromServer>>);
+    vi.mocked(firestore.getDocs).mockResolvedValue({
+      docs: [sampleDoc],
+    } as unknown as Awaited<ReturnType<typeof firestore.getDocs>>);
+    vi.mocked(firestore.setDoc).mockResolvedValue(undefined);
+    const container = document.createElement("div");
+    const root = createRoot(container);
+
+    function Harness() {
+      const result = useAggregatedStats(
+        mockUid,
+        [],
+        maxHr,
+        restingHr,
+        races,
+        successfulPrerequisites
+      );
+      return React.createElement(
+        "span",
+        null,
+        `${result.data?.latestWorkoutId ?? "none"}:${result.data?.vo2History.at(-1)?.date ?? "none"}`
+      );
+    }
+
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+    await vi.waitFor(() => expect(container.textContent).toBe(`:${sampleDate}`));
+    expect(firestore.setDoc).toHaveBeenCalledTimes(1);
     act(() => root.unmount());
   });
 

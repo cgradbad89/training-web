@@ -198,6 +198,87 @@ export interface AggregatedStatsDoc {
   fastestMileSegment: ReturnType<typeof findBestFastestMileAcrossRuns>;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isReviveableDate(value: unknown): boolean {
+  return value instanceof Date || typeof value === "string";
+}
+
+/**
+ * Checks the persisted aggregate shape before any cached value reaches React.
+ * This is intentionally narrower than the source-dependent freshness check:
+ * it proves the document can be safely revived/rendered while source reads are
+ * pending, but it does not attempt to decide whether the aggregate is fresh.
+ */
+export function isStructurallyValidAggregatedStats(
+  value: unknown
+): value is AggregatedStatsDoc {
+  if (!isRecord(value)) return false;
+  if (typeof value.computationVersion !== "number") return false;
+  if (!isRecord(value.freshnessFingerprint)) return false;
+  if (!isRecord(value.vo2FreshnessKey)) return false;
+  if (typeof value.computedAt !== "string") return false;
+  if (typeof value.latestWorkoutId !== "string") return false;
+  if (typeof value.latestWorkoutStartDate !== "string") return false;
+  if (!isRecord(value.trainingLoad) || !Array.isArray(value.trainingLoad.series)) {
+    return false;
+  }
+  if (!Array.isArray(value.vo2History)) return false;
+  if (!isRecord(value.racePredictions)) return false;
+  if (
+    !isRecord(value.personalRecordsByYear) ||
+    !Array.isArray(value.personalRecordsByYear.prs) ||
+    !Array.isArray(value.personalRecordsByYear.specificPrs)
+  ) {
+    return false;
+  }
+  if (!Array.isArray(value.paceTrends)) return false;
+  if (
+    !isRecord(value.hrZoneDistribution) ||
+    !isRecord(value.hrZoneDistribution.zoneMiles)
+  ) {
+    return false;
+  }
+  if (
+    value.fastestMileSegment !== null &&
+    (!isRecord(value.fastestMileSegment) ||
+      typeof value.fastestMileSegment.seconds !== "number" ||
+      !isReviveableDate(value.fastestMileSegment.date))
+  ) {
+    return false;
+  }
+
+  const recordDatesAreReviveable = (entries: unknown[]): boolean =>
+    entries.every(
+      (entry) =>
+        entry === null ||
+        (isRecord(entry) && isReviveableDate(entry.date))
+    );
+  return (
+    recordDatesAreReviveable(value.personalRecordsByYear.prs) &&
+    recordDatesAreReviveable(value.personalRecordsByYear.specificPrs)
+  );
+}
+
+export function reviveStoredAggregatedStats(
+  value: unknown
+): AggregatedStatsDoc | null {
+  return isStructurallyValidAggregatedStats(value)
+    ? reviveAggregatedStatsDates(value)
+    : null;
+}
+
+export function reviveCompatibleAggregatedStats(
+  value: unknown
+): AggregatedStatsDoc | null {
+  const revived = reviveStoredAggregatedStats(value);
+  return revived?.computationVersion === AGGREGATED_STATS_VERSION
+    ? revived
+    : null;
+}
+
 /**
  * Normalize a cached AggregatedStatsDoc read back from Firestore.
  *
