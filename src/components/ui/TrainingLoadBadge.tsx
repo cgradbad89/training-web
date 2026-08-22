@@ -33,7 +33,7 @@ interface TrainingLoadBadgeProps {
   // calculated" section. Absent → that section is omitted (backward compatible).
   durationSeconds?: number;
   restingHr?: number;
-  trainingLoadMethod?: "streamed" | "avg-hr-fallback" | null;
+  trainingLoadMethod?: "streamed" | "avg-hr-fallback" | "none" | null;
   /**
    * Optional 0–1 visual intensity (see computeLoadIntensity in
    * @/utils/loadScale) for a single shared load scale across a mixed list.

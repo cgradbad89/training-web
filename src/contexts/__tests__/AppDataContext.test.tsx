@@ -878,6 +878,67 @@ describe("AppDataProvider", () => {
     expect(latest?.overrides.wX).toEqual({ workoutId: "wX", isExcluded: true });
   });
 
+  it("patchTrainingLoad updates exactly one workout without refresh, duplication, or reordering", async () => {
+    h.fetchHealthWorkouts.mockResolvedValue([
+      { workoutId: "newest", trainingLoadV2: 95, marker: "keep" },
+      { workoutId: "older", trainingLoadV2: 40, marker: "untouched" },
+    ]);
+    await mount();
+
+    await act(async () => {
+      latest?.patchTrainingLoad("newest", {
+        trainingLoadV2: 97,
+        trainingLoadMethod: "streamed",
+        trainingLoadBasisComplete: true,
+      });
+    });
+
+    expect(h.fetchHealthWorkouts).toHaveBeenCalledTimes(1);
+    expect(latest?.workouts.map((workout) => workout.workoutId)).toEqual([
+      "newest",
+      "older",
+    ]);
+    expect(latest?.workouts).toHaveLength(2);
+    expect(latest?.workouts[0]).toMatchObject({
+      workoutId: "newest",
+      trainingLoadV2: 97,
+      trainingLoadMethod: "streamed",
+      trainingLoadBasisComplete: true,
+      marker: "keep",
+    });
+    expect(latest?.workouts[1]).toMatchObject({
+      workoutId: "older",
+      trainingLoadV2: 40,
+      marker: "untouched",
+    });
+  });
+
+  it("ignores a training-load patch callback from a disposed UID generation", async () => {
+    h.fetchHealthWorkouts.mockResolvedValueOnce([
+      { workoutId: "shared-id", trainingLoadV2: 95 },
+    ]);
+    await mount();
+    const stalePatch = latest!.patchTrainingLoad;
+
+    h.fetchHealthWorkouts.mockResolvedValueOnce([
+      { workoutId: "shared-id", trainingLoadV2: 200 },
+    ]);
+    await renderUid("u2");
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      stalePatch("shared-id", {
+        trainingLoadV2: 97,
+        trainingLoadMethod: "streamed",
+        trainingLoadBasisComplete: true,
+      });
+    });
+
+    expect(latest?.workouts[0].trainingLoadV2).toBe(200);
+  });
+
   // Regression guard for the Workouts-page ↔ Dashboard override desync
   // (PRD.md §6): Dashboard's `activeWorkouts` is `selectActiveWorkouts(workouts,
   // overrides)` fed straight from this ONE shared provider instance. Before the

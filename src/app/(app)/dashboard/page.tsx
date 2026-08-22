@@ -66,7 +66,7 @@ import {
   formatMiles,
 } from "@/utils/pace";
 import { resolveActivityTitle } from "@/utils/resolveActivityTitle";
-import { selectActiveWorkouts } from "@/utils/selectActiveWorkouts";
+import { selectEffectiveWorkouts } from "@/utils/selectActiveWorkouts";
 import {
   weekStart as getWeekStart,
   weekEnd as getWeekEnd,
@@ -1652,14 +1652,11 @@ export default function DashboardPage() {
     refreshWorkouts,
   } = useAppData();
 
-  // AppDataContext deliberately does NOT pre-apply workoutOverrides exclusions
-  // (see AppDataContext.tsx) — each page filters for itself, exactly as the
-  // Workouts page does (workouts/page.tsx). Every Dashboard card + Week Score
-  // computation below consumes this filtered array so a manually excluded
-  // workout (e.g. a dismissed Strava/Apple Health duplicate) never appears or
-  // counts here. Memoized + placed before any early return (React #310 guard).
+  // AppData stays raw; every Dashboard card + Week Score consumes the canonical
+  // override-applied, exclusion-filtered projection. Memoized + placed before
+  // any early return (React #310 guard).
   const activeWorkouts = useMemo(
-    () => selectActiveWorkouts(workouts, overrides),
+    () => selectEffectiveWorkouts(workouts, overrides),
     [workouts, overrides]
   );
 

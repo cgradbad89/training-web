@@ -21,6 +21,8 @@ import { WorkoutsSkeleton } from "./WorkoutsSkeleton";
 import { useAuth } from "@/hooks/useAuth";
 import { useAppData } from "@/contexts/AppDataContext";
 import { useEnrichTrainingLoads } from "@/hooks/useEnrichTrainingLoads";
+import { selectEffectiveWorkouts } from "@/utils/selectActiveWorkouts";
+import { applyOverride } from "@/types/workoutOverride";
 import { fetchUserSettings } from "@/services/userSettings";
 import { excludeWorkout } from "@/services/workoutOverrides";
 import { detectDuplicatePairs, type DuplicatePair } from "@/utils/duplicateDetection";
@@ -607,6 +609,7 @@ export default function WorkoutsPage() {
     overrides,
     overridesLoading,
     patchOverrides,
+    patchTrainingLoad,
     refreshWorkouts,
   } = useAppData();
   const [userSettings, setUserSettings] = useState<UserSettings | null>();
@@ -626,12 +629,14 @@ export default function WorkoutsPage() {
     [contextWorkouts]
   );
   const allWorkouts = useMemo(
-    () => nonRunWorkouts.filter((w) => !overrides[w.workoutId]?.isExcluded),
+    () => selectEffectiveWorkouts(nonRunWorkouts, overrides),
     [nonRunWorkouts, overrides]
   );
   const excludedWorkouts = useMemo(
     () =>
-      nonRunWorkouts.filter((w) => overrides[w.workoutId]?.isExcluded === true),
+      nonRunWorkouts
+        .filter((w) => overrides[w.workoutId]?.isExcluded === true)
+        .map((w) => applyOverride(w, overrides[w.workoutId] ?? null)),
     [nonRunWorkouts, overrides]
   );
 
@@ -708,9 +713,8 @@ export default function WorkoutsPage() {
 
   // Auto-store Training Load V2 for the non-run workouts this page loads (the
   // Runs page covers runs). Stores a missing load / upgrades an avg-HR value once
-  // a stream arrives. Runs after paint; writes flow back on the next refetch
-  // (focus refresh or manual refresh) rather than a live listener.
-  useEnrichTrainingLoads(uid, allWorkouts, userSettings);
+  // a stream arrives. Runs after paint; successful writes patch shared AppData.
+  useEnrichTrainingLoads(uid, allWorkouts, userSettings, patchTrainingLoad);
 
   const availableYears = useMemo(() => {
     const years = Array.from(

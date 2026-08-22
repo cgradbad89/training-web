@@ -30,27 +30,13 @@ import {
   type ShoeAutoAssignRule,
 } from "@/types/shoe";
 import { evaluateAutoAssignRules } from "@/utils/shoeAutoAssign";
+import { selectEffectiveWorkouts } from "@/utils/selectActiveWorkouts";
+import {
+  shoeAssignedRuns,
+  totalShoeMileage,
+} from "@/utils/shoeMileage";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function shoeAssignedRuns(
-  shoe: RunningShoe,
-  activities: HealthWorkout[],
-  assignments: Record<string, string | null>
-): HealthWorkout[] {
-  return activities.filter(
-    (a) => a.isRunLike && assignments[a.workoutId] === shoe.id
-  );
-}
-
-function totalMileage(
-  shoe: RunningShoe,
-  activities: HealthWorkout[],
-  assignments: Record<string, string | null>
-): number {
-  const runs = shoeAssignedRuns(shoe, activities, assignments);
-  return shoe.startMileageOffset + runs.reduce((s, r) => s + r.distanceMiles, 0);
-}
 
 function mileageBarColor(pct: number): string {
   if (pct > 0.9) return "bg-danger";
@@ -174,7 +160,7 @@ interface ShoeCardProps {
 
 function ShoeCard({ shoe, activities, assignments, onEdit, onManageRuns }: ShoeCardProps) {
   const assigned = shoeAssignedRuns(shoe, activities, assignments);
-  const miles = totalMileage(shoe, activities, assignments);
+  const miles = totalShoeMileage(shoe, activities, assignments);
 
   const totalTime = assigned.reduce((s, r) => s + r.durationSeconds, 0);
   const totalDist = assigned.reduce((s, r) => s + r.distanceMiles, 0);
@@ -946,7 +932,7 @@ function RunsPanel({
     [runs, assignments, shoe.id]
   );
 
-  const miles = totalMileage(shoe, activities, assignments);
+  const miles = totalShoeMileage(shoe, activities, assignments);
 
   // Picker: show runs not assigned to any other shoe + runs assigned to this shoe
   const pickerRuns = useMemo(() => {
@@ -1149,9 +1135,18 @@ export default function ShoesPage() {
   const { user } = useAuth();
   const uid = user?.uid ?? null;
 
-  // Workouts + plans now come from the shared AppDataContext (live listener);
+  // Workouts + plans come from the shared AppDataContext (full/delta refresh);
   // shoes and manual assignments remain a shoes-page-local fetch.
-  const { workouts: activities, plans, workoutsLoading } = useAppData();
+  const {
+    workouts: rawActivities,
+    overrides,
+    plans,
+    workoutsLoading,
+  } = useAppData();
+  const activities = useMemo(
+    () => selectEffectiveWorkouts(rawActivities, overrides),
+    [rawActivities, overrides]
+  );
   const [shoes, setShoes] = useState<RunningShoe[]>([]);
   const [assignments, setAssignments] = useState<Record<string, string | null>>({});
   // Manual assignments exactly as fetched (pre-merge with auto-assignments).
@@ -1211,7 +1206,7 @@ export default function ShoesPage() {
 
   // Recompute auto-assignments whenever the run list, shoes, or manual
   // assignments change. Previously computed inline in loadAll; now reactive
-  // because workouts arrive from the shared live listener rather than a
+  // because workouts arrive from the shared refreshable array rather than a
   // one-shot fetch on this page.
   useEffect(() => {
     const autoAssigned = evaluateAutoAssignRules(activities, shoes, rawAssignments);

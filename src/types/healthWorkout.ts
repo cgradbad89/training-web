@@ -57,7 +57,7 @@ export interface HealthWorkout {
   trainingLoadV2?: number | null;
   /** Which V2 model produced trainingLoadV2: per-second "streamed" integral or
    *  the avg-HR baseline ("avg-hr-fallback"). */
-  trainingLoadMethod?: "streamed" | "avg-hr-fallback";
+  trainingLoadMethod?: TrainingLoadMethod;
   /** Whether the route basis was COMPLETE (routeComplete !== false) at the moment
    *  trainingLoadV2 was computed. Written by computeAndStoreTrainingLoad. Lets the
    *  enrich guard recompute a "streamed" load exactly once after a two-pass iOS
@@ -106,6 +106,17 @@ export interface HealthWorkout {
    *  (per-mile avgBpm). Attached at the wiring layer for HR-gated best-effort
    *  extraction — see src/utils/bestEffortExtraction.ts. */
   mileSplits?: MileSplit[];
+}
+
+export type TrainingLoadMethod =
+  | "streamed"
+  | "avg-hr-fallback"
+  | "none";
+
+export interface TrainingLoadFields {
+  trainingLoadV2: number | null;
+  trainingLoadMethod: TrainingLoadMethod;
+  trainingLoadBasisComplete: boolean;
 }
 
 export function isRunWorkout(w: HealthWorkout): boolean {

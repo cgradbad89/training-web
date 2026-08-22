@@ -22,7 +22,7 @@ import {
   copyPlanWithNewStart,
   snapToMonday,
 } from "@/utils/planDateEdit";
-import { applyOverride } from "@/types/workoutOverride";
+import { selectEffectiveWorkouts } from "@/utils/selectActiveWorkouts";
 import {
   DEFAULT_HALF_MARATHON_PLAN,
   seedSeptHMPlan,
@@ -289,10 +289,7 @@ export default function PlansPage() {
   // and /plan-insights do, so a workout excluded elsewhere never counts as a
   // completed plan entry here either.
   const activities = useMemo(
-    () =>
-      rawWorkouts
-        .map((w) => applyOverride(w, overrides[w.workoutId] ?? null))
-        .filter((w) => !overrides[w.workoutId]?.isExcluded),
+    () => selectEffectiveWorkouts(rawWorkouts, overrides),
     [rawWorkouts, overrides]
   );
 

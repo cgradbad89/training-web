@@ -29,7 +29,7 @@ import {
   findActiveRunningPlan,
   type RunTitleContext,
 } from "@/utils/runPlanTitle";
-import { applyOverride } from "@/types/workoutOverride";
+import { selectEffectiveWorkouts } from "@/utils/selectActiveWorkouts";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { RACE_DISTANCE_MILES } from "@/types/race";
 import { useAggregatedStats } from "@/hooks/useAggregatedStats";
@@ -1321,10 +1321,7 @@ export default function PersonalInsightsPage() {
   // Apply overrides and drop excluded workouts — same processing the old
   // per-page fetch did inline before setting local state.
   const workouts = useMemo(
-    () =>
-      rawWorkouts
-        .map((w) => applyOverride(w, overrides[w.workoutId] ?? null))
-        .filter((w) => !overrides[w.workoutId]?.isExcluded),
+    () => selectEffectiveWorkouts(rawWorkouts, overrides),
     [rawWorkouts, overrides]
   );
   const raceInputs = useMemo(

@@ -4,11 +4,14 @@ import { createRoot, type Root } from "react-dom/client";
 import {
   computeAndStoreBestEfforts,
   fetchHealthWorkout,
+  fetchHealthWorkoutsInRange,
 } from "@/services/healthWorkouts";
 import { getRoutePoints } from "@/utils/routeCache";
 import { getMileSplits } from "@/utils/mileSplitsCache";
 import { fetchWeatherForRun } from "@/lib/weather";
 import { BEST_EFFORTS_COMPUTATION_VERSION } from "@/utils/fastestMileSegment";
+import { fetchAllOverrides, fetchOverride } from "@/services/workoutOverrides";
+import { fetchPlans } from "@/services/plans";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -29,7 +32,7 @@ vi.mock("@/hooks/useAuth", () => ({
 // The page reads the shared workouts array for efficiency baselines; the tests
 // render it outside AppDataProvider, so stub the hook with an empty set.
 vi.mock("@/contexts/AppDataContext", () => ({
-  useAppData: () => ({ workouts: [] }),
+  useAppData: () => ({ workouts: [], overrides: {} }),
 }));
 
 vi.mock("@/hooks/useUnsavedChanges", () => ({
@@ -99,6 +102,13 @@ vi.mock("@/lib/weather", async (importOriginal) => {
 });
 
 import RunDetailPage from "../page";
+
+afterEach(() => {
+  vi.mocked(fetchHealthWorkoutsInRange).mockReset().mockResolvedValue([]);
+  vi.mocked(fetchAllOverrides).mockReset().mockResolvedValue({});
+  vi.mocked(fetchOverride).mockReset().mockResolvedValue(null);
+  vi.mocked(fetchPlans).mockReset().mockResolvedValue([]);
+});
 
 describe("RunDetailPage Execution Structure", () => {
   let container: HTMLDivElement;
@@ -182,6 +192,98 @@ describe("RunDetailPage Execution Structure", () => {
 
     expect(fetchWeatherForRun).not.toHaveBeenCalled();
     expect(container.textContent).toContain("3.00");
+  });
+
+  it("builds the viewed title from effective workouts in the narrow ±2-day window", async () => {
+    const viewed = {
+      workoutId: "workout_123",
+      name: "Run",
+      activityType: "running",
+      displayType: "Run",
+      startDate: new Date("2024-01-01T12:00:00Z"),
+      endDate: new Date("2024-01-01T12:30:00Z"),
+      distanceMiles: 3,
+      durationSeconds: 1800,
+      isRunLike: true,
+      hasRoute: false,
+      weather: null,
+    };
+    const competitor = { ...viewed, workoutId: "excluded", distanceMiles: 5 };
+    const viewedOverride = {
+      workoutId: "workout_123",
+      userId: "u1",
+      isExcluded: false,
+      excludedAt: null,
+      excludedReason: null,
+      distanceMilesOverride: 5,
+      durationSecondsOverride: null,
+      runTypeOverride: null,
+      updatedAt: "2024-01-02T00:00:00Z",
+    };
+    const excludedOverride = {
+      ...viewedOverride,
+      workoutId: "excluded",
+      isExcluded: true,
+      distanceMilesOverride: null,
+    };
+    vi.mocked(fetchHealthWorkout).mockResolvedValue(viewed as never);
+    vi.mocked(fetchOverride).mockResolvedValue(viewedOverride as never);
+    vi.mocked(fetchAllOverrides).mockResolvedValue({
+      workout_123: viewedOverride,
+      excluded: excludedOverride,
+    } as never);
+    vi.mocked(fetchHealthWorkoutsInRange).mockImplementation(
+      (_uid: string, _start: Date, end?: Date) =>
+        Promise.resolve((end ? [competitor, viewed] : []) as never)
+    );
+    vi.mocked(fetchPlans).mockResolvedValue([
+      {
+        id: "plan",
+        name: "Plan",
+        planType: "running",
+        startDate: "2024-01-01",
+        status: "active",
+        isActive: true,
+        createdAt: "2023-12-01T00:00:00Z",
+        updatedAt: "2023-12-01T00:00:00Z",
+        weeks: [
+          {
+            weekNumber: 1,
+            entries: [
+              {
+                id: "entry",
+                weekIndex: 0,
+                weekday: 1,
+                dayOfWeek: 0,
+                distanceMiles: 5,
+                runType: "longRun",
+              },
+            ],
+          },
+        ],
+      },
+    ] as never);
+    vi.mocked(getRoutePoints).mockResolvedValue([]);
+    vi.mocked(getMileSplits).mockResolvedValue([]);
+
+    act(() => {
+      root = createRoot(container);
+      root.render(<RunDetailPage />);
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("Long Run");
+    expect(fetchHealthWorkoutsInRange).toHaveBeenCalledWith(
+      "u1",
+      expect.any(Date),
+      expect.any(Date)
+    );
   });
 
   it("fetches weather only after the (gated) route read resolves", async () => {

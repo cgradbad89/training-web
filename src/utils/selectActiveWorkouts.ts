@@ -11,11 +11,31 @@
  * A missing override, or an override with isExcluded false/undefined, keeps it.
  */
 import { type HealthWorkout } from "@/types/healthWorkout";
-import { type WorkoutOverride } from "@/types/workoutOverride";
+import {
+  applyOverride,
+  type WorkoutOverride,
+} from "@/types/workoutOverride";
 
 export function selectActiveWorkouts(
   workouts: HealthWorkout[],
   overrides: Record<string, WorkoutOverride>
 ): HealthWorkout[] {
   return workouts.filter((w) => !overrides[w.workoutId]?.isExcluded);
+}
+
+/**
+ * Canonical projection for features that operate on the user's actual workout
+ * history. Raw AppData workouts remain untouched: exclusions are removed first,
+ * then supported field overrides are layered onto each retained workout via the
+ * single existing applyOverride implementation.
+ */
+export function selectEffectiveWorkouts(
+  workouts: HealthWorkout[],
+  overrides: Record<string, WorkoutOverride> | null | undefined
+): HealthWorkout[] {
+  const overrideMap = overrides ?? {};
+  return workouts.flatMap((workout) => {
+    const override = overrideMap[workout.workoutId] ?? null;
+    return override?.isExcluded ? [] : [applyOverride(workout, override)];
+  });
 }

@@ -13,7 +13,7 @@ import { fetchUserSettings } from '@/services/userSettings'
 import { buildCoachContext } from '@/utils/coachContext'
 import { parseLocalDate, daysUntil } from '@/utils/dates'
 import { resolveMaxHr, resolveRestingHr } from '@/utils/trainingLoad'
-import { applyOverride } from '@/types/workoutOverride'
+import { selectEffectiveWorkouts } from '@/utils/selectActiveWorkouts'
 import {
   BotMessageSquare, Send, Loader2, RefreshCw, ChevronRight
 } from 'lucide-react'
@@ -33,6 +33,8 @@ const SUGGESTED_QUESTIONS = [
   'How does my current fitness compare to my race goal?',
 ]
 
+type ContextStatus = 'loading' | 'ready' | 'error'
+
 // ── Main page ────────────────────────────────────────────────────────────────
 
 export default function CoachPage() {
@@ -40,7 +42,7 @@ export default function CoachPage() {
   const userId = user?.uid ?? ''
 
   const searchParams = useSearchParams()
-  const [loading, setLoading] = useState(true)
+  const [contextStatus, setContextStatus] = useState<ContextStatus>('loading')
   const [context, setContext] = useState<ReturnType<typeof buildCoachContext> | null>(null)
   const [question, setQuestion] = useState('')
   const [response, setResponse] = useState('')
@@ -49,6 +51,7 @@ export default function CoachPage() {
   const [hasAsked, setHasAsked] = useState(false)
   const responseRef = useRef<HTMLDivElement>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const autoAskedRef = useRef(false)
 
   // Abort in-flight stream on unmount
   useEffect(() => {
@@ -58,7 +61,10 @@ export default function CoachPage() {
   // Load all training data on mount
   useEffect(() => {
     if (!userId) return
-    setLoading(true)
+    setContextStatus('loading')
+    setContext(null)
+    setError(null)
+    autoAskedRef.current = false
     let cancelled = false
 
     Promise.all([
@@ -67,11 +73,10 @@ export default function CoachPage() {
       fetchPlans(userId),
       fetchRaces(userId),
       fetchHealthMetrics(userId, 30),
-    ]).then(([workouts, overrides, plans, races, healthMetrics]) => {
-      // Apply overrides
-      const runs = workouts
+      fetchUserSettings(userId),
+    ]).then(([workouts, overrides, plans, races, healthMetrics, settings]) => {
+      const runs = selectEffectiveWorkouts(workouts, overrides)
         .filter(w => w.isRunLike)
-        .map(w => applyOverride(w, overrides[w.workoutId] ?? null))
 
       // Find active plan and race (running plans only — coach is running-focused)
       const runningPlans = plans.filter(isRunningPlan)
@@ -85,49 +90,44 @@ export default function CoachPage() {
         })
       const activeRace = upcomingRaces.find(r => r.isActive) ?? upcomingRaces[0] ?? null
 
-      const buildContext = (maxHr: number, restingHr: number) =>
+      if (cancelled) return
+      setContext(
         buildCoachContext(
           runs,
           activePlan,
           activeRace,
-          overrides,
           healthMetrics,
-          maxHr,
-          restingHr
+          resolveMaxHr(settings),
+          resolveRestingHr(settings)
         )
-
-      if (cancelled) return
-      setContext(
-        buildContext(resolveMaxHr(undefined), resolveRestingHr(undefined))
       )
-      setLoading(false)
-
-      fetchUserSettings(userId)
-        .then(settings => {
-          if (!cancelled)
-            setContext(
-              buildContext(resolveMaxHr(settings), resolveRestingHr(settings))
-            )
-        })
-        .catch(err => console.error('[Coach] fetchUserSettings failed:', err))
+      setContextStatus('ready')
     }).catch(err => {
       if (cancelled) return
-      setError(err.message)
-      setLoading(false)
+      setContext(null)
+      setError(err instanceof Error ? err.message : 'Training context unavailable')
+      setContextStatus('error')
     })
     return () => { cancelled = true }
   }, [userId])
 
   // Auto-ask if a question was passed via URL param
   useEffect(() => {
-    if (!context || asking || hasAsked) return
+    if (
+      contextStatus !== 'ready' ||
+      !context ||
+      asking ||
+      hasAsked ||
+      autoAskedRef.current
+    ) return
     const prefilled = searchParams.get('q')
     if (prefilled) {
+      autoAskedRef.current = true
       setQuestion(prefilled)
-      handleAsk(prefilled)
+      void handleAsk(prefilled)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [context])
+  }, [context, contextStatus])
 
   // Auto-scroll response as it streams
   useEffect(() => {
@@ -138,7 +138,12 @@ export default function CoachPage() {
 
   async function handleAsk(q?: string) {
     const questionToAsk = q ?? question
-    if (!questionToAsk.trim() || !context || asking) return
+    if (
+      !questionToAsk.trim() ||
+      contextStatus !== 'ready' ||
+      !context ||
+      asking
+    ) return
 
     setAsking(true)
     setResponse('')
@@ -200,7 +205,7 @@ export default function CoachPage() {
 
   // ── Render ───────────────────────────────────────────────────────────────
 
-  if (loading) {
+  if (contextStatus === 'loading') {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="w-8 h-8 border-2 border-primary border-t-transparent
@@ -275,8 +280,8 @@ export default function CoachPage() {
         </div>
       )}
 
-      {/* Response area */}
-      {hasAsked && (
+      {/* Response / context-unavailable area */}
+      {(hasAsked || contextStatus === 'error') && (
         <div
           ref={responseRef}
           className="bg-card rounded-2xl border border-border p-5 mb-5
@@ -323,7 +328,7 @@ export default function CoachPage() {
           </p>
           <button
             onClick={() => handleAsk()}
-            disabled={!question.trim() || asking || !context}
+            disabled={!question.trim() || asking || contextStatus !== 'ready' || !context}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl
                        bg-primary text-white text-xs font-semibold
                        hover:bg-primary/90 disabled:opacity-40
@@ -351,7 +356,7 @@ export default function CoachPage() {
               <button
                 key={q}
                 onClick={() => handleAsk(q)}
-                disabled={asking || !context}
+                disabled={asking || contextStatus !== 'ready' || !context}
                 className="flex items-center gap-2 text-left p-3 rounded-xl
                            bg-surface border border-border text-sm
                            text-textSecondary hover:text-textPrimary

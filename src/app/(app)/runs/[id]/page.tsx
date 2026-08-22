@@ -134,6 +134,7 @@ import {
   type MileSplitDoc,
 } from "@/utils/mileSplitsCache";
 import { fetchWeatherForRun } from "@/lib/weather";
+import { selectEffectiveWorkouts } from "@/utils/selectActiveWorkouts";
 
 const RunMap = dynamic(() => import("@/components/RunMap"), { ssr: false });
 
@@ -186,7 +187,11 @@ export default function RunDetailPage() {
   const uid = user?.uid ?? null;
   // Shared, already-fetched workouts (AppDataContext one-time fetch) — used ONLY
   // to build the efficiency baselines below. No new Firestore read.
-  const { workouts: sharedWorkouts } = useAppData();
+  const { workouts: sharedWorkouts, overrides: sharedOverrides } = useAppData();
+  const effectiveSharedWorkouts = useMemo(
+    () => selectEffectiveWorkouts(sharedWorkouts, sharedOverrides),
+    [sharedWorkouts, sharedOverrides]
+  );
 
   const [workout, setWorkout] = useState<HealthWorkout | null>(null);
   const [routePoints, setRoutePoints] = useState<RoutePoint[]>([]);
@@ -278,7 +283,7 @@ export default function RunDetailPage() {
   // the same resolved settings used for Training Load.
   const runEfficiency = useMemo(() => {
     if (!displayWorkoutForSplits) return null;
-    const runWorkouts = sharedWorkouts.filter(
+    const runWorkouts = effectiveSharedWorkouts.filter(
       (w) => w.isRunLike && w.workoutId !== displayWorkoutForSplits.workoutId
     );
     const baseline = buildEfficiencyBaseline(
@@ -296,7 +301,7 @@ export default function RunDetailPage() {
       baseline,
     });
     return { result, baselineRunCount: baseline.runCount };
-  }, [sharedWorkouts, displayWorkoutForSplits, resolvedMaxHR, resolvedRestingHR]);
+  }, [effectiveSharedWorkouts, displayWorkoutForSplits, resolvedMaxHR, resolvedRestingHR]);
   const mileSplits = useMemo<MileSplit[]>(
     () => {
       // Cached path: splits persisted on the mileSplits subcollection are used
@@ -719,9 +724,7 @@ export default function RunDetailPage() {
   // Personal/Plan Insights use), so the prediction here matches those pages.
   const workoutsForInsights = useMemo(() => {
     if (!allWorkoutsRaw || !allOverrides) return null;
-    return allWorkoutsRaw
-      .map((w) => applyOverride(w, allOverrides[w.workoutId] ?? null))
-      .filter((w) => !allOverrides[w.workoutId]?.isExcluded);
+    return selectEffectiveWorkouts(allWorkoutsRaw, allOverrides);
   }, [allWorkoutsRaw, allOverrides]);
 
   // Hydrate fast-finish mileSplits across the recency-window insights runs (not
@@ -920,9 +923,7 @@ export default function RunDetailPage() {
         fetchAllOverrides(uid),
       ]);
       if (cancelled) return;
-      const shaped = seedWorkouts
-        .map((w) => applyOverride(w, overrides[w.workoutId] ?? null))
-        .filter((w) => !overrides[w.workoutId]?.isExcluded);
+      const shaped = selectEffectiveWorkouts(seedWorkouts, overrides);
       const live = computeCtlImpact(
         shaped,
         workoutId,
@@ -959,9 +960,16 @@ export default function RunDetailPage() {
       .catch((err) => console.error("[fetchPlans]", err));
   }, [uid]);
 
+  const effectivePlanWindowWorkouts = useMemo(
+    () =>
+      planWindowWorkouts && allOverrides
+        ? selectEffectiveWorkouts(planWindowWorkouts, allOverrides)
+        : [],
+    [planWindowWorkouts, allOverrides]
+  );
   const runTitleMap = useMemo(
-    () => buildRunTitleMap(activeRunningPlan, planWindowWorkouts ?? []),
-    [activeRunningPlan, planWindowWorkouts]
+    () => buildRunTitleMap(activeRunningPlan, effectivePlanWindowWorkouts),
+    [activeRunningPlan, effectivePlanWindowWorkouts]
   );
 
   if (loading) {
