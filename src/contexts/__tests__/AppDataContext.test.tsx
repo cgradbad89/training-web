@@ -86,6 +86,7 @@ afterEach(() => {
     root?.unmount();
   });
   container?.remove();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -239,6 +240,7 @@ describe("AppDataProvider", () => {
       latest?.workouts.map((w) => (w as { workoutId: string }).workoutId)
     ).toEqual(["w1", "w2"]);
     expect(h.fetchHealthWorkouts).toHaveBeenCalledTimes(2);
+    expect(h.fetchHealthWorkoutsInRange).not.toHaveBeenCalled();
   });
 
   it("preserves workouts and uses workoutsRefreshing during a background refresh", async () => {
@@ -319,6 +321,254 @@ describe("AppDataProvider", () => {
       "backfill",
     ]);
     expect(latest?.workouts[1]?.name).toBe("updated");
+  });
+
+  it("performs one full reconciliation on a later local day, then returns to delta", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 7, 20, 12));
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    const initial = {
+      workoutId: "initial",
+      startDate: new Date(2026, 7, 20, 10),
+    };
+    const daily = {
+      workoutId: "daily-full",
+      startDate: new Date(2026, 7, 19, 10),
+    };
+    h.fetchHealthWorkouts.mockResolvedValueOnce([initial]);
+    await mount();
+
+    h.fetchHealthWorkouts.mockResolvedValueOnce([initial, daily]);
+    vi.setSystemTime(new Date(2026, 7, 21, 12));
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(h.fetchHealthWorkouts).toHaveBeenCalledTimes(2);
+    expect(h.fetchHealthWorkoutsInRange).not.toHaveBeenCalled();
+    expect(latest?.workouts.map((workout) => workout.workoutId)).toEqual([
+      "initial",
+      "daily-full",
+    ]);
+    expect(latest?.workoutsFullReconciliationVersion).toBe(2);
+
+    h.fetchHealthWorkoutsInRange.mockResolvedValueOnce([]);
+    vi.setSystemTime(new Date(2026, 7, 21, 12, 1));
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(h.fetchHealthWorkouts).toHaveBeenCalledTimes(2);
+    expect(h.fetchHealthWorkoutsInRange).toHaveBeenCalledTimes(1);
+    expect(latest?.workoutsFullReconciliationVersion).toBe(2);
+  });
+
+  it("does not advance the daily-full marker after failure and retries full successfully", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 7, 20, 12));
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const initial = {
+      workoutId: "initial",
+      startDate: new Date(2026, 7, 20, 10),
+    };
+    const recovered = {
+      workoutId: "recovered",
+      startDate: new Date(2026, 7, 10, 10),
+    };
+    h.fetchHealthWorkouts.mockResolvedValueOnce([initial]);
+    await mount();
+
+    h.fetchHealthWorkouts.mockRejectedValueOnce(new Error("daily full failed"));
+    vi.setSystemTime(new Date(2026, 7, 21, 12));
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(latest?.workouts.map((workout) => workout.workoutId)).toEqual([
+      "initial",
+    ]);
+    expect(latest?.workoutsResolution).toBe("error");
+    expect(latest?.workoutsFullReconciliationVersion).toBe(1);
+
+    h.fetchHealthWorkouts.mockResolvedValueOnce([initial, recovered]);
+    vi.setSystemTime(new Date(2026, 7, 21, 12, 1));
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(h.fetchHealthWorkouts).toHaveBeenCalledTimes(3);
+    expect(h.fetchHealthWorkoutsInRange).not.toHaveBeenCalled();
+    expect(latest?.workoutsResolution).toBe("success");
+    expect(latest?.workouts.map((workout) => workout.workoutId)).toEqual([
+      "initial",
+      "recovered",
+    ]);
+    expect(latest?.workoutsFullReconciliationVersion).toBe(2);
+  });
+
+  it("preserves workouts on a failed delta and recovers resolution on a later empty delta", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 7, 20, 12));
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const initial = {
+      workoutId: "initial",
+      startDate: new Date(2026, 7, 20, 10),
+    };
+    h.fetchHealthWorkouts.mockResolvedValueOnce([initial]);
+    await mount();
+
+    h.fetchHealthWorkoutsInRange.mockRejectedValueOnce(
+      new Error("delta failed")
+    );
+    vi.setSystemTime(new Date(2026, 7, 20, 12, 1));
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(latest?.workouts.map((workout) => workout.workoutId)).toEqual([
+      "initial",
+    ]);
+    expect(latest?.workoutsResolution).toBe("error");
+
+    h.fetchHealthWorkoutsInRange.mockResolvedValueOnce([]);
+    vi.setSystemTime(new Date(2026, 7, 20, 12, 2));
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(h.fetchHealthWorkoutsInRange).toHaveBeenCalledTimes(2);
+    expect(latest?.workoutsResolution).toBe("success");
+    expect(latest?.workouts.map((workout) => workout.workoutId)).toEqual([
+      "initial",
+    ]);
+  });
+
+  it("recovers a workout older than the overlap on the next daily full reconciliation", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 7, 20, 12));
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    const newest = {
+      workoutId: "newest",
+      startDate: new Date(2026, 7, 20, 10),
+    };
+    const delayedHistorical = {
+      workoutId: "delayed-historical",
+      startDate: new Date(2026, 7, 10, 8),
+    };
+    h.fetchHealthWorkouts.mockResolvedValueOnce([newest]);
+    await mount();
+
+    h.fetchHealthWorkoutsInRange.mockResolvedValueOnce([]);
+    vi.setSystemTime(new Date(2026, 7, 20, 12, 1));
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(latest?.workouts.map((workout) => workout.workoutId)).not.toContain(
+      "delayed-historical"
+    );
+
+    h.fetchHealthWorkouts.mockResolvedValueOnce([newest, delayedHistorical]);
+    vi.setSystemTime(new Date(2026, 7, 21, 12));
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(latest?.workouts.map((workout) => workout.workoutId)).toContain(
+      "delayed-historical"
+    );
+  });
+
+  it("recovers a workout older than the overlap immediately through manual full refresh", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 7, 20, 12));
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    const newest = {
+      workoutId: "newest",
+      startDate: new Date(2026, 7, 20, 10),
+    };
+    const delayedHistorical = {
+      workoutId: "delayed-historical",
+      startDate: new Date(2026, 7, 10, 8),
+    };
+    h.fetchHealthWorkouts.mockResolvedValueOnce([newest]);
+    await mount();
+
+    h.fetchHealthWorkoutsInRange.mockResolvedValueOnce([]);
+    vi.setSystemTime(new Date(2026, 7, 20, 12, 1));
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    h.fetchHealthWorkouts.mockResolvedValueOnce([newest, delayedHistorical]);
+    await act(async () => {
+      await latest?.refreshWorkouts();
+    });
+
+    expect(h.fetchHealthWorkouts).toHaveBeenCalledTimes(2);
+    expect(latest?.workouts.map((workout) => workout.workoutId)).toContain(
+      "delayed-historical"
+    );
+  });
+
+  it("queues a required manual full reconciliation behind an in-flight delta", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 7, 20, 12));
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    const newest = {
+      workoutId: "newest",
+      startDate: new Date(2026, 7, 20, 10),
+    };
+    const fullResult = {
+      workoutId: "full-result",
+      startDate: new Date(2026, 7, 10, 8),
+    };
+    h.fetchHealthWorkouts.mockResolvedValueOnce([newest]);
+    await mount();
+
+    const delta = deferred<Array<typeof newest>>();
+    h.fetchHealthWorkoutsInRange.mockReturnValueOnce(delta.promise);
+    h.fetchHealthWorkouts.mockResolvedValueOnce([newest, fullResult]);
+    vi.setSystemTime(new Date(2026, 7, 20, 12, 1));
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+
+    let manualFull!: Promise<void>;
+    act(() => {
+      manualFull = latest!.refreshWorkouts();
+    });
+    expect(h.fetchHealthWorkouts).toHaveBeenCalledTimes(1);
+
+    delta.resolve([]);
+    await act(async () => manualFull);
+
+    expect(h.fetchHealthWorkoutsInRange).toHaveBeenCalledTimes(1);
+    expect(h.fetchHealthWorkouts).toHaveBeenCalledTimes(2);
+    expect(latest?.workouts.map((workout) => workout.workoutId)).toEqual([
+      "newest",
+      "full-result",
+    ]);
+    expect(latest?.workoutsFullReconciliationVersion).toBe(2);
   });
 
   it("loads plans, races, overrides, and settings on mount", async () => {

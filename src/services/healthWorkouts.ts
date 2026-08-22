@@ -40,8 +40,11 @@ import {
   where,
   orderBy,
   limit,
+  startAfter,
   writeBatch,
+  type DocumentData,
   type QueryConstraint,
+  type QueryDocumentSnapshot,
   type Unsubscribe,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
@@ -334,6 +337,119 @@ export async function fetchHealthWorkout(
   return docToHealthWorkout(snap.id, snap.data() as Record<string, unknown>);
 }
 
+/** AutoMatch's live page size. This bounds each read, not the total candidate set. */
+export const AUTO_MATCH_CANDIDATE_PAGE_SIZE = 250;
+
+export type HealthWorkoutQueryCursor = QueryDocumentSnapshot<DocumentData>;
+
+export interface AutoMatchCandidatePageOptions {
+  /** Already-mapped first live-listener page, in descending startDate order. */
+  initialCandidates?: HealthWorkout[];
+  /** Last Firestore document from initialCandidates, used by startAfter(). */
+  initialCursor?: HealthWorkoutQueryCursor;
+}
+
+function autoMatchCandidateQuery(
+  uid: string,
+  earliestDueDayStart: Date,
+  cursor?: HealthWorkoutQueryCursor
+) {
+  const constraints: QueryConstraint[] = [
+    where("isRunLike", "==", false),
+    where("startDate", ">=", earliestDueDayStart),
+    orderBy("startDate", "desc"),
+  ];
+  if (cursor) constraints.push(startAfter(cursor));
+  constraints.push(limit(AUTO_MATCH_CANDIDATE_PAGE_SIZE));
+  return query(
+    collection(db, "users", uid, "healthWorkouts"),
+    ...constraints
+  );
+}
+
+function autoMatchPageCoversDueBoundary(
+  page: HealthWorkout[],
+  documentCount: number,
+  earliestDueDayStart: Date
+): boolean {
+  if (documentCount < AUTO_MATCH_CANDIDATE_PAGE_SIZE) return true;
+  const oldest = page[page.length - 1];
+  return Boolean(
+    oldest && oldest.startDate.getTime() < earliestDueDayStart.getTime()
+  );
+}
+
+/**
+ * Fetch all non-run AutoMatch candidates through the entire local calendar day
+ * of the earliest due incomplete workout session.
+ *
+ * The live listener supplies the recent first page and its last-document
+ * cursor. A saturated page is followed with the same filtered query plus
+ * startAfter(lastDocument). Paging stops as soon as the oldest result is before
+ * the due day's local midnight or Firestore returns a short page. The current
+ * lower bound is that same midnight, so exhaustion normally proves coverage
+ * without scanning any earlier, unrelated workout history.
+ */
+export async function fetchAutoMatchCandidatesThroughDate(
+  uid: string,
+  earliestDueDate: Date,
+  options: AutoMatchCandidatePageOptions = {}
+): Promise<HealthWorkout[]> {
+  const earliestDueDayStart = new Date(earliestDueDate);
+  earliestDueDayStart.setHours(0, 0, 0, 0);
+
+  const combined: HealthWorkout[] = [];
+  const seenWorkoutIds = new Set<string>();
+  const appendPage = (page: HealthWorkout[]) => {
+    for (const workout of page) {
+      if (seenWorkoutIds.has(workout.workoutId)) continue;
+      seenWorkoutIds.add(workout.workoutId);
+      combined.push(workout);
+    }
+  };
+
+  let cursor = options.initialCursor;
+  if (options.initialCandidates) {
+    appendPage(options.initialCandidates);
+    if (
+      autoMatchPageCoversDueBoundary(
+        options.initialCandidates,
+        options.initialCandidates.length,
+        earliestDueDayStart
+      )
+    ) {
+      return combined;
+    }
+  }
+
+  // A saturated initial page should always provide a listener cursor. If it
+  // does not, re-read page 1 rather than silently accepting an incomplete set.
+  while (true) {
+    const snap = await getDocs(
+      autoMatchCandidateQuery(uid, earliestDueDayStart, cursor)
+    );
+    const page = snap.docs.map((document) =>
+      docToHealthWorkout(
+        document.id,
+        document.data() as Record<string, unknown>
+      )
+    );
+    appendPage(page);
+
+    if (
+      autoMatchPageCoversDueBoundary(
+        page,
+        snap.docs.length,
+        earliestDueDayStart
+      )
+    ) {
+      return combined;
+    }
+
+    cursor = snap.docs[snap.docs.length - 1];
+  }
+}
+
 /**
  * Real-time listener for healthWorkouts. Calls `onData` whenever the
  * result set changes (initial load + subsequent writes from iOS sync).
@@ -342,7 +458,10 @@ export async function fetchHealthWorkout(
 export function onHealthWorkoutsSnapshot(
   uid: string,
   opts: { limitCount?: number; isRunLike?: boolean; startDate?: Date },
-  onData: (workouts: HealthWorkout[]) => void,
+  onData: (
+    workouts: HealthWorkout[],
+    lastDocument?: HealthWorkoutQueryCursor
+  ) => void,
   onError?: (error: Error) => void
 ): Unsubscribe {
   const constraints: QueryConstraint[] = [];
@@ -363,11 +482,10 @@ export function onHealthWorkoutsSnapshot(
   return onSnapshot(
     q,
     (snap) => {
-      onData(
-        snap.docs.map((d) =>
-          docToHealthWorkout(d.id, d.data() as Record<string, unknown>)
-        )
+      const workouts = snap.docs.map((d) =>
+        docToHealthWorkout(d.id, d.data() as Record<string, unknown>)
       );
+      onData(workouts, snap.docs[snap.docs.length - 1]);
     },
     (err) => {
       console.error("[onHealthWorkoutsSnapshot] listener error:", err);

@@ -12,12 +12,11 @@
  * mounted once at the (app) route-group layout.
  *
  * Design constraints (do not regress):
- *  - Workouts are fetched ONCE per mount (getDocs, limit 1000) rather than via
- *    a live onSnapshot listener — historical data doesn't need continuous
- *    push. Freshness comes from useRefetchOnFocus (tab-focus refetch, 30s
- *    floor) plus each consumer's own manual refresh control. Every consumer
- *    (dashboard, runs, personal-insights, plan-insights, shoes, workouts)
- *    reads the same array.
+ *  - Workouts use a full getDocs read (limit 1000) on mount and manual refresh.
+ *    Same-local-day focus refreshes use a seven-day overlap delta; the first
+ *    eligible focus on a later local day performs another full reconciliation.
+ *    Every consumer (dashboard, runs, personal-insights, plan-insights, shoes,
+ *    workouts) reads the same array.
  *  - Overrides are exposed as the raw Record keyed by workoutId (matching how
  *    every page consumes them: `overrides[workout.workoutId]`). Pages apply
  *    overrides themselves via applyOverride — the context does not pre-apply.
@@ -50,7 +49,7 @@ import { fetchRaces } from "@/services/races";
 import { fetchAllOverrides } from "@/services/workoutOverrides";
 import { fetchUserSettings } from "@/services/userSettings";
 import { resolveMaxHr, resolveRestingHr } from "@/utils/trainingLoad";
-import { trackInFlightRequest } from "@/utils/inFlightRequest";
+import { toLocalIsoDate } from "@/utils/dates";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { type Plan } from "@/types/plan";
 import { type Race } from "@/types/race";
@@ -66,6 +65,12 @@ export const APP_DATA_WORKOUTS_LIMIT = 1000;
 export const WORKOUT_DELTA_OVERLAP_DAYS = 7;
 
 export type AppDataResolution = "loading" | "success" | "error";
+type WorkoutRefreshMode = "full" | "delta";
+
+interface WorkoutRefreshRequest {
+  mode: WorkoutRefreshMode;
+  promise: Promise<void>;
+}
 
 export function workoutDeltaStartDate(latestWorkoutDate: Date): Date {
   return new Date(
@@ -95,6 +100,10 @@ export interface AppDataContextValue {
   workoutsRefreshing: boolean;
   /** True when the latest full read returned fewer than its cap. */
   workoutsHistoryComplete: boolean;
+  /** Advances after each successful full reconciliation so AutoMatch can
+   *  re-evaluate due sessions after an old-dated delayed insert. */
+  workoutsFullReconciliationVersion: number;
+  /** Explicit user refresh: always a full top-1000 reconciliation. */
   refreshWorkouts: () => Promise<void>;
   plans: Plan[];
   plansLoading: boolean;
@@ -137,8 +146,14 @@ export function AppDataProvider({
     useState<AppDataResolution>("loading");
   const [workoutsRefreshing, setWorkoutsRefreshing] = useState(false);
   const [workoutsHistoryComplete, setWorkoutsHistoryComplete] = useState(false);
+  const [
+    workoutsFullReconciliationVersion,
+    setWorkoutsFullReconciliationVersion,
+  ] = useState(0);
   const workoutsLoadedRef = useRef(false);
-  const workoutsInFlightRef = useRef<Promise<void> | null>(null);
+  const workoutsInFlightRef = useRef<WorkoutRefreshRequest | null>(null);
+  const workoutsQueuedFullRef = useRef<Promise<void> | null>(null);
+  const lastSuccessfulFullDateRef = useRef<string | null>(null);
   const workoutsRef = useRef<HealthWorkout[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [plansLoading, setPlansLoading] = useState(true);
@@ -169,87 +184,122 @@ export function AppDataProvider({
     measureName: "training:app-data:duration",
   });
 
-  // One-time workouts fetch — the single shared workouts source for every
-  // consumer (dashboard, runs, personal-insights, plan-insights, shoes,
-  // workouts). Freshness comes from useRefetchOnFocus below plus each
-  // consumer's manual refresh control, not a live subscription.
-  const refreshWorkouts = useCallback((): Promise<void> => {
-    if (workoutsInFlightRef.current) return workoutsInFlightRef.current;
-    if (!uid) {
-      setWorkouts([]);
-      setWorkoutsLoading(false);
-      setWorkoutsRefreshing(false);
-      setWorkoutsHistoryComplete(true);
-      setWorkoutsResolution("success");
-      workoutsLoadedRef.current = true;
-      return Promise.resolve();
-    }
+  workoutsRef.current = workouts;
 
-    const isInitialLoad = !workoutsLoadedRef.current;
-    if (isInitialLoad) setWorkoutsLoading(true);
-    else setWorkoutsRefreshing(true);
-    setWorkoutsResolution("loading");
-
-    const promise = (async () => {
-      try {
-        const loaded = await fetchHealthWorkouts(uid, {
-          limitCount: APP_DATA_WORKOUTS_LIMIT,
-        });
-        setWorkouts(loaded);
-        setWorkoutsHistoryComplete(
-          loaded.length < APP_DATA_WORKOUTS_LIMIT
-        );
+  const startWorkoutRefresh = useCallback(
+    (mode: WorkoutRefreshMode): Promise<void> => {
+      if (!uid) {
+        setWorkouts([]);
+        setWorkoutsLoading(false);
+        setWorkoutsRefreshing(false);
+        setWorkoutsHistoryComplete(true);
         setWorkoutsResolution("success");
         workoutsLoadedRef.current = true;
-      } catch (err) {
-        setWorkoutsResolution("error");
-        console.error("[AppData] fetchHealthWorkouts", err);
-      } finally {
-        if (isInitialLoad) setWorkoutsLoading(false);
-        else setWorkoutsRefreshing(false);
+        return Promise.resolve();
       }
-    })();
-    return trackInFlightRequest(workoutsInFlightRef, promise);
-  }, [uid]);
+
+      const isInitialLoad = !workoutsLoadedRef.current;
+      if (isInitialLoad) setWorkoutsLoading(true);
+      else setWorkoutsRefreshing(true);
+      setWorkoutsResolution("loading");
+
+      const promise = (async () => {
+        try {
+          if (mode === "full") {
+            const loaded = await fetchHealthWorkouts(uid, {
+              limitCount: APP_DATA_WORKOUTS_LIMIT,
+            });
+            setWorkouts(loaded);
+            setWorkoutsHistoryComplete(
+              loaded.length < APP_DATA_WORKOUTS_LIMIT
+            );
+            lastSuccessfulFullDateRef.current = toLocalIsoDate(new Date());
+            setWorkoutsFullReconciliationVersion((current) => current + 1);
+            workoutsLoadedRef.current = true;
+          } else {
+            const latestWorkout = workoutsRef.current[0];
+            const delta = await fetchHealthWorkoutsInRange(
+              uid,
+              workoutDeltaStartDate(latestWorkout?.startDate ?? new Date())
+            );
+            setWorkouts((current) => mergeWorkoutDelta(current, delta));
+          }
+          setWorkoutsResolution("success");
+        } catch (err) {
+          setWorkoutsResolution("error");
+          console.error(
+            mode === "full"
+              ? "[AppData] fetchHealthWorkouts"
+              : "[AppData] refreshRecentWorkouts",
+            err
+          );
+        } finally {
+          if (isInitialLoad) setWorkoutsLoading(false);
+          else setWorkoutsRefreshing(false);
+        }
+      })();
+
+      const request = { mode, promise };
+      workoutsInFlightRef.current = request;
+      const clearRequest = () => {
+        if (workoutsInFlightRef.current === request) {
+          workoutsInFlightRef.current = null;
+        }
+      };
+      void promise.then(clearRequest, clearRequest);
+      return promise;
+    },
+    [uid]
+  );
+
+  const requestWorkoutRefresh = useCallback(
+    (mode: WorkoutRefreshMode): Promise<void> => {
+      const active = workoutsInFlightRef.current;
+      if (!active) return startWorkoutRefresh(mode);
+
+      // A full request already satisfies either caller. A delta caller can
+      // reuse any active read. Only full-behind-delta needs queued promotion.
+      if (active.mode === "full" || mode === "delta") {
+        return active.promise;
+      }
+      if (workoutsQueuedFullRef.current) {
+        return workoutsQueuedFullRef.current;
+      }
+
+      const queued = active.promise.then(() => startWorkoutRefresh("full"));
+      workoutsQueuedFullRef.current = queued;
+      const clearQueued = () => {
+        if (workoutsQueuedFullRef.current === queued) {
+          workoutsQueuedFullRef.current = null;
+        }
+      };
+      void queued.then(clearQueued, clearQueued);
+      return queued;
+    },
+    [startWorkoutRefresh]
+  );
+
+  // Public/manual action: always reconcile the authoritative shared top 1000.
+  const refreshWorkouts = useCallback(
+    (): Promise<void> => requestWorkoutRefresh("full"),
+    [requestWorkoutRefresh]
+  );
 
   useEffect(() => {
     void refreshWorkouts();
   }, [refreshWorkouts]);
 
-  workoutsRef.current = workouts;
+  // Same-day focus stays on the seven-day overlap delta. The first eligible
+  // focus after the local date rolls over performs one full reconciliation;
+  // only a successful full advances the provider-lifetime in-memory marker.
+  const refreshWorkoutsOnFocus = useCallback((): Promise<void> => {
+    const today = toLocalIsoDate(new Date());
+    const mode: WorkoutRefreshMode =
+      lastSuccessfulFullDateRef.current === today ? "delta" : "full";
+    return requestWorkoutRefresh(mode);
+  }, [requestWorkoutRefresh]);
 
-  // Focus recovery overlaps the newest workout by seven days before merging by
-  // ID. The overlap captures delayed Apple Health inserts and edits whose
-  // workout date predates the newest item without returning to a full-history
-  // read. Manual refreshWorkouts remains the explicit reconciliation path.
-  const refreshRecentWorkouts = useCallback((): Promise<void> => {
-    if (workoutsInFlightRef.current) return workoutsInFlightRef.current;
-    const latestWorkout = workoutsRef.current[0];
-    if (!workoutsLoadedRef.current || !latestWorkout) {
-      return refreshWorkouts();
-    }
-
-    setWorkoutsRefreshing(true);
-    setWorkoutsResolution("loading");
-    const promise = (async () => {
-      try {
-        const delta = await fetchHealthWorkoutsInRange(
-          uid,
-          workoutDeltaStartDate(latestWorkout.startDate)
-        );
-        setWorkouts((current) => mergeWorkoutDelta(current, delta));
-        setWorkoutsResolution("success");
-      } catch (err) {
-        setWorkoutsResolution("error");
-        console.error("[AppData] refreshRecentWorkouts", err);
-      } finally {
-        setWorkoutsRefreshing(false);
-      }
-    })();
-    return trackInFlightRequest(workoutsInFlightRef, promise);
-  }, [uid, refreshWorkouts]);
-
-  useRefetchOnFocus(refreshRecentWorkouts);
+  useRefetchOnFocus(refreshWorkoutsOnFocus);
 
   const refreshPlans = useCallback(async () => {
     if (!uid) {
@@ -359,6 +409,7 @@ export function AppDataProvider({
       workoutsResolution,
       workoutsRefreshing,
       workoutsHistoryComplete,
+      workoutsFullReconciliationVersion,
       refreshWorkouts,
       plans,
       plansLoading,
@@ -385,6 +436,7 @@ export function AppDataProvider({
       workoutsResolution,
       workoutsRefreshing,
       workoutsHistoryComplete,
+      workoutsFullReconciliationVersion,
       refreshWorkouts,
       plans,
       plansLoading,
