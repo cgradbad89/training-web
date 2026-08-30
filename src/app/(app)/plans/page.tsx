@@ -24,11 +24,6 @@ import {
 } from "@/utils/planDateEdit";
 import { selectEffectiveWorkouts } from "@/utils/selectActiveWorkouts";
 import {
-  DEFAULT_HALF_MARATHON_PLAN,
-  seedSeptHMPlan,
-  buildSeptTravelMigration,
-} from "@/lib/seedData";
-import {
   type Plan,
   type PlanType,
   type RunningPlan,
@@ -260,11 +255,6 @@ export default function PlansPage() {
 
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [selectedWeekIndex, setSelectedWeekIndex] = useState(0);
-  // Seed/migration runs once per mount after the primary plans query. It is
-  // deliberately not a rendering gate: existing plans remain usable while
-  // background maintenance finishes, and empty accounts can use the shell
-  // while their defaults are created.
-  const [seeded, setSeeded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [mobileView, setMobileView] = useState<"list" | "detail">("list");
   const [pageView, setPageView] = useState<"plans" | "calendar" | "goals">(
@@ -328,99 +318,9 @@ export default function PlansPage() {
   // app layout). The plan shell can render before workout/race enrichment is
   // ready; those arrays update the selected detail progressively.
 
-  // One-time seed / migration pass, run once per mount after the shared
-  // `plans` array has loaded from context. Same conditions as the old
-  // loadAll(): seed a default plan if none exist, seed/replace the Sept 2026
-  // half marathon plan, then run buildSeptTravelMigration on it. Any write
-  // triggers a single refreshPlans() so context (and /dashboard) picks it up.
-  useEffect(() => {
-    if (!user || plansResolution !== "success" || seeded) return;
-    let cancelled = false;
-
-    async function runSeedAndMigration() {
-      if (!user) return;
-      let finalPlans: Plan[] = plans;
-      let plansChanged = false;
-
-      // Seed default running plan only if no plans of any kind exist
-      if (plans.length === 0) {
-        const seededPlan = await createPlan<RunningPlan>(
-          user.uid,
-          DEFAULT_HALF_MARATHON_PLAN
-        );
-        finalPlans = [seededPlan];
-        plansChanged = true;
-      }
-
-      // One-time seed / replacement: September 2026 half marathon plan.
-      //   • No "sept 2026" plan         → seed the current Sub 9:30 version
-      //   • Existing plan has "sub 9:45" → delete the old one and reseed
-      //   • Existing plan has "sub 9:30" → already up to date, skip
-      const existingSept = finalPlans.find((p) =>
-        p.name.toLowerCase().includes("sept 2026")
-      );
-      const isOldVersion =
-        !!existingSept && existingSept.name.toLowerCase().includes("sub 9:45");
-      const isCurrentVersion =
-        !!existingSept && existingSept.name.toLowerCase().includes("sub 9:30");
-      const needsSeed = !existingSept || isOldVersion;
-
-      if (isOldVersion && existingSept) {
-        try {
-          await deletePlan(user.uid, existingSept.id);
-          finalPlans = finalPlans.filter((p) => p.id !== existingSept.id);
-          plansChanged = true;
-        } catch (err) {
-          console.error("[SeedSeptHMPlan] delete old plan error", err);
-        }
-      }
-
-      if (needsSeed && !isCurrentVersion) {
-        try {
-          const { plan: septPlan } = await seedSeptHMPlan(user.uid);
-          finalPlans = [...finalPlans, septPlan];
-          plansChanged = true;
-        } catch (err) {
-          console.error("[SeedSeptHMPlan] error", err);
-        }
-      }
-
-      // One-time travel/run-reduction migration for the pre-existing live
-      // Sept 2026 plan. Fresh seeds are already stamped, so they return null.
-      try {
-        const septPlan = finalPlans.find((p) =>
-          p.name.toLowerCase().includes("sept 2026")
-        );
-        if (septPlan && isRunningPlan(septPlan)) {
-          const migrated = buildSeptTravelMigration(septPlan);
-          if (migrated) {
-            await updatePlan(user.uid, migrated);
-            plansChanged = true;
-          }
-        }
-      } catch (err) {
-        console.error("[SeptTravelMigration] error", err);
-      }
-
-      if (plansChanged) {
-        await refreshPlans();
-      }
-    }
-
-    void runSeedAndMigration().finally(() => {
-      if (!cancelled) setSeeded(true);
-    });
-
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, plansResolution, seeded]);
-
   // Select as soon as the primary plans query provides a plan. Do not wait for
-  // background seed/migration work, and never replace an existing selection.
-  // Empty accounts naturally select their first seeded plan after
-  // refreshPlans() updates context.
+  // any enrichment work, and never replace an existing selection. Empty
+  // accounts stay empty until the owner explicitly creates a plan.
   useEffect(() => {
     if (!user || plansResolution !== "success" || selectedPlanId !== null) return;
     const active = plans.find((p) => p.status === "active") ?? plans[0];

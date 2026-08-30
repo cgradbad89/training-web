@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { useAuth } from '@/hooks/useAuth'
+import { APP_DATA_WORKOUTS_LIMIT } from '@/contexts/AppDataContext'
 import { fetchHealthWorkouts } from '@/services/healthWorkouts'
 import { fetchAllOverrides } from '@/services/workoutOverrides'
 import { fetchPlans } from '@/services/plans'
@@ -14,6 +15,15 @@ import { buildCoachContext } from '@/utils/coachContext'
 import { parseLocalDate, daysUntil } from '@/utils/dates'
 import { resolveMaxHr, resolveRestingHr } from '@/utils/trainingLoad'
 import { selectEffectiveWorkouts } from '@/utils/selectActiveWorkouts'
+import {
+  HALF_MARATHON_MILES,
+  RACE_DISTANCE_MILES,
+} from '@/types/race'
+import { hydrateFastFinishSplits } from '@/services/fastFinishSplits'
+import {
+  buildBestEffortSegments,
+  type BestEffortSegment,
+} from '@/utils/bestEffortExtraction'
 import {
   BotMessageSquare, Send, Loader2, RefreshCw, ChevronRight
 } from 'lucide-react'
@@ -68,19 +78,19 @@ export default function CoachPage() {
     let cancelled = false
 
     Promise.all([
-      fetchHealthWorkouts(userId, { limitCount: 500 }),
+      fetchHealthWorkouts(userId, { limitCount: APP_DATA_WORKOUTS_LIMIT }),
       fetchAllOverrides(userId),
       fetchPlans(userId),
       fetchRaces(userId),
       fetchHealthMetrics(userId, 30),
       fetchUserSettings(userId),
-    ]).then(([workouts, overrides, plans, races, healthMetrics, settings]) => {
+    ]).then(async ([workouts, overrides, plans, races, healthMetrics, settings]) => {
       const runs = selectEffectiveWorkouts(workouts, overrides)
         .filter(w => w.isRunLike)
 
       // Find active plan and race (running plans only — coach is running-focused)
       const runningPlans = plans.filter(isRunningPlan)
-      const activePlan = runningPlans.find(p => p.status === "active") ?? runningPlans[0] ?? null
+      const activePlan = runningPlans.find(p => p.status === "active") ?? null
       // Race dates are date-only strings — local-midnight parsing via the shared
       // helpers keeps the coach's "days away" consistent with Races/Plan Insights.
       const upcomingRaces = races
@@ -88,7 +98,40 @@ export default function CoachPage() {
         .sort((a, b) => {
           return parseLocalDate(a.raceDate).getTime() - parseLocalDate(b.raceDate).getTime()
         })
-      const activeRace = upcomingRaces.find(r => r.isActive) ?? upcomingRaces[0] ?? null
+      const activeRace = upcomingRaces.find(r => r.isActive) ?? null
+
+      const maxHr = resolveMaxHr(settings)
+      const restingHr = resolveRestingHr(settings)
+      const asOf = new Date()
+      const raceDistanceMiles = activeRace
+        ? activeRace.raceDistance === 'custom'
+          ? activeRace.customDistanceMiles ?? null
+          : RACE_DISTANCE_MILES[activeRace.raceDistance] ?? null
+        : null
+      const raceInputs = races
+        .map(r => ({
+          raceDate: r.raceDate,
+          distanceMiles:
+            r.raceDistance === 'custom'
+              ? r.customDistanceMiles ?? 0
+              : RACE_DISTANCE_MILES[r.raceDistance] ?? 0,
+        }))
+        .filter(r => r.distanceMiles > 0)
+
+      let bestEffortSegments: BestEffortSegment[] = []
+      if (raceDistanceMiles && raceDistanceMiles >= HALF_MARATHON_MILES) {
+        const hydrated = await hydrateFastFinishSplits(userId, runs, {
+          maxHr,
+          restingHr,
+          asOf,
+        })
+        bestEffortSegments = buildBestEffortSegments(
+          hydrated.runs,
+          asOf,
+          maxHr,
+          restingHr
+        )
+      }
 
       if (cancelled) return
       setContext(
@@ -97,8 +140,9 @@ export default function CoachPage() {
           activePlan,
           activeRace,
           healthMetrics,
-          resolveMaxHr(settings),
-          resolveRestingHr(settings)
+          maxHr,
+          restingHr,
+          { races: raceInputs, bestEffortSegments, asOf }
         )
       )
       setContextStatus('ready')

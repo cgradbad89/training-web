@@ -10,7 +10,14 @@ import { getRoutePoints } from "@/utils/routeCache";
 import { getMileSplits } from "@/utils/mileSplitsCache";
 import { fetchWeatherForRun } from "@/lib/weather";
 import { BEST_EFFORTS_COMPUTATION_VERSION } from "@/utils/fastestMileSegment";
-import { fetchAllOverrides, fetchOverride } from "@/services/workoutOverrides";
+import {
+  deleteOverride,
+  excludeWorkout,
+  fetchAllOverrides,
+  fetchOverride,
+  restoreWorkout,
+  saveOverride,
+} from "@/services/workoutOverrides";
 import { fetchPlans } from "@/services/plans";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -29,10 +36,20 @@ vi.mock("@/hooks/useAuth", () => ({
   useAuth: () => ({ user: { uid: "u1" } }),
 }));
 
-// The page reads the shared workouts array for efficiency baselines; the tests
-// render it outside AppDataProvider, so stub the hook with an empty set.
+const appData = vi.hoisted(() => ({
+  patchOverrides: vi.fn(),
+  workouts: [] as unknown[],
+  overrides: {} as Record<string, unknown>,
+}));
+
+// The page reads the shared workouts array for efficiency baselines and
+// publishes successful override writes through patchOverrides.
 vi.mock("@/contexts/AppDataContext", () => ({
-  useAppData: () => ({ workouts: [], overrides: {} }),
+  useAppData: () => ({
+    workouts: appData.workouts,
+    overrides: appData.overrides,
+    patchOverrides: appData.patchOverrides,
+  }),
 }));
 
 vi.mock("@/hooks/useUnsavedChanges", () => ({
@@ -108,6 +125,9 @@ afterEach(() => {
   vi.mocked(fetchAllOverrides).mockReset().mockResolvedValue({});
   vi.mocked(fetchOverride).mockReset().mockResolvedValue(null);
   vi.mocked(fetchPlans).mockReset().mockResolvedValue([]);
+  appData.patchOverrides.mockReset();
+  appData.workouts = [];
+  appData.overrides = {};
 });
 
 describe("RunDetailPage Execution Structure", () => {
@@ -522,5 +542,232 @@ describe("RunDetailPage GAP/elevation sublabels", () => {
     expect(getRoutePoints).toHaveBeenCalledWith("u1", "workout_123");
     // Live-computed flat aggregate grade → GAP KPI labelled "flat".
     expect(container.textContent).toContain("flat");
+  });
+});
+
+// ── Shared override continuity ───────────────────────────────────────────────
+
+function mutationWorkout(): Record<string, unknown> {
+  return {
+    workoutId: "workout_123",
+    name: "Run",
+    activityType: "running",
+    displayType: "Run",
+    startDate: new Date("2026-08-24T10:00:00Z"),
+    endDate: new Date("2026-08-24T10:30:00Z"),
+    durationSeconds: 1800,
+    sourceName: "Test",
+    isRunLike: true,
+    hasRoute: false,
+    hasHRStream: false,
+    syncedAt: new Date("2026-08-24T10:31:00Z"),
+    calories: 300,
+    avgHeartRate: 145,
+    distanceMiles: 3,
+    distanceMeters: 4828,
+    avgPaceSecPerMile: 600,
+    avgSpeedMPS: null,
+    hrDriftPct: null,
+    cadenceSPM: null,
+    efficiencyRaw: null,
+    efficiencyScore: null,
+    elevationGainM: null,
+    weather: null,
+  };
+}
+
+function workoutOverride(
+  overrides: Partial<import("@/types/workoutOverride").WorkoutOverride> = {}
+): import("@/types/workoutOverride").WorkoutOverride {
+  return {
+    workoutId: "workout_123",
+    userId: "u1",
+    isExcluded: false,
+    excludedAt: null,
+    excludedReason: null,
+    distanceMilesOverride: null,
+    durationSecondsOverride: null,
+    runTypeOverride: null,
+    updatedAt: "2026-08-29T12:00:00.000Z",
+    ...overrides,
+  };
+}
+
+describe("RunDetailPage shared override continuity", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    vi.clearAllMocks();
+    vi.mocked(fetchHealthWorkout).mockResolvedValue(mutationWorkout() as never);
+    vi.mocked(fetchOverride).mockResolvedValue(null);
+    vi.mocked(getMileSplits).mockResolvedValue([]);
+    vi.mocked(getRoutePoints).mockResolvedValue([]);
+    vi.mocked(saveOverride).mockImplementation(async (_uid, value) => value);
+    vi.mocked(deleteOverride).mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    act(() => root?.unmount());
+    container.remove();
+  });
+
+  async function renderSettled() {
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<RunDetailPage />);
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  function lastPatchedMap(
+    initial: Record<string, import("@/types/workoutOverride").WorkoutOverride> = {}
+  ) {
+    const updater = appData.patchOverrides.mock.calls.at(-1)?.[0] as
+      | ((prev: typeof initial) => typeof initial)
+      | undefined;
+    expect(updater).toBeTypeOf("function");
+    return updater!(initial);
+  }
+
+  function setInput(input: HTMLInputElement, value: string) {
+    const setter = Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value"
+    )?.set;
+    setter?.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  it("publishes distance, duration, and run-type overrides after persistence", async () => {
+    await renderSettled();
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[title="Edit workout"]')!.click();
+    });
+    const numberInput = container.querySelector<HTMLInputElement>('input[type="number"]')!;
+    const durationInput = container.querySelector<HTMLInputElement>('input[type="text"]')!;
+    await act(async () => {
+      setInput(numberInput, "4.2");
+      setInput(durationInput, "40:00");
+      Array.from(container.querySelectorAll("button")).find(
+        (button) => button.textContent === "Treadmill Run"
+      )!.click();
+    });
+    await act(async () => {
+      Array.from(container.querySelectorAll("button")).find(
+        (button) => button.textContent === "Save Changes"
+      )!.click();
+      await Promise.resolve();
+    });
+
+    expect(saveOverride).toHaveBeenCalledTimes(1);
+    expect(lastPatchedMap().workout_123).toMatchObject({
+      distanceMilesOverride: 4.2,
+      durationSecondsOverride: 2400,
+      runTypeOverride: "Treadmill Run",
+    });
+  });
+
+  it("publishes exclusion only after excludeWorkout succeeds", async () => {
+    const excluded = workoutOverride({
+      isExcluded: true,
+      excludedAt: "2026-08-29T12:00:00.000Z",
+    });
+    vi.mocked(excludeWorkout).mockResolvedValue(excluded);
+    await renderSettled();
+
+    await act(async () => {
+      Array.from(container.querySelectorAll("button")).find(
+        (button) => button.textContent === "Exclude"
+      )!.click();
+    });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[role="dialog"] button:last-child')!.click();
+      await Promise.resolve();
+    });
+
+    expect(lastPatchedMap().workout_123).toEqual(excluded);
+  });
+
+  it("restore removes the shared entry when persistence deletes the document", async () => {
+    const excluded = workoutOverride({ isExcluded: true });
+    vi.mocked(fetchOverride).mockResolvedValue(excluded);
+    vi.mocked(restoreWorkout).mockResolvedValue(null);
+    await renderSettled();
+
+    await act(async () => {
+      Array.from(container.querySelectorAll("button")).find(
+        (button) => button.textContent === "Restore"
+      )!.click();
+      await Promise.resolve();
+    });
+
+    expect(lastPatchedMap({ workout_123: excluded })).toEqual({});
+  });
+
+  it("restore retains field overrides while clearing the shared exclusion", async () => {
+    const excluded = workoutOverride({
+      isExcluded: true,
+      distanceMilesOverride: 4,
+    });
+    const restored = workoutOverride({
+      isExcluded: false,
+      distanceMilesOverride: 4,
+    });
+    vi.mocked(fetchOverride).mockResolvedValue(excluded);
+    vi.mocked(restoreWorkout).mockResolvedValue(restored);
+    await renderSettled();
+
+    await act(async () => {
+      Array.from(container.querySelectorAll("button")).find(
+        (button) => button.textContent === "Restore"
+      )!.click();
+      await Promise.resolve();
+    });
+
+    expect(lastPatchedMap({ workout_123: excluded }).workout_123).toEqual(restored);
+  });
+
+  it("reset/delete removes the shared override effect", async () => {
+    const edited = workoutOverride({ distanceMilesOverride: 4 });
+    vi.mocked(fetchOverride).mockResolvedValue(edited);
+    await renderSettled();
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[title="Edit workout"]')!.click();
+    });
+    await act(async () => {
+      Array.from(container.querySelectorAll("button")).find(
+        (button) => button.textContent?.includes("Reset to Original")
+      )!.click();
+      await Promise.resolve();
+    });
+
+    expect(deleteOverride).toHaveBeenCalledWith("u1", "workout_123");
+    expect(lastPatchedMap({ workout_123: edited })).toEqual({});
+  });
+
+  it("does not publish a failed persistence attempt", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(saveOverride).mockRejectedValue(new Error("write failed"));
+    await renderSettled();
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('button[title="Edit workout"]')!.click();
+    });
+    await act(async () => {
+      Array.from(container.querySelectorAll("button")).find(
+        (button) => button.textContent === "Save Changes"
+      )!.click();
+      await Promise.resolve();
+    });
+
+    expect(appData.patchOverrides).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 });

@@ -181,9 +181,7 @@ function buildOverride(workoutId: string, isExcluded: boolean): WorkoutOverride 
   };
 }
 
-/** A "Sept 2026 ... Sub 9:30" running plan that's already the current seed
- *  version, so the seed/migration effect makes no writes (buildSeptTravelMigration
- *  is mocked to return null too) — keeps refreshPlans call counts deterministic. */
+/** Representative running plan used by page-mount and explicit-action tests. */
 function buildSeptPlan(overrides: Partial<RunningPlan> = {}): RunningPlan {
   return {
     id: "sept1",
@@ -269,9 +267,8 @@ describe("PlansPage — shared AppDataContext wiring", () => {
   it("calls the shared refreshPlans() after a plan-mutating action (complete plan)", async () => {
     await mount();
 
-    // The seed/migration pass makes no writes for an already-current Sept
-    // plan (buildSeptTravelMigration mocked to null), so refreshPlans should
-    // not have fired yet from mount alone.
+    // Mounting is read-only, so refreshPlans has not fired before the explicit
+    // completion action.
     expect(h.refreshPlans).not.toHaveBeenCalled();
 
     const completeBtn = Array.from(container.querySelectorAll("button")).find(
@@ -320,29 +317,53 @@ describe("PlansPage — shared AppDataContext wiring", () => {
     expect(h.fetchRaces).not.toHaveBeenCalled();
   });
 
-  it("renders the page shell and existing plan before migration finishes", async () => {
-    let resolveMigration!: () => void;
-    h.buildSeptTravelMigration.mockImplementation(() => ({
-      ...buildSeptPlan(),
-      name: "Sept 2026 Half Marathon Sub 9:30 Migrated",
-    }));
-    h.updatePlan.mockReturnValue(
-      new Promise<void>((resolve) => {
-        resolveMigration = resolve;
-      })
-    );
+  it.each([
+    "Sept 2026 Owner Plan",
+    "Half Marathon Sept 2026 Sub 9:45",
+    "Sub 9:45 Base Block",
+  ])("mounting an existing plan named %s performs no plan write", async (name) => {
+    h.useAppDataReturn.plans = [buildSeptPlan({ name })];
 
     await mount();
 
-    expect(h.updatePlan).toHaveBeenCalledTimes(1);
-    expect(container.textContent).toContain("Plans & Goals");
-    expect(container.textContent).toContain("Calendar");
-    expect(container.querySelector('[data-testid="running-plan-detail"]')).toBeTruthy();
+    expect(h.createPlan).not.toHaveBeenCalled();
+    expect(h.updatePlan).not.toHaveBeenCalled();
+    expect(h.deletePlan).not.toHaveBeenCalled();
+    expect(h.setActivePlan).not.toHaveBeenCalled();
+    expect(h.setPlanCompletion).not.toHaveBeenCalled();
+    expect(h.seedSeptHMPlan).not.toHaveBeenCalled();
+    expect(h.buildSeptTravelMigration).not.toHaveBeenCalled();
+    expect(h.refreshPlans).not.toHaveBeenCalled();
+  });
 
-    resolveMigration();
+  it("mounting with zero plans leaves the account empty and performs no seed write", async () => {
+    h.useAppDataReturn.plans = [];
+
+    await mount();
+
+    expect(container.textContent).toContain("No running plans");
+    expect(container.textContent).toContain("Create a plan");
+    expect(h.createPlan).not.toHaveBeenCalled();
+    expect(h.seedSeptHMPlan).not.toHaveBeenCalled();
+    expect(h.refreshPlans).not.toHaveBeenCalled();
+  });
+
+  it("later shared-plan refresh results do not trigger removed migration behavior", async () => {
+    await mount();
+    h.useAppDataReturn.plans = [
+      buildSeptPlan({ id: "old-shape", name: "Sept 2026 Sub 9:45" }),
+    ];
+
+    await act(async () => {
+      root.render(<PlansPage />);
+    });
     await flush();
-    await flush();
-    expect(h.refreshPlans).toHaveBeenCalledTimes(1);
+
+    expect(h.createPlan).not.toHaveBeenCalled();
+    expect(h.updatePlan).not.toHaveBeenCalled();
+    expect(h.deletePlan).not.toHaveBeenCalled();
+    expect(h.seedSeptHMPlan).not.toHaveBeenCalled();
+    expect(h.buildSeptTravelMigration).not.toHaveBeenCalled();
   });
 
   it("does not seed, migrate, or present empty plans after a failed plans read", async () => {

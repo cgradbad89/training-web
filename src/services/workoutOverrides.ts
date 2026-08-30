@@ -41,15 +41,14 @@ export async function fetchAllOverrides(
 export async function saveOverride(
   uid: string,
   override: WorkoutOverride
-): Promise<void> {
+): Promise<WorkoutOverride> {
   const ref = doc(db, overridePath(uid, override.workoutId));
-  await setDoc(
-    ref,
-    stripUndefined({
-      ...override,
-      updatedAt: new Date().toISOString(),
-    })
-  );
+  const persisted = stripUndefined({
+    ...override,
+    updatedAt: new Date().toISOString(),
+  });
+  await setDoc(ref, persisted);
+  return persisted;
 }
 
 export async function deleteOverride(
@@ -63,9 +62,9 @@ export async function excludeWorkout(
   uid: string,
   workoutId: string,
   reason?: string
-): Promise<void> {
+): Promise<WorkoutOverride> {
   const existing = await fetchOverride(uid, workoutId);
-  await saveOverride(uid, {
+  return saveOverride(uid, {
     workoutId,
     userId: uid,
     isExcluded: true,
@@ -81,9 +80,9 @@ export async function excludeWorkout(
 export async function restoreWorkout(
   uid: string,
   workoutId: string
-): Promise<void> {
+): Promise<WorkoutOverride | null> {
   const existing = await fetchOverride(uid, workoutId);
-  if (!existing) return;
+  if (!existing) return null;
 
   // If no other overrides exist, delete the doc entirely
   const hasOtherOverrides =
@@ -92,13 +91,14 @@ export async function restoreWorkout(
     existing.runTypeOverride != null;
 
   if (hasOtherOverrides) {
-    await saveOverride(uid, {
+    return saveOverride(uid, {
       ...existing,
       isExcluded: false,
       excludedAt: null,
       excludedReason: null,
     });
-  } else {
-    await deleteOverride(uid, workoutId);
   }
+
+  await deleteOverride(uid, workoutId);
+  return null;
 }
