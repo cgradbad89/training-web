@@ -45,13 +45,7 @@ After streaming begins, HTTP status cannot change. A mid-stream failure terminat
 
 ## Rollback and transitional safety
 
-The migration is reversible by reverting migration commit `b0a89ab` and the follow-up output-budget fix `f6606a2`. Production verification has succeeded, but the following rollback assets are deliberately retained for a separate cleanup change:
-
-- `@anthropic-ai/sdk` and `@google/genai` remain installed.
-- `GEMINI_API_KEY` and `ANTHROPIC_API_KEY` remain documented and must not be removed from production configuration.
-- The inactive previous provider implementation remains in `src/app/api/coach/coachStream.legacy.ts` and is not imported by the active route.
-
-Do not delete those rollback assets as part of an unrelated change. Remove them together in a dedicated cleanup after confirming the team no longer needs immediate direct-provider rollback.
+The migration remains reversible through git history by reverting migration commit `b0a89ab` and the follow-up output-budget fix `f6606a2`. The dedicated dependency-security cleanup removed the inactive `coachStream.legacy.ts` implementation and its unused `@anthropic-ai/sdk` and `@google/genai` dependencies after production verification succeeded. Restoring the historical direct-provider path now also requires restoring those files/dependencies and configuring the corresponding provider credentials.
 
 ## Production verification (completed 2026-08-20)
 
@@ -60,11 +54,11 @@ Do not delete those rollback assets as part of an unrelated change. Remove them 
 - The production `/api/coach` request returned HTTP 200. Runtime logs recorded `finishReason: stop`, 1,800 input tokens, 950 output/text tokens, and zero reasoning tokens; the error-level log scan was clean.
 - AI Gateway request `gen_01M0GCBKG026CKSDKV5WJQVT3Z` returned 200 for `anthropic/claude-sonnet-5`, routed through Claude Platform on AWS in `iad1`, with project authentication shown as `training-web`. There were no 403, entitlement, or missing-key errors.
 - The first smoke test exposed Sonnet 5 adaptive reasoning consuming the 1,024-token response budget. Commit `f6606a2` explicitly disabled reasoning, and the successful request above verified the correction with 950 visible text tokens and zero reasoning tokens.
-- Rollback remains available through the retained legacy implementation and provider dependencies; reverting `f6606a2` and `b0a89ab` restores the previous direct-provider path.
+- Rollback remains available through git history; it is no longer an in-tree dormant implementation.
 
-## Recommended follow-up cleanup (separate change)
+## Cleanup status
 
-- Delete `coachStream.legacy.ts`.
-- Remove `@anthropic-ai/sdk` and `@google/genai`.
-- Remove `GEMINI_API_KEY` and `ANTHROPIC_API_KEY` from Vercel and local documentation.
-- Remove the transitional provider entries from the PRD and this document when the rollback assets are deleted.
+- `coachStream.legacy.ts` was deleted.
+- `@anthropic-ai/sdk` and `@google/genai` were removed from the runtime dependency graph.
+- The PRD and repository guidance now describe AI SDK + AI Gateway as the only active application architecture.
+- Deployment-environment cleanup of any old direct-provider secrets is an operational follow-up and was not required for application behavior.

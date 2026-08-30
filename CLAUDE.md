@@ -67,7 +67,7 @@ Deferred:         [anything not completed, or "none"]
 | Local repo | /Users/johnfolstrom/Desktop/training-web |
 | iOS sync repo | cgradbad89/MEA.git — do not modify from this repo |
 | Firestore rules | Firebase Console is authoritative; only the product owner may change production rules manually. Agents may inspect/report Console rules but never edit or deploy them. |
-| API keys | `GEMINI_API_KEY` and `ANTHROPIC_API_KEY` are server-only — never `NEXT_PUBLIC_*`. Gemini is the default AI Coach provider. |
+| AI Coach credentials | Deployments use Vercel OIDC for AI Gateway; `AI_GATEWAY_API_KEY` is the optional server-only static-key alternative for local/CI use. |
 
 ## Architecture Quick Reference
 
@@ -75,7 +75,7 @@ Deferred:         [anything not completed, or "none"]
 src/
   app/
     (app)/          # Auth-guarded routes (dashboard, runs, plans, health, etc.)
-    api/coach/      # Server-side Gemini & Anthropic API route
+    api/coach/      # Server-side Vercel AI SDK / AI Gateway route
     login/          # Public login page
   components/       # Shared UI components + layout/
   hooks/            # useAuth, useActivities, useUnsavedChanges
