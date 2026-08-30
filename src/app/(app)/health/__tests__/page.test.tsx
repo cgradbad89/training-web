@@ -130,6 +130,10 @@ describe("Health Dashboard Page", () => {
   let root: Root;
 
   beforeEach(() => {
+    // Keep calendar/cache expectations tied to an explicit local calendar day
+    // instead of whichever date the test process happens to run. Local noon
+    // represents the same intended day in every host timezone.
+    vi.setSystemTime(new Date(2026, 7, 29, 12));
     vi.clearAllMocks();
     focus.refetch = null;
     container = document.createElement("div");
@@ -151,6 +155,7 @@ describe("Health Dashboard Page", () => {
       root.unmount();
     });
     container.remove();
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -342,27 +347,50 @@ describe("Health Dashboard Page", () => {
     expect(healthMetricsService.fetchHealthMetricsRange).not.toHaveBeenCalled();
   });
 
-  it("fetches only the uncovered start of a partially covered Calendar month", async () => {
-    await renderPage(root);
-    await clickButton(container, "Calendar");
-    await clickButton(container, "Month");
+  it.each([
+    {
+      localDate: new Date(2026, 7, 30, 12),
+      cutoff: "2026-06-01",
+      expectedGap: null,
+    },
+    {
+      localDate: new Date(2026, 7, 31, 12),
+      cutoff: "2026-06-02",
+      expectedGap: ["2026-06-01", "2026-06-01"],
+    },
+    {
+      localDate: new Date(2026, 8, 1, 12),
+      cutoff: "2026-06-03",
+      expectedGap: ["2026-06-01", "2026-06-02"],
+    },
+  ])(
+    "requests only the uncovered cutoff-month gap on $cutoff",
+    async ({ localDate, cutoff, expectedGap }) => {
+      vi.setSystemTime(localDate);
+      await renderPage(root);
+      await clickButton(container, "Calendar");
+      await clickButton(container, "Month");
 
-    const now = new Date();
-    const cutoff = healthMetricsService.healthMetricsCutoffISO(90);
-    const [cutoffYear, cutoffMonth] = cutoff.split("-").map(Number);
-    const monthsBack =
-      now.getFullYear() * 12 + now.getMonth() -
-      (cutoffYear * 12 + cutoffMonth - 1);
-    for (let index = 0; index < monthsBack; index += 1) {
-      await clickAriaLabel(container, "Previous month");
+      expect(healthMetricsService.healthMetricsCutoffISO(90)).toBe(cutoff);
+      const now = new Date();
+      const [cutoffYear, cutoffMonth] = cutoff.split("-").map(Number);
+      const monthsBack =
+        now.getFullYear() * 12 + now.getMonth() -
+        (cutoffYear * 12 + cutoffMonth - 1);
+      for (let index = 0; index < monthsBack; index += 1) {
+        await clickAriaLabel(container, "Previous month");
+      }
+
+      if (expectedGap === null) {
+        expect(healthMetricsService.fetchHealthMetricsRange).not.toHaveBeenCalled();
+      } else {
+        expect(healthMetricsService.fetchHealthMetricsRange).toHaveBeenLastCalledWith(
+          "test-user-123",
+          ...expectedGap
+        );
+      }
     }
-
-    expect(healthMetricsService.fetchHealthMetricsRange).toHaveBeenLastCalledWith(
-      "test-user-123",
-      `${cutoff.slice(0, 7)}-01`,
-      shiftIsoDate(cutoff, -1)
-    );
-  });
+  );
 
   it("fetches a fully uncovered Calendar month as one whole-month gap", async () => {
     await renderPage(root);
