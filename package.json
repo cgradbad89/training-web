@@ -16,8 +16,6 @@
     "snapshot:import": "SNAPSHOT_IMPORT=1 vitest run scripts/importFirestoreSnapshot.test.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.82.0",
-    "@google/genai": "^2.13.0",
     "@react-google-maps/api": "^2.20.8",
     "ai": "^7.0.70",
     "firebase": "^12.11.0",

@@ -6,6 +6,7 @@
     "**/*.test.ts",
     "**/*.test.tsx",
     "**/*.spec.ts",
-    "**/*.spec.tsx"
+    "**/*.spec.tsx",
+    "src/app/api/coach/coachStream 2.ts"
   ]
 }
