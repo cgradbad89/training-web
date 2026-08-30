@@ -37,7 +37,10 @@ import {
 } from "@/hooks/useClientPerformanceMark";
 import { type AggregatedStatsDoc } from "@/utils/aggregatedStats";
 import { formatPaceLabel } from "@/utils/pace";
-import { weekStart as getWeekStart } from "@/utils/dates";
+import {
+  isDateOnlyWithinPastMonths,
+  weekStart as getWeekStart,
+} from "@/utils/dates";
 import {
   buildQualifyingEfforts,
   fitRiegel,
@@ -848,10 +851,8 @@ function CardioFitnessCard({
   const currentVo2Date = formatVo2DateShort(latest.date);
   const band = ratingBand(currentVo2);
 
-  const twelveMonthsAgo = new Date();
-  twelveMonthsAgo.setFullYear(twelveMonthsAgo.getFullYear() - 1);
   const recentHistory = history.filter(
-    (e) => new Date(e.date) >= twelveMonthsAgo,
+    (e) => isDateOnlyWithinPastMonths(e.date, 12),
   );
   const chartData = recentHistory.map((h) => ({
     date: formatVo2DateShort(h.date),

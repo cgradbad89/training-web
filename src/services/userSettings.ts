@@ -9,6 +9,7 @@ import {
   serverTimestamp,
   setDoc,
   where,
+  deleteField,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { COLLECTIONS } from "@/lib/firestore";
@@ -68,13 +69,19 @@ export async function saveUserSettings(
   settings: Partial<UserSettings>
 ): Promise<void> {
   const ref = doc(db, COLLECTIONS.userSettings(uid), PREFS_DOC);
+  const writes = Object.fromEntries(
+    Object.entries(settings).map(([key, value]) => [
+      key,
+      value === undefined ? deleteField() : value,
+    ])
+  );
   await setDoc(
     ref,
-    stripUndefined({
-      ...settings,
+    {
+      ...writes,
       uid,
       updatedAt: new Date().toISOString(),
-    }),
+    },
     { merge: true }
   );
 }

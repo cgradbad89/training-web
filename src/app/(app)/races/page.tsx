@@ -5,7 +5,6 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useAuth } from "@/hooks/useAuth";
 import { useUnsavedChanges } from "@/hooks/useUnsavedChanges";
 import {
-  fetchRaces,
   createRace,
   updateRace,
   deleteRace,
@@ -13,9 +12,8 @@ import {
   associateRunWithRace,
   disassociateRunFromRace,
 } from "@/services/races";
-import { fetchHealthWorkouts } from "@/services/healthWorkouts";
-import { fetchPlans } from "@/services/plans";
 import { type RunningPlan, isRunningPlan } from "@/types/plan";
+import { useAppData } from "@/contexts/AppDataContext";
 import { PageHeader } from "@/components/layout/PageHeader";
 import {
   type Race,
@@ -29,7 +27,12 @@ import {
   formatDuration,
   parsePaceString,
 } from "@/utils/pace";
-import { parseLocalDate, daysUntil } from "@/utils/dates";
+import {
+  parseLocalDate,
+  daysUntil,
+  isPastLocalDate,
+  toLocalIsoDate,
+} from "@/utils/dates";
 import {
   Calendar,
   MapPin,
@@ -92,6 +95,42 @@ function nearbyRuns(
     const diff = Math.abs(a.startDate.getTime() - raceMs);
     return diff <= window;
   });
+}
+
+function applyRaceData(
+  race: Race,
+  data: Partial<Omit<Race, "id" | "createdAt">>
+): Race {
+  const next = { ...race } as Race & Record<string, unknown>;
+  for (const [key, value] of Object.entries(data)) {
+    if (value === undefined) delete next[key];
+    else next[key] = value;
+  }
+  return next;
+}
+
+function withAssociatedRun(race: Race, run: HealthWorkout): Race {
+  return applyRaceData(race, {
+    actualRunId: run.workoutId,
+    actualRunDate: toLocalIsoDate(run.startDate),
+    actualRunDistanceMiles: run.distanceMiles,
+    actualRunDurationSeconds: run.durationSeconds,
+    actualRunAvgPace: run.avgPaceSecPerMile ?? undefined,
+  });
+}
+
+function withoutAssociatedRun(race: Race): Race {
+  const next = { ...race } as Race & Record<string, unknown>;
+  for (const key of [
+    "actualRunId",
+    "actualRunDate",
+    "actualRunDistanceMiles",
+    "actualRunDurationSeconds",
+    "actualRunAvgPace",
+  ]) {
+    delete next[key];
+  }
+  return next;
 }
 
 // ─── StatBlock ────────────────────────────────────────────────────────────────
@@ -884,11 +923,18 @@ function RunPickerModal({
 
 export default function RacesPage() {
   const { user } = useAuth();
-  const [races, setRaces] = useState<Race[]>([]);
-  const [activities, setActivities] = useState<HealthWorkout[]>([]);
-  const [runningPlans, setRunningPlans] = useState<RunningPlan[]>([]);
-  const [loading, setLoading] = useState(true);
+  const {
+    races,
+    workouts: activities,
+    plans,
+    racesLoading,
+    workoutsLoading,
+    plansLoading,
+    patchRaces,
+  } = useAppData();
+  const runningPlans = plans.filter(isRunningPlan) as RunningPlan[];
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingRace, setEditingRace] = useState<Race | null>(null);
@@ -896,46 +942,23 @@ export default function RacesPage() {
   const [pickerRaceId, setPickerRaceId] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!user) return;
-    loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
-
-  useEffect(() => {
     const isOpen = modalOpen || !!deletingRace || !!pickerRaceId;
     document.body.style.overflow = isOpen ? "hidden" : "";
     return () => { document.body.style.overflow = ""; };
   }, [modalOpen, deletingRace, pickerRaceId]);
 
-  async function loadAll() {
-    if (!user) return;
-    setLoading(true);
-    try {
-      const [loadedRaces, loadedActivities, loadedPlans] = await Promise.all([
-        fetchRaces(user.uid),
-        fetchHealthWorkouts(user.uid, { limitCount: 200 }),
-        fetchPlans(user.uid),
-      ]);
-      setRaces(loadedRaces);
-      setActivities(loadedActivities);
-      setRunningPlans(loadedPlans.filter(isRunningPlan));
-    } finally {
-      setLoading(false);
-    }
-  }
-
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
   const upcomingRaces = races
-    .filter((r) => parseLocalDate(r.raceDate) > today)
+    .filter((r) => !isPastLocalDate(r.raceDate, today))
     .sort(
       (a, b) =>
         parseLocalDate(a.raceDate).getTime() - parseLocalDate(b.raceDate).getTime()
     );
 
   const pastRaces = races
-    .filter((r) => parseLocalDate(r.raceDate) <= today)
+    .filter((r) => isPastLocalDate(r.raceDate, today))
     .sort(
       (a, b) =>
         parseLocalDate(b.raceDate).getTime() - parseLocalDate(a.raceDate).getTime()
@@ -959,20 +982,46 @@ export default function RacesPage() {
   ) {
     if (!user) return;
     setSaving(true);
+    setError(null);
     try {
       if (editingRace) {
         await updateRace(user.uid, editingRace.id, data);
+        patchRaces((previous) =>
+          previous.map((race) =>
+            race.id === editingRace.id ? applyRaceData(race, data) : race
+          )
+        );
         if (setGoal && !editingRace.isActive) {
           await setActiveRace(user.uid, editingRace.id);
+          patchRaces((previous) =>
+            previous.map((race) => ({
+              ...race,
+              isActive: race.id === editingRace.id,
+            }))
+          );
         }
       } else {
-        const newId = await createRace(user.uid, data);
+        const createdRaceId = await createRace(user.uid, data);
+        const createdRace: Race = {
+          ...data,
+          id: createdRaceId,
+          createdAt: new Date().toISOString(),
+        };
+        patchRaces((previous) => [...previous, createdRace]);
         if (setGoal) {
-          await setActiveRace(user.uid, newId);
+          await setActiveRace(user.uid, createdRace.id);
+          patchRaces((previous) =>
+            previous.map((race) => ({
+              ...race,
+              isActive: race.id === createdRace.id,
+            }))
+          );
         }
       }
       setModalOpen(false);
-      await loadAll();
+    } catch (err) {
+      console.error("[Races] save failed", err);
+      setError("Could not save this race.");
     } finally {
       setSaving(false);
     }
@@ -981,11 +1030,15 @@ export default function RacesPage() {
   async function handleSetActive(race: Race) {
     if (!user || saving) return;
     setSaving(true);
+    setError(null);
     try {
       await setActiveRace(user.uid, race.id);
-      setRaces((prev) =>
+      patchRaces((prev) =>
         prev.map((r) => ({ ...r, isActive: r.id === race.id }))
       );
+    } catch (err) {
+      console.error("[Races] set active failed", err);
+      setError("Could not change the goal race.");
     } finally {
       setSaving(false);
     }
@@ -994,10 +1047,18 @@ export default function RacesPage() {
   async function handleAssociate(run: HealthWorkout) {
     if (!user || !pickerRaceId) return;
     setSaving(true);
+    setError(null);
     try {
       await associateRunWithRace(user.uid, pickerRaceId, run);
+      patchRaces((previous) =>
+        previous.map((race) =>
+          race.id === pickerRaceId ? withAssociatedRun(race, run) : race
+        )
+      );
       setPickerRaceId(null);
-      await loadAll();
+    } catch (err) {
+      console.error("[Races] associate run failed", err);
+      setError("Could not link that run.");
     } finally {
       setSaving(false);
     }
@@ -1006,9 +1067,17 @@ export default function RacesPage() {
   async function handleDisassociate(raceId: string) {
     if (!user) return;
     setSaving(true);
+    setError(null);
     try {
       await disassociateRunFromRace(user.uid, raceId);
-      await loadAll();
+      patchRaces((previous) =>
+        previous.map((race) =>
+          race.id === raceId ? withoutAssociatedRun(race) : race
+        )
+      );
+    } catch (err) {
+      console.error("[Races] disassociate run failed", err);
+      setError("Could not remove that run link.");
     } finally {
       setSaving(false);
     }
@@ -1017,10 +1086,14 @@ export default function RacesPage() {
   async function handleDelete() {
     if (!user || !deletingRace) return;
     setSaving(true);
+    setError(null);
     try {
       await deleteRace(user.uid, deletingRace.id);
-      setRaces((prev) => prev.filter((r) => r.id !== deletingRace.id));
+      patchRaces((prev) => prev.filter((r) => r.id !== deletingRace.id));
       setDeletingRace(null);
+    } catch (err) {
+      console.error("[Races] delete failed", err);
+      setError("Could not delete this race.");
     } finally {
       setSaving(false);
     }
@@ -1028,7 +1101,7 @@ export default function RacesPage() {
 
   // ── Render ────────────────────────────────────────────────────────────────
 
-  if (loading) {
+  if (racesLoading || workoutsLoading || plansLoading) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
@@ -1050,6 +1123,7 @@ export default function RacesPage() {
           </button>
         }
       />
+      {error ? <p className="mt-3 text-sm font-medium text-danger">{error}</p> : null}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
         {/* Upcoming */}

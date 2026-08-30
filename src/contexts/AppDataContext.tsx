@@ -128,6 +128,8 @@ export interface AppDataContextValue {
   refreshRaces: () => Promise<void>;
   refreshOverrides: () => Promise<void>;
   refreshSettings: () => Promise<void>;
+  /** Persistence-first shared race mutation. Failed writes must never call it. */
+  patchRaces: (updater: (prev: Race[]) => Race[]) => void;
   /** Optimistic local override mutation (post-write UX), mirrors the old
    *  per-page `setOverrides((prev) => ...)` calls. */
   patchOverrides: (
@@ -498,6 +500,14 @@ function AppDataProviderGeneration({
     [isCurrentRequest, uid]
   );
 
+  const patchRaces = useCallback(
+    (updater: (prev: Race[]) => Race[]) => {
+      const generation = requestGenerationRef.current;
+      if (isCurrentRequest(uid, generation)) setRaces(updater);
+    },
+    [isCurrentRequest, uid]
+  );
+
   const patchTrainingLoad = useCallback(
     (workoutId: string, patch: TrainingLoadFields) => {
       const generation = requestGenerationRef.current;
@@ -545,6 +555,7 @@ function AppDataProviderGeneration({
       refreshRaces,
       refreshOverrides,
       refreshSettings,
+      patchRaces,
       patchOverrides,
       patchTrainingLoad,
     }),
@@ -574,6 +585,7 @@ function AppDataProviderGeneration({
       refreshRaces,
       refreshOverrides,
       refreshSettings,
+      patchRaces,
       patchOverrides,
       patchTrainingLoad,
     ]

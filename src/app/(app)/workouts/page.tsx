@@ -23,7 +23,6 @@ import { useAppData } from "@/contexts/AppDataContext";
 import { useEnrichTrainingLoads } from "@/hooks/useEnrichTrainingLoads";
 import { selectEffectiveWorkouts } from "@/utils/selectActiveWorkouts";
 import { applyOverride } from "@/types/workoutOverride";
-import { fetchUserSettings } from "@/services/userSettings";
 import { excludeWorkout } from "@/services/workoutOverrides";
 import { detectDuplicatePairs, type DuplicatePair } from "@/utils/duplicateDetection";
 import {
@@ -46,10 +45,7 @@ import {
   getActivityContext,
   isHiitLikeActivity,
   isMindfulActivity,
-  resolveMaxHr,
-  resolveRestingHr,
 } from "@/utils/trainingLoad";
-import { type UserSettings } from "@/types/userSettings";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -611,8 +607,11 @@ export default function WorkoutsPage() {
     patchOverrides,
     patchTrainingLoad,
     refreshWorkouts,
+    userSettings,
+    maxHr,
+    restingHr,
+    settingsLoading,
   } = useAppData();
-  const [userSettings, setUserSettings] = useState<UserSettings | null>();
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [selectedWorkout, setSelectedWorkout] = useState<HealthWorkout | null>(null);
@@ -663,15 +662,6 @@ export default function WorkoutsPage() {
 
   const currentYear = new Date().getFullYear();
   const [selectedYear, setSelectedYear] = useState<number>(currentYear);
-  const maxHr = resolveMaxHr(userSettings);
-  const restingHr = resolveRestingHr(userSettings);
-
-  useEffect(() => {
-    if (!uid) return;
-    fetchUserSettings(uid)
-      .then(setUserSettings)
-      .catch((err) => console.error("[fetchUserSettings]", err));
-  }, [uid]);
 
   // Fetch dismissed pairs. Overrides now come from the shared AppDataContext
   // (see useAppData() above) instead of a page-local fetch, so excluding a
@@ -781,7 +771,7 @@ export default function WorkoutsPage() {
     });
   }, []);
 
-  if (loading || workoutsLoading || overridesLoading) {
+  if (loading || workoutsLoading || overridesLoading || settingsLoading) {
     return <WorkoutsSkeleton />;
   }
 
