@@ -7,18 +7,18 @@ import { InfoTooltip } from "@/components/ui/InfoTooltip";
 import { LoadingSpinner } from "@/components/ui/LoadingSpinner";
 import { useAuth } from "@/hooks/useAuth";
 import {
-  fetchUserSettings,
   gatherRecentRunHr,
   saveUserSettings,
   saveUserSettingsSuggestions,
 } from "@/services/userSettings";
+import { recomputeAllTrainingLoad } from "@/services/healthWorkouts";
+import { type HrAnchors } from "@/utils/trainingLoad";
+import { useAppData } from "@/contexts/AppDataContext";
 import {
-  fetchHealthWorkouts,
-  recomputeAllTrainingLoad,
-} from "@/services/healthWorkouts";
-import { hrAnchorsChanged, type HrAnchors } from "@/utils/trainingLoad";
-import { type UserSettings } from "@/types/userSettings";
-import { fetchRaces } from "@/services/races";
+  saveSettingsWithRecompute,
+  recomputeIsRequired,
+  type SettingsRecomputeStatus,
+} from "@/utils/settingsRecompute";
 import { RACE_DISTANCE_MILES } from "@/types/race";
 import { formatPace, parsePaceString } from "@/utils/pace";
 import { computeMaxHrSuggestion } from "@/utils/maxHrSuggestion";
@@ -98,14 +98,27 @@ function FieldLabel({
 export default function SettingsPage() {
   const { user } = useAuth();
   const uid = user?.uid ?? null;
+  const {
+    userSettings,
+    workouts,
+    races,
+    settingsLoading,
+    workoutsLoading,
+    racesLoading,
+    racesResolution,
+    refreshSettings,
+    refreshWorkouts,
+    settingsResolution,
+    workoutsResolution,
+  } = useAppData();
 
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [recomputing, setRecomputing] = useState(false);
+  const operationInFlightRef = useRef(false);
   const [recomputeMessage, setRecomputeMessage] = useState<string | null>(null);
-  // Anchors as last persisted — the baseline handleSave diffs against to decide
-  // whether a stored-load recompute is needed. Seeded on load + after each save.
-  const prevAnchorsRef = useRef<HrAnchors>({});
+  const completedAnchorsRef = useRef<HrAnchors>({});
+  const [recomputeStatus, setRecomputeStatus] =
+    useState<SettingsRecomputeStatus>({ state: "idle" });
+  const initializedUidRef = useRef<string | null>(null);
   const [suggestingHr, setSuggestingHr] = useState(false);
   const [displayName, setDisplayName] = useState("");
   const [defaultTargetPace, setDefaultTargetPace] = useState("");
@@ -121,88 +134,84 @@ export default function SettingsPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!uid) return;
-    let cancelled = false;
-
-    setLoading(true);
-    Promise.all([
-      fetchUserSettings(uid),
-      fetchHealthWorkouts(uid, { limitCount: 500 }),
-      fetchRaces(uid),
-    ])
-      .then(([settings, workouts, races]) => {
-        if (cancelled) return;
-
-        setDisplayName(settings?.displayName ?? user?.displayName ?? "");
-        setDefaultTargetPace(
-          settings?.defaultTargetPaceSecPerMile
-            ? formatPace(settings.defaultTargetPaceSecPerMile)
-            : "10:00"
-        );
-        setMaxHeartRate(
-          settings?.maxHeartRate ? String(settings.maxHeartRate) : ""
-        );
-        setRestingHeartRate(
-          settings?.restingHeartRate ? String(settings.restingHeartRate) : ""
-        );
-        prevAnchorsRef.current = {
-          maxHeartRate: settings?.maxHeartRate,
-          restingHeartRate: settings?.restingHeartRate,
-        };
-        setThresholdPace(
-          settings?.thresholdPaceSecPerMile
-            ? formatPace(settings.thresholdPaceSecPerMile)
-            : ""
-        );
-        setSuggestedMaxHeartRate(settings?.suggestedMaxHeartRate ?? null);
-
-        const runs = workouts.filter((w) => w.isRunLike);
-        const runInputs = runs.map((r) => ({
-          workoutId: r.workoutId,
-          distanceMiles: r.distanceMiles,
-          durationSeconds: r.durationSeconds,
-          startDate: r.startDate,
-          activityType: r.activityType,
-          sourceName: r.sourceName,
-        }));
-        const raceInputs = races
-          .map((race) => {
-            const distanceMiles =
-              race.raceDistance === "custom"
-                ? (race.customDistanceMiles ?? 0)
-                : (RACE_DISTANCE_MILES[race.raceDistance] ?? 0);
-            return { raceDate: race.raceDate, distanceMiles };
-          })
-          .filter((race) => race.distanceMiles > 0);
-        const efforts = buildQualifyingEfforts(runInputs, 56, {
-          races: raceInputs,
-        });
-        const fitTen = fitRiegel(efforts, 10.0, 3.0, {
-          min: 1.04,
-          max: 1.10,
-        });
-        const fitHalf = fitRiegel(efforts, 13.109, 3.0, {
-          min: 1.04,
-          max: 1.10,
-        });
-        const suggestion = computeThresholdPaceSuggestion(
-          fitTen ? predictSeconds(fitTen, 10.0) : null,
-          fitHalf ? predictSeconds(fitHalf, 13.109) : null
-        );
-        setThresholdSuggestion(suggestion);
-      })
-      .catch((err) => {
-        console.error("[SettingsPage] load failed", err);
-        if (!cancelled) setError("Could not load settings.");
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
+    if (
+      !uid ||
+      settingsLoading ||
+      workoutsLoading ||
+      racesLoading ||
+      initializedUidRef.current === uid
+    ) {
+      return;
+    }
+    const settings = userSettings;
+    initializedUidRef.current = uid;
+    setDisplayName(settings?.displayName ?? user?.displayName ?? "");
+    setDefaultTargetPace(
+      settings?.defaultTargetPaceSecPerMile
+        ? formatPace(settings.defaultTargetPaceSecPerMile)
+        : "10:00"
+    );
+    setMaxHeartRate(
+      settings?.maxHeartRate ? String(settings.maxHeartRate) : ""
+    );
+    setRestingHeartRate(
+      settings?.restingHeartRate ? String(settings.restingHeartRate) : ""
+    );
+    completedAnchorsRef.current = {
+      maxHeartRate: settings?.maxHeartRate,
+      restingHeartRate: settings?.restingHeartRate,
     };
-  }, [uid, user?.displayName]);
+    setThresholdPace(
+      settings?.thresholdPaceSecPerMile
+        ? formatPace(settings.thresholdPaceSecPerMile)
+        : ""
+    );
+    setSuggestedMaxHeartRate(settings?.suggestedMaxHeartRate ?? null);
+
+    const runs = workouts.filter((w) => w.isRunLike);
+    const runInputs = runs.map((r) => ({
+      workoutId: r.workoutId,
+      distanceMiles: r.distanceMiles,
+      durationSeconds: r.durationSeconds,
+      startDate: r.startDate,
+      activityType: r.activityType,
+      sourceName: r.sourceName,
+    }));
+    const raceInputs = races
+      .map((race) => {
+        const distanceMiles =
+          race.raceDistance === "custom"
+            ? (race.customDistanceMiles ?? 0)
+            : (RACE_DISTANCE_MILES[race.raceDistance] ?? 0);
+        return { raceDate: race.raceDate, distanceMiles };
+      })
+      .filter((race) => race.distanceMiles > 0);
+    const efforts = buildQualifyingEfforts(runInputs, 56, {
+      races: raceInputs,
+    });
+    const fitTen = fitRiegel(efforts, 10.0, 3.0, {
+      min: 1.04,
+      max: 1.10,
+    });
+    const fitHalf = fitRiegel(efforts, 13.109, 3.0, {
+      min: 1.04,
+      max: 1.10,
+    });
+    const suggestion = computeThresholdPaceSuggestion(
+      fitTen ? predictSeconds(fitTen, 10.0) : null,
+      fitHalf ? predictSeconds(fitHalf, 13.109) : null
+    );
+    setThresholdSuggestion(suggestion);
+  }, [
+    races,
+    racesLoading,
+    settingsLoading,
+    uid,
+    user?.displayName,
+    userSettings,
+    workouts,
+    workoutsLoading,
+  ]);
 
   const defaultTargetPaceSeconds = useMemo(
     () => parsePaceString(defaultTargetPace),
@@ -242,8 +251,9 @@ export default function SettingsPage() {
   }
 
   async function handleSave() {
-    if (!uid || saving || recomputing) return;
+    if (!uid || operationInFlightRef.current) return;
 
+    operationInFlightRef.current = true;
     setSaving(true);
     setMessage(null);
     setError(null);
@@ -280,7 +290,7 @@ export default function SettingsPage() {
         return;
       }
 
-      await saveUserSettings(uid, {
+      const settingsToSave = {
         displayName: displayName.trim() || undefined,
         email: user?.email ?? undefined,
         defaultTargetPaceSecPerMile: defaultTargetPaceSeconds ?? 600,
@@ -290,8 +300,7 @@ export default function SettingsPage() {
         suggestedMaxHeartRate: suggestedMaxHeartRate ?? undefined,
         suggestedThresholdPaceSecPerMile:
           thresholdSuggestion?.paceSecPerMile ?? undefined,
-      });
-      setMessage("Settings saved.");
+      };
 
       // If either HR anchor changed, the STORED training loads were computed
       // against the old reserve and are now stale. Recompute every HR-bearing
@@ -300,36 +309,63 @@ export default function SettingsPage() {
         maxHeartRate: parsedMaxHr,
         restingHeartRate: parsedRestingHr,
       };
-      if (hrAnchorsChanged(prevAnchorsRef.current, newAnchors)) {
-        setRecomputing(true);
-        try {
-          const stats = await recomputeAllTrainingLoad(uid, {
-            maxHeartRate: parsedMaxHr,
-            restingHeartRate: parsedRestingHr,
-          } as UserSettings);
-          setRecomputeMessage(`Updated ${stats.processed} workouts.`);
-        } catch (recomputeErr) {
-          // Non-blocking: settings ARE saved; recompute is idempotent and safe
-          // to retry by saving again. Leave already-written docs intact.
-          console.error("[SettingsPage] training-load recompute failed", recomputeErr);
-          setError(
-            "Settings saved, but updating training loads didn't finish. Save again to retry."
-          );
-        } finally {
-          setRecomputing(false);
-        }
+      const requiresRecompute = recomputeIsRequired(
+        completedAnchorsRef.current,
+        newAnchors,
+        recomputeStatus
+      );
+      if (requiresRecompute) {
+        setRecomputeStatus({ state: "running", anchors: newAnchors });
       }
-      // Advance the baseline only after the attempt, so a failed recompute is
-      // re-detected (and retried) on the next save.
-      prevAnchorsRef.current = newAnchors;
+      const result = await saveSettingsWithRecompute({
+        uid,
+        settings: settingsToSave,
+        anchors: newAnchors,
+        completedAnchors: completedAnchorsRef.current,
+        recomputeStatus,
+        saveSettings: saveUserSettings,
+        refreshSettings,
+        recompute: recomputeAllTrainingLoad,
+        refreshWorkouts,
+      });
+      completedAnchorsRef.current = result.completedAnchors;
+      setRecomputeStatus(result.recomputeStatus);
+      setMessage("Settings saved.");
+      if (result.recomputeStats) {
+        setRecomputeMessage(`Updated ${result.recomputeStats.processed} workouts.`);
+      }
+      if (result.recomputeError) {
+        console.error(
+          "[SettingsPage] training-load recompute failed",
+          result.recomputeError
+        );
+        const processed =
+          result.recomputeStatus.state === "failed"
+            ? result.recomputeStatus.processed
+            : 0;
+        setError(
+          `Settings saved, but updating training loads didn't finish${
+            processed > 0 ? ` after ${processed} workouts` : ""
+          }. Save Settings to retry with these same heart-rate values.`
+        );
+      }
     } catch (err) {
       console.error("[SettingsPage] save failed", err);
       setError("Could not save settings.");
     } finally {
+      operationInFlightRef.current = false;
       setSaving(false);
     }
   }
 
+  const loading = settingsLoading || workoutsLoading || racesLoading;
+  const loadError =
+    settingsResolution === "error" ||
+    workoutsResolution === "error" ||
+    racesResolution === "error"
+      ? "Could not load Settings data."
+      : null;
+  const recomputing = recomputeStatus.state === "running";
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -514,7 +550,9 @@ export default function SettingsPage() {
         </div>
       </Card>
 
-      {error ? <p className="text-sm font-medium text-danger">{error}</p> : null}
+      {error || loadError ? (
+        <p className="text-sm font-medium text-danger">{error ?? loadError}</p>
+      ) : null}
       {message ? (
         <p className="text-sm font-medium text-success">{message}</p>
       ) : null}

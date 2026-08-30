@@ -606,6 +606,24 @@ describe("AppDataProvider", () => {
     );
   });
 
+  it("publishes a persisted race mutation to every consumer without remount", async () => {
+    h.fetchRaces.mockResolvedValue([{ id: "r1", name: "Before" }]);
+    await mount();
+    const providerNode = container.firstChild;
+
+    act(() => {
+      latest?.patchRaces((current) =>
+        current.map((race) =>
+          race.id === "r1" ? { ...race, name: "After" } : race
+        )
+      );
+    });
+
+    expect(latest?.races).toEqual([{ id: "r1", name: "After" }]);
+    expect(container.firstChild).toBe(providerNode);
+    expect(h.fetchRaces).toHaveBeenCalledTimes(1);
+  });
+
   it("tracks failed settings, races, and overrides independently and recovers on refresh", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     h.fetchRaces.mockRejectedValueOnce(new Error("races unavailable"));

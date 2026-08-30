@@ -31,6 +31,10 @@ const h = vi.hoisted(() => ({
     overrides: {} as Record<string, WorkoutOverride>,
     workoutsLoading: false,
     overridesLoading: false,
+    settingsLoading: false,
+    userSettings: null,
+    maxHr: 185,
+    restingHr: 60,
   },
   excludeWorkout: vi.fn(),
   restoreWorkout: vi.fn(),
@@ -50,6 +54,10 @@ vi.mock("@/contexts/AppDataContext", () => ({
     overrides: h.useAppDataReturn.overrides,
     workoutsLoading: h.useAppDataReturn.workoutsLoading,
     overridesLoading: h.useAppDataReturn.overridesLoading,
+    settingsLoading: h.useAppDataReturn.settingsLoading,
+    userSettings: h.useAppDataReturn.userSettings,
+    maxHr: h.useAppDataReturn.maxHr,
+    restingHr: h.useAppDataReturn.restingHr,
     patchOverrides: h.patchOverrides,
     refreshWorkouts: h.refreshWorkouts,
   }),
@@ -89,6 +97,7 @@ vi.mock("next/dynamic", () => ({
 
 // Imported after the mocks are registered.
 import WorkoutsPage from "../page";
+import { resolveDisplayLoad } from "@/utils/trainingLoad";
 
 function buildWorkout(overrides: Partial<HealthWorkout> = {}): HealthWorkout {
   return {
@@ -186,6 +195,10 @@ beforeEach(() => {
   h.useAppDataReturn.overrides = {};
   h.useAppDataReturn.workoutsLoading = false;
   h.useAppDataReturn.overridesLoading = false;
+  h.useAppDataReturn.settingsLoading = false;
+  h.useAppDataReturn.userSettings = null;
+  h.useAppDataReturn.maxHr = 185;
+  h.useAppDataReturn.restingHr = 60;
 });
 
 afterEach(() => {
@@ -194,6 +207,29 @@ afterEach(() => {
 });
 
 describe("WorkoutsPage — shared overrides wiring", () => {
+  it("uses shared settings anchors without a redundant page-local settings read", async () => {
+    const workout = buildWorkout({
+      trainingLoadV2: undefined,
+      trainingLoadMethod: undefined,
+      avgHeartRate: 160,
+    });
+    h.useAppDataReturn.workouts = [workout];
+    const initialLoad = resolveDisplayLoad(workout, 185, 60)!;
+    await mount();
+
+    expect(h.fetchUserSettings).not.toHaveBeenCalled();
+    expect(container.textContent).toContain(String(initialLoad));
+
+    h.useAppDataReturn.maxHr = 210;
+    const updatedLoad = resolveDisplayLoad(workout, 210, 60)!;
+    expect(updatedLoad).not.toBe(initialLoad);
+    await act(async () => {
+      root.render(<WorkoutsPage />);
+    });
+    await flush();
+    expect(container.textContent).toContain(String(updatedLoad));
+  });
+
   it("reads overrides from the shared AppDataContext, not a page-local fetch", async () => {
     // A workout excluded in the SHARED context's overrides must be hidden
     // here without this page ever calling fetchAllOverrides itself — there

@@ -12,7 +12,7 @@ import { db } from "@/lib/firebase";
 import { COLLECTIONS } from "@/lib/firestore";
 import { type Race } from "@/types";
 import { type HealthWorkout } from "@/types/healthWorkout";
-import { toDate } from "@/utils/dates";
+import { toDate, toLocalIsoDate } from "@/utils/dates";
 
 function stripUndefined<T extends object>(obj: T): T {
   return JSON.parse(JSON.stringify(obj)) as T;
@@ -46,9 +46,15 @@ export async function updateRace(
   raceId: string,
   data: Partial<Omit<Race, "id" | "createdAt">>
 ): Promise<void> {
+  const writes = Object.fromEntries(
+    Object.entries(data).map(([key, value]) => [
+      key,
+      value === undefined ? deleteField() : value,
+    ])
+  );
   await setDoc(
     doc(db, COLLECTIONS.halfMarathonRaces(uid), raceId),
-    stripUndefined(data),
+    writes,
     { merge: true }
   );
 }
@@ -84,7 +90,7 @@ export async function associateRunWithRace(
 ): Promise<void> {
   await updateRace(uid, raceId, {
     actualRunId: run.workoutId,
-    actualRunDate: run.startDate.toISOString().split("T")[0],
+    actualRunDate: toLocalIsoDate(run.startDate),
     actualRunDistanceMiles: run.distanceMiles,
     actualRunDurationSeconds: run.durationSeconds,
     actualRunAvgPace: run.avgPaceSecPerMile ?? undefined,

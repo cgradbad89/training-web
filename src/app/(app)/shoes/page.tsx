@@ -22,7 +22,7 @@ import { formatPace } from "@/utils/pace";
 import { resolveActivityTitle } from "@/utils/resolveActivityTitle";
 import { buildRunTitleMap, findActiveRunningPlan } from "@/utils/runPlanTitle";
 import { type RunningPlan } from "@/types/plan";
-import { formatShortDate, formatMonthYear } from "@/utils/dates";
+import { formatShortDate, formatMonthYear, parseLocalDate } from "@/utils/dates";
 import { projectShoeReplacement } from "@/utils/shoeProjection";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import {
@@ -63,7 +63,7 @@ function buildRuleDescription(rule: ShoeAutoAssignRule, shoeName: string): strin
 
   let dateText = "";
   const fmt = (d: string) =>
-    new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+    parseLocalDate(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
   if (rule.startDate && rule.endDate) {
     dateText = ` from ${fmt(rule.startDate)} – ${fmt(rule.endDate)}`;
   } else if (rule.startDate) {
@@ -149,7 +149,7 @@ function ShoeCard({ shoe, activities, assignments, onEdit, onManageRuns }: ShoeC
   );
 
   const purchaseDateDisplay = shoe.purchaseDate
-    ? new Date(shoe.purchaseDate).toLocaleDateString("en-US", {
+    ? parseLocalDate(shoe.purchaseDate).toLocaleDateString("en-US", {
         month: "short",
         day: "numeric",
         year: "numeric",

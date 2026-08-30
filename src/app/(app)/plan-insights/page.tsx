@@ -26,6 +26,7 @@ import {
   weekStart as getWeekStart,
   parseLocalDate,
   daysUntil,
+  toLocalIsoDate,
 } from "@/utils/dates";
 import {
   predictSeconds,
@@ -708,7 +709,7 @@ export default function PlanInsightsPage() {
     const monday = new Date(d);
     monday.setDate(d.getDate() + mondayOffset);
     monday.setHours(0, 0, 0, 0);
-    const key = monday.toISOString().split("T")[0];
+    const key = toLocalIsoDate(monday);
     weeklyMilesMap.set(key, (weeklyMilesMap.get(key) ?? 0) + r.distanceMiles);
   });
 
@@ -718,7 +719,7 @@ export default function PlanInsightsPage() {
     const offset = day === 0 ? -6 : 1 - day;
     d.setDate(d.getDate() + offset);
     d.setHours(0, 0, 0, 0);
-    return d.toISOString().split("T")[0];
+    return toLocalIsoDate(d);
   })();
 
   const completedWeeks = Array.from(weeklyMilesMap.entries())

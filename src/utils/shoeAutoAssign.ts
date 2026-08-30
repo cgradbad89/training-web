@@ -1,5 +1,6 @@
 import { type HealthWorkout, isRunWorkout } from "@/types/healthWorkout";
 import { type RunningShoe, type ShoeAutoAssignRule } from "@/types/shoe";
+import { parseLocalDate } from "@/utils/dates";
 
 /**
  * Evaluates all active auto-assign rules across all shoes and returns
@@ -83,12 +84,12 @@ export function ruleMatchesRun(
   // Date range check
   const runDate = new Date(run.startDate);
   if (rule.startDate != null) {
-    const start = new Date(rule.startDate);
+    const start = parseLocalDate(rule.startDate);
     start.setHours(0, 0, 0, 0);
     if (runDate < start) return false;
   }
   if (rule.endDate != null) {
-    const end = new Date(rule.endDate);
+    const end = parseLocalDate(rule.endDate);
     end.setHours(23, 59, 59, 999);
     if (runDate > end) return false;
   }

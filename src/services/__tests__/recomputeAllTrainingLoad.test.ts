@@ -34,7 +34,10 @@ vi.mock("firebase/firestore", () => ({
 vi.mock("@/services/routes", () => ({ fetchRoutePoints: vi.fn() }));
 vi.mock("@/services/hrStream", () => ({ fetchHRStream: vi.fn() }));
 
-import { recomputeAllTrainingLoad } from "@/services/healthWorkouts";
+import {
+  recomputeAllTrainingLoad,
+  TrainingLoadRecomputeError,
+} from "@/services/healthWorkouts";
 
 const avgHrDoc = (activityType: string, avgHeartRate: number | null) => ({
   activityType,
@@ -48,6 +51,7 @@ const avgHrDoc = (activityType: string, avgHeartRate: number | null) => ({
 afterEach(() => {
   dataById = {};
   vi.clearAllMocks();
+  setDocMock.mockImplementation(() => Promise.resolve());
 });
 
 describe("recomputeAllTrainingLoad — selects ALL activity types (no isRunLike filter)", () => {
@@ -97,5 +101,41 @@ describe("recomputeAllTrainingLoad — selects ALL activity types (no isRunLike 
     expect(written.trainingLoadMethod).toBe("avg-hr-fallback");
     expect(typeof written.trainingLoadV2).toBe("number");
     expect(written.trainingLoadV2).toBeGreaterThan(0);
+  });
+
+  it("reports zero progress and the failed workout when the first write fails", async () => {
+    dataById = {
+      first: avgHrDoc("running", 150),
+      second: avgHrDoc("running", 145),
+    };
+    setDocMock.mockRejectedValueOnce(new Error("write failed"));
+
+    const error = await recomputeAllTrainingLoad("uid", null).catch((err) => err);
+
+    expect(error).toBeInstanceOf(TrainingLoadRecomputeError);
+    expect(error).toMatchObject({
+      failedWorkoutId: "first",
+      progress: { processed: 0, streamed: 0, fallback: 0, skipped: 0 },
+    });
+    expect(setDocMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves and reports successful writes before a later failure", async () => {
+    dataById = {
+      first: avgHrDoc("running", 150),
+      second: avgHrDoc("running", 145),
+      third: avgHrDoc("running", 140),
+    };
+    setDocMock
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("second write failed"));
+
+    const error = await recomputeAllTrainingLoad("uid", null).catch((err) => err);
+
+    expect(error).toMatchObject({
+      failedWorkoutId: "second",
+      progress: { processed: 1, fallback: 1 },
+    });
+    expect(setDocMock).toHaveBeenCalledTimes(2);
   });
 });

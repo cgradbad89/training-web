@@ -6,6 +6,9 @@ import {
   weekStart,
   normalizeToMonday,
   weekToDateWindow,
+  isDateOnlyWithinPastMonths,
+  isPastLocalDate,
+  toLocalIsoDate,
 } from "@/utils/dates";
 import { ringDailyAverage } from "@/lib/ringMath";
 
@@ -55,6 +58,31 @@ describe("daysUntil", () => {
     // US DST ends Nov 1 2026; Oct 30 → Nov 2 is 3 calendar days even though
     // one of them is 25 hours long.
     expect(daysUntil("2026-11-02", new Date(2026, 9, 30, 12, 0))).toBe(3);
+  });
+});
+
+describe("local date-only continuity", () => {
+  it("keeps race day current in both the morning and evening", () => {
+    expect(isPastLocalDate("2026-08-29", new Date(2026, 7, 28, 23, 59))).toBe(false);
+    expect(isPastLocalDate("2026-08-29", new Date(2026, 7, 29, 0, 1))).toBe(false);
+    expect(isPastLocalDate("2026-08-29", new Date(2026, 7, 29, 23, 59))).toBe(false);
+    expect(isPastLocalDate("2026-08-29", new Date(2026, 7, 30, 0, 1))).toBe(true);
+  });
+
+  it("serializes workout instants to their local calendar date", () => {
+    const lateLocalWorkout = new Date(2026, 7, 29, 23, 30);
+    expect(toLocalIsoDate(lateLocalWorkout)).toBe("2026-08-29");
+  });
+
+  it("keeps a local Monday key on Monday, including a DST-transition week", () => {
+    expect(toLocalIsoDate(weekStart(new Date(2026, 7, 31, 12)))).toBe("2026-08-31");
+    expect(toLocalIsoDate(weekStart(new Date(2026, 10, 4, 12)))).toBe("2026-11-02");
+  });
+
+  it("applies the 12-month VO2 cutoff as a local calendar boundary", () => {
+    const now = new Date(2026, 7, 29, 23, 45);
+    expect(isDateOnlyWithinPastMonths("2025-08-29", 12, now)).toBe(true);
+    expect(isDateOnlyWithinPastMonths("2025-08-28", 12, now)).toBe(false);
   });
 });
 

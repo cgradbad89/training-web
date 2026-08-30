@@ -77,6 +77,17 @@ export function toLocalIsoDate(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
+/** True when a date-only value falls on/after a local calendar-month cutoff. */
+export function isDateOnlyWithinPastMonths(
+  isoDate: string,
+  months: number,
+  from: Date = new Date()
+): boolean {
+  const cutoff = new Date(from.getFullYear(), from.getMonth(), from.getDate());
+  cutoff.setMonth(cutoff.getMonth() - months);
+  return parseLocalDate(isoDate) >= cutoff;
+}
+
 /** Normalize a date to the Monday of its week (ISO string, local date) */
 export function normalizeToMonday(date: Date): string {
   return toLocalIsoDate(weekStart(date));
@@ -129,6 +140,14 @@ export function daysUntil(isoDate: string, from: Date = new Date()): number {
   const base = new Date(from);
   base.setHours(0, 0, 0, 0);
   return Math.round((target.getTime() - base.getTime()) / 86400000);
+}
+
+/** Date-only race/result semantics: today remains current until local midnight. */
+export function isPastLocalDate(
+  isoDate: string,
+  from: Date = new Date()
+): boolean {
+  return daysUntil(isoDate, from) < 0;
 }
 
 /**

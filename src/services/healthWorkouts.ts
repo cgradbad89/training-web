@@ -762,7 +762,12 @@ export async function recomputeAllTrainingLoad(
       continue;
     }
 
-    const result = await computeAndStoreTrainingLoad(uid, workoutDoc.id, settings);
+    let result: EnrichedTrainingLoadResult | null;
+    try {
+      result = await computeAndStoreTrainingLoad(uid, workoutDoc.id, settings);
+    } catch (cause) {
+      throw new TrainingLoadRecomputeError(workoutDoc.id, stats, cause);
+    }
     if (!result) {
       stats.skipped++;
       continue;
@@ -773,6 +778,28 @@ export async function recomputeAllTrainingLoad(
   }
 
   return stats;
+}
+
+export type TrainingLoadRecomputeStats = Awaited<
+  ReturnType<typeof recomputeAllTrainingLoad>
+>;
+
+/**
+ * Progress-bearing failure for the sequential all-workout recompute. Already
+ * completed writes stay persisted; callers can report the honest partial
+ * result and keep the same anchors eligible for retry.
+ */
+export class TrainingLoadRecomputeError extends Error {
+  constructor(
+    public readonly failedWorkoutId: string,
+    public readonly progress: TrainingLoadRecomputeStats,
+    options?: unknown
+  ) {
+    super(`Training-load recomputation failed at workout ${failedWorkoutId}`, {
+      cause: options,
+    });
+    this.name = "TrainingLoadRecomputeError";
+  }
 }
 
 /**
