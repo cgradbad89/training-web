@@ -1,11 +1,17 @@
 import type { HealthWorkout } from '@/types/healthWorkout'
 import type { HealthMetric } from '@/services/healthMetrics'
 import type { RunningPlan } from '@/types/plan'
-import type { Race, RaceDistance } from '@/types/race'
 import {
-  formatRaceTime,
-  buildQualifyingEfforts, fitRiegel, predictSeconds
-} from '@/utils/riegelFit'
+  RACE_DISTANCE_LABELS,
+  RACE_DISTANCE_MILES,
+  type Race,
+} from '@/types/race'
+import { formatRaceTime, type RaceMatchInput } from '@/utils/riegelFit'
+import {
+  predictRaceTime,
+  type RacePredictionResult,
+} from '@/utils/racePrediction'
+import type { BestEffortSegment } from '@/utils/bestEffortExtraction'
 import { weekStart as getWeekStart, parseLocalDate, daysUntil } from '@/utils/dates'
 import { resolveActivityTitle } from '@/utils/resolveActivityTitle'
 import { buildRunTitleMap } from '@/utils/runPlanTitle'
@@ -16,21 +22,6 @@ import {
   DEFAULT_MAX_HR,
   DEFAULT_RESTING_HR,
 } from '@/utils/trainingLoad'
-
-const RACE_MILES: Record<Exclude<RaceDistance, 'custom'>, number> = {
-  '5K':         3.107,
-  '10K':        6.214,
-  halfMarathon: 13.109,
-  marathon:     26.219,
-}
-
-const RACE_LABELS: Record<RaceDistance, string> = {
-  '5K':         '5K',
-  '10K':        '10K',
-  halfMarathon: 'Half Marathon',
-  marathon:     'Marathon',
-  custom:       'Custom',
-}
 
 // Format pace seconds to M:SS string
 function formatPaceStr(secPerMile: number | null | undefined): string | null {
@@ -49,7 +40,13 @@ function formatDateStr(d: Date): string {
 // Get distance miles for a race
 function getRaceDistanceMiles(race: Race): number | null {
   if (race.raceDistance === 'custom') return race.customDistanceMiles ?? null
-  return RACE_MILES[race.raceDistance] ?? null
+  return RACE_DISTANCE_MILES[race.raceDistance] ?? null
+}
+
+export interface CoachPredictionInputs {
+  races: RaceMatchInput[]
+  bestEffortSegments?: BestEffortSegment[]
+  asOf?: Date
 }
 
 export function buildCoachContext(
@@ -58,7 +55,8 @@ export function buildCoachContext(
   activeRace: Race | null,
   healthMetrics: HealthMetric[] = [],
   maxHr: number = DEFAULT_MAX_HR,
-  restingHr: number = DEFAULT_RESTING_HR
+  restingHr: number = DEFAULT_RESTING_HR,
+  predictionInputs?: CoachPredictionInputs
 ) {
   const now = Date.now()
   const thirtyDaysAgo = now - 30 * 86400000
@@ -230,17 +228,25 @@ export function buildCoachContext(
     const daysAway = daysUntil(activeRace.raceDate)
     const distanceMiles = getRaceDistanceMiles(activeRace)
 
-    // Predicted time via Riegel — race-anchored: the active race's planned
-    // date/distance feed the race-match so the actual race run (if already
-    // recorded) dominates the fit while fresh.
-    const raceInputs = distanceMiles
+    // Use the application's canonical prediction pipeline verbatim. The Coach
+    // page prepares transient best-effort evidence in its IO layer and passes
+    // every race anchor here, matching Plan Insights without putting Firestore
+    // reads or a second fit implementation in this pure context builder.
+    const defaultRaceInputs = distanceMiles
       ? [{ raceDate: activeRace.raceDate, distanceMiles }]
       : []
-    const efforts = buildQualifyingEfforts(allRuns, 56, { races: raceInputs })
-    const fit = distanceMiles
-      ? fitRiegel(efforts, distanceMiles, 3.0, { min: 1.04, max: 1.10 })
+    const prediction: RacePredictionResult | null = distanceMiles
+      ? predictRaceTime(
+          allRuns,
+          {
+            raceDistanceMiles: distanceMiles,
+            races: predictionInputs?.races ?? defaultRaceInputs,
+            bestEffortSegments: predictionInputs?.bestEffortSegments,
+          },
+          predictionInputs?.asOf ?? new Date(now)
+        )
       : null
-    const predictedSeconds = fit && distanceMiles ? predictSeconds(fit, distanceMiles) : null
+    const predictedSeconds = prediction?.predictedSeconds ?? null
     const predictedTime = predictedSeconds
       ? formatRaceTime(predictedSeconds)
       : null
@@ -269,7 +275,7 @@ export function buildCoachContext(
       name: activeRace.name,
       raceDate: formatDateStr(raceDate),
       daysAway,
-      distanceLabel: RACE_LABELS[activeRace.raceDistance] ?? 'Unknown',
+      distanceLabel: RACE_DISTANCE_LABELS[activeRace.raceDistance] ?? 'Unknown',
       targetPace,
       goalTime,
       predictedTime,

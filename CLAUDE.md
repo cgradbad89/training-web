@@ -4,7 +4,7 @@
 
 - **Branch**: Work directly on `main`. If a branch is created automatically, merge it into `main` before pushing.
 - **Build**: Run `npm run build` after all changes. On failure, fix and retry. Stop after 3 consecutive failures — output the full error log and make no further changes. If a typecheck reports duplicate identifiers from numbered `.next/types/* 2.ts`-style copies, remove only the numbered copies (or clear `.next`) and prevent the Desktop cloud-sync client from syncing `.next`; these are external file-conflict artifacts, never source files.
-- **Test**: Run `npm test` after a passing build (`vitest run`, 1,486 tests across 139 files — 1,474 passed, 12 skipped; as of the 2026-08-22 AI Coach adherence consistency fix). Note the suite is only fully timezone-clean at US-Eastern; `bestEffortExtraction.test.ts` fails at other offsets and `paceTrends`/`personalRecords` fail at UTC-11 — pre-existing, unrelated to plan matching. This number drifts — always trust a fresh `vitest run` over this doc, and correct this line when it does. Also watch for stray `.claude/worktrees/*` checkouts inflating the count (vitest's exclude only covers `node_modules`/`.git`); run `git worktree list` if the total looks off.
+- **Test**: Run `npm test` after a passing build (`vitest run`, 1,517 tests across 139 files — 1,505 passed, 12 skipped; as of the 2026-08-29 pre-production deterministic-blocker remediation). Note the suite is only fully timezone-clean at US-Eastern; `bestEffortExtraction.test.ts` fails at other offsets and `paceTrends`/`personalRecords` fail at UTC-11 — pre-existing, unrelated to plan matching. This number drifts — always trust a fresh `vitest run` over this doc, and correct this line when it does. Also watch for stray `.claude/worktrees/*` checkouts inflating the count (vitest's exclude only covers `node_modules`/`.git`); run `git worktree list` if the total looks off.
 - **Commit**: Stage files by explicit path (`git add PRD.md src/...`). Never use `git add -A`. Commit and push only after build + tests pass.
 - **No broken commits**: Do not commit if `npm run build` or `npm test` fail.
 
@@ -83,7 +83,7 @@ src/
   services/         # All Firestore read/write (one file per collection)
   types/            # TypeScript interfaces mirroring Firestore documents
   utils/            # Domain logic: metrics, pace, dates, trainingLoad, riegelFit, etc.
-    __tests__/      # Vitest tests (full suite: 1,486 tests across 139 files)
+    __tests__/      # Vitest tests (full suite: 1,517 tests across 139 files)
 ```
 
 **See also**: `PRD.md` — full domain reference (data model, invariants, calculations, backlog, services).

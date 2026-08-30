@@ -1,9 +1,31 @@
 import { NextRequest } from 'next/server'
 import { createTextStreamResponse } from 'ai'
 import { getCoachResponseStream } from './coachStream'
+import {
+  MAX_COACH_JSON_DEPTH,
+  MAX_COACH_QUESTION_CHARS,
+  MAX_COACH_REQUEST_BYTES,
+} from './coachConfig'
 import { isAuthorizedTrainingUser } from '@/lib/trainingAuthorization'
 
+const PRIVATE_NO_STORE = 'private, no-store'
+
+class CoachRequestTooLargeError extends Error {}
+
 export async function POST(req: NextRequest) {
+  const contentType = req.headers.get('Content-Type')
+  if (contentType?.split(';', 1)[0].trim().toLowerCase() !== 'application/json') {
+    return jsonError('Content-Type must be application/json', 415)
+  }
+
+  const contentLength = req.headers.get('Content-Length')
+  if (contentLength !== null) {
+    const declaredBytes = Number(contentLength)
+    if (Number.isFinite(declaredBytes) && declaredBytes > MAX_COACH_REQUEST_BYTES) {
+      return jsonError('Request body is too large', 413)
+    }
+  }
+
   // Verify Firebase Auth token
   const authHeader = req.headers.get('Authorization')
   const token = authHeader?.split('Bearer ')[1]
@@ -11,7 +33,7 @@ export async function POST(req: NextRequest) {
   if (!token) {
     return new Response(
       JSON.stringify({ error: 'Unauthorized' }),
-      { status: 401, headers: { 'Content-Type': 'application/json' } }
+      { status: 401, headers: jsonHeaders() }
     )
   }
 
@@ -21,35 +43,45 @@ export async function POST(req: NextRequest) {
     if (!isAuthorizedTrainingUser(decoded.email, decoded.email_verified)) {
       return new Response(
         JSON.stringify({ error: 'Forbidden' }),
-        { status: 403, headers: { 'Content-Type': 'application/json' } }
+        { status: 403, headers: jsonHeaders() }
       )
     }
   } catch {
     return new Response(
       JSON.stringify({ error: 'Invalid token' }),
-      { status: 401, headers: { 'Content-Type': 'application/json' } }
+      { status: 401, headers: jsonHeaders() }
     )
   }
 
   try {
     let body: unknown
     try {
-      body = await req.json()
-    } catch {
+      const rawBody = await readBoundedBody(req)
+      body = JSON.parse(rawBody) as unknown
+    } catch (error) {
+      if (error instanceof CoachRequestTooLargeError) {
+        return jsonError('Request body is too large', 413)
+      }
       return jsonError('Invalid request body', 400)
     }
 
-    const { question, context } = body as {
-      question?: unknown
-      context?: unknown
+    if (!isPlainJsonObject(body) || exceedsJsonDepth(body, MAX_COACH_JSON_DEPTH)) {
+      return jsonError('Invalid request body', 400)
     }
 
-    if (typeof question !== 'string' || !question.trim() || !context) {
-      return jsonError('Missing question or context', 400)
+    const { question, context } = body
+
+    if (
+      typeof question !== 'string' ||
+      question.trim().length < 1 ||
+      question.length > MAX_COACH_QUESTION_CHARS ||
+      !isPlainJsonObject(context)
+    ) {
+      return jsonError('Invalid question or context', 400)
     }
 
     // Build structured system prompt with all training context
-    const systemPrompt = buildSystemPrompt(context as CoachContext)
+    const systemPrompt = buildSystemPrompt(context as unknown as CoachContext)
 
     const { stream: readable } = await getCoachResponseStream({
       systemPrompt,
@@ -62,7 +94,7 @@ export async function POST(req: NextRequest) {
       headers: {
         'Content-Type': 'text/plain; charset=utf-8',
         'Transfer-Encoding': 'chunked',
-        'Cache-Control': 'no-cache',
+        'Cache-Control': PRIVATE_NO_STORE,
       },
     })
   } catch (error: unknown) {
@@ -83,8 +115,82 @@ export async function POST(req: NextRequest) {
 function jsonError(message: string, status: number): Response {
   return new Response(JSON.stringify({ error: message }), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: jsonHeaders(),
   })
+}
+
+function jsonHeaders(): HeadersInit {
+  return {
+    'Content-Type': 'application/json',
+    'Cache-Control': PRIVATE_NO_STORE,
+  }
+}
+
+async function readBoundedBody(req: NextRequest): Promise<string> {
+  if (!req.body) return ''
+
+  const reader = req.body.getReader()
+  const chunks: Uint8Array[] = []
+  let totalBytes = 0
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (!value) continue
+      totalBytes += value.byteLength
+      if (totalBytes > MAX_COACH_REQUEST_BYTES) {
+        await reader.cancel()
+        throw new CoachRequestTooLargeError()
+      }
+      chunks.push(value)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+
+  const bytes = new Uint8Array(totalBytes)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+}
+
+function isPlainJsonObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false
+  }
+  const prototype = Object.getPrototypeOf(value)
+  return prototype === Object.prototype || prototype === null
+}
+
+/** Count object/array containers with the top-level object at depth 1. */
+function exceedsJsonDepth(value: unknown, maxDepth: number): boolean {
+  const stack: Array<{ value: unknown; depth: number }> = [
+    { value, depth: isContainer(value) ? 1 : 0 },
+  ]
+
+  while (stack.length > 0) {
+    const current = stack.pop()!
+    if (current.depth > maxDepth) return true
+    if (!isContainer(current.value)) continue
+
+    const children = Array.isArray(current.value)
+      ? current.value
+      : Object.values(current.value)
+    for (const child of children) {
+      if (isContainer(child)) {
+        stack.push({ value: child, depth: current.depth + 1 })
+      }
+    }
+  }
+  return false
+}
+
+function isContainer(value: unknown): value is unknown[] | Record<string, unknown> {
+  return typeof value === 'object' && value !== null
 }
 
 // ── Prompt builder ────────────────────────────────────────────────────────────

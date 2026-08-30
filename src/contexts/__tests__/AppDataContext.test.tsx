@@ -7,7 +7,10 @@ import {
   useAppData,
   type AppDataContextValue,
 } from "@/contexts/AppDataContext";
-import { selectActiveWorkouts } from "@/utils/selectActiveWorkouts";
+import {
+  selectActiveWorkouts,
+  selectEffectiveWorkouts,
+} from "@/utils/selectActiveWorkouts";
 
 // React 19 requires this flag for act() to flush effects/microtasks in tests.
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -981,6 +984,60 @@ describe("AppDataProvider", () => {
     // Same provider instance — no unmount/remount between the two reads.
     const after = selectActiveWorkouts(latest!.workouts, latest!.overrides);
     expect(after.map((w) => w.workoutId)).toEqual(["w2"]);
+  });
+
+  it("a downstream effective-workout consumer sees an override and its reset without remounting", async () => {
+    h.fetchHealthWorkouts.mockResolvedValue([
+      {
+        workoutId: "w1",
+        distanceMiles: 3,
+        distanceMeters: 4828,
+        durationSeconds: 1800,
+        displayType: "Run",
+        activityType: "running",
+      },
+    ]);
+    await mount();
+
+    expect(
+      selectEffectiveWorkouts(latest!.workouts, latest!.overrides)[0]
+        .distanceMiles
+    ).toBe(3);
+
+    await act(async () => {
+      latest?.patchOverrides((prev) => ({
+        ...prev,
+        w1: {
+          workoutId: "w1",
+          userId: "u1",
+          isExcluded: false,
+          excludedAt: null,
+          excludedReason: null,
+          distanceMilesOverride: 5,
+          durationSecondsOverride: null,
+          runTypeOverride: null,
+          updatedAt: "2026-08-29T12:00:00.000Z",
+        },
+      }));
+    });
+
+    expect(
+      selectEffectiveWorkouts(latest!.workouts, latest!.overrides)[0]
+        .distanceMiles
+    ).toBe(5);
+
+    await act(async () => {
+      latest?.patchOverrides((prev) => {
+        const next = { ...prev };
+        delete next.w1;
+        return next;
+      });
+    });
+
+    expect(
+      selectEffectiveWorkouts(latest!.workouts, latest!.overrides)[0]
+        .distanceMiles
+    ).toBe(3);
   });
 });
 

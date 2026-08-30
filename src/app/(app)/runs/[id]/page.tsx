@@ -186,7 +186,11 @@ export default function RunDetailPage() {
   const uid = user?.uid ?? null;
   // Shared, already-fetched workouts (AppDataContext one-time fetch) — used ONLY
   // to build the efficiency baselines below. No new Firestore read.
-  const { workouts: sharedWorkouts, overrides: sharedOverrides } = useAppData();
+  const {
+    workouts: sharedWorkouts,
+    overrides: sharedOverrides,
+    patchOverrides,
+  } = useAppData();
   const effectiveSharedWorkouts = useMemo(
     () => selectEffectiveWorkouts(sharedWorkouts, sharedOverrides),
     [sharedWorkouts, sharedOverrides]
@@ -1091,57 +1095,87 @@ export default function RunDetailPage() {
         formRunType !== workout.displayType ? formRunType : null,
       updatedAt: new Date().toISOString(),
     };
-    await saveOverride(uid, overrideObj);
-    setOverride(overrideObj);
-    if (selectedShoeId !== assignedShoeId) {
-      await saveManualAssignments(uid, { [workout.workoutId]: selectedShoeId });
-      setAssignments((prev) => ({ ...prev, [workout.workoutId]: selectedShoeId }));
+    try {
+      const persisted = await saveOverride(uid, overrideObj);
+      setOverride(persisted);
+      patchOverrides((prev) => ({
+        ...prev,
+        [workout.workoutId]: persisted,
+      }));
+      if (selectedShoeId !== assignedShoeId) {
+        await saveManualAssignments(uid, { [workout.workoutId]: selectedShoeId });
+        setAssignments((prev) => ({ ...prev, [workout.workoutId]: selectedShoeId }));
+      }
+      setIsEditing(false);
+    } catch (err) {
+      console.error("[RunDetail] save workout override", err);
+    } finally {
+      setSaving(false);
     }
-    setIsEditing(false);
-    setSaving(false);
   }
 
   async function handleReset() {
     if (!uid) return;
     setSaving(true);
-    if (override?.isExcluded) {
-      await saveOverride(uid, {
-        ...override,
-        distanceMilesOverride: null,
-        durationSecondsOverride: null,
-        runTypeOverride: null,
-      });
-      setOverride({
-        ...override,
-        distanceMilesOverride: null,
-        durationSecondsOverride: null,
-        runTypeOverride: null,
-      });
-    } else {
-      await deleteOverride(uid, workoutId);
-      setOverride(null);
+    try {
+      if (override?.isExcluded) {
+        const persisted = await saveOverride(uid, {
+          ...override,
+          distanceMilesOverride: null,
+          durationSecondsOverride: null,
+          runTypeOverride: null,
+        });
+        setOverride(persisted);
+        patchOverrides((prev) => ({ ...prev, [workoutId]: persisted }));
+      } else {
+        await deleteOverride(uid, workoutId);
+        setOverride(null);
+        patchOverrides((prev) => {
+          const next = { ...prev };
+          delete next[workoutId];
+          return next;
+        });
+      }
+      setIsEditing(false);
+    } catch (err) {
+      console.error("[RunDetail] reset workout override", err);
+    } finally {
+      setSaving(false);
     }
-    setIsEditing(false);
-    setSaving(false);
   }
 
   async function handleExclude() {
     if (!uid) return;
     setExcluding(true);
-    await excludeWorkout(uid, workoutId);
-    const updated = await fetchOverride(uid, workoutId);
-    setOverride(updated);
-    setShowExcludeConfirm(false);
-    setExcluding(false);
+    try {
+      const persisted = await excludeWorkout(uid, workoutId);
+      setOverride(persisted);
+      patchOverrides((prev) => ({ ...prev, [workoutId]: persisted }));
+      setShowExcludeConfirm(false);
+    } catch (err) {
+      console.error("[RunDetail] exclude workout", err);
+    } finally {
+      setExcluding(false);
+    }
   }
 
   async function handleRestore() {
     if (!uid) return;
     setExcluding(true);
-    await restoreWorkout(uid, workoutId);
-    const updated = await fetchOverride(uid, workoutId);
-    setOverride(updated);
-    setExcluding(false);
+    try {
+      const persisted = await restoreWorkout(uid, workoutId);
+      setOverride(persisted);
+      patchOverrides((prev) => {
+        if (persisted) return { ...prev, [workoutId]: persisted };
+        const next = { ...prev };
+        delete next[workoutId];
+        return next;
+      });
+    } catch (err) {
+      console.error("[RunDetail] restore workout", err);
+    } finally {
+      setExcluding(false);
+    }
   }
 
   // Live pace preview

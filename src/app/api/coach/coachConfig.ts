@@ -6,6 +6,12 @@
  */
 export const COACH_MODEL = 'anthropic/claude-sonnet-5'
 
+/** Fixed request-boundary safety limits. These are application invariants, not
+ * deployment or product-budget settings. */
+export const MAX_COACH_REQUEST_BYTES = 1_048_576
+export const MAX_COACH_QUESTION_CHARS = 4_000
+export const MAX_COACH_JSON_DEPTH = 12
+
 export const COACH_GENERATION_SETTINGS = {
   maxOutputTokens: 1024,
   // Sonnet 5 defaults to adaptive reasoning. Disable hidden reasoning so the

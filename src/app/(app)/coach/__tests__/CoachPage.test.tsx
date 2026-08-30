@@ -12,6 +12,7 @@ const h = vi.hoisted(() => ({
   fetchRaces: vi.fn(),
   fetchHealthMetrics: vi.fn(),
   fetchUserSettings: vi.fn(),
+  hydrateFastFinishSplits: vi.fn(),
   getIdToken: vi.fn(),
   fetch: vi.fn(),
   searchParams: new URLSearchParams(),
@@ -40,6 +41,9 @@ vi.mock('@/services/healthMetrics', () => ({
 }))
 vi.mock('@/services/userSettings', () => ({
   fetchUserSettings: h.fetchUserSettings,
+}))
+vi.mock('@/services/fastFinishSplits', () => ({
+  hydrateFastFinishSplits: h.hydrateFastFinishSplits,
 }))
 
 vi.mock('firebase/auth', () => ({
@@ -117,6 +121,7 @@ beforeEach(() => {
   h.fetchRaces.mockResolvedValue([])
   h.fetchHealthMetrics.mockResolvedValue([])
   h.fetchUserSettings.mockResolvedValue(null)
+  h.hydrateFastFinishSplits.mockImplementation(async (_uid, runs) => ({ runs }))
   h.getIdToken.mockResolvedValue('firebase-token')
   h.fetch.mockResolvedValue(
     new Response('Streamed coach response', {
@@ -270,5 +275,66 @@ describe('CoachPage provider behavior', () => {
     ask?.click()
     expect(h.fetch).not.toHaveBeenCalled()
     settings.resolve(null)
+  })
+
+  it('does not describe inactive plans or races as active', async () => {
+    h.searchParams = new URLSearchParams('q=What+is+active')
+    h.fetchPlans.mockResolvedValue([
+      {
+        id: 'draft-plan',
+        name: 'Draft Plan',
+        planType: 'running',
+        startDate: '2026-08-03',
+        status: 'draft',
+        isActive: false,
+        weeks: [],
+      },
+    ])
+    h.fetchRaces.mockResolvedValue([
+      {
+        id: 'inactive-race',
+        name: 'Inactive Race',
+        raceDate: '2026-09-20',
+        raceDistance: 'halfMarathon',
+        isActive: false,
+        createdAt: '2026-01-01T00:00:00.000Z',
+      },
+    ])
+
+    await mount()
+    await flush()
+
+    const body = JSON.parse(String((h.fetch.mock.calls[0][1] as RequestInit).body))
+    expect(body.context.activePlan).toBeNull()
+    expect(body.context.activeRace).toBeNull()
+    expect(h.hydrateFastFinishSplits).not.toHaveBeenCalled()
+  })
+
+  it('hydrates canonical best-effort inputs for an active half-marathon race', async () => {
+    h.fetchHealthWorkouts.mockResolvedValue([recentWorkout()])
+    h.fetchRaces.mockResolvedValue([
+      {
+        id: 'active-race',
+        name: 'Active Race',
+        raceDate: '2026-09-20',
+        raceDistance: 'halfMarathon',
+        isActive: true,
+        createdAt: '2026-01-01T00:00:00.000Z',
+      },
+    ])
+    h.fetchUserSettings.mockResolvedValue({
+      maxHeartRate: 175,
+      restingHeartRate: 65,
+    })
+
+    await mount()
+    await flush()
+
+    expect(h.fetchHealthWorkouts).toHaveBeenCalledWith('u1', { limitCount: 1000 })
+    expect(h.hydrateFastFinishSplits).toHaveBeenCalledWith(
+      'u1',
+      [expect.objectContaining({ workoutId: 'w1' })],
+      expect.objectContaining({ maxHr: 175, restingHr: 65, asOf: expect.any(Date) })
+    )
   })
 })
