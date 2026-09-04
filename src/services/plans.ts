@@ -81,9 +81,10 @@ export async function createPlan<T extends Plan>(
   return plan;
 }
 
-export async function updatePlan(uid: string, plan: Plan): Promise<void> {
-  const updated = { ...plan, updatedAt: new Date().toISOString() };
+export async function updatePlan(uid: string, plan: Plan): Promise<Plan> {
+  const updated = { ...plan, updatedAt: new Date().toISOString() } as Plan;
   await setDoc(doc(db, plansPath(uid), plan.id), stripUndefined(updated));
+  return updated;
 }
 
 export async function deletePlan(uid: string, planId: string): Promise<void> {
@@ -122,8 +123,7 @@ export async function setPlanCompletion(
   action: "complete" | "reopen"
 ): Promise<Plan> {
   const merged = { ...plan, ...planCompletionPatch(action) } as Plan;
-  await updatePlan(uid, merged);
-  return merged;
+  return updatePlan(uid, merged);
 }
 
 /**

@@ -10,12 +10,10 @@
  * planType inside its JSX.
  *
  * Persistence is NOT owned here: every mutation calls `onUpdateWeek(weekIndex,
- * entries)` and the caller writes to Firestore (preserving the existing
- * autosave-per-mutation model). Real dirty-state is surfaced via `onMarkDirty`
- * (a real mutation happened) and `onClearDirty` (cancel-with-no-change / exit).
+ * entries)`. The parent plan detail applies those changes to its edit-session
+ * draft and persists the complete draft when the user selects Done.
  *
- * Currently wired by: CrossTrainingPlanDetail (workout plans). The running plan
- * is migrated in a later prompt.
+ * Wired by both CrossTrainingPlanDetail and RunningPlanDetail.
  */
 
 import React, { useEffect, useState } from "react";
@@ -126,12 +124,14 @@ export interface PlanEditorProps<TEntry> {
   isEditMode: boolean;
   /** Edit/Done toggle is owned by the parent header; provided for API parity. */
   onToggleEdit: () => void;
-  /** Caller persists: replace the given week's entries. */
+  /** Caller stages: replace the given week's entries in its plan draft. */
   onUpdateWeek: (weekIndex: number, entries: TEntry[]) => void;
   /** A real mutation occurred. */
   onMarkDirty: () => void;
   /** Cancel-with-no-change, or exit of edit mode. */
   onClearDirty: () => void;
+  /** Lets the parent prevent Done while a row form still has unapplied fields. */
+  onEntryEditorChange?: (isOpen: boolean) => void;
   /**
    * 0-based week to land on initially (e.g. a calendar deep-link target).
    * Overrides the default current-week landing; clamped to a valid index.
@@ -149,6 +149,7 @@ export function PlanEditor<TEntry extends PlanEditorEntryBase>({
   onUpdateWeek,
   onMarkDirty,
   onClearDirty,
+  onEntryEditorChange,
   initialWeekIndex,
 }: PlanEditorProps<TEntry>) {
   const [selectedWeekIndex, setSelectedWeekIndex] = useState<number>(() =>
@@ -196,6 +197,10 @@ export function PlanEditor<TEntry extends PlanEditorEntryBase>({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEditMode]);
+
+  useEffect(() => {
+    onEntryEditorChange?.(editingDay !== null);
+  }, [editingDay, onEntryEditorChange]);
 
   // If the plan shrinks (end-date shorten drops trailing weeks), clamp the
   // selected week so the pager never points past the last week.

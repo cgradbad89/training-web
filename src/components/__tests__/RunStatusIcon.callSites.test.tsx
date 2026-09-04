@@ -150,8 +150,6 @@ describe("RunningPlanDetail routes its entry rows through RunStatusIcon", () => 
           onUpdate={() => {}}
           onDelete={() => {}}
           onSetActive={() => {}}
-          onComplete={() => {}}
-          onReopen={() => {}}
           onCopyPlan={() => {}}
           onExport={() => {}}
         />

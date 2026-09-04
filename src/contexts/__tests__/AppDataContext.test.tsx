@@ -11,6 +11,7 @@ import {
   selectActiveWorkouts,
   selectEffectiveWorkouts,
 } from "@/utils/selectActiveWorkouts";
+import { type RunningPlan } from "@/types/plan";
 
 // React 19 requires this flag for act() to flush effects/microtasks in tests.
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -681,6 +682,36 @@ describe("AppDataProvider", () => {
     });
     expect(latest?.plans).toEqual([{ id: "p1" }, { id: "p2" }]);
     expect(latest?.plansResolution).toBe("success");
+  });
+
+  it("patchPlan replaces only the saved plan without starting a refresh", async () => {
+    const first: RunningPlan = {
+      id: "p1",
+      name: "First",
+      planType: "running",
+      startDate: "2026-09-07",
+      weeks: [{ weekNumber: 1, entries: [] }],
+      status: "draft",
+      isActive: false,
+      createdAt: "2026-09-01T00:00:00.000Z",
+      updatedAt: "2026-09-01T00:00:00.000Z",
+    };
+    const second = { ...first, id: "p2", name: "Second" };
+    h.fetchPlans.mockResolvedValue([first, second]);
+    await mount();
+    const fetchCount = h.fetchPlans.mock.calls.length;
+
+    const saved = {
+      ...first,
+      name: "First updated",
+      updatedAt: "2026-09-04T12:00:00.000Z",
+    };
+    act(() => latest?.patchPlan(saved));
+
+    expect(latest?.plans).toEqual([saved, second]);
+    expect(latest?.plansLoading).toBe(false);
+    expect(latest?.plansResolution).toBe("success");
+    expect(h.fetchPlans).toHaveBeenCalledTimes(fetchCount);
   });
 
   it("treats a successful empty plans read as authoritative success", async () => {
