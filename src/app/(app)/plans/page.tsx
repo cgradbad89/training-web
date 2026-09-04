@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CrossTrainingPlanDetail } from "@/components/CrossTrainingPlanDetail";
 import { RunningPlanDetail } from "@/components/RunningPlanDetail";
@@ -12,7 +12,6 @@ import {
   updatePlan,
   deletePlan,
   setActivePlan,
-  setPlanCompletion,
 } from "@/services/plans";
 import { deepCopyRunningPlan } from "@/utils/planCopy";
 import { planWeekIndexFor } from "@/utils/planMatching";
@@ -243,6 +242,7 @@ export default function PlansPage() {
     overrides,
     races,
     refreshPlans,
+    patchPlan,
   } = useAppData();
 
   // Apply overrides and drop excluded workouts — same processing /dashboard
@@ -260,6 +260,15 @@ export default function PlansPage() {
   const [pageView, setPageView] = useState<"plans" | "calendar" | "goals">(
     "plans"
   );
+  const [editSession, setEditSession] = useState({
+    planId: null as string | null,
+    isEditing: false,
+    isDirty: false,
+  });
+  const [confirmDiscardNavigation, setConfirmDiscardNavigation] =
+    useState(false);
+  const pendingPageActionRef = useRef<(() => void) | null>(null);
+  const discardEditSessionRef = useRef<(() => void) | null>(null);
 
   // Goals data — hook called unconditionally (before any early return).
   const {
@@ -286,6 +295,39 @@ export default function PlansPage() {
   // Calendar (.ics) export modal — lifted here since `plans` lives on the page.
   const [showExportModal, setShowExportModal] = useState(false);
 
+  const handleEditSessionChange = useCallback(
+    (
+      planId: string,
+      isEditing: boolean,
+      isDirty: boolean,
+      discard: () => void
+    ) => {
+      discardEditSessionRef.current = isEditing ? discard : null;
+      setEditSession({ planId, isEditing, isDirty });
+    },
+    []
+  );
+
+  function runWithEditGuard(action: () => void) {
+    if (editSession.isEditing && editSession.isDirty) {
+      pendingPageActionRef.current = action;
+      setConfirmDiscardNavigation(true);
+      return;
+    }
+    discardEditSessionRef.current?.();
+    discardEditSessionRef.current = null;
+    setEditSession({ planId: null, isEditing: false, isDirty: false });
+    action();
+  }
+
+  function selectPlan(plan: Plan) {
+    if (plan.id === selectedPlanId) return;
+    runWithEditGuard(() => {
+      setSelectedPlanId(plan.id);
+      setSelectedWeekIndex(currentWeekIndex(plan));
+      setMobileView("detail");
+    });
+  }
 
   const selectedPlan = plans.find((p) => p.id === selectedPlanId) ?? null;
   const selectedRunningPlan =
@@ -358,35 +400,6 @@ export default function PlansPage() {
     setSaving(true);
     try {
       await setActivePlan(user.uid, planId, plans);
-      await refreshPlans();
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  // Completion is self-only: it clears this plan's own active flag and never
-  // touches sibling plans (no auto-pick of a new active plan). setPlanCompletion
-  // dual-writes status + completedAt + isActive together.
-  async function handleCompletePlan(planId: string) {
-    if (!user || saving) return;
-    const plan = plans.find((p) => p.id === planId);
-    if (!plan) return;
-    setSaving(true);
-    try {
-      await setPlanCompletion(user.uid, plan, "complete");
-      await refreshPlans();
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleReopenPlan(planId: string) {
-    if (!user || saving) return;
-    const plan = plans.find((p) => p.id === planId);
-    if (!plan) return;
-    setSaving(true);
-    try {
-      await setPlanCompletion(user.uid, plan, "reopen");
       await refreshPlans();
     } finally {
       setSaving(false);
@@ -498,27 +511,20 @@ export default function PlansPage() {
 
   /** Persist updates to a Workout plan from CrossTrainingPlanDetail. */
   async function handleCrossTrainingUpdate(updated: WorkoutPlan) {
-    if (!user) return;
-    try {
-      await updatePlan(user.uid, updated);
-      await refreshPlans();
-    } catch (e) {
-      console.error(e);
-    }
+    if (!user) throw new Error("Sign in before saving a plan.");
+    const saved = await updatePlan(user.uid, updated);
+    patchPlan(saved);
   }
 
   /**
    * Persist updates to a Running plan from the in-place RunningPlanDetail.
-   * Same autosave-per-mutation path as the legacy /edit route's handleUpdateWeek.
+   * Done writes the complete local draft once, then publishes that saved plan
+   * directly into shared state without a collection-wide loading transition.
    */
   async function handleRunningPlanUpdate(updated: RunningPlan) {
-    if (!user) return;
-    try {
-      await updatePlan(user.uid, updated);
-      await refreshPlans();
-    } catch (e) {
-      console.error(e);
-    }
+    if (!user) throw new Error("Sign in before saving a plan.");
+    const saved = await updatePlan(user.uid, updated);
+    patchPlan(saved);
   }
 
   /** Copy the selected running plan under a given name (RunningPlanDetail modal). */
@@ -583,7 +589,7 @@ export default function PlansPage() {
 
   // ── Render ────────────────────────────────────────────────────────────────
 
-  if (loading) {
+  if (loading && plans.length === 0) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
@@ -591,7 +597,7 @@ export default function PlansPage() {
     );
   }
 
-  if (plansResolution === "error") {
+  if (plansResolution === "error" && plans.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-64 gap-3">
         <p className="text-sm text-danger" role="alert">
@@ -615,7 +621,10 @@ export default function PlansPage() {
         {(["plans", "calendar", "goals"] as const).map((v) => (
           <button
             key={v}
-            onClick={() => setPageView(v)}
+            onClick={() => {
+              if (pageView === v) return;
+              runWithEditGuard(() => setPageView(v));
+            }}
             className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors capitalize ${
               pageView === v
                 ? "bg-primary text-white"
@@ -626,6 +635,15 @@ export default function PlansPage() {
           </button>
         ))}
       </div>
+
+      {plansResolution === "error" && plans.length > 0 && (
+        <div
+          className="px-4 py-2 border-b border-danger/20 bg-danger/5 text-xs text-danger"
+          role="alert"
+        >
+          Plans could not be refreshed. Your last loaded plans are still shown.
+        </div>
+      )}
 
       {pageView === "calendar" ? (
         <CalendarView
@@ -650,7 +668,7 @@ export default function PlansPage() {
         <div className="p-4 border-b border-border flex items-center justify-between">
           <h2 className="font-semibold text-textPrimary">Plans &amp; Goals</h2>
           <button
-            onClick={openTypePicker}
+            onClick={() => runWithEditGuard(openTypePicker)}
             className="p-1.5 rounded-lg hover:bg-surface text-textSecondary hover:text-primary"
             title="New plan"
           >
@@ -664,11 +682,7 @@ export default function PlansPage() {
             plans={runningPlans}
             emptyLabel="No running plans"
             selectedPlanId={selectedPlanId}
-            onSelect={(plan) => {
-              setSelectedPlanId(plan.id);
-              setSelectedWeekIndex(currentWeekIndex(plan));
-              setMobileView("detail");
-            }}
+            onSelect={selectPlan}
           />
           <PlanGroup
             title="Workout Plans"
@@ -676,11 +690,7 @@ export default function PlansPage() {
             emptyLabel="No workout plans"
             topBorder
             selectedPlanId={selectedPlanId}
-            onSelect={(plan) => {
-              setSelectedPlanId(plan.id);
-              setSelectedWeekIndex(currentWeekIndex(plan));
-              setMobileView("detail");
-            }}
+            onSelect={selectPlan}
           />
         </div>
       </div>
@@ -691,7 +701,9 @@ export default function PlansPage() {
         {selectedPlan && (
           <div className="lg:hidden px-6 pt-4 pb-0 bg-card border-b border-transparent">
             <button
-              onClick={() => setMobileView("list")}
+              onClick={() =>
+                runWithEditGuard(() => setMobileView("list"))
+              }
               className="text-sm text-primary mb-4 flex items-center gap-1"
             >
               ← Back to Plans
@@ -718,12 +730,11 @@ export default function PlansPage() {
               }
             }}
             onSetActive={() => handleSetActive(selectedPlan.id)}
-            onComplete={() => handleCompletePlan(selectedPlan.id)}
-            onReopen={() => handleReopenPlan(selectedPlan.id)}
             onCopyPlan={handleCopyWorkoutPlan}
             saving={saving}
             linkedRaceDate={selectedRaceDate}
             onExport={() => setShowExportModal(true)}
+            onEditSessionChange={handleEditSessionChange}
           />
         )}
 
@@ -803,11 +814,10 @@ export default function PlansPage() {
               }
             }}
             onSetActive={() => handleSetActive(selectedRunningPlan.id)}
-            onComplete={() => handleCompletePlan(selectedRunningPlan.id)}
-            onReopen={() => handleReopenPlan(selectedRunningPlan.id)}
             onCopyPlan={handleCopyRunningPlanNamed}
             onExport={() => setShowExportModal(true)}
             linkedRaceDate={selectedRaceDate}
+            onEditSessionChange={handleEditSessionChange}
           />
         ) : !selectedPlan ? (
           <div className="flex-1 flex items-center justify-center">
@@ -816,7 +826,7 @@ export default function PlansPage() {
                 No training plan selected.
               </p>
               <button
-                onClick={openTypePicker}
+                onClick={() => runWithEditGuard(openTypePicker)}
                 className="px-4 py-2 bg-primary text-white text-sm font-medium rounded-xl hover:bg-primary/90"
               >
                 Create a plan
@@ -829,6 +839,27 @@ export default function PlansPage() {
       )}
 
       {/* ── Modals ─────────────────────────────────────────────────────── */}
+
+      <ConfirmDialog
+        isOpen={confirmDiscardNavigation}
+        title="Discard plan changes?"
+        message="This plan has changes that haven't been saved. Continue without saving them?"
+        confirmLabel="Discard & Continue"
+        confirmVariant="danger"
+        onConfirm={() => {
+          const action = pendingPageActionRef.current;
+          pendingPageActionRef.current = null;
+          discardEditSessionRef.current?.();
+          discardEditSessionRef.current = null;
+          setConfirmDiscardNavigation(false);
+          setEditSession({ planId: null, isEditing: false, isDirty: false });
+          action?.();
+        }}
+        onCancel={() => {
+          pendingPageActionRef.current = null;
+          setConfirmDiscardNavigation(false);
+        }}
+      />
 
       {/* Type picker — opened first when user clicks + */}
       {showTypePicker && (

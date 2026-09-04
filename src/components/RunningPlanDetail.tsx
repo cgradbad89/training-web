@@ -4,17 +4,18 @@
  * Running plan detail view — rendered INLINE on the Plans page (no route nav).
  *
  * Mirrors CrossTrainingPlanDetail: owns the header (Set Active / Edit Plan↔Done
- * / Copy plan / rename / delete) + real dirty-state, and mounts the shared
+ * / Copy plan / rename / delete) + a draft edit session, and mounts the shared
  * PlanEditor for the single-week-paginated editing UI. The type-specific row
  * (run-type badge, distance/pace/HR/notes + planMatching status) and the inline
- * EntryForm are supplied via PlanEditorConfig. All edits autosave via onUpdate.
+ * EntryForm are supplied via PlanEditorConfig. Done persists the complete draft.
  *
  * Match status (completed/missed/upcoming) is computed with the SAME
  * matchPlanToActual / statusForRunEntry the running view uses — no new logic.
  */
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { useUnsavedChanges } from "@/hooks/useUnsavedChanges";
+import { usePlanDraftEdit } from "@/hooks/usePlanDraftEdit";
 import {
   Pencil,
   Trash2,
@@ -230,7 +231,7 @@ function EntryForm({ initial, weekday, weekIndex, onSave, onCancel }: EntryFormP
           onClick={handleSave}
           className="flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-white bg-primary rounded-lg hover:bg-primary/90 transition-colors"
         >
-          <Check className="w-3 h-3" /> Save Entry
+          <Check className="w-3 h-3" /> Apply Entry
         </button>
       </div>
     </div>
@@ -245,8 +246,6 @@ interface RunningPlanDetailProps {
   onUpdate: (updated: RunningPlan) => void | Promise<void>;
   onDelete: () => void;
   onSetActive: () => void;
-  onComplete: () => void;
-  onReopen: () => void;
   onCopyPlan: (newName: string, startIso: string) => void | Promise<void>;
   /** Open the calendar (.ics) export modal — state owned by the Plans page. */
   onExport: () => void;
@@ -254,6 +253,13 @@ interface RunningPlanDetailProps {
   initialWeekIndex?: number;
   /** Linked race date (ISO) for the in-place editor's race-alignment note. */
   linkedRaceDate?: string;
+  /** Reports page-local edit sessions so plan/tab switches can guard drafts. */
+  onEditSessionChange?: (
+    planId: string,
+    isEditing: boolean,
+    isDirty: boolean,
+    discard: () => void
+  ) => void;
 }
 
 export function RunningPlanDetail({
@@ -262,16 +268,17 @@ export function RunningPlanDetail({
   onUpdate,
   onDelete,
   onSetActive,
-  onComplete,
-  onReopen,
   onCopyPlan,
   onExport,
   initialWeekIndex,
   linkedRaceDate,
+  onEditSessionChange,
 }: RunningPlanDetailProps) {
-  const [isEditMode, setIsEditMode] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmComplete, setConfirmComplete] = useState(false);
+  const [entryEditorOpen, setEntryEditorOpen] = useState(false);
+  const [saveNotice, setSaveNotice] = useState<string | null>(null);
+  const editButtonRef = useRef<HTMLButtonElement>(null);
 
   // Copy-plan modal
   const [copyPlanOpen, setCopyPlanOpen] = useState(false);
@@ -281,53 +288,60 @@ export function RunningPlanDetail({
   );
   const [copyPlanSaving, setCopyPlanSaving] = useState(false);
 
-  // Inline plan-name editing (in edit mode) — replaces the standalone rename
-  // pencil/modal. Persists on blur via onUpdate (mirrors the legacy /edit route).
-  const [nameDraft, setNameDraft] = useState(plan.name);
-
-  // Real dirty-state: true only while a mutation's autosave is in flight (same
-  // model as the workout flow) — NOT the edit-mode boolean.
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const {
+    editablePlan,
+    isEditMode,
+    isDirty,
+    isSaving,
+    saveError,
+    showDiscardConfirm,
+    beginEdit,
+    updateDraft,
+    requestDiscard,
+    discardDraft,
+    cancelDiscard,
+    saveAndFinish,
+  } = usePlanDraftEdit({ plan, onSave: onUpdate, onEditSessionChange });
 
   const { showNavWarning, confirmNav, cancelNav } =
-    useUnsavedChanges(hasUnsavedChanges);
+    useUnsavedChanges(isDirty);
 
   const matchMap = useMemo(
-    () => matchPlanToActual(plan, activities),
-    [plan, activities]
+    () => matchPlanToActual(editablePlan, activities),
+    [editablePlan, activities]
   );
 
-  // ── Persistence + dirty-state ─────────────────────────────────────────────
+  // ── Draft editing ─────────────────────────────────────────────────────────
 
   function entriesForWeek(weekIndex: number): PlannedRunEntry[] {
-    return plan.weeks[weekIndex]?.entries ?? [];
+    return editablePlan.weeks[weekIndex]?.entries ?? [];
   }
 
-  function planWithWeekEntries(
-    weekIndex: number,
-    entries: PlannedRunEntry[]
-  ): RunningPlan {
-    const weeks = plan.weeks.map((w, i) =>
-      i === weekIndex ? { ...w, entries } : w
-    );
-    return { ...plan, weeks };
-  }
-
-  // Every edit autosaves immediately. Flag dirty around the awaited write so the
-  // leave-site guard only arms for the brief in-flight window, then clears.
-  async function persist(updatedPlan: RunningPlan) {
-    setHasUnsavedChanges(true);
-    try {
-      await onUpdate(updatedPlan);
-    } finally {
-      setHasUnsavedChanges(false);
-    }
-  }
-
-  // Replace a week's entries — called by PlanEditor for save / delete / drag /
-  // copy-day / copy-week.
   function handleUpdateWeek(weekIndex: number, entries: PlannedRunEntry[]) {
-    void persist(planWithWeekEntries(weekIndex, entries));
+    updateDraft((current) => ({
+      ...current,
+      weeks: current.weeks.map((week, index) =>
+        index === weekIndex ? { ...week, entries } : week
+      ),
+    }));
+  }
+
+  async function handleEditButton() {
+    if (!isEditMode) {
+      setSaveNotice(null);
+      beginEdit();
+      return;
+    }
+    if (entryEditorOpen) return;
+
+    const outcome = await saveAndFinish();
+    if (outcome === "saved") {
+      setSaveNotice("Plan saved.");
+      window.setTimeout(() => setSaveNotice(null), 2500);
+    }
+    if (outcome) {
+      window.requestAnimationFrame(() => editButtonRef.current?.focus());
+    }
   }
 
   async function handleCopyPlan() {
@@ -343,21 +357,12 @@ export function RunningPlanDetail({
     }
   }
 
-  function handleNameBlur() {
-    const name = nameDraft.trim();
-    if (!name || name === plan.name) {
-      setNameDraft(plan.name);
-      return;
-    }
-    void persist({ ...plan, name });
-  }
-
   // ── Editor config (type-specific row + inline form wiring) ────────────────
 
   const editorConfig: PlanEditorConfig<PlannedRunEntry> = {
     planType: "running",
     renderEntryRow: ({ entry, isEditing, onEdit, onDelete: onDeleteEntry, onCopyDay }) => {
-      const status = statusForRunEntry(plan, entry, matchMap);
+      const status = statusForRunEntry(editablePlan, entry, matchMap);
       const match = matchMap.get(entry.id);
 
       // Shared four-state icon (see RunStatusIcon) — this row used to draw its
@@ -469,7 +474,7 @@ export function RunningPlanDetail({
             const m = matchMap.get(id);
             return m ? m.activity.distanceMiles : null;
           },
-          (entry) => statusForRunEntry(plan, entry, matchMap)
+          (entry) => statusForRunEntry(editablePlan, entry, matchMap)
         );
       return (
         <div className="mt-4 p-3 rounded-xl bg-surface border border-border">
@@ -501,18 +506,19 @@ export function RunningPlanDetail({
 
   // ── Render ────────────────────────────────────────────────────────────────
 
-  const isCompleted = plan.status === "completed";
+  const isCompleted = !isEditMode && editablePlan.status === "completed";
 
   const planEditor = (
     <PlanEditor
-      plan={plan}
+      plan={editablePlan}
       entriesForWeek={entriesForWeek}
       config={editorConfig}
       isEditMode={isEditMode}
-      onToggleEdit={() => setIsEditMode((v) => !v)}
+      onToggleEdit={() => void handleEditButton()}
       onUpdateWeek={handleUpdateWeek}
-      onMarkDirty={() => setHasUnsavedChanges(true)}
-      onClearDirty={() => setHasUnsavedChanges(false)}
+      onMarkDirty={() => {}}
+      onClearDirty={() => {}}
+      onEntryEditorChange={setEntryEditorOpen}
       initialWeekIndex={initialWeekIndex}
     />
   );
@@ -525,14 +531,16 @@ export function RunningPlanDetail({
           <div className="flex items-center gap-3 flex-wrap">
             {isEditMode ? (
               <input
-                value={nameDraft}
-                onChange={(e) => setNameDraft(e.target.value)}
-                onBlur={handleNameBlur}
+                value={editablePlan.name}
+                onChange={(e) =>
+                  updateDraft((current) => ({ ...current, name: e.target.value }))
+                }
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") e.currentTarget.blur();
+                  if (e.key === "Enter" && !entryEditorOpen) {
+                    void handleEditButton();
+                  }
                   if (e.key === "Escape") {
-                    setNameDraft(plan.name);
-                    e.currentTarget.blur();
+                    updateDraft((current) => ({ ...current, name: plan.name }));
                   }
                 }}
                 placeholder="Plan name"
@@ -542,21 +550,21 @@ export function RunningPlanDetail({
               />
             ) : (
               <h1 className="text-lg font-bold text-textPrimary truncate">
-                {plan.name}
+                {editablePlan.name}
               </h1>
             )}
-            {plan.status === "active" && (
+            {editablePlan.status === "active" && (
               <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-success/10 text-success">
                 Active
               </span>
             )}
-            {plan.status === "completed" && (
+            {editablePlan.status === "completed" && (
               <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-surface text-textSecondary border border-border">
                 Completed
               </span>
             )}
             {isEditMode &&
-              (plan.status !== "completed" ? (
+              (editablePlan.status !== "completed" ? (
                 <button
                   onClick={() => setConfirmComplete(true)}
                   className="text-xs px-2 py-0.5 rounded-full border border-border text-textSecondary hover:text-textPrimary hover:bg-surface transition-colors"
@@ -565,7 +573,17 @@ export function RunningPlanDetail({
                 </button>
               ) : (
                 <button
-                  onClick={onReopen}
+                  onClick={() =>
+                    updateDraft((current) => {
+                      const reopened = {
+                        ...current,
+                        status: "draft" as const,
+                        isActive: false,
+                      };
+                      delete reopened.completedAt;
+                      return reopened;
+                    })
+                  }
                   className="text-xs px-2 py-0.5 rounded-full border border-border text-textSecondary hover:text-textPrimary hover:bg-surface transition-colors"
                 >
                   Reopen Plan
@@ -574,61 +592,93 @@ export function RunningPlanDetail({
           </div>
           <p className="text-sm text-textSecondary mt-0.5">
             Starts{" "}
-            {new Date(plan.startDate + "T00:00:00").toLocaleDateString("en-US", {
+            {new Date(editablePlan.startDate + "T00:00:00").toLocaleDateString("en-US", {
               month: "long",
               day: "numeric",
               year: "numeric",
             })}
             {" · "}
-            {plan.weeks.length} weeks
-            {plan.status === "completed" && formatCompletedAt(plan.completedAt) && (
+            {editablePlan.weeks.length} weeks
+            {editablePlan.status === "completed" && formatCompletedAt(editablePlan.completedAt) && (
               <>
                 {" · "}
-                Completed {formatCompletedAt(plan.completedAt)}
+                Completed {formatCompletedAt(editablePlan.completedAt)}
               </>
             )}
           </p>
           {isEditMode && (
             <PlanDateEditor
-              plan={plan}
-              onApply={(updated) => persist(updated as RunningPlan)}
+              plan={editablePlan}
+              onApply={(updated) => updateDraft(() => updated as RunningPlan)}
               linkedRaceDate={linkedRaceDate}
             />
           )}
+          <div aria-live="polite" aria-atomic="true" className="mt-1 min-h-4">
+            {saveError ? (
+              <p className="text-xs text-danger" role="alert">
+                {saveError}
+              </p>
+            ) : isEditMode ? (
+              <p className="text-xs text-textSecondary">
+                {isSaving
+                  ? "Saving plan…"
+                  : entryEditorOpen
+                    ? "Apply or cancel the open entry before finishing."
+                    : isDirty
+                      ? "Unsaved changes"
+                      : "No unsaved changes"}
+              </p>
+            ) : saveNotice ? (
+              <p className="text-xs text-success">{saveNotice}</p>
+            ) : null}
+          </div>
         </div>
 
         <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
-          {/* In edit mode on mobile, secondary actions hide so the title input
-              + Done stay on one compact row; all return on Done or at lg. */}
-          {plan.status !== "active" && (
+          {/* Plan-level actions that write or navigate stay out of the way until
+              the edit transaction is either saved with Done or discarded. */}
+          {!isEditMode && editablePlan.status !== "active" && (
             <button
               onClick={onSetActive}
-              className={`${
-                isEditMode ? "hidden lg:inline-flex" : ""
-              } text-sm px-3 py-1.5 rounded-lg bg-primary text-white font-medium hover:bg-primary/90`}
+              className="text-sm px-3 py-1.5 rounded-lg bg-primary text-white font-medium hover:bg-primary/90"
             >
               Set Active
             </button>
           )}
 
-          {/* Edit / Done toggle — toggles in-place edit. In edit mode the plan
-              name above becomes inline-editable (no separate rename control). */}
+          {isEditMode && (
+            <button
+              onClick={requestDiscard}
+              disabled={isSaving}
+              className="text-sm px-3 py-1.5 rounded-lg text-textSecondary hover:text-textPrimary disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          )}
+          {/* Done commits the complete draft; Edit starts a new draft session. */}
           <button
-            onClick={() => setIsEditMode((v) => !v)}
-            className="text-sm px-3 py-1.5 rounded-lg border border-border text-textPrimary font-medium hover:bg-surface"
+            ref={editButtonRef}
+            onClick={() => void handleEditButton()}
+            disabled={isSaving || entryEditorOpen}
+            title={
+              entryEditorOpen
+                ? "Apply or cancel the open entry before saving the plan"
+                : undefined
+            }
+            className="text-sm px-3 py-1.5 rounded-lg border border-border text-textPrimary font-medium hover:bg-surface disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {isEditMode ? "Done" : "Edit"}
+            {isSaving ? "Saving…" : isEditMode ? "Done" : "Edit"}
           </button>
           {/* Copy plan */}
           <button
             onClick={() => {
-              setCopyPlanName(`${plan.name} (copy)`);
+              setCopyPlanName(`${editablePlan.name} (copy)`);
               setCopyPlanStart(upcomingMonday(new Date()));
               setCopyPlanOpen(true);
             }}
             title="Copy plan"
             className={`${
-              isEditMode ? "hidden lg:flex" : "flex"
+              isEditMode ? "hidden" : "flex"
             } items-center gap-1 text-sm px-2.5 py-1.5 rounded-lg border border-border text-textSecondary hover:text-textPrimary hover:bg-surface`}
           >
             <Copy className="w-3.5 h-3.5" />
@@ -639,7 +689,7 @@ export function RunningPlanDetail({
             onClick={onExport}
             title="Export to calendar (.ics)"
             className={`${
-              isEditMode ? "hidden lg:flex" : "flex"
+              isEditMode ? "hidden" : "flex"
             } items-center gap-1 text-sm px-2.5 py-1.5 rounded-lg border border-border text-textSecondary hover:text-textPrimary hover:bg-surface`}
           >
             <CalendarPlus className="w-3.5 h-3.5" />
@@ -650,7 +700,7 @@ export function RunningPlanDetail({
             onClick={() => setConfirmDelete(true)}
             title="Delete plan"
             className={`${
-              isEditMode ? "hidden lg:inline-flex" : ""
+              isEditMode ? "hidden" : "inline-flex"
             } p-1.5 rounded-lg hover:bg-red-50 text-textSecondary hover:text-danger`}
           >
             <Trash2 className="w-4 h-4" />
@@ -664,7 +714,7 @@ export function RunningPlanDetail({
           (no summary) the editor keeps its own flex-1 scroll, unchanged. */}
       {isCompleted ? (
         <div className="flex-1 min-h-0 overflow-y-auto">
-          <PlanCompletionSummary plan={plan} activities={activities} />
+          <PlanCompletionSummary plan={editablePlan} activities={activities} />
           {planEditor}
         </div>
       ) : (
@@ -676,12 +726,25 @@ export function RunningPlanDetail({
       {/* Navigation warning */}
       <ConfirmDialog
         isOpen={showNavWarning}
-        title="Exit edit mode?"
-        message="You're currently in edit mode. Your changes have been auto-saved."
-        confirmLabel="Exit Edit Mode"
-        confirmVariant="primary"
-        onConfirm={confirmNav}
+        title="Discard unsaved changes?"
+        message="This plan has changes that haven't been saved. Leave without saving them?"
+        confirmLabel="Discard & Leave"
+        confirmVariant="danger"
+        onConfirm={() => {
+          discardDraft();
+          confirmNav();
+        }}
         onCancel={cancelNav}
+      />
+
+      <ConfirmDialog
+        isOpen={showDiscardConfirm}
+        title="Discard plan changes?"
+        message="This returns the plan to its last saved version."
+        confirmLabel="Discard Changes"
+        confirmVariant="danger"
+        onConfirm={discardDraft}
+        onCancel={cancelDiscard}
       />
 
       {/* Mark plan completed — clears active; reversible via Reopen */}
@@ -693,7 +756,12 @@ export function RunningPlanDetail({
         confirmVariant="primary"
         onConfirm={() => {
           setConfirmComplete(false);
-          onComplete();
+          updateDraft((current) => ({
+            ...current,
+            status: "completed",
+            isActive: false,
+            completedAt: new Date().toISOString(),
+          }));
         }}
         onCancel={() => setConfirmComplete(false)}
       />

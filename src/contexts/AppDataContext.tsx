@@ -125,6 +125,8 @@ export interface AppDataContextValue {
   settingsLoading: boolean;
   settingsResolution: AppDataResolution;
   refreshPlans: () => Promise<void>;
+  /** Persistence-first targeted publication of a saved plan. */
+  patchPlan: (plan: Plan) => void;
   refreshRaces: () => Promise<void>;
   refreshOverrides: () => Promise<void>;
   refreshSettings: () => Promise<void>;
@@ -508,6 +510,21 @@ function AppDataProviderGeneration({
     [isCurrentRequest, uid]
   );
 
+  const patchPlan = useCallback(
+    (savedPlan: Plan) => {
+      const generation = requestGenerationRef.current;
+      if (!isCurrentRequest(uid, generation)) return;
+      setPlans((current) => {
+        const exists = current.some((plan) => plan.id === savedPlan.id);
+        if (!exists) return [...current, savedPlan];
+        return current.map((plan) =>
+          plan.id === savedPlan.id ? savedPlan : plan
+        );
+      });
+    },
+    [isCurrentRequest, uid]
+  );
+
   const patchTrainingLoad = useCallback(
     (workoutId: string, patch: TrainingLoadFields) => {
       const generation = requestGenerationRef.current;
@@ -552,6 +569,7 @@ function AppDataProviderGeneration({
       settingsLoading,
       settingsResolution,
       refreshPlans,
+      patchPlan,
       refreshRaces,
       refreshOverrides,
       refreshSettings,
@@ -582,6 +600,7 @@ function AppDataProviderGeneration({
       settingsLoading,
       settingsResolution,
       refreshPlans,
+      patchPlan,
       refreshRaces,
       refreshOverrides,
       refreshSettings,

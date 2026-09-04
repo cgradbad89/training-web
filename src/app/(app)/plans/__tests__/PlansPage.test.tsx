@@ -20,8 +20,8 @@ import { type Race } from "@/types/race";
  * already use).
  *
  * `RunningPlanDetail` is stubbed so these tests assert on the PROPS the page
- * hands it (activities already override-filtered, onComplete wired to a real
- * refreshPlans-calling handler) rather than re-testing its own internals.
+ * hands it (activities already override-filtered, Done wired to direct shared
+ * publication) rather than re-testing its own internals.
  */
 
 // ── Shared, hoisted handles the mocks read/write ──────────────────────────────
@@ -32,6 +32,7 @@ const h = vi.hoisted(() => ({
   // effect on every render, looping forever against this test's fake user.
   authUser: { uid: "u1" },
   refreshPlans: vi.fn(),
+  patchPlan: vi.fn(),
   useAppDataReturn: {
     plans: [] as Plan[],
     plansLoading: false,
@@ -42,7 +43,6 @@ const h = vi.hoisted(() => ({
     races: [] as Race[],
     racesLoading: false,
   },
-  setPlanCompletion: vi.fn(),
   createPlan: vi.fn(),
   updatePlan: vi.fn(),
   deletePlan: vi.fn(),
@@ -68,6 +68,7 @@ vi.mock("@/contexts/AppDataContext", () => ({
     races: h.useAppDataReturn.races,
     racesLoading: h.useAppDataReturn.racesLoading,
     refreshPlans: h.refreshPlans,
+    patchPlan: h.patchPlan,
   }),
 }));
 
@@ -76,7 +77,6 @@ vi.mock("@/services/plans", () => ({
   updatePlan: h.updatePlan,
   deletePlan: h.deletePlan,
   setActivePlan: h.setActivePlan,
-  setPlanCompletion: h.setPlanCompletion,
 }));
 
 vi.mock("@/services/races", () => ({
@@ -114,23 +114,39 @@ vi.mock("@/components/GoalsTab", () => ({
 }));
 
 vi.mock("@/components/ConfirmDialog", () => ({
-  ConfirmDialog: () => null,
+  ConfirmDialog: (props: {
+    isOpen: boolean;
+    title: string;
+    confirmLabel: string;
+    onConfirm: () => void;
+    onCancel: () => void;
+  }) =>
+    props.isOpen ? (
+      <div role="dialog" aria-label={props.title}>
+        <button onClick={props.onCancel}>Cancel</button>
+        <button onClick={props.onConfirm}>{props.confirmLabel}</button>
+      </div>
+    ) : null,
 }));
 
-// Stub RunningPlanDetail: capture the props the page hands it, and expose a
-// couple of buttons that invoke the callbacks a real user action would.
+// Stub RunningPlanDetail and capture the props the page hands it.
 vi.mock("@/components/RunningPlanDetail", () => ({
   RunningPlanDetail: (props: {
     plan: RunningPlan;
     activities: HealthWorkout[];
-    onComplete: () => void;
+    onUpdate: (plan: RunningPlan) => Promise<void>;
+    onEditSessionChange?: (
+      planId: string,
+      isEditing: boolean,
+      isDirty: boolean,
+      discard: () => void
+    ) => void;
   }) => {
     h.runningPlanDetailProps.push(props);
     return (
       <div data-testid="running-plan-detail">
         <span data-testid="plan-name">{props.plan.name}</span>
         <span data-testid="activities-count">{props.activities.length}</span>
-        <button onClick={() => props.onComplete()}>Complete Plan</button>
       </div>
     );
   },
@@ -220,11 +236,17 @@ async function mount() {
   await flush();
 }
 
+function buttonWithText(text: string): HTMLButtonElement | undefined {
+  return Array.from(container.querySelectorAll("button")).find(
+    (button) => button.textContent?.trim() === text
+  );
+}
+
 beforeEach(() => {
   h.refreshPlans.mockClear();
-  h.setPlanCompletion.mockReset().mockResolvedValue(undefined);
+  h.patchPlan.mockClear();
   h.createPlan.mockReset().mockResolvedValue(buildSeptPlan());
-  h.updatePlan.mockReset().mockResolvedValue(undefined);
+  h.updatePlan.mockReset().mockImplementation(async (_uid, plan) => plan);
   h.deletePlan.mockReset().mockResolvedValue(undefined);
   h.setActivePlan.mockReset().mockResolvedValue(undefined);
   h.fetchRaces.mockReset().mockResolvedValue([]);
@@ -264,30 +286,6 @@ describe("PlansPage — shared AppDataContext wiring", () => {
     expect(lastProps.activities.map((a) => a.workoutId)).toEqual(["w-included"]);
   });
 
-  it("calls the shared refreshPlans() after a plan-mutating action (complete plan)", async () => {
-    await mount();
-
-    // Mounting is read-only, so refreshPlans has not fired before the explicit
-    // completion action.
-    expect(h.refreshPlans).not.toHaveBeenCalled();
-
-    const completeBtn = Array.from(container.querySelectorAll("button")).find(
-      (b) => b.textContent === "Complete Plan"
-    );
-    expect(completeBtn).toBeTruthy();
-    await act(async () => {
-      completeBtn!.click();
-    });
-    await flush();
-
-    expect(h.setPlanCompletion).toHaveBeenCalledWith(
-      "u1",
-      expect.objectContaining({ id: "sept1" }),
-      "complete"
-    );
-    expect(h.refreshPlans).toHaveBeenCalledTimes(1);
-  });
-
   it("renders the plan list and detail view after the dead-code removal (Phase 3)", async () => {
     await mount();
 
@@ -317,6 +315,71 @@ describe("PlansPage — shared AppDataContext wiring", () => {
     expect(h.fetchRaces).not.toHaveBeenCalled();
   });
 
+  it("keeps the selected plan mounted during a background plans refresh", async () => {
+    await mount();
+    expect(container.querySelector('[data-testid="running-plan-detail"]')).toBeTruthy();
+
+    h.useAppDataReturn.plansLoading = true;
+    h.useAppDataReturn.plansResolution = "loading";
+    await act(async () => {
+      root.render(<PlansPage />);
+    });
+    await flush();
+
+    expect(container.querySelector('[data-testid="running-plan-detail"]')).toBeTruthy();
+    expect(container.textContent).toContain("Sept 2026 Half Marathon Sub 9:30");
+  });
+
+  it("publishes a Done save directly without refreshing or unmounting plans", async () => {
+    await mount();
+    const props = h.runningPlanDetailProps.at(-1) as {
+      plan: RunningPlan;
+      onUpdate: (plan: RunningPlan) => Promise<void>;
+    };
+    const changed = { ...props.plan, name: "Updated Plan" };
+    const saved = { ...changed, updatedAt: "2026-09-04T12:00:00.000Z" };
+    h.updatePlan.mockResolvedValueOnce(saved);
+
+    await act(async () => {
+      await props.onUpdate(changed);
+    });
+
+    expect(h.updatePlan).toHaveBeenCalledWith("u1", changed);
+    expect(h.patchPlan).toHaveBeenCalledWith(saved);
+    expect(h.refreshPlans).not.toHaveBeenCalled();
+  });
+
+  it("requires confirmation and discards the draft before changing tabs", async () => {
+    await mount();
+    const props = h.runningPlanDetailProps.at(-1) as {
+      onEditSessionChange: (
+        planId: string,
+        isEditing: boolean,
+        isDirty: boolean,
+        discard: () => void
+      ) => void;
+    };
+    const discard = vi.fn();
+    act(() => props.onEditSessionChange("sept1", true, true, discard));
+
+    await act(async () => {
+      buttonWithText("Calendar")?.click();
+    });
+
+    expect(container.querySelector('[role="dialog"]')?.getAttribute("aria-label"))
+      .toBe("Discard plan changes?");
+    expect(container.querySelector('[data-testid="running-plan-detail"]')).toBeTruthy();
+    expect(discard).not.toHaveBeenCalled();
+
+    await act(async () => {
+      buttonWithText("Discard & Continue")?.click();
+    });
+    await flush();
+
+    expect(discard).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('[data-testid="running-plan-detail"]')).toBeNull();
+  });
+
   it.each([
     "Sept 2026 Owner Plan",
     "Half Marathon Sept 2026 Sub 9:45",
@@ -330,7 +393,6 @@ describe("PlansPage — shared AppDataContext wiring", () => {
     expect(h.updatePlan).not.toHaveBeenCalled();
     expect(h.deletePlan).not.toHaveBeenCalled();
     expect(h.setActivePlan).not.toHaveBeenCalled();
-    expect(h.setPlanCompletion).not.toHaveBeenCalled();
     expect(h.seedSeptHMPlan).not.toHaveBeenCalled();
     expect(h.buildSeptTravelMigration).not.toHaveBeenCalled();
     expect(h.refreshPlans).not.toHaveBeenCalled();
