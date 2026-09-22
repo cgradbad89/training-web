@@ -213,6 +213,9 @@ export interface PlannedWorkoutEntry {
   category?: WorkoutCategory;
   completed?: boolean;
   completedAt?: string;
+  /** Actual healthWorkouts document that automatically completed this session.
+   * Written only by automatic matching; absent for manual and legacy completions. */
+  matchedWorkoutId?: string;
 }
 
 export interface PlanWorkoutWeek {

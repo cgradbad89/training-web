@@ -2,250 +2,141 @@
 
 import React, { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import type {
-  RunningPlan,
-  WorkoutPlan,
-  WorkoutCategory,
-  PlannedRunEntry,
-} from "@/types/plan";
+import { Dumbbell, Footprints } from "lucide-react";
+import type { RunningPlan, WorkoutPlan, WorkoutCategory, PlannedRunEntry } from "@/types/plan";
 import { isRunningPlan } from "@/types/plan";
 import type { HealthWorkout } from "@/types/healthWorkout";
 import type { WorkoutOverride } from "@/types/workoutOverride";
-import {
-  buildCalendarEvents,
-  type CalendarEvent,
-} from "@/utils/planCalendar";
-import { weekStart as getWeekStart } from "@/utils/dates";
-import { type RunEntryStatus } from "@/utils/planMatching";
+import { buildCalendarEvents, type CalendarEvent } from "@/utils/planCalendar";
+import { weekStart as getWeekStart, toLocalIsoDate } from "@/utils/dates";
+import type { RunEntryStatus } from "@/utils/planMatching";
 import { RunActivityModal } from "@/components/runs/RunActivityModal";
 import { RunStatusIcon } from "@/components/RunStatusIcon";
 
-// ─── Color helpers ────────────────────────────────────────────────────────────
-
 const CATEGORY_PILL: Record<WorkoutCategory, string> = {
-  strength:     "bg-blue-600 text-white",
-  orangetheory: "bg-orange-500 text-white",
-  cycling:      "bg-green-600 text-white",
-  pilates:      "bg-purple-500 text-white",
-  yoga:         "bg-teal-500 text-white",
-  hiit:         "bg-red-500 text-white",
+  strength: "bg-blue-600 text-white", orangetheory: "bg-orange-500 text-white",
+  cycling: "bg-green-600 text-white", pilates: "bg-purple-500 text-white",
+  yoga: "bg-teal-500 text-white", hiit: "bg-red-500 text-white",
 };
 
-function eventPillClass(event: CalendarEvent): string {
-  if (event.planType === "running") return "bg-blue-100 text-blue-800";
-  if (event.category && event.category in CATEGORY_PILL) {
-    return CATEGORY_PILL[event.category];
-  }
-  return "bg-gray-100 text-gray-600";
+export function calendarEventKey(event: CalendarEvent): string {
+  return event.kind === "actual-run" || event.kind === "actual-workout"
+    ? `${event.kind}-${event.activity.workoutId}`
+    : `${event.kind}-${event.planId}-${event.entryId}`;
 }
 
-// ─── Date helpers ─────────────────────────────────────────────────────────────
+function eventPillClass(event: CalendarEvent): string {
+  if (event.kind === "actual-run" || event.kind === "actual-workout") {
+    return "bg-surface text-textPrimary border border-border";
+  }
+  if (event.kind === "planned-running") return "bg-blue-100 text-blue-800";
+  return event.category ? CATEGORY_PILL[event.category] : "bg-gray-100 text-gray-600";
+}
 
 function addDays(date: Date, n: number): Date {
-  const d = new Date(date);
-  d.setDate(d.getDate() + n);
-  return d;
-}
-
-function isSameDay(a: Date, b: Date): boolean {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  );
-}
-
-function todayMidnight(): Date {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d;
+  const result = new Date(date);
+  result.setDate(result.getDate() + n);
+  return result;
 }
 
 const DAY_HEADERS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-// ─── Event Pill ───────────────────────────────────────────────────────────────
-
-export function EventPill({
-  event,
-  onClick,
-}: {
-  event: CalendarEvent;
-  onClick: () => void;
-}) {
-  // Running events carry a four-state `status` (met/partial/missed/upcoming)
-  // computed via statusForRunEntry. Workout events have no mileage-matched
-  // status concept — they keep the original checkmark + dimming treatment
-  // driven by their stored `completed` boolean.
+export function EventPill({ event, onClick }: { event: CalendarEvent; onClick: () => void }) {
+  const actual = event.kind === "actual-run" || event.kind === "actual-workout";
+  const time = actual ? event.activity.startDate.toLocaleTimeString("en-US", {
+    hour: "numeric", minute: "2-digit",
+  }) : null;
   return (
-    <div
+    <button
+      type="button"
       onClick={onClick}
-      className={`rounded px-1.5 py-0.5 text-xs cursor-pointer truncate leading-tight flex items-center gap-1 ${eventPillClass(event)} ${event.status == null && event.completed ? "opacity-60" : ""}`}
+      className={`w-full text-left rounded px-1.5 py-0.5 text-xs truncate leading-tight flex items-center gap-1 ${eventPillClass(event)} ${event.kind === "planned-workout" && event.completed ? "opacity-60" : ""}`}
     >
-      {event.status != null ? (
-        <RunStatusIcon status={event.status} size={12} />
-      ) : (
-        event.completed && "✓ "
-      )}
+      {event.kind === "planned-running" && <RunStatusIcon status={event.status} size={12} />}
+      {event.kind === "planned-workout" && event.completed && "✓ "}
+      {event.kind === "actual-run" && <Footprints aria-label="Actual run" size={12} className="shrink-0" />}
+      {event.kind === "actual-workout" && <Dumbbell aria-label="Actual workout" size={12} className="shrink-0" />}
       <span className="truncate">
-        {event.label}
-        {event.distanceMiles != null && ` · ${event.distanceMiles.toFixed(1)} mi`}
+        {actual && `${time} · `}{event.label}
+        {event.kind === "planned-running" && event.distanceMiles != null && ` · ${event.distanceMiles.toFixed(1)} mi`}
       </span>
-    </div>
+    </button>
   );
 }
-
-// ─── Week Calendar ────────────────────────────────────────────────────────────
 
 interface WeekCalendarProps {
   plans: (RunningPlan | WorkoutPlan)[];
   actualRuns: HealthWorkout[];
-  /**
-   * Raw workoutOverrides map keyed by workoutId. Forwarded to
-   * buildCalendarEvents → matchPlanToActual so a corrected distance grades the
-   * pill. Omit when `actualRuns` is already override-applied.
-   */
   overrides?: Record<string, WorkoutOverride>;
-  /** Optional override for which week to show. Defaults to the current week's Monday. */
+  prebuiltEvents?: CalendarEvent[];
   weekStart?: Date;
-  /**
-   * Optional click handler. When omitted, defaults to the same routing
-   * behavior CalendarView uses: workout events route to the workout detail
-   * page, running events route to /plans.
-   */
   onEventClick?: (event: CalendarEvent) => void;
 }
 
-/**
- * Standalone week-view calendar grid. Renders 7 columns (Mon–Sun) of the
- * given `weekStart` Monday, with planned-session pills derived from
- * `plans` + `actualRuns` via buildCalendarEvents.
- *
- * No prev/next/toggle controls — those are owned by the parent (CalendarView
- * provides them; the dashboard renders the calendar fixed to the current week).
- */
+/** Standalone dashboard use stays planned-only unless prebuiltEvents is supplied. */
 export function WeekCalendar({
-  plans,
-  actualRuns,
-  overrides,
-  weekStart,
-  onEventClick,
+  plans, actualRuns, overrides, prebuiltEvents, weekStart, onEventClick,
 }: WeekCalendarProps) {
   const router = useRouter();
-
-  // Planned-vs-actual modal for RUNNING events — replaces the old
-  // router.push("/plans"). Workout events still navigate to the follow-along
-  // page (see handleClick). State declared before any early return.
-  const [modalOpen, setModalOpen] = useState(false);
-  const [selectedEntry, setSelectedEntry] = useState<PlannedRunEntry | null>(
-    null
+  const [selected, setSelected] = useState<{
+    entry: PlannedRunEntry; activity: HealthWorkout | null;
+    status: RunEntryStatus; date: Date;
+  } | null>(null);
+  const monday = useMemo(() => weekStart ?? getWeekStart(new Date()), [weekStart]);
+  const builtEvents = useMemo(
+    () => prebuiltEvents ?? buildCalendarEvents(plans, actualRuns, overrides),
+    [prebuiltEvents, plans, actualRuns, overrides]
   );
-  const [selectedMatchedRun, setSelectedMatchedRun] =
-    useState<HealthWorkout | null>(null);
-  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
-  const [selectedStatus, setSelectedStatus] = useState<RunEntryStatus>("upcoming");
-
-  const monday = useMemo(
-    () => weekStart ?? getWeekStart(new Date()),
-    [weekStart]
-  );
-
-  const events = useMemo(
-    () => buildCalendarEvents(plans, actualRuns, overrides),
-    [plans, actualRuns, overrides]
-  );
-
-  const today = todayMidnight();
-  const days = useMemo(
-    () => Array.from({ length: 7 }, (_, i) => addDays(monday, i)),
-    [monday]
-  );
+  const days = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(monday, i)), [monday]);
+  const todayKey = toLocalIsoDate(new Date());
 
   function handleClick(event: CalendarEvent) {
-    if (onEventClick) {
-      onEventClick(event);
+    if (onEventClick) return onEventClick(event);
+    if (event.kind === "planned-workout") {
+      router.push(`/workout/${event.planId}/${event.weekIndex}/${event.weekday}/${event.sessionIndex}`);
       return;
     }
-    if (event.planType === "workout") {
-      router.push(
-        `/workout/${event.planId}/${event.weekIndex}/${event.weekday}/${event.sessionIndex}`
-      );
+    if (event.kind === "actual-run") {
+      router.push(`/runs/${event.activity.workoutId}`);
       return;
     }
-    // Running event → open the planned-vs-actual RunActivityModal in place of
-    // the old router.push("/plans"). The full PlannedRunEntry is looked up from
-    // the already-loaded plans prop; the matched activity + status come
-    // straight off the event (computed once in buildCalendarEvents) — no
-    // second matchPlanToActual call needed.
-    const plan = plans.find((p) => p.id === event.planId);
+    if (event.kind === "actual-workout") return;
+    const plan = plans.find((candidate) => candidate.id === event.planId);
     if (!plan || !isRunningPlan(plan)) return;
-    let entry: PlannedRunEntry | undefined;
-    for (const week of plan.weeks) {
-      entry = week.entries.find((e) => e.id === event.entryId);
-      if (entry) break;
-    }
-    if (!entry) return;
-    setSelectedEntry(entry);
-    setSelectedMatchedRun(event.activity ?? null);
-    setSelectedStatus(event.status ?? "upcoming");
-    setSelectedDate(event.date);
-    setModalOpen(true);
+    const entry = plan.weeks.flatMap((week) => week.entries).find((candidate) => candidate.id === event.entryId);
+    if (entry) setSelected({ entry, activity: event.activity, status: event.status, date: event.date });
   }
 
   return (
     <>
-    <div className="overflow-x-auto">
-      <div className="min-w-[560px] grid grid-cols-7 gap-px bg-border rounded-xl overflow-hidden border border-border">
-        {/* Header row */}
-        {days.map((day, i) => {
-          const isToday = isSameDay(day, today);
-          return (
-            <div
-              key={`h-${i}`}
-              className={`p-2 text-center bg-card ${isToday ? "bg-primary/5" : ""}`}
-            >
-              <div className="text-xs font-semibold text-textSecondary">
-                {DAY_HEADERS[i]}
+      <div className="overflow-x-auto">
+        <div className="min-w-[560px] grid grid-cols-7 gap-px bg-border rounded-xl overflow-hidden border border-border">
+          {days.map((day, i) => {
+            const isToday = toLocalIsoDate(day) === todayKey;
+            return (
+              <div key={`h-${toLocalIsoDate(day)}`} className={`p-2 text-center bg-card ${isToday ? "bg-primary/5" : ""}`}>
+                <div className="text-xs font-semibold text-textSecondary">{DAY_HEADERS[i]}</div>
+                <div className={`text-sm font-bold mt-0.5 ${isToday ? "text-primary" : "text-textPrimary"}`}>{day.getDate()}</div>
               </div>
-              <div
-                className={`text-sm font-bold mt-0.5 ${isToday ? "text-primary" : "text-textPrimary"}`}
-              >
-                {day.getDate()}
+            );
+          })}
+          {days.map((day) => {
+            const dayKey = toLocalIsoDate(day);
+            const isToday = dayKey === todayKey;
+            return (
+              <div key={`b-${dayKey}`} className={`p-2 bg-card min-h-[100px] flex flex-col gap-1 ${isToday ? "bg-primary/5" : ""}`}>
+                {builtEvents.filter((event) => toLocalIsoDate(event.date) === dayKey).map((event) => (
+                  <EventPill key={calendarEventKey(event)} event={event} onClick={() => handleClick(event)} />
+                ))}
               </div>
-            </div>
-          );
-        })}
-        {/* Body row */}
-        {days.map((day, i) => {
-          const dayEvents = events.filter((e) => isSameDay(e.date, day));
-          const isToday = isSameDay(day, today);
-          return (
-            <div
-              key={`b-${i}`}
-              className={`p-2 bg-card min-h-[100px] flex flex-col gap-1 ${isToday ? "bg-primary/5" : ""}`}
-            >
-              {dayEvents.map((ev, j) => (
-                <EventPill
-                  key={j}
-                  event={ev}
-                  onClick={() => handleClick(ev)}
-                />
-              ))}
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
-    </div>
-
-    {modalOpen && selectedEntry && selectedDate && (
-      <RunActivityModal
-        isOpen={modalOpen}
-        onClose={() => setModalOpen(false)}
-        plannedEntry={selectedEntry}
-        matchedRun={selectedMatchedRun}
-        status={selectedStatus}
-        sessionDate={selectedDate}
-      />
-    )}
+      {selected && (
+        <RunActivityModal isOpen onClose={() => setSelected(null)} plannedEntry={selected.entry}
+          matchedRun={selected.activity} status={selected.status} sessionDate={selected.date} />
+      )}
     </>
   );
 }

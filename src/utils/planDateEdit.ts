@@ -186,6 +186,7 @@ export function slideStartDate(plan: Plan, newStartIso: string): Plan {
       entries: w.entries.map((e) => {
         const cleared: PlannedWorkoutEntry = { ...e, completed: false };
         delete cleared.completedAt;
+        delete cleared.matchedWorkoutId;
         return cleared;
       }),
     }));

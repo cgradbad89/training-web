@@ -81,6 +81,8 @@ function run(startISO: string, distanceMiles: number, id?: string): HealthWorkou
   const [y, m, d] = startISO.slice(0, 10).split("-").map(Number);
   return {
     workoutId: id ?? `run-${startISO}`,
+    activityType: "running",
+    displayType: "Run",
     isRunLike: true,
     startDate: new Date(y, m - 1, d, 12, 0, 0),
     distanceMiles,
@@ -88,6 +90,17 @@ function run(startISO: string, distanceMiles: number, id?: string): HealthWorkou
     avgHeartRate: null,
     trainingLoadV2: null,
   } as unknown as HealthWorkout;
+}
+
+function nonRun(id: string, hour = 9): HealthWorkout {
+  return {
+    workoutId: id,
+    isRunLike: false,
+    activityType: "traditional_strength_training",
+    displayType: "Workout",
+    startDate: new Date(2026, 0, 19, hour),
+    distanceMiles: 0,
+  } as HealthWorkout;
 }
 
 describe("buildCalendarEvents — running events carry the 4-state status", () => {
@@ -168,5 +181,75 @@ describe("buildCalendarEvents — workout events are unaffected (no status conce
     }
     expect(events.find((e) => e.entryId === "w1-strength-done")?.completed).toBe(true);
     expect(events.find((e) => e.entryId === "w1-strength-todo")?.completed).toBe(false);
+  });
+});
+
+const withActual = (plans: (RunningPlan | WorkoutPlan)[], workouts: HealthWorkout[]) =>
+  buildCalendarEvents(plans, workouts, undefined, { includeActualOnly: true });
+
+describe("buildCalendarEvents — complete Calendar activity", () => {
+  it("defaults to planned-only even when actual workouts are loaded", () => {
+    expect(buildCalendarEvents([], [run("2026-01-19", 3)])).toEqual([]);
+  });
+  it("shows an unmatched run with no active plan", () => {
+    const events = withActual([], [run("2026-01-19", 3, "extra")]);
+    expect(events).toMatchObject([{ kind: "actual-run", activity: { workoutId: "extra" } }]);
+  });
+  it("does not duplicate a full matched run", () => {
+    const events = withActual([makeRunningPlan([runEntry(0, 1, 10, "e1")])], [run("2026-01-19", 9, "w1")]);
+    expect(events.map((event) => event.kind)).toEqual(["planned-running"]);
+  });
+  it("does not duplicate a partial matched run", () => {
+    const events = withActual([makeRunningPlan([runEntry(0, 1, 10, "e1")])], [run("2026-01-19", 2, "w1")]);
+    expect(events.map((event) => event.kind)).toEqual(["planned-running"]);
+    expect(events[0].status).toBe("partial");
+  });
+  it("shows an additional same-day run", () => {
+    const events = withActual([makeRunningPlan([runEntry(0, 1, 10, "e1")])],
+      [run("2026-01-19", 9, "w1"), run("2026-01-19", 3, "w2")]);
+    expect(events.map((event) => event.kind)).toEqual(["planned-running", "actual-run"]);
+  });
+  it("shows multiple unmatched runs on one day", () => {
+    expect(withActual([], [run("2026-01-19", 3, "w1"), run("2026-01-19", 4, "w2")])).toHaveLength(2);
+  });
+  it("shows a non-run outside a plan date span", () => {
+    const future = { ...nonRun("w1"), startDate: new Date(2026, 2, 19, 9) };
+    const events = withActual([makeWorkoutPlan([workoutEntry(0, 1, "e1", false)])], [future]);
+    expect(events[1].kind).toBe("actual-workout");
+  });
+  it("suppresses a durable matched workout", () => {
+    const e = { ...workoutEntry(0, 1, "e1", true), matchedWorkoutId: "w1" };
+    const events = withActual([makeWorkoutPlan([e])], [nonRun("w1")]);
+    expect(events).toHaveLength(1);
+  });
+  it("shows an additional non-run workout on a completed planned day", () => {
+    const e = { ...workoutEntry(0, 1, "e1", true), matchedWorkoutId: "w1" };
+    const events = withActual([makeWorkoutPlan([e])], [nonRun("w1"), nonRun("w2", 10)]);
+    expect(events.map((event) => event.kind)).toEqual(["planned-workout", "actual-workout"]);
+    expect(events[1].activity?.workoutId).toBe("w2");
+  });
+  it("leaves an ambiguous legacy workout visible", () => {
+    const w = nonRun("w1");
+    const e = { ...workoutEntry(0, 1, "e1", true), completedAt: new Date(2026, 0, 19, 11).toISOString() };
+    expect(withActual([makeWorkoutPlan([e])], [w]).map((event) => event.kind))
+      .toEqual(["planned-workout", "actual-workout"]);
+  });
+  it("uses local midnight for actual activity dates", () => {
+    const w = { ...nonRun("w1"), startDate: new Date(2026, 0, 19, 0, 5) };
+    expect(withActual([], [w])[0].date.getDate()).toBe(19);
+  });
+  it("places planned events before actual events regardless of start time", () => {
+    const events = withActual([makeWorkoutPlan([workoutEntry(0, 1, "e1", false)])], [nonRun("w1", 5)]);
+    expect(events.map((event) => event.kind)).toEqual(["planned-workout", "actual-workout"]);
+  });
+  it("orders actual events by local start time then workoutId", () => {
+    const events = withActual([], [nonRun("z", 10), nonRun("b", 9), nonRun("a", 10)]);
+    expect(events.map((event) => event.activity?.workoutId)).toEqual(["b", "a", "z"]);
+  });
+  it("uses resolved titles and no fake plan metadata on actual-only events", () => {
+    const [event] = withActual([], [run("2026-01-19", 3, "w1")]);
+    expect(event.label).toBe("3mi Run");
+    expect(event).not.toHaveProperty("planId");
+    expect(event).not.toHaveProperty("entryId");
   });
 });

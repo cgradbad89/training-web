@@ -196,7 +196,7 @@ export default function WorkoutDetailPage() {
           ...w,
           entries: w.entries.map((e) =>
             e.id === session.id
-              ? { ...e, completed: true, completedAt: new Date().toISOString() }
+              ? { ...e, completed: true, completedAt: new Date().toISOString(), matchedWorkoutId: undefined }
               : e
           ),
         };

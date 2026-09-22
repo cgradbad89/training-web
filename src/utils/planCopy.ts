@@ -32,6 +32,7 @@ export function deepCopyWorkoutEntry(
     dayOfWeek: wd - 1,
     completed: false,
     completedAt: undefined,
+    matchedWorkoutId: undefined,
     exercises: (entry.exercises ?? []).map((ex) => ({
       ...ex,
       id: crypto.randomUUID(),

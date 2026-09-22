@@ -308,6 +308,7 @@ describe("slideStartDate — running", () => {
 describe("slideStartDate — workout", () => {
   it("clears completed/completedAt on every entry, keeps other fields", () => {
     const plan = makeWorkoutPlan();
+    plan.weeks[0].entries[0].matchedWorkoutId = "matched-1";
     const slid = slideStartDate(plan, "2026-02-02") as WorkoutPlan;
 
     expect(isWorkoutPlan(slid)).toBe(true);
@@ -315,6 +316,7 @@ describe("slideStartDate — workout", () => {
       for (const e of week.entries) {
         expect(e.completed).toBe(false);
         expect("completedAt" in e).toBe(false);
+        expect("matchedWorkoutId" in e).toBe(false);
       }
     }
     // Non-completion fields preserved (ids, weekday, type).
@@ -474,6 +476,7 @@ describe("copyPlanWithNewStart", () => {
 
   it("workout: clears completion and sets the new start", () => {
     const plan = makeWorkoutPlan();
+    plan.weeks[0].entries[0].matchedWorkoutId = "matched-1";
     const payload = copyPlanWithNewStart(plan, "Strength Copy", "2026-03-02");
 
     expect(isWorkoutPlan(payload as WorkoutPlan)).toBe(true);
@@ -484,6 +487,7 @@ describe("copyPlanWithNewStart", () => {
       for (const e of week.entries) {
         expect(e.completed).toBe(false);
         expect(e.completedAt).toBeUndefined();
+        expect(e.matchedWorkoutId).toBeUndefined();
       }
     }
   });
