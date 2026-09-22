@@ -136,6 +136,7 @@ afterEach(() => {
   act(() => root?.unmount())
   container?.remove()
   vi.unstubAllGlobals()
+  vi.useRealTimers()
 })
 
 describe('CoachPage provider behavior', () => {
@@ -311,6 +312,8 @@ describe('CoachPage provider behavior', () => {
   })
 
   it('hydrates canonical best-effort inputs for an active half-marathon race', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 8, 19, 12))
     h.fetchHealthWorkouts.mockResolvedValue([recentWorkout()])
     h.fetchRaces.mockResolvedValue([
       {
