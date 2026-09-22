@@ -827,12 +827,14 @@ export function CrossTrainingPlanDetail({
       ...entry,
       completed: true,
       completedAt: new Date().toISOString(),
+      matchedWorkoutId: undefined,
     });
   }
 
   function unmatchEntry(entry: PlannedWorkoutEntry) {
     const cleared = { ...entry, completed: false };
     delete cleared.completedAt;
+    delete cleared.matchedWorkoutId;
     replaceEntry(cleared);
   }
 

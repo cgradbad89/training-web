@@ -102,6 +102,7 @@ describe("autoMatchCrossTrainingSessions — excluded workouts never write compl
     expect(result.matched).toBe(1);
     expect(result.updatedPlanIds).toEqual(["wp1"]);
     expect(sessionOf(plans).completed).toBe(true);
+    expect(sessionOf(plans).matchedWorkoutId).toBe("w1");
     expect(h.updatePlan).toHaveBeenCalledTimes(1);
   });
 
@@ -117,6 +118,7 @@ describe("autoMatchCrossTrainingSessions — excluded workouts never write compl
     expect(result.matched).toBe(0);
     expect(result.updatedPlanIds).toEqual([]);
     expect(sessionOf(plans).completed).toBeUndefined();
+    expect(sessionOf(plans).matchedWorkoutId).toBeUndefined();
     expect(h.updatePlan).not.toHaveBeenCalled();
   });
 
@@ -134,6 +136,7 @@ describe("autoMatchCrossTrainingSessions — excluded workouts never write compl
     expect(sessionOf(plans).completed).toBe(true);
     // completedAt comes from the surviving (non-excluded) workout.
     expect(sessionOf(plans).completedAt).toBe(later.toISOString());
+    expect(sessionOf(plans).matchedWorkoutId).toBe("w2");
   });
 
   it("omitting the overrides argument preserves the pre-existing behaviour", async () => {

@@ -33,6 +33,8 @@ const h = vi.hoisted(() => ({
   authUser: { uid: "u1" },
   refreshPlans: vi.fn(),
   patchPlan: vi.fn(),
+  patchOverrides: vi.fn(),
+  calendarViewProps: [] as unknown[],
   useAppDataReturn: {
     plans: [] as Plan[],
     plansLoading: false,
@@ -40,6 +42,8 @@ const h = vi.hoisted(() => ({
     workouts: [] as HealthWorkout[],
     workoutsLoading: false,
     overrides: {} as Record<string, WorkoutOverride>,
+    maxHr: 185,
+    restingHr: 60,
     races: [] as Race[],
     racesLoading: false,
   },
@@ -65,10 +69,13 @@ vi.mock("@/contexts/AppDataContext", () => ({
     workouts: h.useAppDataReturn.workouts,
     workoutsLoading: h.useAppDataReturn.workoutsLoading,
     overrides: h.useAppDataReturn.overrides,
+    maxHr: h.useAppDataReturn.maxHr,
+    restingHr: h.useAppDataReturn.restingHr,
     races: h.useAppDataReturn.races,
     racesLoading: h.useAppDataReturn.racesLoading,
     refreshPlans: h.refreshPlans,
     patchPlan: h.patchPlan,
+    patchOverrides: h.patchOverrides,
   }),
 }));
 
@@ -106,7 +113,10 @@ vi.mock("@/components/PlanExportModal", () => ({
 }));
 
 vi.mock("@/components/CalendarView", () => ({
-  CalendarView: () => null,
+  CalendarView: (props: unknown) => {
+    h.calendarViewProps.push(props);
+    return null;
+  },
 }));
 
 vi.mock("@/components/GoalsTab", () => ({
@@ -245,6 +255,8 @@ function buttonWithText(text: string): HTMLButtonElement | undefined {
 beforeEach(() => {
   h.refreshPlans.mockClear();
   h.patchPlan.mockClear();
+  h.patchOverrides.mockClear();
+  h.calendarViewProps.length = 0;
   h.createPlan.mockReset().mockResolvedValue(buildSeptPlan());
   h.updatePlan.mockReset().mockImplementation(async (_uid, plan) => plan);
   h.deletePlan.mockReset().mockResolvedValue(undefined);
@@ -259,6 +271,8 @@ beforeEach(() => {
   h.useAppDataReturn.workouts = [];
   h.useAppDataReturn.workoutsLoading = false;
   h.useAppDataReturn.overrides = {};
+  h.useAppDataReturn.maxHr = 185;
+  h.useAppDataReturn.restingHr = 60;
   h.useAppDataReturn.races = [];
   h.useAppDataReturn.racesLoading = false;
 });
@@ -591,5 +605,34 @@ describe("PlansPage — new plan startDate is Monday-normalized (both plan types
     expect(h.createPlan).not.toHaveBeenCalled();
     // The in-memory copy the page holds is still the stored Thursday date.
     expect((h.useAppDataReturn.plans[1] as Plan).startDate).toBe("2026-01-22");
+  });
+});
+
+describe("Plans Calendar wiring", () => {
+  it("passes effective workouts, raw overrides, HR anchors, UID, and override patch callback", async () => {
+    const raw = buildWorkout({ workoutId: "effective", distanceMiles: 3 });
+    h.useAppDataReturn.workouts = [raw, buildWorkout({ workoutId: "excluded" })];
+    h.useAppDataReturn.overrides = {
+      effective: { ...buildOverride("effective", false), distanceMilesOverride: 5 },
+      excluded: buildOverride("excluded", true),
+    };
+    h.useAppDataReturn.maxHr = 177;
+    h.useAppDataReturn.restingHr = 62;
+    await mount();
+    await act(async () => { buttonWithText("Calendar")?.click(); });
+    const props = h.calendarViewProps.at(-1) as {
+      actualWorkouts: HealthWorkout[];
+      overrides: Record<string, WorkoutOverride>;
+      userId: string;
+      maxHr: number;
+      restingHr: number;
+      onWorkoutExcludeChange: (id: string, excluded: boolean) => void;
+    };
+    expect(props.actualWorkouts.map((workout) => workout.workoutId)).toEqual(["effective"]);
+    expect(props.actualWorkouts[0].distanceMiles).toBe(5);
+    expect(props.overrides).toBe(h.useAppDataReturn.overrides);
+    expect(props).toMatchObject({ userId: "u1", maxHr: 177, restingHr: 62 });
+    props.onWorkoutExcludeChange("effective", true);
+    expect(h.patchOverrides).toHaveBeenCalledTimes(1);
   });
 });

@@ -240,9 +240,12 @@ export default function PlansPage() {
     plansResolution,
     workouts: rawWorkouts,
     overrides,
+    maxHr,
+    restingHr,
     races,
     refreshPlans,
     patchPlan,
+    patchOverrides,
   } = useAppData();
 
   // Apply overrides and drop excluded workouts — same processing /dashboard
@@ -651,7 +654,29 @@ export default function PlansPage() {
             (p): p is RunningPlan | WorkoutPlan =>
               isRunningPlan(p) || isWorkoutPlan(p)
           )}
-          actualRuns={activities}
+          actualWorkouts={activities}
+          userId={user?.uid ?? null}
+          overrides={overrides}
+          maxHr={maxHr}
+          restingHr={restingHr}
+          onWorkoutExcludeChange={(workoutId, excluded) => {
+            if (!user) return;
+            patchOverrides((previous) => ({
+              ...previous,
+              [workoutId]: {
+                ...previous[workoutId],
+                workoutId,
+                userId: user.uid,
+                isExcluded: excluded,
+                excludedAt: excluded ? new Date().toISOString() : null,
+                excludedReason: null,
+                distanceMilesOverride: null,
+                durationSecondsOverride: null,
+                runTypeOverride: null,
+                updatedAt: new Date().toISOString(),
+              },
+            }));
+          }}
         />
       ) : pageView === "goals" ? (
         <GoalsTab

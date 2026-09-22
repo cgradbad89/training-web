@@ -299,3 +299,41 @@ describe("plan draft edit sessions", () => {
     expect(container.textContent).toContain("Your draft is still here");
   });
 });
+
+describe("workout completion evidence", () => {
+  function withEvidence(completed: boolean): WorkoutPlan {
+    return {
+      ...workoutPlan,
+      weeks: [{ ...workoutPlan.weeks[0], entries: [{
+        ...workoutPlan.weeks[0].entries[0],
+        completed,
+        completedAt: completed ? "2026-09-07T13:00:00.000Z" : undefined,
+        matchedWorkoutId: "automatic-workout",
+      }] }],
+    };
+  }
+  function renderPlan(plan: WorkoutPlan, onUpdate: (plan: WorkoutPlan) => Promise<void>) {
+    return <CrossTrainingPlanDetail plan={plan} onUpdate={onUpdate} onDelete={vi.fn()}
+      onSetActive={vi.fn()} onCopyPlan={vi.fn(async () => {})} saving={false} onExport={vi.fn()} />;
+  }
+
+  it("Unmatch clears completion, timestamp, and matchedWorkoutId", async () => {
+    const onUpdate = vi.fn(async (updated: WorkoutPlan) => { void updated; });
+    await mount(renderPlan(withEvidence(true), onUpdate));
+    await click(buttonWithText("Unmatch"));
+    const saved = onUpdate.mock.calls[0][0].weeks[0].entries[0];
+    expect(saved.completed).toBe(false);
+    expect(saved).not.toHaveProperty("completedAt");
+    expect(saved).not.toHaveProperty("matchedWorkoutId");
+  });
+
+  it("manual Mark Complete retains normal timestamp behavior but clears prior matched ID", async () => {
+    const onUpdate = vi.fn(async (updated: WorkoutPlan) => { void updated; });
+    await mount(renderPlan(withEvidence(false), onUpdate));
+    await click(buttonWithText("✓ Mark Complete"));
+    const saved = onUpdate.mock.calls[0][0].weeks[0].entries[0];
+    expect(saved.completed).toBe(true);
+    expect(new Date(saved.completedAt!).getTime()).toBeGreaterThan(0);
+    expect(saved.matchedWorkoutId).toBeUndefined();
+  });
+});
