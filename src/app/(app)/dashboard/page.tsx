@@ -1971,6 +1971,8 @@ export default function DashboardPage() {
           ]}
           actualRuns={activeWorkouts}
           overrides={overrides}
+          includeActualOnly
+          onActualWorkoutClick={setSelectedWorkout}
           weekStart={selectedWeekStart}
         />
       </section>

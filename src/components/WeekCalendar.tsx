@@ -69,13 +69,16 @@ interface WeekCalendarProps {
   actualRuns: HealthWorkout[];
   overrides?: Record<string, WorkoutOverride>;
   prebuiltEvents?: CalendarEvent[];
+  includeActualOnly?: boolean;
+  onActualWorkoutClick?: (workout: HealthWorkout) => void;
   weekStart?: Date;
   onEventClick?: (event: CalendarEvent) => void;
 }
 
-/** Standalone dashboard use stays planned-only unless prebuiltEvents is supplied. */
+/** Local event construction stays planned-only unless explicitly opted in. */
 export function WeekCalendar({
-  plans, actualRuns, overrides, prebuiltEvents, weekStart, onEventClick,
+  plans, actualRuns, overrides, prebuiltEvents, includeActualOnly = false,
+  onActualWorkoutClick, weekStart, onEventClick,
 }: WeekCalendarProps) {
   const router = useRouter();
   const [selected, setSelected] = useState<{
@@ -84,8 +87,8 @@ export function WeekCalendar({
   } | null>(null);
   const monday = useMemo(() => weekStart ?? getWeekStart(new Date()), [weekStart]);
   const builtEvents = useMemo(
-    () => prebuiltEvents ?? buildCalendarEvents(plans, actualRuns, overrides),
-    [prebuiltEvents, plans, actualRuns, overrides]
+    () => prebuiltEvents ?? buildCalendarEvents(plans, actualRuns, overrides, { includeActualOnly }),
+    [prebuiltEvents, plans, actualRuns, overrides, includeActualOnly]
   );
   const days = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(monday, i)), [monday]);
   const todayKey = toLocalIsoDate(new Date());
@@ -100,7 +103,10 @@ export function WeekCalendar({
       router.push(`/runs/${event.activity.workoutId}`);
       return;
     }
-    if (event.kind === "actual-workout") return;
+    if (event.kind === "actual-workout") {
+      onActualWorkoutClick?.(event.activity);
+      return;
+    }
     const plan = plans.find((candidate) => candidate.id === event.planId);
     if (!plan || !isRunningPlan(plan)) return;
     const entry = plan.weeks.flatMap((week) => week.entries).find((candidate) => candidate.id === event.entryId);
