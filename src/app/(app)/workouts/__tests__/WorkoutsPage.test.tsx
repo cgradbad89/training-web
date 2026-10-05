@@ -3,6 +3,8 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { type WorkoutOverride } from "@/types/workoutOverride";
+import { type UserSettings } from "@/types/userSettings";
+import { type AppDataResolution } from "@/contexts/AppDataContext";
 
 // React 19 requires this flag for act() to flush effects/microtasks in tests.
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -26,13 +28,16 @@ import { type WorkoutOverride } from "@/types/workoutOverride";
 const h = vi.hoisted(() => ({
   patchOverrides: vi.fn(),
   refreshWorkouts: vi.fn(),
+  patchTrainingLoad: vi.fn(),
+  enrichTrainingLoads: vi.fn(),
   useAppDataReturn: {
     workouts: [] as HealthWorkout[],
     overrides: {} as Record<string, WorkoutOverride>,
     workoutsLoading: false,
     overridesLoading: false,
     settingsLoading: false,
-    userSettings: null,
+    settingsResolution: "success" as AppDataResolution,
+    userSettings: null as UserSettings | null,
     maxHr: 185,
     restingHr: 60,
   },
@@ -55,16 +60,18 @@ vi.mock("@/contexts/AppDataContext", () => ({
     workoutsLoading: h.useAppDataReturn.workoutsLoading,
     overridesLoading: h.useAppDataReturn.overridesLoading,
     settingsLoading: h.useAppDataReturn.settingsLoading,
+    settingsResolution: h.useAppDataReturn.settingsResolution,
     userSettings: h.useAppDataReturn.userSettings,
     maxHr: h.useAppDataReturn.maxHr,
     restingHr: h.useAppDataReturn.restingHr,
     patchOverrides: h.patchOverrides,
     refreshWorkouts: h.refreshWorkouts,
+    patchTrainingLoad: h.patchTrainingLoad,
   }),
 }));
 
-vi.mock("@/hooks/useEnrichTrainingLoads", () => ({
-  useEnrichTrainingLoads: () => {},
+vi.mock("@/services/healthWorkouts", () => ({
+  enrichTrainingLoads: h.enrichTrainingLoads,
 }));
 
 vi.mock("@/services/userSettings", () => ({
@@ -185,6 +192,8 @@ function clickButtonByText(text: string) {
 beforeEach(() => {
   h.patchOverrides.mockClear();
   h.refreshWorkouts.mockClear();
+  h.patchTrainingLoad.mockClear();
+  h.enrichTrainingLoads.mockReset().mockResolvedValue([]);
   h.excludeWorkout.mockReset().mockResolvedValue(undefined);
   h.restoreWorkout.mockReset().mockResolvedValue(undefined);
   h.fetchUserSettings.mockReset().mockResolvedValue(null);
@@ -196,6 +205,7 @@ beforeEach(() => {
   h.useAppDataReturn.workoutsLoading = false;
   h.useAppDataReturn.overridesLoading = false;
   h.useAppDataReturn.settingsLoading = false;
+  h.useAppDataReturn.settingsResolution = "success";
   h.useAppDataReturn.userSettings = null;
   h.useAppDataReturn.maxHr = 185;
   h.useAppDataReturn.restingHr = 60;
@@ -207,6 +217,45 @@ afterEach(() => {
 });
 
 describe("WorkoutsPage — shared overrides wiring", () => {
+  it.each(["loading", "error"] as const)("does not enrich when settings resolution is %s", async (resolution) => {
+    h.useAppDataReturn.workouts = [buildWorkout({ trainingLoadV2: undefined })];
+    h.useAppDataReturn.settingsResolution = resolution;
+    await mount();
+    expect(h.enrichTrainingLoads).not.toHaveBeenCalled();
+  });
+
+  it("enriches with intentional defaults only after settings successfully resolve missing", async () => {
+    const source = buildWorkout({ trainingLoadV2: undefined });
+    h.useAppDataReturn.workouts = [source];
+    h.useAppDataReturn.settingsResolution = "loading";
+    await mount();
+    expect(h.enrichTrainingLoads).not.toHaveBeenCalled();
+    h.useAppDataReturn.settingsResolution = "success";
+    await act(async () => root.render(<WorkoutsPage />));
+    await flush();
+    expect(h.enrichTrainingLoads).toHaveBeenCalledOnce();
+    expect(h.enrichTrainingLoads).toHaveBeenCalledWith("u1", [source], null);
+  });
+
+  it("enriches raw non-run inputs with stored settings while displaying effective overrides", async () => {
+    const source = buildWorkout({ trainingLoadV2: undefined, durationSeconds: 3600 });
+    h.useAppDataReturn.workouts = [source, buildWorkout({ workoutId: "run", isRunLike: true })];
+    const settings = { maxHeartRate: 190, restingHeartRate: 70 } as UserSettings;
+    h.useAppDataReturn.userSettings = settings;
+    h.useAppDataReturn.maxHr = 190;
+    h.useAppDataReturn.restingHr = 70;
+    h.useAppDataReturn.overrides = {
+      w1: { ...buildOverride("w1", false), durationSecondsOverride: 7200 },
+    };
+    await mount();
+    expect(h.enrichTrainingLoads).toHaveBeenCalledWith("u1", [source], settings);
+    expect(h.enrichTrainingLoads.mock.calls[0][1][0]).toBe(source);
+    // The writer uses 60 minutes, while the activity row still shows the
+    // persisted 120-minute override through the existing effective selector.
+    expect(container.textContent).toContain("2:00:00");
+    expect(source.durationSeconds).toBe(3600);
+  });
+
   it("uses shared settings anchors without a redundant page-local settings read", async () => {
     const workout = buildWorkout({
       trainingLoadV2: undefined,

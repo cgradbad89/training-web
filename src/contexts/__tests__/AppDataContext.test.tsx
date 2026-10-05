@@ -58,12 +58,13 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-async function mount() {
+async function mount(strict = false) {
   container = document.createElement("div");
   document.body.appendChild(container);
   await act(async () => {
     root = createRoot(container);
-    root.render(<AppDataProvider uid="u1"><Probe /></AppDataProvider>);
+    const tree = <AppDataProvider uid="u1"><Probe /></AppDataProvider>;
+    root.render(strict ? <React.StrictMode>{tree}</React.StrictMode> : tree);
   });
   // Extra flush so post-await setState in the fetch effects settles.
   await act(async () => {
@@ -98,6 +99,124 @@ afterEach(() => {
 });
 
 describe("AppDataProvider", () => {
+  it("Strict Mode's replay setup owns W/P/R/O/H and rejects the first setup's results", async () => {
+    const oldW = deferred<Array<{ workoutId: string }>>();
+    const oldP = deferred<Array<{ id: string }>>();
+    const oldR = deferred<Array<{ id: string }>>();
+    const oldO = deferred<Record<string, { workoutId: string }>>();
+    const oldH = deferred<{ maxHeartRate: number }>();
+    const newW = deferred<Array<{ workoutId: string }>>();
+    const newP = deferred<Array<{ id: string }>>();
+    const newR = deferred<Array<{ id: string }>>();
+    const newO = deferred<Record<string, { workoutId: string }>>();
+    const newH = deferred<{ maxHeartRate: number }>();
+    h.fetchHealthWorkouts.mockReturnValueOnce(oldW.promise).mockReturnValueOnce(newW.promise);
+    h.fetchPlans.mockReturnValueOnce(oldP.promise).mockReturnValueOnce(newP.promise);
+    h.fetchRaces.mockReturnValueOnce(oldR.promise).mockReturnValueOnce(newR.promise);
+    h.fetchAllOverrides.mockReturnValueOnce(oldO.promise).mockReturnValueOnce(newO.promise);
+    h.fetchUserSettings.mockReturnValueOnce(oldH.promise).mockReturnValueOnce(newH.promise);
+    await mount(true);
+    for (const loader of [h.fetchHealthWorkouts, h.fetchPlans, h.fetchRaces, h.fetchAllOverrides, h.fetchUserSettings]) {
+      expect(loader).toHaveBeenCalledTimes(2);
+    }
+    oldW.resolve([{ workoutId: "retired" }]);
+    oldP.resolve([{ id: "retired" }]);
+    oldR.resolve([{ id: "retired" }]);
+    oldO.resolve({ retired: { workoutId: "retired" } });
+    oldH.resolve({ maxHeartRate: 199 });
+    await act(async () => { await Promise.all([oldW.promise, oldP.promise, oldR.promise, oldO.promise, oldH.promise]); });
+    expect(latest?.workoutsResolution).toBe("loading");
+    expect(latest?.workouts).toEqual([]);
+    expect(latest?.plans).toEqual([]);
+    expect(latest?.races).toEqual([]);
+    expect(latest?.overrides).toEqual({});
+    expect(latest?.userSettings).toBeNull();
+    expect(latest?.workoutsFullReconciliationVersion).toBe(0);
+    newW.resolve([{ workoutId: "current" }]);
+    newP.resolve([{ id: "current" }]);
+    newR.resolve([{ id: "current" }]);
+    newO.resolve({ current: { workoutId: "current" } });
+    newH.resolve({ maxHeartRate: 177 });
+    await act(async () => { await Promise.all([newW.promise, newP.promise, newR.promise, newO.promise, newH.promise]); });
+    expect(latest).toMatchObject({
+      workouts: [{ workoutId: "current" }], plans: [{ id: "current" }],
+      races: [{ id: "current" }], overrides: { current: { workoutId: "current" } },
+      maxHr: 177, workoutsFullReconciliationVersion: 1,
+      workoutsLoading: false, plansLoading: false, racesLoading: false,
+      overridesLoading: false, settingsLoading: false,
+      workoutsResolution: "success", plansResolution: "success",
+      racesResolution: "success", overridesResolution: "success", settingsResolution: "success",
+    });
+    // Replay did not leave an orphaned active request in the coordinator.
+    await act(async () => { await latest!.refreshWorkouts(); });
+    expect(h.fetchHealthWorkouts).toHaveBeenCalledTimes(3);
+  });
+
+  it("Strict Mode can settle successful empty sources and intentional default settings", async () => {
+    await mount(true);
+    expect(latest).toMatchObject({
+      workoutsResolution: "success", plansResolution: "success",
+      racesResolution: "success", overridesResolution: "success", settingsResolution: "success",
+      workouts: [], plans: [], races: [], overrides: {}, userSettings: null,
+      workoutsFullReconciliationVersion: 1,
+    });
+  });
+
+  it("a genuine unmount retires pending sources and old mutation callbacks even on a same-UID remount", async () => {
+    const pending = deferred<Array<{ workoutId: string }>>();
+    const pendingP = deferred<Array<{ id: string }>>();
+    const pendingR = deferred<Array<{ id: string }>>();
+    const pendingO = deferred<Record<string, { workoutId: string }>>();
+    const pendingH = deferred<{ maxHeartRate: number }>();
+    h.fetchHealthWorkouts.mockReturnValueOnce(pending.promise);
+    h.fetchPlans.mockReturnValueOnce(pendingP.promise);
+    h.fetchRaces.mockReturnValueOnce(pendingR.promise);
+    h.fetchAllOverrides.mockReturnValueOnce(pendingO.promise);
+    h.fetchUserSettings.mockReturnValueOnce(pendingH.promise);
+    await mount();
+    const retired = latest!;
+    await act(async () => root.render(null));
+    const overrideUpdater = vi.fn(prev => prev);
+    const raceUpdater = vi.fn(prev => prev);
+    await act(async () => {
+      retired.patchOverrides(overrideUpdater);
+      retired.patchRaces(raceUpdater);
+      await retired.refreshWorkouts();
+    });
+    expect(overrideUpdater).not.toHaveBeenCalled();
+    expect(raceUpdater).not.toHaveBeenCalled();
+    expect(h.fetchHealthWorkouts).toHaveBeenCalledTimes(1);
+    h.fetchHealthWorkouts.mockResolvedValueOnce([{ workoutId: "fresh" }]);
+    await renderUid("u1");
+    pending.resolve([{ workoutId: "retired" }]);
+    pendingP.resolve([{ id: "retired" }]);
+    pendingR.resolve([{ id: "retired" }]);
+    pendingO.resolve({ retired: { workoutId: "retired" } });
+    pendingH.resolve({ maxHeartRate: 199 });
+    await act(async () => { await Promise.all([pending.promise, pendingP.promise, pendingR.promise, pendingO.promise, pendingH.promise]); });
+    expect(latest?.workouts).toEqual([{ workoutId: "fresh" }]);
+    expect(latest).toMatchObject({ plans: [], races: [], overrides: {}, userSettings: null });
+    expect(latest?.workoutsFullReconciliationVersion).toBe(1);
+  });
+
+  it("rejects every old mutation callback after A-to-B identity replacement", async () => {
+    await mount();
+    const retired = latest!;
+    await renderUid("u2");
+    const overrideUpdater = vi.fn(prev => prev);
+    const raceUpdater = vi.fn(prev => prev);
+    await act(async () => {
+      retired.patchOverrides(overrideUpdater);
+      retired.patchRaces(raceUpdater);
+      retired.patchPlan({ id: "old-plan" } as RunningPlan);
+      retired.patchTrainingLoad("same-id", { trainingLoadV2: 999 });
+    });
+    expect(overrideUpdater).not.toHaveBeenCalled();
+    expect(raceUpdater).not.toHaveBeenCalled();
+    expect(latest?.plans).toEqual([]);
+    expect(latest?.workouts).toEqual([]);
+  });
+
   it("fetches workouts once on mount via getDocs, not a live listener", async () => {
     h.fetchHealthWorkouts.mockResolvedValue([{ workoutId: "w1" }]);
     await mount();

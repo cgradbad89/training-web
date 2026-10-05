@@ -9,6 +9,7 @@ import React, {
 } from "react";
 import { type User } from "firebase/auth";
 import { onAuthChange, signOut } from "@/lib/auth";
+import { setRouteCacheSession } from "@/utils/routeCache";
 import {
   isAuthorizedTrainingUser,
   UNAUTHORIZED_TRAINING_USER_MESSAGE,
@@ -46,8 +47,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const rejectingUnauthorizedRef = React.useRef(false);
 
   useEffect(() => {
-    return onAuthChange((nextUser) => {
+    const unsubscribe = onAuthChange((nextUser) => {
       if (!nextUser) {
+        setRouteCacheSession(null);
         setUser(null);
         setLoading(false);
         if (rejectingUnauthorizedRef.current) {
@@ -62,6 +64,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (
         !isAuthorizedTrainingUser(nextUser.email, nextUser.emailVerified)
       ) {
+        setRouteCacheSession(null);
         rejectingUnauthorizedRef.current = true;
         setUser(null);
         setLoading(false);
@@ -74,11 +77,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       rejectingUnauthorizedRef.current = false;
+      setRouteCacheSession(nextUser.uid);
       setUser(nextUser);
       setLoading(false);
       setAuthorizationStatus("authorized");
       setAuthorizationError(null);
     });
+    return () => {
+      unsubscribe();
+      setRouteCacheSession(null);
+    };
   }, []);
 
   const value = useMemo(

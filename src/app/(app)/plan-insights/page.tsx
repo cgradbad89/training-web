@@ -214,7 +214,11 @@ export default function PlanInsightsPage() {
     maxHr,
     restingHr,
     workoutsLoading,
+    workoutsResolution,
+    overridesResolution,
     plansResolution,
+    racesResolution,
+    settingsResolution,
   } = useAppData();
 
   // Apply overrides and drop excluded workouts — same processing the old
@@ -228,7 +232,10 @@ export default function PlanInsightsPage() {
   // Runs with fast-finish `mileSplits` hydrated (route-derived pace + per-mile
   // HR), for the HR-gated best-effort pipeline. Null until the async hydration
   // resolves; the segments fall back to the full-run-only path meanwhile.
-  const [hydratedRuns, setHydratedRuns] = useState<HealthWorkout[] | null>(null);
+  const [hydrated, setHydrated] = useState<{
+    inputs: object;
+    runs: HealthWorkout[];
+  } | null>(null);
 
   // ── Race-driven page state ─────────────────────────────────────────────────
   // Plan Insights is keyed off a user-selected race. By default we pick the
@@ -317,24 +324,38 @@ export default function PlanInsightsPage() {
     return all.filter((w) => w.startDate < raceDateCutoff);
   }, [workouts, raceDateCutoff]);
 
-  // Hydrate fast-finish mileSplits for the recency-window runs (route-derived
+  const hydrationReady = [
+    workoutsResolution, overridesResolution, plansResolution,
+    racesResolution, settingsResolution,
+  ].every((status) => status === "success");
+  const needsFastFinish = hydrationReady && !!raceDistanceMiles &&
+    raceDistanceMiles >= HALF_MARATHON_MILES;
+  // Invalidate settled results during render when the selection or anchors
+  // change, before the next effect can cancel an in-flight hydration.
+  const hydrationInputs = useMemo(() => ({
+    uid, runs, activeRace, activePlan, maxHr, restingHr, needsFastFinish,
+  }), [
+    uid, runs, activeRace, activePlan, maxHr, restingHr, needsFastFinish,
+  ]);
+  const hydratedRuns = hydrated?.inputs === hydrationInputs ? hydrated.runs : null;
+
+  // Hydrate fast-finish mileSplits only for a settled half+ prediction consumer
+  // (including successful missing settings, whose default anchors are deliberate).
+  // Hydrate the recency-window runs (route-derived
   // pace + per-mile HR), behind the cheap avgBpm pre-filter so route reads are
   // spent only on runs with a genuinely hard mile. Read-only.
   useEffect(() => {
-    if (!uid || runs.length === 0) {
-      setHydratedRuns(null);
-      return;
-    }
+    if (!uid || !needsFastFinish || runs.length === 0) return;
     let cancelled = false;
     hydrateFastFinishSplits(uid, runs, { maxHr, restingHr })
       .then((res) => {
-        if (!cancelled) setHydratedRuns(res.runs);
+        if (!cancelled) setHydrated({ inputs: hydrationInputs, runs: res.runs });
       })
       .catch(console.error);
     return () => {
       cancelled = true;
     };
-  }, [uid, runs, maxHr, restingHr]);
+  }, [uid, runs, maxHr, restingHr, needsFastFinish, hydrationInputs]);
 
   // Riegel fit for race prediction
   // Race inputs for ±1-day RACE-tier matching — shared by the live prediction
