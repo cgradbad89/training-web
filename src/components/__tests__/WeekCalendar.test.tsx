@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { EventPill, WeekCalendar } from "@/components/WeekCalendar";
@@ -30,6 +30,12 @@ function activity(id: string, isRunLike: boolean): HealthWorkout {
 }
 const actualRun: CalendarEvent = { kind: "actual-run", date, label: "3mi Run", activity: activity("r1", true), distanceMiles: 3 };
 const actualWorkout: CalendarEvent = { kind: "actual-workout", date, label: "Strength Training", activity: activity("w1", false) };
+function plannedWorkout(scheduledDate: Date, completed: boolean): CalendarEvent {
+  return { kind: "planned-workout", planType: "workout", date: scheduledDate,
+    entryId: `workout-${scheduledDate.getDate()}-${completed}`, planId: "p2", planName: "Workout Plan",
+    weekIndex: 0, dayIndex: 0, weekday: 1, sessionIndex: 0,
+    label: "Strength", completed, isRestDay: false };
+}
 
 describe("EventPill", () => {
   it("shows Footprints and local time for an actual run without a plan-status badge", () => {
@@ -44,16 +50,65 @@ describe("EventPill", () => {
     expect(container.querySelector(".lucide-dumbbell")).not.toBeNull();
     expect(container.textContent).toContain("9:15 AM · Strength Training");
   });
-  it("preserves planned run status and workout completion treatment", () => {
+  it("preserves the planned run partial status treatment", () => {
     const plannedRun: CalendarEvent = { kind: "planned-running", planType: "running", date,
       entryId: "e1", planId: "p1", planName: "Plan", weekIndex: 0, dayIndex: 0,
       weekday: 1, sessionIndex: 0, label: "Long Run", completed: true,
       isRestDay: false, status: "partial", activity: null, distanceMiles: 10 };
-    render(<><EventPill event={plannedRun} onClick={vi.fn()} />
-      <EventPill event={{ ...plannedRun, kind: "planned-workout", planType: "workout", entryId: "e2" } as CalendarEvent} onClick={vi.fn()} /></>);
+    render(<EventPill event={plannedRun} onClick={vi.fn()} />);
     expect(container.querySelector(".lucide-circle-minus")).not.toBeNull();
     expect(container.textContent).toContain("10.0 mi");
-    expect(container.textContent).toContain("✓");
+  });
+});
+
+describe("EventPill planned workout status", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 8, 21, 23, 30));
+  });
+
+  afterEach(() => vi.useRealTimers());
+
+  it("shows a success check for a completed workout in the past", () => {
+    render(<EventPill event={plannedWorkout(new Date(2026, 8, 20, 8), true)} onClick={vi.fn()} />);
+    const icon = container.querySelector("svg");
+    expect(icon?.classList).toContain("lucide-circle-check");
+    expect(icon?.classList).toContain("text-success");
+  });
+
+  it("shows a success check for a completed workout in the future", () => {
+    render(<EventPill event={plannedWorkout(new Date(2026, 8, 22, 8), true)} onClick={vi.fn()} />);
+    const icon = container.querySelector("svg");
+    expect(icon?.classList).toContain("lucide-circle-check");
+    expect(icon?.classList).toContain("text-success");
+  });
+
+  it("shows a danger X for an incomplete workout yesterday", () => {
+    render(<EventPill event={plannedWorkout(new Date(2026, 8, 20, 23, 59), false)} onClick={vi.fn()} />);
+    const icon = container.querySelector("svg");
+    expect(icon?.classList).toContain("lucide-circle-x");
+    expect(icon?.classList).toContain("text-danger");
+  });
+
+  it("keeps an incomplete workout neutral throughout today", () => {
+    render(<EventPill event={plannedWorkout(new Date(2026, 8, 21, 0, 1), false)} onClick={vi.fn()} />);
+    const icon = container.querySelector("svg");
+    expect(icon?.classList).toContain("lucide-circle");
+    expect(icon?.classList).toContain("text-textSecondary");
+  });
+
+  it("shows a neutral circle for an incomplete workout tomorrow", () => {
+    render(<EventPill event={plannedWorkout(new Date(2026, 8, 22, 0, 1), false)} onClick={vi.fn()} />);
+    const icon = container.querySelector("svg");
+    expect(icon?.classList).toContain("lucide-circle");
+    expect(icon?.classList).toContain("text-textSecondary");
+  });
+
+  it("renders exactly one icon and no textual status words", () => {
+    render(<EventPill event={plannedWorkout(new Date(2026, 8, 20, 8), false)} onClick={vi.fn()} />);
+    expect(container.querySelectorAll("svg")).toHaveLength(1);
+    expect(container.textContent).toBe("Strength");
+    expect(container.textContent).not.toMatch(/Completed|Missed|Upcoming|Unplanned|Extra/);
   });
 });
 
