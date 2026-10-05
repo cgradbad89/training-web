@@ -19,6 +19,7 @@ import {
   saveOverride,
 } from "@/services/workoutOverrides";
 import { fetchPlans } from "@/services/plans";
+import { fetchShoes, fetchManualShoeAssignmentsMap, saveManualAssignments } from "@/services/shoes";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -104,6 +105,7 @@ vi.mock("@/services/fastFinishSplits", () => ({
   hydrateFastFinishSplits: vi.fn().mockResolvedValue({ runs: [] }),
 }));
 vi.mock("@/utils/routeCache", () => ({
+  getRouteCacheEpoch: () => 0,
   getRoutePoints: vi.fn(),
 }));
 vi.mock("@/utils/mileSplitsCache", () => ({
@@ -751,6 +753,29 @@ describe("RunDetailPage shared override continuity", () => {
 
     expect(deleteOverride).toHaveBeenCalledWith("u1", "workout_123");
     expect(lastPatchedMap({ workout_123: edited })).toEqual({});
+  });
+
+  it.each(["success", "failure"])("shoe assignment %s keeps the raw map consistent on re-derivation", async outcome => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(fetchShoes).mockResolvedValue(["A", "B"].map(id => ({ id, name: `Shoe ${id}`, brand: "", model: "", startMileageOffset: 0, isRetired: false, addedAt: "2026-01-01" })));
+    vi.mocked(fetchManualShoeAssignmentsMap).mockResolvedValue({ workout_123: "A" });
+    if (outcome === "success") vi.mocked(saveManualAssignments).mockResolvedValue(undefined);
+    else vi.mocked(saveManualAssignments).mockRejectedValue(new Error("offline"));
+    await renderSettled();
+    await act(async () => container.querySelector<HTMLButtonElement>('button[title="Edit workout"]')!.click());
+    await act(async () => {
+      const select = container.querySelector<HTMLSelectElement>("select")!;
+      select.value = "B"; select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => Array.from(container.querySelectorAll("button")).find(b => b.textContent === "Save Changes")!.click());
+    expect(saveManualAssignments).toHaveBeenCalledWith("u1", { workout_123: "B" });
+    if (outcome === "failure") await act(async () => Array.from(container.querySelectorAll("button")).find(b => b.textContent === "Cancel")!.click());
+    // Reopening derives the form from the canonical assignment, not its draft.
+    await act(async () => container.querySelector<HTMLButtonElement>('button[title="Edit workout"]')!.click());
+    expect(container.querySelector<HTMLSelectElement>("select")!.value).toBe(outcome === "success" ? "B" : "A");
+    vi.mocked(fetchShoes).mockResolvedValue([]);
+    vi.mocked(fetchManualShoeAssignmentsMap).mockResolvedValue({});
+    errorSpy.mockRestore();
   });
 
   it("does not publish a failed persistence attempt", async () => {

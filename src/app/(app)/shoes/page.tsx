@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { Pencil, Trash2, Plus, X, Footprints } from "lucide-react";
 
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -1102,8 +1102,13 @@ function RunsPanel({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function ShoesPage() {
-  const { user } = useAuth();
+  const { user, sessionEpoch, isSessionCurrent } = useAuth();
   const uid = user?.uid ?? null;
+  const assignmentOwner = useRef(0);
+  useEffect(() => {
+    assignmentOwner.current += 1;
+    return () => { assignmentOwner.current += 1; };
+  }, [uid, sessionEpoch]);
 
   // Workouts + plans come from the shared AppDataContext (full/delta refresh);
   // shoes and manual assignments remain a shoes-page-local fetch.
@@ -1118,7 +1123,6 @@ export default function ShoesPage() {
     [rawActivities, overrides]
   );
   const [shoes, setShoes] = useState<RunningShoe[]>([]);
-  const [assignments, setAssignments] = useState<Record<string, string | null>>({});
   // Manual assignments exactly as fetched (pre-merge with auto-assignments).
   const [rawAssignments, setRawAssignments] = useState<Record<string, string | null>>({});
   const activeRunningPlan = useMemo(
@@ -1151,40 +1155,44 @@ export default function ShoesPage() {
     return () => { document.body.style.overflow = ""; };
   }, [editingShoe, editingRule, deleteConfirm, deleteRuleConfirm, runsPanel]);
 
-  const [autoAssignedCount, setAutoAssignedCount] = useState(0);
-  const [autoAssignedMap, setAutoAssignedMap] = useState<Record<string, string>>({});
   const [savingAuto, setSavingAuto] = useState(false);
   const [autoSaveMsg, setAutoSaveMsg] = useState<"success" | "error" | null>(null);
 
   const loadShoesAndAssignments = useCallback(async () => {
     if (!uid) return;
+    const generation = assignmentOwner.current;
     const [fetchedShoes, fetchedAssign] = await Promise.all([
       fetchShoes(uid),
       fetchManualShoeAssignmentsMap(uid),
     ]);
+    if (generation !== assignmentOwner.current || !isSessionCurrent(sessionEpoch)) return;
     setShoes(fetchedShoes);
     setRawAssignments(fetchedAssign);
-  }, [uid]);
+  }, [uid, sessionEpoch, isSessionCurrent]);
 
   useEffect(() => {
     if (!uid) return;
     setShoesLoading(true);
+    let cancelled = false;
     loadShoesAndAssignments()
       .catch(console.error)
-      .finally(() => setShoesLoading(false));
+      .finally(() => { if (!cancelled) setShoesLoading(false); });
+    return () => { cancelled = true; };
   }, [uid, loadShoesAndAssignments]);
 
   // Recompute auto-assignments whenever the run list, shoes, or manual
   // assignments change. Previously computed inline in loadAll; now reactive
   // because workouts arrive from the shared refreshable array rather than a
   // one-shot fetch on this page.
-  useEffect(() => {
-    const autoAssigned = evaluateAutoAssignRules(activities, shoes, rawAssignments);
-    setAutoAssignedMap(autoAssigned);
-    setAutoAssignedCount(Object.keys(autoAssigned).length);
-    // Merge: manual assignments take precedence over auto-assignments.
-    setAssignments({ ...autoAssigned, ...rawAssignments });
-  }, [activities, shoes, rawAssignments]);
+  const autoAssignedMap = useMemo(
+    () => evaluateAutoAssignRules(activities, shoes, rawAssignments),
+    [activities, shoes, rawAssignments]
+  );
+  const autoAssignedCount = Object.keys(autoAssignedMap).length;
+  const assignments = useMemo(
+    () => ({ ...autoAssignedMap, ...rawAssignments }),
+    [autoAssignedMap, rawAssignments]
+  );
 
   const activeShoes = shoes.filter((s) => !s.isRetired);
   const retiredShoes = shoes.filter((s) => s.isRetired);
@@ -1195,9 +1203,14 @@ export default function ShoesPage() {
     shoeId: string | null
   ) {
     if (!uid) return;
-    // Optimistic update
-    setAssignments((prev) => ({ ...prev, [activityId]: shoeId }));
-    await saveManualAssignments(uid, { [activityId]: shoeId });
+    const generation = assignmentOwner.current;
+    try {
+      await saveManualAssignments(uid, { [activityId]: shoeId });
+      if (generation !== assignmentOwner.current || !isSessionCurrent(sessionEpoch)) return;
+      setRawAssignments((prev) => ({ ...prev, [activityId]: shoeId }));
+    } catch (err) {
+      console.error(err);
+    }
   }
 
   // ── Shoe save handler ────────────────────────────────────────────────────
@@ -1217,6 +1230,7 @@ export default function ShoesPage() {
   // ── Shoe delete handler ──────────────────────────────────────────────────
   async function handleDeleteShoe(shoe: RunningShoe) {
     if (!uid) return;
+    const generation = assignmentOwner.current;
 
     const cleared: Record<string, null> = {};
     for (const [actId, shoeId] of Object.entries(assignments)) {
@@ -1224,6 +1238,8 @@ export default function ShoesPage() {
     }
     if (Object.keys(cleared).length > 0) {
       await saveManualAssignments(uid, cleared);
+      if (generation !== assignmentOwner.current || !isSessionCurrent(sessionEpoch)) return;
+      setRawAssignments((prev) => ({ ...prev, ...cleared }));
     }
 
     await deleteShoe(uid, shoe.id);
@@ -1362,12 +1378,13 @@ export default function ShoesPage() {
           <button
             onClick={async () => {
               if (!uid) return;
+              const generation = assignmentOwner.current;
               setSavingAuto(true);
               setAutoSaveMsg(null);
               try {
                 await saveManualAssignments(uid, autoAssignedMap);
-                setAutoAssignedCount(0);
-                setAutoAssignedMap({});
+                if (generation !== assignmentOwner.current || !isSessionCurrent(sessionEpoch)) return;
+                setRawAssignments((prev) => ({ ...prev, ...autoAssignedMap }));
                 setAutoSaveMsg("success");
                 setTimeout(() => setAutoSaveMsg(null), 3000);
               } catch (err) {
