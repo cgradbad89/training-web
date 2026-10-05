@@ -7,7 +7,7 @@
  */
 
 import { type HealthWorkout } from "@/types/healthWorkout";
-import { getRouteStartPoint, haversineMeters } from "@/utils/routeCache";
+import { getRouteCacheEpoch, getRouteStartPoint, haversineMeters } from "@/utils/routeCache";
 
 export interface RouteCluster {
   id: string;
@@ -29,8 +29,11 @@ export async function clusterRoutesGeographic(
 ): Promise<RouteCluster[]> {
   // Fetch start points for all runs in parallel (batched)
   const startPoints = new Map<string, { lat: number; lng: number } | null>();
+  const epoch = getRouteCacheEpoch();
 
   for (let i = 0; i < runs.length; i += 10) {
+    // A retired preparation cannot start another batch in a replacement session.
+    if (epoch !== getRouteCacheEpoch()) return [];
     const batch = runs.slice(i, i + 10);
     await Promise.all(
       batch.map(async (run) => {
@@ -39,6 +42,7 @@ export async function clusterRoutesGeographic(
       })
     );
   }
+  if (epoch !== getRouteCacheEpoch()) return [];
 
   // Sort by pace (best pace first = representative run)
   const sorted = [...runs].sort(

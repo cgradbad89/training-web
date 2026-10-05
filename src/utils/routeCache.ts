@@ -6,11 +6,24 @@
  */
 
 import { type RoutePoint, fetchRoutePoints } from "@/services/routes";
+import { collection, query, orderBy, limit, getDocs } from "firebase/firestore";
+import { db } from "@/lib/firebase";
 
 const cache = new Map<string, RoutePoint[]>();
 const inFlight = new Map<string, Promise<RoutePoint[]>>();
+type RouteStart = { lat: number; lng: number };
+// One Routes view uses at most 500 raw workouts. Keep only small coordinates,
+// with LRU eviction; empty/failed reads are not cached (ingestion may be pending).
+const MAX_ROUTE_STARTS = 500;
+const startCache = new Map<string, RouteStart>();
+const startInFlight = new Map<string, Promise<RouteStart | null>>();
 let sessionUid: string | null = null;
 let sessionEpoch = 0;
+
+/** Snapshot for multi-batch consumers: retirement must stop subsequent reads. */
+export function getRouteCacheEpoch(): number {
+  return sessionEpoch;
+}
 
 /** Explicit tuple encoding avoids collisions and requires UID at every read. */
 function routeKey(uid: string, workoutId: string): string {
@@ -22,6 +35,8 @@ export function clearRouteCache(): void {
   sessionEpoch += 1;
   cache.clear();
   inFlight.clear();
+  startCache.clear();
+  startInFlight.clear();
 }
 
 /** Called by the existing auth observer, before exposing the next identity.
@@ -100,8 +115,9 @@ export function isRouteCached(uid: string, workoutId: string): boolean {
 
 /**
  * Fetch just the first route point for a workout (start coordinate).
- * Uses the existing cache — if route is already cached, reads from it.
- * Otherwise fetches just the first document from the route subcollection.
+ * Full GPS takes precedence; a coordinate never substitutes for full GPS.
+ * Nonempty starts survive same-session navigation, with identical work shared.
+ * The auth observer retires both maps and pending owners with the GPS epoch.
  */
 export async function getRouteStartPoint(
   uid: string,
@@ -115,24 +131,46 @@ export async function getRouteStartPoint(
     return null;
   }
 
-  // Otherwise fetch just the first route point from Firestore
-  try {
-    const { collection, query, orderBy, limit, getDocs } = await import(
-      "firebase/firestore"
-    );
-    const { db } = await import("@/lib/firebase");
-    const routeRef = collection(
-      db,
-      `users/${uid}/healthWorkouts/${workoutId}/route`
-    );
-    const q = query(routeRef, orderBy("__name__"), limit(1));
-    const snap = await getDocs(q);
-    if (snap.empty) return null;
-    const data = snap.docs[0].data();
-    return { lat: data.lat, lng: data.lng };
-  } catch {
-    return null;
+  const cached = startCache.get(key);
+  if (cached) {
+    startCache.delete(key);
+    startCache.set(key, cached);
+    return cached;
   }
+  const pending = startInFlight.get(key);
+  if (pending) return pending;
+
+  const epoch = sessionEpoch;
+  const promise = (async (): Promise<RouteStart | null> => {
+    try {
+      // Defer work until its promise is registered, allowing synchronous
+      // retirement to prevent a queued old-session query from starting.
+      await Promise.resolve();
+      if (epoch !== sessionEpoch) return null;
+      const routeRef = collection(
+        db,
+        `users/${uid}/healthWorkouts/${workoutId}/route`
+      );
+      const q = query(routeRef, orderBy("__name__"), limit(1));
+      const snap = await getDocs(q);
+      if (epoch !== sessionEpoch || snap.empty) return null;
+      const data = snap.docs[0].data();
+      if (!Number.isFinite(data.lat) || !Number.isFinite(data.lng)) return null;
+      const start = { lat: data.lat, lng: data.lng };
+      startCache.set(key, start);
+      if (startCache.size > MAX_ROUTE_STARTS) {
+        startCache.delete(startCache.keys().next().value!);
+      }
+      return start;
+    } catch {
+      return null;
+    }
+  })().finally(() => {
+    // Late old work must not remove a replacement request for this same key.
+    if (startInFlight.get(key) === promise) startInFlight.delete(key);
+  });
+  startInFlight.set(key, promise);
+  return promise;
 }
 
 /** Haversine distance in meters between two lat/lng points */

@@ -743,8 +743,13 @@ function ShoesUsed({ runs, shoes, manualAssignments }: ShoesUsedProps) {
 
 export default function RunsPage() {
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, sessionEpoch, isSessionCurrent } = useAuth();
   const uid = user?.uid ?? null;
+  const assignmentOwner = useRef(0);
+  useEffect(() => {
+    assignmentOwner.current += 1;
+    return () => { assignmentOwner.current += 1; };
+  }, [uid, sessionEpoch]);
 
   // Shared cross-page data from AppDataContext. As of 2026-07-17, workouts
   // are fetched once on mount (not a live listener) and refreshed on tab
@@ -812,9 +817,7 @@ export default function RunsPage() {
   }, [refreshWorkouts]);
 
   const [shoes, setShoes] = useState<RunningShoe[]>([]);
-  // Merged auto + manual shoe assignments (manual wins).
-  const [manualAssignments, setManualAssignments] = useState<Record<string, string | null>>({});
-  // Manual assignments exactly as fetched (pre-merge), for auto-assign recompute.
+  // Canonical persisted assignments; manual values (including null) win over rules.
   const [rawAssignments, setRawAssignments] = useState<Record<string, string | null>>({});
   const [showExcluded, setShowExcluded] = useState(false);
   const [shoesLoading, setShoesLoading] = useState(true);
@@ -881,7 +884,7 @@ export default function RunsPage() {
     let cancelled = false;
     Promise.all([fetchShoes(uid), fetchManualShoeAssignmentsMap(uid)])
       .then(([fetchedShoes, assignments]) => {
-        if (cancelled) return;
+        if (cancelled || !isSessionCurrent(sessionEpoch)) return;
         setShoes(fetchedShoes);
         setRawAssignments(assignments);
       })
@@ -892,14 +895,14 @@ export default function RunsPage() {
     return () => {
       cancelled = true;
     };
-  }, [uid]);
+  }, [uid, sessionEpoch, isSessionCurrent]);
 
   // Recompute auto-assignments whenever the run list, shoes, or manual
   // assignments change. Previously computed inside the local workouts listener
   // callback; now reactive to the shared workouts array (manual wins on merge).
-  useEffect(() => {
+  const manualAssignments = useMemo(() => {
     const autoAssigned = evaluateAutoAssignRules(allRuns, shoes, rawAssignments);
-    setManualAssignments({ ...autoAssigned, ...rawAssignments });
+    return { ...autoAssigned, ...rawAssignments };
   }, [allRuns, shoes, rawAssignments]);
 
   // Background prefetch — most recent 20 runs with routes. Previously ran inside
@@ -930,15 +933,18 @@ export default function RunsPage() {
   const handleAssign = useCallback(
     async (workoutId: string, shoeId: string | null) => {
       if (!uid) return;
-      setManualAssignments((prev) => ({ ...prev, [workoutId]: shoeId }));
       setOpenDropdown(null);
+      const generation = assignmentOwner.current;
       try {
         await saveManualAssignments(uid, { [workoutId]: shoeId });
+        if (generation !== assignmentOwner.current || !isSessionCurrent(sessionEpoch)) return;
+        // Publish only persisted assignments; later workout refreshes derive from this map.
+        setRawAssignments((prev) => ({ ...prev, [workoutId]: shoeId }));
       } catch (err) {
         console.error(err);
       }
     },
-    [uid]
+    [uid, sessionEpoch, isSessionCurrent]
   );
 
   const availableYears = useMemo(() => {

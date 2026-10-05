@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RoutePoint } from "@/services/routes";
+import type { HealthWorkout } from "@/types/healthWorkout";
+import { clusterRoutesGeographic } from "@/utils/routeClustering";
 
 const h = vi.hoisted(() => ({ fetch: vi.fn(), getDocs: vi.fn() }));
 vi.mock("@/services/routes", () => ({ fetchRoutePoints: h.fetch }));
@@ -166,5 +168,114 @@ describe("GPS memory identity and session ownership", () => {
     await prefetchRoutes("A", ["X"]);
     expect(await getRoutePoints("A", "X")).toEqual(points(40));
     expect(h.fetch).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("bounded session route-start cache", () => {
+  const snapshot = (lat = 38) => ({ empty: false, docs: [{ data: () => ({ lat, lng: -77 }) }] });
+
+  it("queries once then reuses a successful same-session start", async () => {
+    setRouteCacheSession("A"); h.getDocs.mockResolvedValue(snapshot());
+    expect(await getRouteStartPoint("A", "X")).toEqual({ lat: 38, lng: -77 });
+    setRouteCacheSession("A");
+    expect(await getRouteStartPoint("A", "X")).toEqual({ lat: 38, lng: -77 });
+    expect(h.getDocs).toHaveBeenCalledOnce(); expect(h.fetch).not.toHaveBeenCalled();
+    expect(isRouteCached("A", "X")).toBe(false);
+  });
+
+  it("shares one underlying query between 50 concurrent consumers", async () => {
+    const pending = deferred<ReturnType<typeof snapshot>>(); h.getDocs.mockReturnValue(pending.promise);
+    const reads = Array.from({ length: 50 }, () => getRouteStartPoint("A", "X"));
+    await vi.waitFor(() => expect(h.getDocs).toHaveBeenCalledOnce());
+    pending.resolve(snapshot());
+    expect(await Promise.all(reads)).toEqual(Array.from({ length: 50 }, () => ({ lat: 38, lng: -77 })));
+  });
+
+  it.each(["empty", "failure", "invalid coordinates"])("does not retain %s and retries incomplete GPS", async kind => {
+    if (kind === "failure") h.getDocs.mockRejectedValueOnce(new Error("offline"));
+    else if (kind === "empty") h.getDocs.mockResolvedValueOnce({ empty: true });
+    else h.getDocs.mockResolvedValueOnce(snapshot(NaN));
+    h.getDocs.mockResolvedValueOnce(snapshot(39));
+    expect(await getRouteStartPoint("A", "X")).toBeNull();
+    expect(await getRouteStartPoint("A", "X")).toEqual({ lat: 39, lng: -77 });
+    expect(await getRouteStartPoint("A", "X")).toEqual({ lat: 39, lng: -77 });
+    expect(h.getDocs).toHaveBeenCalledTimes(2);
+  });
+
+  it("scopes identical workout IDs by UID", async () => {
+    h.getDocs.mockResolvedValueOnce(snapshot(38)).mockResolvedValueOnce(snapshot(42));
+    await getRouteStartPoint("A", "X");
+    expect(await getRouteStartPoint("B", "X")).toEqual({ lat: 42, lng: -77 });
+    expect(h.getDocs.mock.calls).toEqual([["users/A/healthWorkouts/X/route"], ["users/B/healthWorkouts/X/route"]]);
+  });
+
+  it.each(["UID change", "same UID new session", "explicit epoch clear"])("retires resolved starts at %s", async kind => {
+    setRouteCacheSession("A"); h.getDocs.mockResolvedValueOnce(snapshot(38)).mockResolvedValueOnce(snapshot(39));
+    await getRouteStartPoint("A", "X");
+    if (kind === "UID change") setRouteCacheSession("B");
+    else if (kind === "explicit epoch clear") clearRouteCache();
+    else { setRouteCacheSession(null); setRouteCacheSession("A"); }
+    expect(await getRouteStartPoint(kind === "UID change" ? "B" : "A", "X")).toEqual({ lat: 39, lng: -77 });
+    expect(h.getDocs).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(["success", "failure"])("late retired %s cannot publish or remove replacement work", async kind => {
+    setRouteCacheSession("A");
+    const old = deferred<ReturnType<typeof snapshot>>(); const fresh = deferred<ReturnType<typeof snapshot>>();
+    h.getDocs.mockReturnValueOnce(old.promise).mockReturnValueOnce(fresh.promise);
+    const oldRead = getRouteStartPoint("A", "X"); await vi.waitFor(() => expect(h.getDocs).toHaveBeenCalledTimes(1));
+    setRouteCacheSession(null); setRouteCacheSession("A");
+    const freshRead = getRouteStartPoint("A", "X"); await vi.waitFor(() => expect(h.getDocs).toHaveBeenCalledTimes(2));
+    if (kind === "success") old.resolve(snapshot(38)); else old.reject(new Error("retired failure"));
+    expect(await oldRead).toBeNull();
+    const reused = getRouteStartPoint("A", "X"); fresh.resolve(snapshot(39));
+    expect(await freshRead).toEqual({ lat: 39, lng: -77 }); expect(await reused).toEqual({ lat: 39, lng: -77 });
+    expect(await getRouteStartPoint("A", "X")).toEqual({ lat: 39, lng: -77 }); expect(h.getDocs).toHaveBeenCalledTimes(2);
+  });
+
+  it("retirement before async imports finish prevents the old query starting", async () => {
+    const read = getRouteStartPoint("A", "X"); clearRouteCache();
+    expect(await read).toBeNull(); expect(h.getDocs).not.toHaveBeenCalled();
+  });
+
+  it("full GPS remains a separate demand read and takes precedence afterward", async () => {
+    h.getDocs.mockResolvedValue(snapshot(38)); await getRouteStartPoint("A", "X");
+    h.fetch.mockResolvedValue(points(39)); expect(await getRoutePoints("A", "X")).toEqual(points(39));
+    expect(await getRouteStartPoint("A", "X")).toEqual({ lat: 39, lng: -77 });
+    expect(h.fetch).toHaveBeenCalledOnce(); expect(h.getDocs).toHaveBeenCalledOnce();
+  });
+
+  it("empty full GPS preserves its existing contract without a separate start query", async () => {
+    h.fetch.mockResolvedValue([]); await getRoutePoints("A", "X");
+    expect(await getRouteStartPoint("A", "X")).toBeNull(); expect(h.getDocs).not.toHaveBeenCalled();
+  });
+
+  it.each(["UID change", "same UID new session"])("stops retired geographic batches after %s", async kind => {
+    setRouteCacheSession("A");
+    const pending = deferred<ReturnType<typeof snapshot>>(); h.getDocs.mockReturnValue(pending.promise);
+    const runs = Array.from({ length: 50 }, (_, i) => ({ workoutId: String(i), distanceMiles: 3 } as HealthWorkout));
+    const preparation = clusterRoutesGeographic(runs, "A");
+    await vi.waitFor(() => expect(h.getDocs).toHaveBeenCalledTimes(10));
+    if (kind === "UID change") setRouteCacheSession("B");
+    else { setRouteCacheSession(null); setRouteCacheSession("A"); }
+    pending.resolve(snapshot()); expect(await preparation).toEqual([]);
+    expect(h.getDocs).toHaveBeenCalledTimes(10);
+    h.getDocs.mockResolvedValue(snapshot(39));
+    expect(await getRouteStartPoint(kind === "UID change" ? "B" : "A", "49")).toEqual({ lat: 39, lng: -77 });
+    expect(h.getDocs).toHaveBeenCalledTimes(11);
+  });
+
+  it("requests distinct workout starts independently in parallel", async () => {
+    h.getDocs.mockResolvedValue(snapshot());
+    await Promise.all(Array.from({ length: 50 }, (_, i) => getRouteStartPoint("A", String(i))));
+    expect(h.getDocs).toHaveBeenCalledTimes(50);
+  });
+
+  it("retains at most 500 starts, evicting the least recently used", async () => {
+    h.getDocs.mockResolvedValue(snapshot());
+    for (let i = 0; i < 500; i++) await getRouteStartPoint("A", String(i));
+    await getRouteStartPoint("A", "0"); await getRouteStartPoint("A", "500");
+    await getRouteStartPoint("A", "0"); expect(h.getDocs).toHaveBeenCalledTimes(501);
+    await getRouteStartPoint("A", "1"); expect(h.getDocs).toHaveBeenCalledTimes(502);
   });
 });

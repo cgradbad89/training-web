@@ -1606,13 +1606,16 @@ function WeekScoreBar({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
-  const { user } = useAuth();
+  const { user, sessionEpoch, isSessionCurrent } = useAuth();
   const uid = user?.uid ?? null;
 
   const [selectedWeekStart, setSelectedWeekStart] = useState<Date>(() =>
     getWeekStart(new Date())
   );
-  const selectedWeekEnd = getWeekEnd(selectedWeekStart);
+  const selectedWeekEnd = useMemo(() => getWeekEnd(selectedWeekStart), [selectedWeekStart]);
+  // Date identities must not make a successful response trigger the same query.
+  const weekFromIso = toIsoDate(selectedWeekStart);
+  const weekToIso = toIsoDate(selectedWeekEnd);
 
   // Shared cross-page data (workouts / plans / overrides / HR anchors) comes
   // from AppDataContext. As of 2026-07-17, workouts are fetched once on mount
@@ -1700,22 +1703,26 @@ export default function DashboardPage() {
     let cancelled = false;
     fetchHealthMetricsRange(uid, iso, iso)
       .then((m) => {
-        if (!cancelled) setTodayMetric(m.find((d) => d.date === iso) ?? null);
+        if (!cancelled && isSessionCurrent(sessionEpoch)) setTodayMetric(m.find((d) => d.date === iso) ?? null);
       })
       .catch((err) => console.error("[fetchTodayMetric]", err));
     return () => {
       cancelled = true;
     };
-  }, [uid]);
+  }, [uid, sessionEpoch, isSessionCurrent]);
 
   // One-time fetch for the effective-dated ring goal versions
   // (users/{uid}/healthGoals) powering the activity rings.
   useEffect(() => {
     if (!uid) return;
+    let cancelled = false;
     fetchRingGoalVersions(uid)
-      .then(setRingGoals)
+      .then((goals) => {
+        if (!cancelled && isSessionCurrent(sessionEpoch)) setRingGoals(goals);
+      })
       .catch((err) => console.error("[fetchRingGoalVersions]", err));
-  }, [uid]);
+    return () => { cancelled = true; };
+  }, [uid, sessionEpoch, isSessionCurrent]);
 
   // Ring tap → Health page Trends tab, scrolled to that metric's section
   // (same ?tab=trends&metric= deep link the Health page rings use).
@@ -1731,21 +1738,19 @@ export default function DashboardPage() {
   // no live snapshot, since this row is summary data.
   useEffect(() => {
     if (!uid) return;
-    const fromIso = toIsoDate(selectedWeekStart);
-    const toIso = toIsoDate(selectedWeekEnd);
     let cancelled = false;
-    fetchHealthMetricsRange(uid, fromIso, toIso)
+    fetchHealthMetricsRange(uid, weekFromIso, weekToIso)
       .then((m) => {
-        if (!cancelled) setWeekMetrics(m);
+        if (!cancelled && isSessionCurrent(sessionEpoch)) setWeekMetrics(m);
       })
       .catch((err) => {
         console.error("[fetchHealthMetricsRange]", err);
-        if (!cancelled) setWeekMetrics([]);
+        if (!cancelled && isSessionCurrent(sessionEpoch)) setWeekMetrics([]);
       });
     return () => {
       cancelled = true;
     };
-  }, [uid, selectedWeekStart, selectedWeekEnd]);
+  }, [uid, sessionEpoch, isSessionCurrent, weekFromIso, weekToIso]);
 
   const plannedMiles = useMemo(() => {
     if (!activePlan) return 0;
