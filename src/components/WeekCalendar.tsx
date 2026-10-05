@@ -46,6 +46,13 @@ export function EventPill({ event, onClick }: { event: CalendarEvent; onClick: (
   const time = actual ? event.activity.startDate.toLocaleTimeString("en-US", {
     hour: "numeric", minute: "2-digit",
   }) : null;
+  const workoutStatus = event.kind === "planned-workout"
+    ? event.completed
+      ? "met"
+      : toLocalIsoDate(event.date) < toLocalIsoDate(new Date())
+        ? "missed"
+        : "upcoming"
+    : null;
   return (
     <button
       type="button"
@@ -53,7 +60,7 @@ export function EventPill({ event, onClick }: { event: CalendarEvent; onClick: (
       className={`w-full text-left rounded px-1.5 py-0.5 text-xs truncate leading-tight flex items-center gap-1 ${eventPillClass(event)} ${event.kind === "planned-workout" && event.completed ? "opacity-60" : ""}`}
     >
       {event.kind === "planned-running" && <RunStatusIcon status={event.status} size={12} />}
-      {event.kind === "planned-workout" && event.completed && "✓ "}
+      {workoutStatus && <RunStatusIcon status={workoutStatus} size={12} />}
       {event.kind === "actual-run" && <Footprints aria-label="Actual run" size={12} className="shrink-0" />}
       {event.kind === "actual-workout" && <Dumbbell aria-label="Actual workout" size={12} className="shrink-0" />}
       <span className="truncate">
