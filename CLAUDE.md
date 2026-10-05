@@ -2,10 +2,10 @@
 
 ## Workflow Rules
 
-- **Branch**: Work directly on `main`. If a branch is created automatically, merge it into `main` before pushing.
+- **Branch / delivery**: `main` is protected. Start each implementation task from an up-to-date `origin/main` and create a short-lived task branch before making changes. Never push directly to `main`, force-push to `main`, or attempt to bypass branch protection or required checks. After local validation passes, stage only the explicit intended files, commit and push the task branch, open a PR targeting `main`, wait for all required GitHub checks, and merge only after they pass. If a required check fails because of the task, fix it on the same branch, rerun the applicable local validation, push the correction, and wait for checks again; never merge a knowingly broken PR. After a successful merge, synchronize local `main` with `origin/main`, verify remote `main` contains the intended implementation, and verify no tracked or staged task changes remain. Preserve unrelated local and untracked files throughout.
 - **Build**: Run `npm run build` after all changes. On failure, fix and retry. Stop after 3 consecutive failures — output the full error log and make no further changes. If a typecheck reports duplicate identifiers from numbered `.next/types/* 2.ts`-style copies, remove only the numbered copies (or clear `.next`) and prevent the Desktop cloud-sync client from syncing `.next`; these are external file-conflict artifacts, never source files.
-- **Test**: Run `npm test` after a passing build (`vitest run`, 1,606 tests across 150 files — 1,594 passed, 12 skipped; as of the 2026-09-22 Rock and Roll 1/2 Marathon plan-creation session). Note the suite is only fully timezone-clean at US-Eastern; `bestEffortExtraction.test.ts` fails at other offsets and `paceTrends`/`personalRecords` fail at UTC-11 — pre-existing, unrelated to plan matching. This number drifts — always trust a fresh `vitest run` over this doc, and correct this line when it does. Also watch for stray `.claude/worktrees/*` checkouts inflating the count (vitest's exclude only covers `node_modules`/`.git`); run `git worktree list` if the total looks off.
-- **Commit**: Stage files by explicit path (`git add PRD.md src/...`). Never use `git add -A`. Commit and push only after build + tests pass.
+- **Test**: Run `npm test` after a passing build (`vitest run`, 1,612 tests across 150 files — 1,600 passed, 12 skipped; as of the 2026-10-05 protected-main workflow documentation session). Note the suite is only fully timezone-clean at US-Eastern; `bestEffortExtraction.test.ts` fails at other offsets and `paceTrends`/`personalRecords` fail at UTC-11 — pre-existing, unrelated to plan matching. This number drifts — always trust a fresh `vitest run` over this doc, and correct this line when it does. Also watch for stray `.claude/worktrees/*` checkouts inflating the count (vitest's exclude only covers `node_modules`/`.git`); run `git worktree list` if the total looks off.
+- **Commit**: Stage files by explicit path (`git add PRD.md src/...`). Never use `git add -A` or `git add .`. Commit and push the task branch only after build + tests pass.
 - **No broken commits**: Do not commit if `npm run build` or `npm test` fail.
 
 ## Firestore Security Rules — Console Is Authoritative
@@ -49,7 +49,10 @@ Files modified:   [path — one-line reason each]
 Files created:    [path — one-line reason each]
 Tests:            [new count] new / [total] total
 Build:            PASSED or FAILED (paste error if failed)
-Deployment:       committed and pushed to main — yes / no
+PR:               [#number / not created]
+GitHub checks:    [passed / failed / pending — details]
+Delivery:         merged to main — yes / no
+Final main SHA:   [SHA / unavailable]
 PRD.md updated:   yes — [sections changed] / no — [reason]
 Unverifiable:     [items that can't be confirmed from code alone, or "none"]
 Deferred:         [anything not completed, or "none"]
@@ -83,7 +86,7 @@ src/
   services/         # All Firestore read/write (one file per collection)
   types/            # TypeScript interfaces mirroring Firestore documents
   utils/            # Domain logic: metrics, pace, dates, trainingLoad, riegelFit, etc.
-    __tests__/      # Vitest tests (full suite: 1,606 tests across 150 files)
+    __tests__/      # Vitest tests (full suite: 1,612 tests across 150 files)
 ```
 
 **See also**: `PRD.md` — full domain reference (data model, invariants, calculations, backlog, services).
