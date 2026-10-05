@@ -403,7 +403,7 @@ export default function PlansPage() {
     setSaving(true);
     try {
       await setActivePlan(user.uid, planId, plans);
-      await refreshPlans();
+      await refreshPlans({ afterMutation: true });
     } finally {
       setSaving(false);
     }
@@ -462,7 +462,7 @@ export default function PlansPage() {
           })),
         });
       }
-      await refreshPlans();
+      await refreshPlans({ afterMutation: true });
       setSelectedPlanId(plan.id);
       setSelectedWeekIndex(0);
       setMobileView("detail");
@@ -486,7 +486,7 @@ export default function PlansPage() {
         user.uid,
         deepCopyRunningPlan(selectedPlan, name)
       );
-      await refreshPlans();
+      await refreshPlans({ afterMutation: true });
       setSelectedPlanId(plan.id);
       setShowCopyRunningPlanModal(false);
       setCopyRunningPlanName("");
@@ -506,7 +506,7 @@ export default function PlansPage() {
         "id" | "createdAt" | "updatedAt"
       >
     );
-    await refreshPlans();
+    await refreshPlans({ afterMutation: true });
     setSelectedPlanId(plan.id);
     setCopyPlanFlash(`✓ Copied as "${plan.name}"`);
     setTimeout(() => setCopyPlanFlash(null), 3000);
@@ -540,7 +540,7 @@ export default function PlansPage() {
         "id" | "createdAt" | "updatedAt"
       >
     );
-    await refreshPlans();
+    await refreshPlans({ afterMutation: true });
     setSelectedPlanId(plan.id);
     setCopyPlanFlash(`✓ Copied as "${plan.name}"`);
     setTimeout(() => setCopyPlanFlash(null), 3000);
@@ -552,7 +552,7 @@ export default function PlansPage() {
     try {
       const updated = { ...selectedPlan, name: nameInput.trim() };
       await updatePlan(user.uid, updated);
-      await refreshPlans();
+      await refreshPlans({ afterMutation: true });
       setShowRenameModal(false);
       setNameInput("");
     } finally {
@@ -567,7 +567,7 @@ export default function PlansPage() {
       await deletePlan(user.uid, selectedPlan.id);
       const remaining = plans.filter((p) => p.id !== selectedPlan.id);
       setSelectedPlanId(remaining[0]?.id ?? null);
-      await refreshPlans();
+      await refreshPlans({ afterMutation: true });
       setConfirmDelete(false);
     } finally {
       setSaving(false);
@@ -749,7 +749,7 @@ export default function PlansPage() {
                 await deletePlan(user.uid, selectedPlan.id);
                 const remaining = plans.filter((p) => p.id !== selectedPlan.id);
                 setSelectedPlanId(remaining[0]?.id ?? null);
-                await refreshPlans();
+                await refreshPlans({ afterMutation: true });
               } finally {
                 setSaving(false);
               }
@@ -785,7 +785,7 @@ export default function PlansPage() {
                     await deletePlan(user.uid, selectedPlan.id);
                     const remaining = plans.filter((p) => p.id !== selectedPlan.id);
                     setSelectedPlanId(remaining[0]?.id ?? null);
-                    await refreshPlans();
+                    await refreshPlans({ afterMutation: true });
                   } finally {
                     setSaving(false);
                   }
@@ -833,7 +833,7 @@ export default function PlansPage() {
                   (p) => p.id !== selectedRunningPlan.id
                 );
                 setSelectedPlanId(remaining[0]?.id ?? null);
-                await refreshPlans();
+                await refreshPlans({ afterMutation: true });
               } finally {
                 setSaving(false);
               }

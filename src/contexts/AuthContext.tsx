@@ -2,6 +2,7 @@
 
 import React, {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -27,6 +28,9 @@ export interface AuthState {
   loading: boolean;
   authorizationStatus: ApplicationAuthStatus;
   authorizationError: string | null;
+  /** A logout/login (even the same UID) starts a new memory ownership epoch. */
+  sessionEpoch: number;
+  isSessionCurrent: (epoch: number) => boolean;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -45,10 +49,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     null
   );
   const rejectingUnauthorizedRef = React.useRef(false);
+  const sessionRef = React.useRef({ uid: null as string | null, epoch: 0 });
+  const [sessionEpoch, setSessionEpoch] = useState(0);
+  const isSessionCurrent = useCallback((epoch: number) =>
+    sessionRef.current.uid !== null && sessionRef.current.epoch === epoch, []);
 
   useEffect(() => {
+    function transitionSession(uid: string | null) {
+      if (uid !== null && uid === sessionRef.current.uid) return;
+      sessionRef.current = { uid, epoch: sessionRef.current.epoch + 1 };
+      setSessionEpoch(sessionRef.current.epoch);
+    }
     const unsubscribe = onAuthChange((nextUser) => {
       if (!nextUser) {
+        transitionSession(null);
         setRouteCacheSession(null);
         setUser(null);
         setLoading(false);
@@ -64,6 +78,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (
         !isAuthorizedTrainingUser(nextUser.email, nextUser.emailVerified)
       ) {
+        transitionSession(null);
         setRouteCacheSession(null);
         rejectingUnauthorizedRef.current = true;
         setUser(null);
@@ -77,6 +92,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       rejectingUnauthorizedRef.current = false;
+      transitionSession(nextUser.uid);
       setRouteCacheSession(nextUser.uid);
       setUser(nextUser);
       setLoading(false);
@@ -85,13 +101,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
     return () => {
       unsubscribe();
+      sessionRef.current = { uid: null, epoch: sessionRef.current.epoch + 1 };
       setRouteCacheSession(null);
     };
   }, []);
 
   const value = useMemo(
-    () => ({ user, loading, authorizationStatus, authorizationError }),
-    [user, loading, authorizationStatus, authorizationError]
+    () => ({ user, loading, authorizationStatus, authorizationError, sessionEpoch, isSessionCurrent }),
+    [user, loading, authorizationStatus, authorizationError, sessionEpoch, isSessionCurrent]
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

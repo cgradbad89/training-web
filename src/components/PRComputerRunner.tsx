@@ -33,12 +33,12 @@ function scheduleWhenIdle(callback: () => void): () => void {
  * session guard, fires from a useEffect on the auth user.
  */
 export default function PRComputerRunner() {
-  const { user } = useAuth()
-  const { workouts, workoutsLoading, workoutsHistoryComplete } = useAppData()
+  const { user, sessionEpoch, isSessionCurrent } = useAuth()
+  const { workouts, workoutsLoading, workoutsHistoryComplete, trainingActivated } = useAppData()
   const hasRun = useRef(false)
 
   useEffect(() => {
-    if (!user || workoutsLoading || hasRun.current) return
+    if (!user || trainingActivated === false || workoutsLoading || hasRun.current) return
 
     // Throttle — skip if we already ran in the last 24 hours.
     try {
@@ -59,13 +59,17 @@ export default function PRComputerRunner() {
     hasRun.current = true
     const uid = user.uid
     let cancelled = false
+    let completed = false
+    const isCurrent = () => !cancelled &&
+      (!isSessionCurrent || isSessionCurrent(sessionEpoch))
 
     async function run() {
       try {
+        if (!isCurrent()) return
         const sourceWorkouts = workoutsHistoryComplete
           ? workouts
           : await fetchHealthWorkouts(uid, {})
-        if (cancelled) return
+        if (!isCurrent()) return
         const runs = sourceWorkouts.filter((w) => w.isRunLike)
 
         const prResults = computeAllPRs(runs)
@@ -95,6 +99,8 @@ export default function PRComputerRunner() {
           console.log('[PRComputerRunner] no PR changes')
         }
 
+        if (!isCurrent()) return
+        completed = true
         try {
           window.localStorage.setItem(PR_THROTTLE_KEY, String(Date.now()))
         } catch {
@@ -111,8 +117,11 @@ export default function PRComputerRunner() {
     return () => {
       cancelled = true
       cancelIdle()
+      // Cancelled idle/data work never completed this session's PR attempt.
+      // Strict replay and a refreshed snapshot must be able to reschedule it.
+      if (!completed) hasRun.current = false
     }
-  }, [user, workouts, workoutsHistoryComplete, workoutsLoading])
+  }, [user, workouts, workoutsHistoryComplete, workoutsLoading, trainingActivated, sessionEpoch, isSessionCurrent])
 
   return null
 }

@@ -166,4 +166,27 @@ describe("autoMatchCrossTrainingSessions — excluded workouts never write compl
     expect(sessionOf(plans).completed).toBeUndefined();
     expect(h.updatePlan).not.toHaveBeenCalled();
   });
+  it("a retired runner cannot initiate matching persistence", async () => {
+    const date = yesterday();
+    const { result } = await autoMatchCrossTrainingSessions(
+      "u1", [workoutPlan(date)], [strengthWorkout(date, "w1")], {}, () => false
+    );
+    expect(h.updatePlan).not.toHaveBeenCalled();
+    expect(result.updatedPlanIds).toEqual([]);
+  });
+
+  it("pause during a plan write prevents later plan writes from starting", async () => {
+    const date = yesterday();
+    const nextDay = new Date(date); nextDay.setDate(nextDay.getDate() - 1);
+    const first = workoutPlan(date);
+    const second = { ...workoutPlan(nextDay), id: "wp2" };
+    let current = true;
+    h.updatePlan.mockImplementationOnce(async () => { current = false; });
+    const { result } = await autoMatchCrossTrainingSessions(
+      "u1", [first, second], [strengthWorkout(date, "w1"), strengthWorkout(nextDay, "w2")], {}, () => current
+    );
+    expect(h.updatePlan).toHaveBeenCalledTimes(1);
+    expect(result.updatedPlanIds).toEqual(["wp1"]);
+  });
+
 });

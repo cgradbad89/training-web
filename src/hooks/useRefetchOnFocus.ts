@@ -7,13 +7,15 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
  */
 export function useRefetchOnFocus(
   refetchFn: () => Promise<void> | void,
-  minIntervalMs: number = 30000
+  minIntervalMs: number = 30000,
+  enabled: boolean = true
 ): void {
   const refetch = useEffectEvent(refetchFn);
   const [initialRunAt] = useState(Date.now);
   const lastRunRef = useRef(initialRunAt);
 
   useEffect(() => {
+    if (!enabled) return;
     function onVisibilityChange() {
       if (document.visibilityState !== "visible") return;
       const now = Date.now();
@@ -25,5 +27,5 @@ export function useRefetchOnFocus(
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () =>
       document.removeEventListener("visibilitychange", onVisibilityChange);
-  }, [minIntervalMs]);
+  }, [enabled, minIntervalMs]);
 }

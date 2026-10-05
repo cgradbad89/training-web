@@ -24,9 +24,11 @@ vi.mock("@/utils/routeCache", () => ({
 
 import { AuthProvider, useAuthContext } from "@/contexts/AuthContext";
 
+let latestAuth: ReturnType<typeof useAuthContext>;
 function Probe({ name }: { name: string }) {
-  const { user, loading, authorizationStatus, authorizationError } =
-    useAuthContext();
+  const auth = useAuthContext();
+  React.useLayoutEffect(() => { latestAuth = auth; });
+  const { user, loading, authorizationStatus, authorizationError } = auth;
   return (
     <div data-testid={name}>
       {loading ? "loading" : user?.uid ?? authorizationStatus}
@@ -143,6 +145,41 @@ describe("AuthProvider", () => {
 
     expect(container.textContent).toContain("unauthorized");
     expect(container.textContent).toContain("not authorized");
+  });
+
+  it("repeated authorized observations keep the epoch; batched same-UID logout/login retires it", () => {
+    act(() => root.render(<AuthProvider><Probe name="private" /></AuthProvider>));
+    act(() => h.listener?.(authUser()));
+    const original = latestAuth.sessionEpoch;
+    const isCurrent = latestAuth.isSessionCurrent;
+    act(() => h.listener?.(authUser()));
+    expect(latestAuth.sessionEpoch).toBe(original);
+    expect(isCurrent(original)).toBe(true);
+    act(() => {
+      h.listener?.(null);
+      expect(isCurrent(original)).toBe(false);
+      h.listener?.(authUser());
+      expect(isCurrent(original)).toBe(false);
+    });
+    expect(latestAuth.sessionEpoch).toBeGreaterThan(original);
+    expect(latestAuth.isSessionCurrent(latestAuth.sessionEpoch)).toBe(true);
+  });
+
+  it("UID change, unauthorized observation and genuine disposal invalidate session guards synchronously", () => {
+    act(() => root.render(<AuthProvider><Probe name="private" /></AuthProvider>));
+    act(() => h.listener?.(authUser({ uid: "A" })));
+    const original = latestAuth;
+    act(() => {
+      h.listener?.(authUser({ uid: "B" }));
+      expect(original.isSessionCurrent(original.sessionEpoch)).toBe(false);
+    });
+    const second = latestAuth;
+    act(() => h.listener?.(authUser({ emailVerified: false })));
+    expect(second.isSessionCurrent(second.sessionEpoch)).toBe(false);
+    act(() => h.listener?.(authUser({ uid: "B" })));
+    const third = latestAuth;
+    act(() => root.render(null));
+    expect(third.isSessionCurrent(third.sessionEpoch)).toBe(false);
   });
 
   it("unsubscribes the root observer when the provider unmounts", () => {

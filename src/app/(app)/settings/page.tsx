@@ -324,7 +324,7 @@ export default function SettingsPage() {
         completedAnchors: completedAnchorsRef.current,
         recomputeStatus,
         saveSettings: saveUserSettings,
-        refreshSettings,
+        refreshSettings: () => refreshSettings({ afterMutation: true }),
         recompute: recomputeAllTrainingLoad,
         refreshWorkouts,
       });
