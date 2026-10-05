@@ -76,7 +76,7 @@ export function autoMatchWorkoutPoolKey(workouts: HealthWorkout[]): string {
  * never tears down and re-subscribes the snapshot listener.
  */
 export default function AutoMatchRunner() {
-  const { user } = useAuth()
+  const { user, sessionEpoch, isSessionCurrent } = useAuth()
   const userUid = user?.uid ?? null
   const {
     overrides,
@@ -89,6 +89,9 @@ export default function AutoMatchRunner() {
   const pendingRequest = useRef<AutoMatchRequest | null>(null)
   const lastKey = useRef<string | null>(null)
   const listenerGeneration = useRef(0)
+  const isCurrentGeneration = useCallback((generation: number) =>
+    generation === listenerGeneration.current &&
+    (!isSessionCurrent || isSessionCurrent(sessionEpoch)), [isSessionCurrent, sessionEpoch])
   const matchWindowStart = plansResolution === "success"
     ? autoMatchWindowStart(plans)
     : null
@@ -108,7 +111,7 @@ export default function AutoMatchRunner() {
     (request: AutoMatchRequest) => Promise<void>
   >(async () => {})
   const processRequest = useCallback(async (request: AutoMatchRequest) => {
-    if (request.generation !== listenerGeneration.current) return
+    if (!isCurrentGeneration(request.generation)) return
     if (inFlight.current) {
       pendingRequest.current = request
       return
@@ -124,24 +127,24 @@ export default function AutoMatchRunner() {
           initialCursor: request.firstPageCursor,
         }
       )
-      if (request.generation !== listenerGeneration.current) return
+      if (!isCurrentGeneration(request.generation)) return
 
       const currentPlans = await fetchPlans(request.uid)
-      if (request.generation !== listenerGeneration.current) return
+      if (!isCurrentGeneration(request.generation)) return
 
       const { result } = await autoMatchCrossTrainingSessions(
         request.uid,
         currentPlans,
         candidates,
-        overridesRef.current
+        overridesRef.current,
+        () => isCurrentGeneration(request.generation)
       )
-      if (request.generation === listenerGeneration.current) {
-        lastKey.current = request.contentKey
-      }
+      if (!isCurrentGeneration(request.generation)) return
+      lastKey.current = request.contentKey
       // Only refresh shared plan state when the matcher actually persisted
       // something — a no-op pass shouldn't trigger a plans read.
       if (result.updatedPlanIds.length > 0) {
-        await refreshPlansRef.current()
+        await refreshPlansRef.current({ afterMutation: true })
       }
     } catch (err) {
       console.error('[AutoMatchRunner] error:', err)
@@ -151,13 +154,13 @@ export default function AutoMatchRunner() {
       pendingRequest.current = null
       if (
         pending &&
-        pending.generation === listenerGeneration.current &&
+        isCurrentGeneration(pending.generation) &&
         pending.contentKey !== lastKey.current
       ) {
         void processRequestRef.current(pending)
       }
     }
-  }, [])
+  }, [isCurrentGeneration])
   useEffect(() => {
     processRequestRef.current = processRequest
   }, [processRequest])

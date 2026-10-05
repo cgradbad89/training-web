@@ -65,17 +65,22 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <AuthGuard>
-      {({ user }) =>
-        isHealthRoute ? (
-          appShell
-        ) : (
-          <AppDataProvider key={user.uid} uid={user.uid}>
-            <AutoMatchRunner />
-            <PRComputerRunner />
-            {appShell}
-          </AppDataProvider>
-        )
-      }
+      {({ user, sessionEpoch, isSessionCurrent }) => (
+        <AppDataProvider
+          uid={user.uid}
+          sessionEpoch={sessionEpoch}
+          isSessionCurrent={isSessionCurrent}
+          trainingActive={!isHealthRoute}
+        >
+          {!isHealthRoute && (
+            <>
+              <AutoMatchRunner />
+              <PRComputerRunner />
+            </>
+          )}
+          {appShell}
+        </AppDataProvider>
+      )}
     </AuthGuard>
   );
 }

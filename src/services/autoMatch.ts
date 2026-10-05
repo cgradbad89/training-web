@@ -47,6 +47,7 @@ export async function autoMatchCrossTrainingSessions(
   plans: Plan[],
   healthWorkouts: HealthWorkout[],
   overrides: Record<string, WorkoutOverride> = {},
+  isCurrent: () => boolean = () => true,
 ): Promise<{ plans: Plan[]; result: AutoMatchResult }> {
   const activeWorkouts = selectActiveWorkouts(healthWorkouts, overrides);
   const workoutPlans = plans.filter(isWorkoutPlan);
@@ -61,6 +62,9 @@ export async function autoMatchCrossTrainingSessions(
 
   const nextPlans: Plan[] = [];
   for (const plan of plans) {
+    // A paused/retired runner cannot initiate another persistence operation.
+    // An already submitted write may finish; publication is runner-guarded.
+    if (!isCurrent()) break;
     if (!isWorkoutPlan(plan) || !byPlan.has(plan.id)) {
       nextPlans.push(plan);
       continue;

@@ -11,6 +11,7 @@ const h = vi.hoisted(() => ({
   workouts: [] as HealthWorkout[],
   workoutsLoading: false,
   workoutsHistoryComplete: true,
+  trainingActivated: true,
   fetchHealthWorkouts: vi.fn(),
   computeAllPRs: vi.fn(),
   buildPRBadgeMap: vi.fn(),
@@ -27,6 +28,7 @@ vi.mock("@/contexts/AppDataContext", () => ({
     workouts: h.workouts,
     workoutsLoading: h.workoutsLoading,
     workoutsHistoryComplete: h.workoutsHistoryComplete,
+    trainingActivated: h.trainingActivated,
   }),
 }));
 vi.mock("@/services/healthWorkouts", () => ({
@@ -83,6 +85,7 @@ beforeEach(() => {
   h.workouts = [workout("shared-run")];
   h.workoutsLoading = false;
   h.workoutsHistoryComplete = true;
+  h.trainingActivated = true;
   h.runIdle = null;
   h.fetchHealthWorkouts.mockReset().mockResolvedValue([]);
   h.computeAllPRs.mockReset().mockReturnValue([]);
@@ -140,4 +143,62 @@ describe("PRComputerRunner", () => {
     expect(h.fetchHealthWorkouts).not.toHaveBeenCalled();
     expect(h.computeAllPRs).not.toHaveBeenCalled();
   });
+  it("does not schedule before a dormant Health owner has activated training", async () => {
+    h.trainingActivated = false;
+    await mount();
+    expect(requestIdleCallback).not.toHaveBeenCalled();
+  });
+
+  it("Strict Mode reschedules cancelled idle work and computes once", async () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<React.StrictMode><PRComputerRunner /></React.StrictMode>);
+    });
+    expect(requestIdleCallback).toHaveBeenCalledTimes(2);
+    expect(cancelIdleCallback).toHaveBeenCalledTimes(1);
+    await runIdleWork();
+    expect(h.computeAllPRs).toHaveBeenCalledTimes(1);
+  });
+
+  it("a workout update before idle reschedules the cancelled attempt with the current snapshot", async () => {
+    await mount();
+    const retiredIdle = h.runIdle!;
+    h.workouts = [workout("current-run")];
+    await act(async () => root.render(<PRComputerRunner />));
+    expect(requestIdleCallback).toHaveBeenCalledTimes(2);
+    await act(async () => retiredIdle());
+    expect(h.computeAllPRs).not.toHaveBeenCalled();
+    await runIdleWork();
+    expect(h.computeAllPRs).toHaveBeenCalledWith(h.workouts);
+  });
+
+  it("unmount cancels pending all-time reads without computing or updating the persisted throttle", async () => {
+    let resolve!: (value: HealthWorkout[]) => void;
+    h.workoutsHistoryComplete = false;
+    h.fetchHealthWorkouts.mockReturnValue(new Promise<HealthWorkout[]>(res => { resolve = res; }));
+    await mount();
+    await runIdleWork();
+    await act(async () => root.render(null));
+    await act(async () => resolve([workout("retired-run")]));
+    expect(h.computeAllPRs).not.toHaveBeenCalled();
+    expect(localStorage.setItem).not.toHaveBeenCalled();
+  });
+
+  it("a completed attempt keeps the persisted 24-hour throttle across runner recreation", async () => {
+    await mount(); await runIdleWork();
+    expect(localStorage.setItem).toHaveBeenCalledWith("pr_last_computed", expect.any(String));
+    await act(async () => root.render(null));
+    await act(async () => root.render(<PRComputerRunner />));
+    expect(requestIdleCallback).toHaveBeenCalledTimes(1);
+    expect(h.computeAllPRs).toHaveBeenCalledTimes(1);
+  });
+
+  it("the unchanged persisted throttle allows a new attempt after 24 hours", async () => {
+    localStorage.setItem("pr_last_computed", String(Date.now() - 24 * 60 * 60 * 1000 - 1));
+    await mount(); await runIdleWork();
+    expect(h.computeAllPRs).toHaveBeenCalledTimes(1);
+  });
+
 });

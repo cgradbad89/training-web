@@ -204,7 +204,7 @@ export default function WorkoutDetailPage() {
       const updated: WorkoutPlan = { ...plan, weeks: updatedWeeks };
       await updatePlan(uid, updated);
       setPlan(updated);
-      await refreshPlans();
+      await refreshPlans({ afterMutation: true });
       setFinished(true);
       setTimeout(() => router.back(), 2000);
     } catch (err) {

@@ -40,8 +40,8 @@ vi.mock("@/components/layout/MobileTabBar", () => ({
   MobileTabBar: () => <div data-testid="mobile-tabs" />,
 }));
 vi.mock("@/contexts/AppDataContext", () => ({
-  AppDataProvider: ({ children, uid }: { children: React.ReactNode; uid: string }) => (
-    <div data-testid="app-data-provider" data-uid={uid}>{children}</div>
+  AppDataProvider: ({ children, uid, trainingActive }: { children: React.ReactNode; uid: string; trainingActive: boolean }) => (
+    <div data-testid="app-data-provider" data-uid={uid} data-active={String(trainingActive)}>{children}</div>
   ),
 }));
 vi.mock("@/components/AutoMatchRunner", () => ({
@@ -77,11 +77,11 @@ describe("authenticated app layout training-data scope", () => {
     });
   }
 
-  it("does not mount training data or runners on /health", () => {
+  it("keeps a dormant data owner and no runners on /health", () => {
     renderAt("/health");
 
     expect(container.querySelector('[data-testid="page-content"]')).toBeTruthy();
-    expect(container.querySelector('[data-testid="app-data-provider"]')).toBeNull();
+    expect(container.querySelector('[data-testid="app-data-provider"]')?.getAttribute("data-active")).toBe("false");
     expect(container.querySelector('[data-testid="auto-match-runner"]')).toBeNull();
     expect(container.querySelector('[data-testid="pr-computer-runner"]')).toBeNull();
   });
@@ -89,7 +89,7 @@ describe("authenticated app layout training-data scope", () => {
   it("also excludes descendant Health routes", () => {
     renderAt("/health/trends");
 
-    expect(container.querySelector('[data-testid="app-data-provider"]')).toBeNull();
+    expect(container.querySelector('[data-testid="app-data-provider"]')?.getAttribute("data-active")).toBe("false");
     expect(container.querySelector('[data-testid="auto-match-runner"]')).toBeNull();
     expect(container.querySelector('[data-testid="pr-computer-runner"]')).toBeNull();
   });

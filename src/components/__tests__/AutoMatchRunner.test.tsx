@@ -216,7 +216,8 @@ describe("AutoMatchRunner — AppDataContext wiring", () => {
       "u1",
       h.plans,
       [expect.objectContaining({ workoutId: "w1" })],
-      h.overrides
+      h.overrides,
+      expect.any(Function)
     );
   });
 
@@ -379,7 +380,8 @@ describe("AutoMatchRunner — AppDataContext wiring", () => {
       "u1",
       h.plans,
       [...boundedPool, oldCandidate],
-      h.overrides
+      h.overrides,
+      expect.any(Function)
     );
   });
 
