@@ -11,6 +11,7 @@ import PRComputerRunner from "@/components/PRComputerRunner";
 import { MobileTabBar } from "@/components/layout/MobileTabBar";
 import { NAV_ITEMS } from "@/components/layout/navItems";
 import { AppDataProvider } from "@/contexts/AppDataContext";
+import { HealthDataProvider } from "@/contexts/HealthDataContext";
 import { startClientNavigationPerformance } from "@/utils/clientPerformanceStore";
 
 function SideNav() {
@@ -72,13 +73,20 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           isSessionCurrent={isSessionCurrent}
           trainingActive={!isHealthRoute}
         >
-          {!isHealthRoute && (
-            <>
-              <AutoMatchRunner />
-              <PRComputerRunner />
-            </>
-          )}
-          {appShell}
+          <HealthDataProvider
+            uid={user.uid}
+            sessionEpoch={sessionEpoch}
+            isSessionCurrent={isSessionCurrent}
+            healthActive={isHealthRoute}
+          >
+            {!isHealthRoute && (
+              <>
+                <AutoMatchRunner />
+                <PRComputerRunner />
+              </>
+            )}
+            {appShell}
+          </HealthDataProvider>
         </AppDataProvider>
       )}
     </AuthGuard>

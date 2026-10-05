@@ -4,8 +4,15 @@ import { createRoot, type Root } from "react-dom/client";
 import HealthPage from "../page";
 import * as healthMetricsService from "@/services/healthMetrics";
 import * as authHook from "@/hooks/useAuth";
+import { HealthDataProvider } from "@/contexts/HealthDataContext";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+const sessionCurrent = () => true;
+function PageTree() {
+  return <HealthDataProvider uid="test-user-123" sessionEpoch={1} isSessionCurrent={sessionCurrent} healthActive><HealthPage /></HealthDataProvider>;
+}
+const rangeData = vi.hoisted(() => ({ rolling: vi.fn(), extension: vi.fn() }));
 
 const localStorageValues = new Map<string, string>();
 const focus = vi.hoisted(() => ({
@@ -100,7 +107,7 @@ function buttonWithText(container: HTMLElement, text: string): HTMLButtonElement
 
 async function renderPage(root: Root) {
   await act(async () => {
-    root.render(<HealthPage />);
+    root.render(<PageTree />);
   });
   await act(async () => {
     await flushPage();
@@ -140,12 +147,16 @@ describe("Health Dashboard Page", () => {
     document.body.appendChild(container);
     root = createRoot(container);
 
-    (authHook.useAuth as any).mockReturnValue({ user: { uid: "test-user-123" }, loading: false });
-    (healthMetricsService.fetchHealthMetrics as any).mockResolvedValue([{ date: "2026-07-17", weight_lbs: 160 }]);
+    (authHook.useAuth as any).mockReturnValue({ user: { uid: "test-user-123" }, loading: false, sessionEpoch: 1, isSessionCurrent: sessionCurrent });
+    rangeData.rolling.mockReset().mockResolvedValue([{ date: "2026-07-17", weight_lbs: 160 }]);
     (healthMetricsService.fetchHourlyHeartRate as any).mockResolvedValue(null);
     (healthMetricsService.fetchHealthGoals as any).mockResolvedValue(null);
     (healthMetricsService.fetchAllHealthMetrics as any).mockResolvedValue([]);
-    (healthMetricsService.fetchHealthMetricsRange as any).mockResolvedValue([]);
+    rangeData.extension.mockReset().mockResolvedValue([]);
+    vi.mocked(healthMetricsService.fetchHealthMetricsRange).mockImplementation((uid, start, end) =>
+      start === healthMetricsService.healthMetricsCutoffISO(90) && end === localIsoDate(new Date())
+        ? rangeData.rolling(uid, start, end) : rangeData.extension(uid, start, end)
+    );
     (healthMetricsService.onHealthMetricsSnapshot as any).mockReturnValue(vi.fn());
     window.localStorage.clear();
   });
@@ -161,30 +172,30 @@ describe("Health Dashboard Page", () => {
 
   it("does not create an onSnapshot subscription for healthMetrics", async () => {
     await act(async () => {
-      root.render(<HealthPage />);
+      root.render(<PageTree />);
     });
     await act(async () => { await flushPromises(); await flushPromises(); await flushPromises(); });
     
     expect(healthMetricsService.onHealthMetricsSnapshot).not.toHaveBeenCalled();
   });
 
-  it("calls fetchHealthMetrics once on mount", async () => {
+  it("calls the inclusive bounded range once on mount", async () => {
     await act(async () => {
-      root.render(<HealthPage />);
+      root.render(<PageTree />);
     });
     await act(async () => { await flushPromises(); await flushPromises(); await flushPromises(); });
     
-    expect(healthMetricsService.fetchHealthMetrics).toHaveBeenCalledWith("test-user-123", 90);
-    expect(healthMetricsService.fetchHealthMetrics).toHaveBeenCalledTimes(1);
+    expect(rangeData.rolling).toHaveBeenCalledWith("test-user-123", healthMetricsService.healthMetricsCutoffISO(90), localIsoDate(new Date()));
+    expect(rangeData.rolling).toHaveBeenCalledTimes(1);
   });
 
-  it("calls fetchHealthMetrics again when manual refresh is clicked", async () => {
+  it("authoritatively requests the rolling range again on manual Refresh", async () => {
     await act(async () => {
-      root.render(<HealthPage />);
+      root.render(<PageTree />);
     });
     await act(async () => { await flushPromises(); await flushPromises(); await flushPromises(); });
     
-    expect(healthMetricsService.fetchHealthMetrics).toHaveBeenCalledTimes(1);
+    expect(rangeData.rolling).toHaveBeenCalledTimes(1);
 
     const refreshButton = container.querySelector("button[aria-label='Refresh metrics']");
     expect(refreshButton).toBeTruthy();
@@ -195,16 +206,16 @@ describe("Health Dashboard Page", () => {
     
     await act(async () => { await flushPromises(); await flushPromises(); await flushPromises(); });
 
-    expect(healthMetricsService.fetchHealthMetrics).toHaveBeenCalledTimes(2);
+    expect(rangeData.rolling).toHaveBeenCalledTimes(2);
   });
 
   it("shows the skeleton only for the initial load and preserves content during a background refresh", async () => {
     const initial = deferred<healthMetricsService.HealthMetric[]>();
-    vi.mocked(healthMetricsService.fetchHealthMetrics).mockReturnValueOnce(
+    rangeData.rolling.mockReturnValueOnce(
       initial.promise
     );
 
-    await act(async () => root.render(<HealthPage />));
+    await act(async () => root.render(<PageTree />));
     expect(container.querySelector("[aria-label='Loading health']")).toBeTruthy();
 
     initial.resolve([{ date: "2026-07-17", weight_lbs: 160 }]);
@@ -212,8 +223,9 @@ describe("Health Dashboard Page", () => {
     expect(container.textContent).toContain("Health");
     expect(container.querySelector("[aria-label='Loading health']")).toBeNull();
 
+    vi.setSystemTime(new Date(2026, 7, 29, 12, 1));
     const background = deferred<healthMetricsService.HealthMetric[]>();
-    vi.mocked(healthMetricsService.fetchHealthMetrics).mockReturnValueOnce(
+    rangeData.rolling.mockReturnValueOnce(
       background.promise
     );
     act(() => {
@@ -228,8 +240,9 @@ describe("Health Dashboard Page", () => {
 
   it("reuses the in-flight Health metrics promise for overlapping focus refreshes", async () => {
     await renderPage(root);
+    vi.setSystemTime(new Date(2026, 7, 29, 12, 1));
     const background = deferred<healthMetricsService.HealthMetric[]>();
-    vi.mocked(healthMetricsService.fetchHealthMetrics).mockReturnValueOnce(
+    rangeData.rolling.mockReturnValueOnce(
       background.promise
     );
 
@@ -241,7 +254,8 @@ describe("Health Dashboard Page", () => {
     });
 
     expect(first).toBe(second);
-    expect(healthMetricsService.fetchHealthMetrics).toHaveBeenCalledTimes(2);
+    await act(async () => { await Promise.resolve(); });
+    expect(rangeData.rolling).toHaveBeenCalledTimes(2);
     background.resolve([]);
     await act(async () => first);
   });
@@ -249,8 +263,9 @@ describe("Health Dashboard Page", () => {
   it("keeps existing Health content when a background refresh fails", async () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     await renderPage(root);
+    vi.setSystemTime(new Date(2026, 7, 29, 12, 1));
     const background = deferred<healthMetricsService.HealthMetric[]>();
-    vi.mocked(healthMetricsService.fetchHealthMetrics).mockReturnValueOnce(
+    rangeData.rolling.mockReturnValueOnce(
       background.promise
     );
 
@@ -268,7 +283,7 @@ describe("Health Dashboard Page", () => {
     window.localStorage.setItem("health_time_range", "ytd");
     await renderPage(root);
 
-    expect(healthMetricsService.fetchHealthMetricsRange).not.toHaveBeenCalled();
+    expect(rangeData.extension).not.toHaveBeenCalled();
     expect(healthMetricsService.fetchAllHealthMetrics).not.toHaveBeenCalled();
   });
 
@@ -279,7 +294,7 @@ describe("Health Dashboard Page", () => {
     await clickButton(container, "Trends");
 
     const cutoff = healthMetricsService.healthMetricsCutoffISO(90);
-    expect(healthMetricsService.fetchHealthMetricsRange).toHaveBeenCalledWith(
+    expect(rangeData.extension).toHaveBeenCalledWith(
       "test-user-123",
       `${today.slice(0, 4)}-01-01`,
       shiftIsoDate(cutoff, -1)
@@ -296,13 +311,13 @@ describe("Health Dashboard Page", () => {
     expect(healthMetricsService.fetchAllHealthMetrics).toHaveBeenCalledWith(
       "test-user-123"
     );
-    expect(healthMetricsService.fetchHealthMetricsRange).not.toHaveBeenCalled();
+    expect(rangeData.extension).not.toHaveBeenCalled();
   });
 
   it("retries a failed YTD fetch when Trends is selected again", async () => {
     window.localStorage.setItem("health_time_range", "ytd");
     vi.spyOn(console, "error").mockImplementation(() => undefined);
-    (healthMetricsService.fetchHealthMetricsRange as any)
+    rangeData.extension
       .mockRejectedValueOnce(new Error("temporary failure"))
       .mockResolvedValueOnce([]);
     await renderPage(root);
@@ -310,7 +325,7 @@ describe("Health Dashboard Page", () => {
     await clickButton(container, "Today");
     await clickButton(container, "Trends");
 
-    expect(healthMetricsService.fetchHealthMetricsRange).toHaveBeenCalledTimes(2);
+    expect(rangeData.extension).toHaveBeenCalledTimes(2);
   });
 
   it("does not repeat a successful YTD fetch when revisiting Trends", async () => {
@@ -320,7 +335,7 @@ describe("Health Dashboard Page", () => {
     await clickButton(container, "Today");
     await clickButton(container, "Trends");
 
-    expect(healthMetricsService.fetchHealthMetricsRange).toHaveBeenCalledTimes(1);
+    expect(rangeData.extension).toHaveBeenCalledTimes(1);
   });
 
   it("retries a failed All fetch and stops after success", async () => {
@@ -344,7 +359,7 @@ describe("Health Dashboard Page", () => {
     await clickButton(container, "Calendar");
     await clickButton(container, "Month");
 
-    expect(healthMetricsService.fetchHealthMetricsRange).not.toHaveBeenCalled();
+    expect(rangeData.extension).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -382,9 +397,9 @@ describe("Health Dashboard Page", () => {
       }
 
       if (expectedGap === null) {
-        expect(healthMetricsService.fetchHealthMetricsRange).not.toHaveBeenCalled();
+        expect(rangeData.extension).not.toHaveBeenCalled();
       } else {
-        expect(healthMetricsService.fetchHealthMetricsRange).toHaveBeenLastCalledWith(
+        expect(rangeData.extension).toHaveBeenLastCalledWith(
           "test-user-123",
           ...expectedGap
         );
@@ -406,7 +421,7 @@ describe("Health Dashboard Page", () => {
     for (let index = 0; index < monthsBack; index += 1) {
       await clickAriaLabel(container, "Previous month");
     }
-    vi.mocked(healthMetricsService.fetchHealthMetricsRange).mockClear();
+    rangeData.extension.mockClear();
 
     await clickAriaLabel(container, "Previous month");
     const previousMonth = new Date(cutoffYear, cutoffMonth - 2, 1);
@@ -414,7 +429,7 @@ describe("Health Dashboard Page", () => {
     const previousMonthEnd = localIsoDate(
       new Date(previousMonth.getFullYear(), previousMonth.getMonth() + 1, 0)
     );
-    expect(healthMetricsService.fetchHealthMetricsRange).toHaveBeenCalledWith(
+    expect(rangeData.extension).toHaveBeenCalledWith(
       "test-user-123",
       previousMonthStart,
       previousMonthEnd
