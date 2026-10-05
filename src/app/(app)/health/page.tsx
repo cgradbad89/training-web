@@ -1,17 +1,16 @@
 "use client";
 
-import { useEffect, useState, useMemo, useCallback, useRef } from "react";
+import { useEffect, useEffectEvent, useLayoutEffect, useState, useMemo, useCallback, useRef } from "react";
 import { useAuth } from "@/hooks/useAuth";
+import { useHealthActivity, useHealthData } from "@/contexts/HealthDataContext";
 import { useRefetchOnFocus } from "@/hooks/useRefetchOnFocus";
 import {
   useClientPagePerformance,
   useClientPerformanceMark,
 } from "@/hooks/useClientPerformanceMark";
 import {
-  fetchHealthMetrics,
   fetchAllHealthMetrics,
   fetchHealthMetricsRange,
-  healthMetricsCutoffISO,
   fetchHourlyHeartRate,
   fetchHealthGoals,
   type HealthGoals,
@@ -20,11 +19,16 @@ import {
 } from "@/services/healthMetrics";
 import {
   getUncoveredGaps,
+  emptyHealthMetricsCache,
+  getMissingOrStaleRanges,
+  healthRetentionRange,
+  healthRollingRange,
+  intersectRanges,
+  metricsInCacheRange,
   mergeCoveredRange,
   type CoveredRange,
   type HealthMetricsCache,
 } from "@/utils/healthMetricsCache";
-import { trackInFlightRequest } from "@/utils/inFlightRequest";
 import dynamic from "next/dynamic";
 import { ChartSkeleton } from "@/components/ui/ChartSkeleton";
 import { HealthSkeleton } from "./HealthSkeleton";
@@ -132,25 +136,6 @@ function shiftISODate(dateStr: string, days: number): string {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
-}
-
-const ALL_HEALTH_METRICS_RANGE: CoveredRange = {
-  start: "0001-01-01",
-  end: "9999-12-31",
-};
-
-function emptyHealthMetricsCache(): HealthMetricsCache {
-  return { entries: new Map(), coveredRanges: [] };
-}
-
-function metricsInCacheRange(
-  cache: HealthMetricsCache,
-  range: CoveredRange
-): HealthMetric[] {
-  return [...cache.entries.values()]
-    .filter((entry) => entry.date >= range.start && entry.date <= range.end)
-    .map((entry) => entry.metrics)
-    .sort((a, b) => a.date.localeCompare(b.date));
 }
 
 function ordinalSuffix(n: number): string {
@@ -1153,29 +1138,53 @@ function SectionActions({
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function HealthPage() {
-  const { user } = useAuth();
+  const healthActive = useHealthActivity();
+  return healthActive ? <HealthPageContent /> : null;
+}
+
+function HealthPageContent() {
+  const { user, sessionEpoch, isSessionCurrent } = useAuth();
   const userId = user?.uid ?? "";
   useClientPagePerformance("/health");
   useClientPerformanceMark("training:health:shell-visible", true);
 
-  const [metrics, setMetrics] = useState<HealthMetric[]>([]);
-  const [metricsCache, setMetricsCache] = useState<HealthMetricsCache>(
-    emptyHealthMetricsCache
-  );
-  const metricsCacheRef = useRef<HealthMetricsCache>(metricsCache);
-  const [ytdMetrics, setYtdMetrics] = useState<HealthMetric[]>([]);
+  const { cache: metricsCache, hasLoadedRolling, pendingRanges, ensureRange } = useHealthData();
+  const [localDay, setLocalDay] = useState(todayISO);
+  const metrics = useMemo(() => metricsInCacheRange(metricsCache, healthRollingRange(localDay)).reverse(), [metricsCache, localDay]);
+  const ytdMetrics = useMemo(() => metricsInCacheRange(metricsCache, { start: `${localDay.slice(0, 4)}-01-01`, end: localDay }), [metricsCache, localDay]);
+  const hasResidentData = hasLoadedRolling;
+  const [enteredWithResidentData] = useState(hasLoadedRolling);
+  const rollingRange = healthRollingRange(localDay);
+  const rollingError = [...(metricsCache?.coverage ?? [])].find(([date, coverage]) =>
+    date >= rollingRange.start && date <= rollingRange.end && coverage.error)?.[1].error ?? null;
+  // Resident refresh failures retain the existing console/error-metadata policy.
+  const error = hasResidentData ? null : rollingError;
+  const metricsInitialLoading = !hasResidentData && error === null;
+  const metricsRefreshing = hasResidentData && pendingRanges.some(range => intersectRanges(range, rollingRange));
   const [allMetrics, setAllMetrics] = useState<HealthMetric[]>([]);
-  const ytdFetchStatusRef = useRef<LazyRangeFetchStatus>("idle");
   const allFetchStatusRef = useRef<LazyRangeFetchStatus>("idle");
   const [hourlyHR, setHourlyHR] = useState<HourlyHeartRate | null>(null);
   const [hourlyHRLoading, setHourlyHRLoading] = useState(true);
-  const [metricsInitialLoading, setMetricsInitialLoading] = useState(true);
-  const [metricsRefreshing, setMetricsRefreshing] = useState(false);
-  const metricsLoadedRef = useRef(false);
-  const metricsInFlightRef = useRef<Promise<void> | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [goals, setGoals] = useState<HealthGoals | null>(null);
   const [goalsModalOpen, setGoalsModalOpen] = useState(false);
+
+  // Page-local sources (including All-time and older Calendar months) require
+  // both this mount generation and the authenticated epoch before publication.
+  const pageGenerationRef = useRef(0);
+  const pageMountedRef = useRef(false);
+  useLayoutEffect(() => {
+    const generation = pageGenerationRef.current + 1;
+    pageGenerationRef.current = generation;
+    pageMountedRef.current = true;
+    return () => {
+      pageGenerationRef.current = generation + 1;
+      pageMountedRef.current = false;
+      allFetchStatusRef.current = "idle";
+    };
+  }, []);
+  const isPageCurrent = useCallback((generation: number) =>
+    pageMountedRef.current && pageGenerationRef.current === generation && isSessionCurrent(sessionEpoch),
+  [isSessionCurrent, sessionEpoch]);
 
   // ── Tabs + activity rings state ─────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<HealthTab>("today");
@@ -1188,11 +1197,14 @@ export default function HealthPage() {
   const [pendingTrendMetric, setPendingTrendMetric] = useState<string | null>(
     null
   );
+  const [selectedKpis, setSelectedKpis] = useState<Set<string>>(
+    () => loadInitialSelectedKpis()
+  );
 
   // Deep link support: /health?tab=trends&metric=steps (used by dashboard
   // ring clicks). Mirrors the coach page's useSearchParams pattern.
   const searchParams = useSearchParams();
-  useEffect(() => {
+  const applyDeepLink = useEffectEvent(() => {
     const tab = searchParams.get("tab");
     if (tab === "today" || tab === "calendar" || tab === "trends") {
       setActiveTab(tab);
@@ -1207,39 +1219,35 @@ export default function HealthPage() {
       });
       setPendingTrendMetric(metric);
     }
-  }, [searchParams]);
+  });
+  useEffect(() => { applyDeepLink(); }, [searchParams]);
 
   // Date navigator — the day whose stats / 7-day / 30-day averages are shown
   // in the KPI tiles. Initialised null on first render to avoid SSR/client
   // hydration mismatch on timezone boundaries, then set to local today after
   // mount. Capped to a 30-day-back window.
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
-  useEffect(() => {
-    if (selectedDate === null) setSelectedDate(todayISO());
-  }, [selectedDate]);
 
   // One-time fetch for user-defined health goals.
   useEffect(() => {
     if (!userId) return;
+    const generation = pageGenerationRef.current;
     fetchHealthGoals(userId)
-      .then(setGoals)
-      .catch((err) => console.error("Health goals fetch error:", err));
-  }, [userId]);
+      .then(data => { if (isPageCurrent(generation)) setGoals(data); })
+      .catch(err => { if (isPageCurrent(generation)) console.error("Health goals fetch error:", err); });
+  }, [userId, isPageCurrent]);
 
   // One-time fetch for the effective-dated ring goal versions
   // (users/{uid}/healthGoals — separate from the settings doc above).
   useEffect(() => {
     if (!userId) return;
+    const generation = pageGenerationRef.current;
     fetchRingGoalVersions(userId)
-      .then(setRingGoals)
-      .catch((err) => console.error("Ring goals fetch error:", err));
-  }, [userId]);
+      .then(data => { if (isPageCurrent(generation)) setRingGoals(data); })
+      .catch(err => { if (isPageCurrent(generation)) console.error("Ring goals fetch error:", err); });
+  }, [userId, isPageCurrent]);
 
   // ── KPI graph selection (persisted in localStorage) ────────────────────
-  const [selectedKpis, setSelectedKpis] = useState<Set<string>>(
-    () => loadInitialSelectedKpis()
-  );
-
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
@@ -1271,52 +1279,63 @@ export default function HealthPage() {
   const sectionAnyActive = (fields: readonly string[]) =>
     fields.some((f) => selectedKpis.has(f));
 
-  const mergeMetricsIntoCache = useCallback(
-    (range: CoveredRange, docs: HealthMetric[]) => {
-      const next = mergeCoveredRange(
-        metricsCacheRef.current,
-        range,
-        docs.map((metrics) => ({ date: metrics.date, metrics }))
-      );
-      metricsCacheRef.current = next;
-      setMetricsCache(next);
-      return next;
-    },
-    []
-  );
+  // Older Calendar months are demand-loaded and discarded with this page.
+  // They never extend the retained rolling/YTD bounds or copy bounded rows.
+  const [calendarCache, setCalendarCache] = useState(emptyHealthMetricsCache);
+  const calendarCacheRef = useRef<HealthMetricsCache>(calendarCache);
+  const calendarPendingRef = useRef(new Map<string, { range: CoveredRange; generation: number }>());
+  const calendarRangeRef = useRef<CoveredRange | null>(null);
 
-  // ── Calendar tab: shared covered-range healthMetrics cache ──────────────
-  // The RingCalendar reports its visible range. Only uncovered gaps are read;
-  // the initial rolling window and Trends ranges seed the same cache.
-  const calendarInFlightRef = useRef<Set<string>>(new Set());
-
-  const handleCalendarRange = useCallback(
-    (start: string, end: string) => {
-      if (!userId) return;
-      const gaps = getUncoveredGaps(metricsCacheRef.current, { start, end });
-      for (const gap of gaps) {
-        const key = `${gap.start}:${gap.end}`;
-        if (calendarInFlightRef.current.has(key)) continue;
-        calendarInFlightRef.current.add(key);
-        fetchHealthMetricsRange(userId, gap.start, gap.end)
-          .then((docs) => mergeMetricsIntoCache(gap, docs))
-          .catch((err) => {
-            console.error("[health calendar] range fetch error:", err);
-          })
-          .finally(() => calendarInFlightRef.current.delete(key));
+  const loadCalendarRange = useCallback((start: string, end: string): Promise<void> => {
+    const generation = pageGenerationRef.current;
+    if (!userId || !isPageCurrent(generation)) return Promise.resolve();
+    const day = todayISO();
+    const requested = { start, end: end < day ? end : day };
+    if (requested.start > requested.end) return Promise.resolve();
+    const bounds = healthRetentionRange(day);
+    const bounded = ensureRange(requested);
+    const outside = getUncoveredGaps({ ...calendarCacheRef.current, coveredRanges: [bounds] }, requested);
+    const work: Promise<void>[] = [bounded];
+    for (const range of outside) {
+      for (const gap of getMissingOrStaleRanges(calendarCacheRef.current, range, Date.now())) {
+        const reservations = [...calendarPendingRef.current.values()]
+          .filter(request => request.generation === generation)
+          .map(request => request.range).sort((a, b) => a.start.localeCompare(b.start));
+        for (const missing of getUncoveredGaps({ ...calendarCacheRef.current, coveredRanges: reservations }, gap)) {
+          const key = `${missing.start}:${missing.end}`;
+          const request = { range: missing, generation };
+          calendarPendingRef.current.set(key, request);
+          work.push(fetchHealthMetricsRange(userId, missing.start, missing.end)
+            .then(docs => {
+              if (!isPageCurrent(generation)) return;
+              const next = mergeCoveredRange(calendarCacheRef.current, missing, docs.map(metrics => ({ date: metrics.date, metrics })));
+              calendarCacheRef.current = next;
+              setCalendarCache(next);
+            })
+            .catch(err => { if (isPageCurrent(generation)) console.error("[health calendar] range fetch error:", err); })
+            .finally(() => {
+              if (isPageCurrent(generation) && calendarPendingRef.current.get(key) === request) calendarPendingRef.current.delete(key);
+            }));
+        }
       }
-    },
-    [userId, mergeMetricsIntoCache]
-  );
+    }
+    return Promise.all(work).then(() => undefined);
+  }, [userId, ensureRange, isPageCurrent]);
 
-  // Adapt the shared cache's entry wrapper to RingCalendar's existing map prop.
+  const handleCalendarRange = useCallback((start: string, end: string) => {
+    calendarRangeRef.current = { start, end };
+    void loadCalendarRange(start, end);
+  }, [loadCalendarRange]);
+
   const calendarMetricsLive = useMemo(() => {
     const byDate = new Map<string, HealthMetric>();
-    for (const [date, entry] of metricsCache.entries) {
-      byDate.set(date, entry.metrics);
+    const bounds = healthRetentionRange(localDay);
+    for (const [date, entry] of calendarCache.entries) {
+      if (!intersectRanges({ start: date, end: date }, bounds)) byDate.set(date, entry.metrics);
     }
+    for (const [date, entry] of metricsCache?.entries ?? []) byDate.set(date, entry.metrics);
     return byDate;
-  }, [metricsCache]);
+  }, [metricsCache, calendarCache, localDay]);
 
   // Ring / KPI-card click → Trends tab, with the metric's chart selected
   // and scrolled into view once it has rendered.
@@ -1362,7 +1381,10 @@ export default function HealthPage() {
     } catch {
       // silent
     }
-    // Reset per-chart overrides so all charts follow the new global range.
+  }, [globalRange]);
+  const changeGlobalRange = useCallback((range: TimeRange) => {
+    if (range === globalRange) return;
+    setGlobalRange(range);
     setChartRanges({});
   }, [globalRange]);
 
@@ -1375,52 +1397,6 @@ export default function HealthPage() {
     setChartRanges((prev) => ({ ...prev, [key]: range }));
   }, []);
 
-  // One-time fetch for last-90-days health metrics
-  const refreshMetrics = useCallback((): Promise<void> => {
-    if (metricsInFlightRef.current) return metricsInFlightRef.current;
-    if (!userId) {
-      setMetricsInitialLoading(false);
-      setMetricsRefreshing(false);
-      return Promise.resolve();
-    }
-
-    const isInitialLoad = !metricsLoadedRef.current;
-    if (isInitialLoad) setMetricsInitialLoading(true);
-    else setMetricsRefreshing(true);
-
-    const promise = (async () => {
-      try {
-        const data = await fetchHealthMetrics(userId, 90);
-        setMetrics(data);
-        mergeMetricsIntoCache(
-          {
-            start: healthMetricsCutoffISO(90),
-            // fetchHealthMetrics has no upper-bound predicate, so this read also
-            // establishes that no later-dated docs existed at fetch time.
-            end: ALL_HEALTH_METRICS_RANGE.end,
-          },
-          data
-        );
-        metricsLoadedRef.current = true;
-        setError(null);
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
-        if (isInitialLoad) setError(message);
-        else console.error("[health metrics refresh]", err);
-      } finally {
-        if (isInitialLoad) setMetricsInitialLoading(false);
-        else setMetricsRefreshing(false);
-      }
-    })();
-    return trackInFlightRequest(metricsInFlightRef, promise);
-  }, [userId, mergeMetricsIntoCache]);
-
-  useEffect(() => {
-    void refreshMetrics();
-  }, [refreshMetrics]);
-
-  useRefetchOnFocus(refreshMetrics);
-
   const trendRanges = Object.values(chartRanges);
   const needsTrendYtd =
     activeTab === "trends" &&
@@ -1428,53 +1404,50 @@ export default function HealthPage() {
   const needsTrendAll =
     activeTab === "trends" &&
     (globalRange === "all" || trendRanges.some((range) => range === "all"));
-  // The Today tab's explicit YTD ring selection remains supported, but a
-  // persisted Trends range cannot trigger this fetch until Trends mounts.
-  const needsYtd =
-    needsTrendYtd || (activeTab === "today" && ringTimeframe === "ytd");
+  const needsRingYtd = activeTab === "today" && ringTimeframe === "ytd";
+  const anchorDate = selectedDate ?? localDay;
 
-  // Lazy-load only the current calendar year for YTD consumers. A failed
-  // request remains retryable when the consumer is selected again.
+  // Activation, visibility and day rollover use the same freshness/overlap
+  // coordinator. The mounted page owns these triggers, not retained residency.
+  const requestCurrentRanges = useCallback((forceRolling = false): Promise<void> => {
+    if (!isPageCurrent(pageGenerationRef.current)) return Promise.resolve();
+    const day = todayISO();
+    const minimum = shiftISODate(day, -30);
+    const anchor = !selectedDate || selectedDate === localDay
+      ? day : selectedDate < minimum ? minimum : selectedDate;
+    setLocalDay(day);
+    setSelectedDate(previous => {
+      if (!previous || previous === localDay) return day;
+      return previous < minimum ? minimum : previous;
+    });
+    const work = [ensureRange(healthRollingRange(day), forceRolling)];
+    if (needsTrendYtd) work.push(ensureRange({ start: `${day.slice(0, 4)}-01-01`, end: day }));
+    if (needsRingYtd) work.push(ensureRange({ start: `${anchor.slice(0, 4)}-01-01`, end: anchor }));
+    if (activeTab === "calendar" && calendarRangeRef.current) {
+      const range = calendarRangeRef.current;
+      work.push(loadCalendarRange(range.start, range.end));
+    }
+    return work.length === 1 ? work[0] : Promise.all(work).then(() => undefined);
+  }, [ensureRange, localDay, selectedDate, needsTrendYtd, needsRingYtd, activeTab, loadCalendarRange, isPageCurrent]);
+
   useEffect(() => {
-    if (
-      !userId ||
-      !needsYtd ||
-      ytdFetchStatusRef.current === "loading" ||
-      ytdFetchStatusRef.current === "success"
-    ) {
-      return;
-    }
+    let cancelled = false;
+    void Promise.resolve().then(() => { if (!cancelled) void requestCurrentRanges(); });
+    return () => { cancelled = true; };
+  }, [requestCurrentRanges]);
+  // Cache timestamps supply the 30-second floor. A new local day must still be
+  // recognized when visibility resumes less than 30 seconds after midnight.
+  useRefetchOnFocus(requestCurrentRanges, 0);
+  const refreshMetrics = useCallback(() => requestCurrentRanges(true), [requestCurrentRanges]);
 
-    const today = localTodayIsoDate();
-    const jan1 = `${today.slice(0, 4)}-01-01`;
-    const requested = { start: jan1, end: today };
-    const gaps = getUncoveredGaps(metricsCacheRef.current, requested);
-    if (gaps.length === 0) {
-      setYtdMetrics(metricsInCacheRange(metricsCacheRef.current, requested));
-      ytdFetchStatusRef.current = "success";
-      return;
-    }
-
-    ytdFetchStatusRef.current = "loading";
-    Promise.all(
-      gaps.map(async (gap) => ({
-        gap,
-        docs: await fetchHealthMetricsRange(userId, gap.start, gap.end),
-      }))
-    )
-      .then((results) => {
-        let next = metricsCacheRef.current;
-        for (const { gap, docs } of results) {
-          next = mergeMetricsIntoCache(gap, docs);
-        }
-        setYtdMetrics(metricsInCacheRange(next, requested));
-        ytdFetchStatusRef.current = "success";
-      })
-      .catch((err) => {
-        ytdFetchStatusRef.current = "error";
-        console.error("YTD health metrics error:", err);
-      });
-  }, [userId, needsYtd, mergeMetricsIntoCache]);
+  // One calendar-boundary timer while Health is mounted; no polling or inactive
+  // Health activity. Visibility/activation covers suspended timers as well.
+  useEffect(() => {
+    const now = new Date();
+    const nextDay = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    const timer = setTimeout(() => { void requestCurrentRanges(); }, nextDay.getTime() - now.getTime());
+    return () => clearTimeout(timer);
+  }, [localDay, requestCurrentRanges]);
 
   // All-time remains the existing unbounded query, activated only by a
   // visible Trends consumer. Errors can retry after the range/tab is chosen
@@ -1489,36 +1462,37 @@ export default function HealthPage() {
       return;
     }
 
+    const generation = pageGenerationRef.current;
     allFetchStatusRef.current = "loading";
     fetchAllHealthMetrics(userId)
       .then((data) => {
+        if (!isPageCurrent(generation)) return;
         setAllMetrics(data);
-        mergeMetricsIntoCache(ALL_HEALTH_METRICS_RANGE, data);
         allFetchStatusRef.current = "success";
       })
       .catch((err) => {
+        if (!isPageCurrent(generation)) return;
         allFetchStatusRef.current = "error";
         console.error("All-time health metrics error:", err);
       });
-  }, [userId, needsTrendAll, mergeMetricsIntoCache]);
+  }, [userId, needsTrendAll, isPageCurrent]);
 
   // One-time fetch for hourly heart rate averages
   useEffect(() => {
     if (!userId) return;
-    setHourlyHRLoading(true);
+    const generation = pageGenerationRef.current;
     fetchHourlyHeartRate(userId)
-      .then((data) => setHourlyHR(data))
-      .catch((err) => console.error("Hourly HR fetch error:", err))
-      .finally(() => setHourlyHRLoading(false));
-  }, [userId]);
-
-  // Anchor for stats — the user-selected date, falling back to today on the
-  // first render (pre-mount, selectedDate is null to avoid hydration drift).
-  const anchorDate = selectedDate ?? todayISO();
+      .then(data => { if (isPageCurrent(generation)) setHourlyHR(data); })
+      .catch(err => { if (isPageCurrent(generation)) console.error("Hourly HR fetch error:", err); })
+      .finally(() => { if (isPageCurrent(generation)) setHourlyHRLoading(false); });
+  }, [userId, isPageCurrent]);
 
   // Stats for the selected day. The rolling 90-day query covers the 30-day-back
   // navigation cap, so we filter from cached data — no extra query needed.
-  const today = metrics.find((m) => m.date === anchorDate) ?? null;
+  const today = useMemo(() => {
+    const doc = metrics.find(m => m.date === anchorDate);
+    return doc ? { ...doc } : null;
+  }, [metrics, anchorDate]);
   const windowStart7 = shiftISODate(anchorDate, -6);
   const windowStart30 = shiftISODate(anchorDate, -29);
   const last7 = metrics.filter(
@@ -1599,11 +1573,11 @@ export default function HealthPage() {
   // Docs inside the ring range. The rolling query covers Today/7D/30D;
   // YTD reads from the bounded current-year cache shared with trend charts.
   const tfDocs = useMemo(() => {
-    const src = ringTimeframe === "ytd" ? ytdMetrics : metrics;
+    const src = ringTimeframe === "ytd" ? metricsInCacheRange(metricsCache, ringRange) : metrics;
     return src.filter(
       (m) => m.date >= ringRange.start && m.date <= ringRange.end
     );
-  }, [ringTimeframe, ringRange, metrics, ytdMetrics]);
+  }, [ringTimeframe, ringRange, metrics, metricsCache]);
 
   // Period daily average over the ring range (existing avg logic,
   // parameterized by range instead of fixed 7/30-day windows).
@@ -1974,7 +1948,7 @@ export default function HealthPage() {
   useClientPerformanceMark(
     "training:health:data-ready",
     !metricsInitialLoading && error === null,
-    { detail: { cacheSource: "server" } }
+    { detail: { cacheSource: enteredWithResidentData ? "local-cache" : "server" } }
   );
 
   if (metricsInitialLoading) {
@@ -2076,7 +2050,7 @@ export default function HealthPage() {
           })()}
           {activeTab === "trends" && (
             <>
-              <TimeRangeSelector value={globalRange} onChange={setGlobalRange} />
+              <TimeRangeSelector value={globalRange} onChange={changeGlobalRange} />
               <button
                 type="button"
                 onClick={() => setGoalsModalOpen(true)}
