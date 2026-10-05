@@ -1,19 +1,13 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useMemo } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { useAuth } from '@/hooks/useAuth'
-import { APP_DATA_WORKOUTS_LIMIT } from '@/contexts/AppDataContext'
-import { fetchHealthWorkouts } from '@/services/healthWorkouts'
-import { fetchAllOverrides } from '@/services/workoutOverrides'
-import { fetchPlans } from '@/services/plans'
+import { useAppData, type AppDataResolution } from '@/contexts/AppDataContext'
 import { isRunningPlan } from '@/types/plan'
-import { fetchRaces } from '@/services/races'
-import { fetchHealthMetrics } from '@/services/healthMetrics'
-import { fetchUserSettings } from '@/services/userSettings'
+import { fetchHealthMetrics, type HealthMetric } from '@/services/healthMetrics'
 import { buildCoachContext } from '@/utils/coachContext'
 import { parseLocalDate, daysUntil } from '@/utils/dates'
-import { resolveMaxHr, resolveRestingHr } from '@/utils/trainingLoad'
 import { selectEffectiveWorkouts } from '@/utils/selectActiveWorkouts'
 import {
   HALF_MARATHON_MILES,
@@ -52,8 +46,48 @@ export default function CoachPage() {
   const userId = user?.uid ?? ''
 
   const searchParams = useSearchParams()
-  const [contextStatus, setContextStatus] = useState<ContextStatus>('loading')
-  const [context, setContext] = useState<ReturnType<typeof buildCoachContext> | null>(null)
+  const {
+    workouts, overrides, plans, races, userSettings, maxHr, restingHr,
+    workoutsResolution, overridesResolution, plansResolution,
+    racesResolution, settingsResolution,
+  } = useAppData()
+  const [health, setHealth] = useState<{
+    uid: string
+    resolution: AppDataResolution
+    metrics: HealthMetric[]
+    error?: string
+  } | null>(null)
+  // Tag preparation with its exact canonical inputs. A changed input invalidates
+  // context during render as well as cancelling the previous async preparation.
+  const inputs = useMemo(() => ({
+    userId, workouts, overrides, plans, races, userSettings, maxHr, restingHr,
+    workoutsResolution, overridesResolution, plansResolution, racesResolution,
+    settingsResolution, health,
+  }), [
+    userId, workouts, overrides, plans, races, userSettings, maxHr, restingHr,
+    workoutsResolution, overridesResolution, plansResolution, racesResolution,
+    settingsResolution, health,
+  ])
+  const [prepared, setPrepared] = useState<{
+    inputs: object
+    context: ReturnType<typeof buildCoachContext>
+  } | null>(null)
+  const [preparationError, setPreparationError] = useState<{
+    inputs: object
+    message: string
+  } | null>(null)
+  const resolutions = [
+    workoutsResolution, overridesResolution, plansResolution,
+    racesResolution, settingsResolution,
+    health?.uid === userId ? health.resolution : 'loading',
+  ]
+  const sourcesReady = resolutions.every(status => status === 'success')
+  const sourcesFailed = resolutions.some(status => status === 'error')
+  const context = sourcesReady && prepared?.inputs === inputs ? prepared.context : null
+  const contextError = sourcesFailed
+    ? health?.error ?? 'Training context unavailable: a required source could not be loaded.'
+    : preparationError?.inputs === inputs ? preparationError.message : null
+  const contextStatus: ContextStatus = contextError ? 'error' : context ? 'ready' : 'loading'
   const [question, setQuestion] = useState('')
   const [response, setResponse] = useState('')
   const [asking, setAsking] = useState(false)
@@ -68,23 +102,29 @@ export default function CoachPage() {
     return () => { abortRef.current?.abort() }
   }, [])
 
-  // Load all training data on mount
+  // Health remains Coach-owned. Training sources use AppData's canonical
+  // full/delta reconciliation contract, without fresh-on-Coach-mount copies.
   useEffect(() => {
     if (!userId) return
-    setContextStatus('loading')
-    setContext(null)
-    setError(null)
     autoAskedRef.current = false
     let cancelled = false
+    setHealth({ uid: userId, resolution: 'loading', metrics: [] })
+    fetchHealthMetrics(userId, 30).then(metrics => {
+      if (!cancelled) setHealth({ uid: userId, resolution: 'success', metrics })
+    }).catch(err => {
+      if (!cancelled) setHealth({
+        uid: userId, resolution: 'error', metrics: [],
+        error: err instanceof Error ? err.message : 'Health context unavailable',
+      })
+    })
+    return () => { cancelled = true }
+  }, [userId])
 
-    Promise.all([
-      fetchHealthWorkouts(userId, { limitCount: APP_DATA_WORKOUTS_LIMIT }),
-      fetchAllOverrides(userId),
-      fetchPlans(userId),
-      fetchRaces(userId),
-      fetchHealthMetrics(userId, 30),
-      fetchUserSettings(userId),
-    ]).then(async ([workouts, overrides, plans, races, healthMetrics, settings]) => {
+  useEffect(() => {
+    if (!userId || !sourcesReady || !health) return
+    let cancelled = false
+    setPreparationError(null)
+    const prepare = async () => {
       const runs = selectEffectiveWorkouts(workouts, overrides)
         .filter(w => w.isRunLike)
 
@@ -100,8 +140,6 @@ export default function CoachPage() {
         })
       const activeRace = upcomingRaces.find(r => r.isActive) ?? null
 
-      const maxHr = resolveMaxHr(settings)
-      const restingHr = resolveRestingHr(settings)
       const asOf = new Date()
       const raceDistanceMiles = activeRace
         ? activeRace.raceDistance === 'custom'
@@ -134,26 +172,24 @@ export default function CoachPage() {
       }
 
       if (cancelled) return
-      setContext(
-        buildCoachContext(
+      setPrepared({ inputs, context: buildCoachContext(
           runs,
           activePlan,
           activeRace,
-          healthMetrics,
+          health.metrics,
           maxHr,
           restingHr,
           { races: raceInputs, bestEffortSegments, asOf }
-        )
-      )
-      setContextStatus('ready')
-    }).catch(err => {
+        ) })
+    }
+    void prepare().catch(err => {
       if (cancelled) return
-      setContext(null)
-      setError(err instanceof Error ? err.message : 'Training context unavailable')
-      setContextStatus('error')
+      setPreparationError({
+        inputs, message: err instanceof Error ? err.message : 'Training context unavailable',
+      })
     })
     return () => { cancelled = true }
-  }, [userId])
+  }, [inputs, userId, sourcesReady, health, workouts, overrides, plans, races, maxHr, restingHr])
 
   // Auto-ask if a question was passed via URL param
   useEffect(() => {
@@ -343,8 +379,8 @@ export default function CoachPage() {
               {response}
             </div>
           )}
-          {error && (
-            <p className="text-danger text-sm">{error}</p>
+          {(contextError || error) && (
+            <p className="text-danger text-sm">{contextError || error}</p>
           )}
         </div>
       )}

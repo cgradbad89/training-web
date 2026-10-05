@@ -611,6 +611,7 @@ export default function WorkoutsPage() {
     maxHr,
     restingHr,
     settingsLoading,
+    settingsResolution,
   } = useAppData();
   const [loading, setLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -704,7 +705,14 @@ export default function WorkoutsPage() {
   // Auto-store Training Load V2 for the non-run workouts this page loads (the
   // Runs page covers runs). Stores a missing load / upgrades an avg-HR value once
   // a stream arrives. Runs after paint; successful writes patch shared AppData.
-  useEnrichTrainingLoads(uid, allWorkouts, userSettings, patchTrainingLoad);
+  // Persistence uses source fields, even when overrides change the display.
+  // Successful absence intentionally selects defaults; loading/error cannot.
+  useEnrichTrainingLoads(
+    uid,
+    nonRunWorkouts,
+    settingsResolution === "success" ? userSettings : undefined,
+    patchTrainingLoad
+  );
 
   const availableYears = useMemo(() => {
     const years = Array.from(

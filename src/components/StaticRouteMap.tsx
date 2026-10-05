@@ -52,7 +52,7 @@ function StaticRouteMapInner({
 }: StaticRouteMapProps) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [visible, setVisible] = useState(() => isRouteCached(workoutId));
+  const [visible, setVisible] = useState(() => isRouteCached(uid, workoutId));
   const [status, setStatus] = useState<
     "idle" | "loading" | "done" | "error"
   >("idle");

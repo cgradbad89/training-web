@@ -215,6 +215,10 @@ function AppDataProviderGeneration({
   );
 
   useEffect(() => {
+    // Every setup owns this keyed UID, including Strict Mode's second setup.
+    // Cleanup still invalidates all earlier requests; replay must restore
+    // ownership before the data effects start their new generation's reads.
+    activeUidRef.current = uid;
     return () => {
       activeUidRef.current = null;
       requestGenerationRef.current += 1;
@@ -223,7 +227,7 @@ function AppDataProviderGeneration({
       lastSuccessfulFullDateRef.current = null;
       workoutsRef.current = [];
     };
-  }, []);
+  }, [uid]);
   const appDataReady =
     workoutsResolution === "success" &&
     plansResolution === "success" &&

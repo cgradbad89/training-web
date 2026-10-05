@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const h = vi.hoisted(() => ({
   fetchHealthWorkouts: vi.fn(),
+  fetchHealthWorkoutsInRange: vi.fn(),
   fetchAllOverrides: vi.fn(),
   fetchPlans: vi.fn(),
   fetchRaces: vi.fn(),
@@ -28,6 +29,7 @@ vi.mock('@/hooks/useAuth', () => ({
 
 vi.mock('@/services/healthWorkouts', () => ({
   fetchHealthWorkouts: h.fetchHealthWorkouts,
+  fetchHealthWorkoutsInRange: h.fetchHealthWorkoutsInRange,
 }))
 
 vi.mock('@/services/workoutOverrides', () => ({
@@ -45,12 +47,21 @@ vi.mock('@/services/userSettings', () => ({
 vi.mock('@/services/fastFinishSplits', () => ({
   hydrateFastFinishSplits: h.hydrateFastFinishSplits,
 }))
+vi.mock('@/utils/coachContext', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/utils/coachContext')>()
+  return { ...actual, buildCoachContext: vi.fn(actual.buildCoachContext) }
+})
 
 vi.mock('firebase/auth', () => ({
   getAuth: () => ({ currentUser: { getIdToken: h.getIdToken } }),
 }))
 
 import CoachPage from '../page'
+import { AppDataProvider, useAppData, type AppDataContextValue } from '@/contexts/AppDataContext'
+import { selectEffectiveWorkouts } from '@/utils/selectActiveWorkouts'
+import { buildCoachContext } from '@/utils/coachContext'
+import type { HealthWorkout } from '@/types/healthWorkout'
+import type { WorkoutOverride } from '@/types/workoutOverride'
 import {
   DEFAULT_MAX_HR,
   DEFAULT_RESTING_HR,
@@ -58,6 +69,17 @@ import {
 
 let container: HTMLDivElement
 let root: Root
+let appData: AppDataContextValue
+
+function SharedCoach() {
+  const value = useAppData()
+  React.useEffect(() => { appData = value }, [value])
+  return <CoachPage />
+}
+
+function coachTree() {
+  return <AppDataProvider uid="u1"><SharedCoach /></AppDataProvider>
+}
 
 const flush = () =>
   act(async () => {
@@ -106,7 +128,7 @@ async function mount() {
   document.body.appendChild(container)
   await act(async () => {
     root = createRoot(container)
-    root.render(<CoachPage />)
+    root.render(coachTree())
   })
   await flush()
   await flush()
@@ -116,6 +138,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   h.searchParams = new URLSearchParams()
   h.fetchHealthWorkouts.mockResolvedValue([])
+  h.fetchHealthWorkoutsInRange.mockResolvedValue([])
   h.fetchAllOverrides.mockResolvedValue({})
   h.fetchPlans.mockResolvedValue([])
   h.fetchRaces.mockResolvedValue([])
@@ -140,6 +163,112 @@ afterEach(() => {
 })
 
 describe('CoachPage provider behavior', () => {
+  it('eliminates all five page-owned training queries while retaining the 30-day Health read', async () => {
+    await mount()
+    for (const loader of [h.fetchHealthWorkouts, h.fetchAllOverrides, h.fetchPlans, h.fetchRaces, h.fetchUserSettings]) {
+      // The mounted real AppDataProvider is the sole caller. Previously each
+      // service ran once there and once again inside Coach.
+      expect(loader).toHaveBeenCalledTimes(1)
+    }
+    expect(h.fetchHealthMetrics).toHaveBeenCalledOnce()
+    expect(h.fetchHealthMetrics).toHaveBeenCalledWith('u1', 30)
+    expect(h.fetch).not.toHaveBeenCalled()
+  })
+
+  it('preserves the effective-workout projection in submitted context', async () => {
+    const raw = [recentWorkout(), { ...recentWorkout(), workoutId: 'excluded' },
+      { ...recentWorkout(), workoutId: 'non-run', isRunLike: false }]
+    const overrides = {
+      w1: { workoutId: 'w1', distanceMilesOverride: 5, durationSecondsOverride: 2000 },
+      excluded: { workoutId: 'excluded', isExcluded: true },
+    } as Record<string, WorkoutOverride>
+    h.fetchHealthWorkouts.mockResolvedValue(raw)
+    h.fetchAllOverrides.mockResolvedValue(overrides)
+    h.searchParams = new URLSearchParams('q=How+am+I+doing')
+    await mount()
+    const body = JSON.parse(String((h.fetch.mock.calls[0][1] as RequestInit).body))
+    const effective = selectEffectiveWorkouts(raw as HealthWorkout[], overrides).filter(w => w.isRunLike)
+    const expected = buildCoachContext(effective, null, null)
+    expect(body.context.stats).toEqual(expected.stats)
+    expect(body.context.runs).toEqual(expected.runs)
+    expect(raw[0].distanceMiles).toBe(3)
+  })
+
+  it('rebuilds after W/O/P/R/H shared updates without resubmitting a URL question or reloading Health', async () => {
+    h.fetchHealthWorkouts.mockResolvedValue([recentWorkout()])
+    h.searchParams = new URLSearchParams('q=How+am+I+doing')
+    await mount()
+    expect(h.fetch).toHaveBeenCalledTimes(1)
+
+    async function changed(update: () => void | Promise<void>) {
+      const builds = vi.mocked(buildCoachContext).mock.calls.length
+      await act(async () => { await update() })
+      await flush()
+      expect(vi.mocked(buildCoachContext).mock.calls.length).toBeGreaterThan(builds)
+      expect(h.fetch).toHaveBeenCalledTimes(1)
+    }
+    await changed(() => appData.patchOverrides(prev => ({
+      ...prev, w1: { workoutId: 'w1', distanceMilesOverride: 5 } as WorkoutOverride,
+    })))
+    expect(container.textContent).toContain('5.0 mi')
+    await changed(() => appData.patchPlan({
+      id: 'plan', name: 'Updated plan', startDate: '2026-09-28',
+      status: 'active', isActive: true, weeks: [{ weekNumber: 1, entries: [] }],
+      createdAt: '', updatedAt: '',
+    }))
+    expect(container.textContent).toContain('Updated plan')
+    await changed(() => appData.patchRaces(() => [{
+      id: 'race', name: 'Updated race', raceDate: '2099-01-01',
+      raceDistance: '5k', isActive: true, createdAt: '',
+    }]))
+    expect(container.textContent).toContain('Updated race')
+    h.fetchUserSettings.mockResolvedValue({ maxHeartRate: 190, restingHeartRate: 70 })
+    await changed(() => appData.refreshSettings())
+    expect(vi.mocked(buildCoachContext).mock.lastCall?.slice(4, 6)).toEqual([190, 70])
+    h.fetchHealthWorkouts.mockResolvedValue([recentWorkout(), { ...recentWorkout(), workoutId: 'w2' }])
+    await changed(() => appData.refreshWorkouts())
+    expect(container.textContent).toContain('2 runs')
+    expect(h.fetchHealthMetrics).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects older asynchronous preparation after a shared override changes', async () => {
+    h.fetchHealthWorkouts.mockResolvedValue([recentWorkout()])
+    h.fetchRaces.mockResolvedValue([{
+      id: 'race', name: 'Half', raceDate: '2099-01-01',
+      raceDistance: 'halfMarathon', isActive: true, createdAt: '',
+    }])
+    const old = deferred<{ runs: HealthWorkout[] }>()
+    h.hydrateFastFinishSplits.mockReturnValueOnce(old.promise)
+    await mount()
+    expect(container.textContent).not.toContain('Training Context Loaded')
+    await act(async () => appData.patchOverrides(() => ({
+      w1: { workoutId: 'w1', distanceMilesOverride: 5 } as WorkoutOverride,
+    })))
+    await flush()
+    expect(container.textContent).toContain('5.0 mi')
+    old.resolve({ runs: [recentWorkout() as HealthWorkout] })
+    await flush()
+    expect(container.textContent).toContain('5.0 mi')
+    expect(container.textContent).not.toContain('3.0 mi')
+    expect(h.fetch).not.toHaveBeenCalled()
+  })
+
+  it('rejects preparation in flight when a canonical prerequisite fails', async () => {
+    h.fetchHealthWorkouts.mockResolvedValue([recentWorkout()])
+    h.fetchRaces.mockResolvedValue([{
+      id: 'race', raceDate: '2099-01-01', raceDistance: 'halfMarathon', isActive: true,
+    }])
+    const old = deferred<{ runs: HealthWorkout[] }>()
+    h.hydrateFastFinishSplits.mockReturnValueOnce(old.promise)
+    h.searchParams = new URLSearchParams('q=Should+I+run')
+    await mount()
+    h.fetchUserSettings.mockRejectedValue(new Error('settings unavailable'))
+    await act(async () => appData.refreshSettings())
+    old.resolve({ runs: [recentWorkout() as HealthWorkout] })
+    await flush()
+    expect(container.textContent).toContain('Training context unavailable')
+    expect(h.fetch).not.toHaveBeenCalled()
+  })
   it('shows one Coach experience with no provider selector', async () => {
     await mount()
 
@@ -214,7 +343,7 @@ describe('CoachPage provider behavior', () => {
     expect(h.fetch).toHaveBeenCalledTimes(1)
 
     await act(async () => {
-      root.render(<CoachPage />)
+      root.render(coachTree())
     })
     await flush()
     expect(h.fetch).toHaveBeenCalledTimes(1)
@@ -242,7 +371,7 @@ describe('CoachPage provider behavior', () => {
     await mount()
 
     expect(h.fetch).not.toHaveBeenCalled()
-    expect(container.textContent).toContain('settings unavailable')
+    expect(container.textContent).toContain('Training context unavailable')
   })
 
   it('does not auto-submit while another context prerequisite is pending', async () => {

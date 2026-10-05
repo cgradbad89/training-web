@@ -10,7 +10,7 @@ import { RoutesSkeleton } from "./RoutesSkeleton";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { StaticRouteMap } from "@/components/StaticRouteMap";
 import { useAuth } from "@/hooks/useAuth";
-import { fetchHealthWorkouts } from "@/services/healthWorkouts";
+import { useAppData } from "@/contexts/AppDataContext";
 import { type RoutePoint } from "@/services/routes";
 import { getRoutePoints } from "@/utils/routeCache";
 import { type HealthWorkout } from "@/types/healthWorkout";
@@ -29,9 +29,6 @@ import {
   type RouteCluster,
 } from "@/utils/routeClustering";
 import { toMatchedRunSummaries } from "@/utils/routePerformance";
-import { resolveMaxHr, resolveRestingHr } from "@/utils/trainingLoad";
-import { fetchUserSettings } from "@/services/userSettings";
-import { type UserSettings } from "@/types/userSettings";
 
 import { CreatedRouteCanvas } from "@/components/CreatedRouteCanvas";
 import { CreatedRouteDetailModal } from "@/components/CreatedRouteDetailModal";
@@ -416,15 +413,28 @@ export default function RoutesPage() {
   const { user } = useAuth();
   const uid = user?.uid ?? null;
 
-  const [runs, setRuns] = useState<HealthWorkout[]>([]);
-  const [loading, setLoading] = useState(true);
+  const {
+    workouts: rawWorkouts,
+    workoutsLoading,
+    workoutsResolution,
+    settingsResolution,
+    maxHr: resolvedMaxHr,
+    restingHr: resolvedRestingHr,
+  } = useAppData();
+  // Preserve the former query's coverage: newest 500 RAW records, then route
+  // filtering. Filtering the shared 1000 first would admit older routed runs.
+  const runs = useMemo(
+    () => rawWorkouts.slice(0, 500).filter((w) => w.isRunLike && w.hasRoute),
+    [rawWorkouts]
+  );
+  const loading = workoutsLoading || settingsResolution === "loading";
+  const sourcesReady = workoutsResolution === "success" && settingsResolution === "success";
   const [filter, setFilter] = useState<DistanceFilter>("all");
   const [expandedCluster, setExpandedCluster] = useState<RouteCluster | null>(
     null
   );
   /** Cluster whose pace-trend drawer is open (card-body click). */
   const [trendCluster, setTrendCluster] = useState<RouteCluster | null>(null);
-  const [userSettings, setUserSettings] = useState<UserSettings | null>(null);
   const [clusters, setClusters] = useState<RouteCluster[]>([]);
   const [clusteringLoading, setClusteringLoading] = useState(false);
   const [createdRoutes, setCreatedRoutes] = useState<CreatedRoute[]>([]);
@@ -440,42 +450,24 @@ export default function RoutesPage() {
   } | null>(null);
 
   useEffect(() => {
-    if (!uid) return;
-    setLoading(true);
-    fetchHealthWorkouts(uid, { limitCount: 500 })
-      .then((wkts) => {
-        setRuns(wkts.filter((w) => w.isRunLike && w.hasRoute));
-      })
-      .catch(console.error)
-      .finally(() => setLoading(false));
-  }, [uid]);
-
-  useEffect(() => {
-    if (!uid || runs.length === 0) return;
+    if (!uid || !sourcesReady || runs.length === 0) return;
+    let cancelled = false;
     setClusteringLoading(true);
     clusterRoutesGeographic(runs, uid)
       .then((result) => {
+        if (cancelled) return;
         setClusters(result);
         setClusteringLoading(false);
       })
-      .catch(() => setClusteringLoading(false));
-  }, [runs, uid]);
+      .catch(() => { if (!cancelled) setClusteringLoading(false); });
+    return () => { cancelled = true; };
+  }, [runs, uid, sourcesReady]);
 
   // Fetch created routes
   useEffect(() => {
     if (!uid) return;
     fetchCreatedRoutes(uid).then(setCreatedRoutes).catch(console.error);
   }, [uid]);
-
-  // Settings → resolved max/resting HR for the Load chips in the trend drawer
-  // (resolveDisplayLoad is the single source of truth for displayed load).
-  useEffect(() => {
-    if (!uid) return;
-    fetchUserSettings(uid).then(setUserSettings).catch(console.error);
-  }, [uid]);
-
-  const resolvedMaxHr = resolveMaxHr(userSettings);
-  const resolvedRestingHr = resolveRestingHr(userSettings);
 
   const handleSaveRoute = async (data: {
     name: string;
@@ -573,6 +565,10 @@ export default function RoutesPage() {
 
   if (loading) {
     return <RoutesSkeleton />;
+  }
+
+  if (!sourcesReady) {
+    return <EmptyState title="Routes unavailable" description="Workout metadata or settings could not be loaded." />;
   }
 
   if (runs.length === 0) {

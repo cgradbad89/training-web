@@ -1,42 +1,67 @@
 /**
  * Module-level cache for route points.
  * Persists across page navigations within the same session.
- * Keyed by workoutId.
+ * UID-scoped, with an auth-session epoch so cleared in-flight work cannot
+ * repopulate memory. No custom persistence or route freshness policy.
  */
 
 import { type RoutePoint, fetchRoutePoints } from "@/services/routes";
 
 const cache = new Map<string, RoutePoint[]>();
 const inFlight = new Map<string, Promise<RoutePoint[]>>();
+let sessionUid: string | null = null;
+let sessionEpoch = 0;
+
+/** Explicit tuple encoding avoids collisions and requires UID at every read. */
+function routeKey(uid: string, workoutId: string): string {
+  return JSON.stringify([uid, workoutId]);
+}
+
+/** Invalidates pending owners as well as settled data (including same-UID login). */
+export function clearRouteCache(): void {
+  sessionEpoch += 1;
+  cache.clear();
+  inFlight.clear();
+}
+
+/** Called by the existing auth observer, before exposing the next identity.
+ * Repeated observations of the same authorized UID retain navigation reuse;
+ * a signed-out observation followed by that UID starts a fresh session. */
+export function setRouteCacheSession(uid: string | null): void {
+  if (uid !== null && uid === sessionUid) return;
+  clearRouteCache();
+  sessionUid = uid;
+}
 
 /**
  * Get route points from cache or fetch them.
- * Deduplicates concurrent requests for the same workoutId.
+ * Deduplicates concurrent requests for the same UID/workout in this session.
  */
 export async function getRoutePoints(
   uid: string,
   workoutId: string
 ): Promise<RoutePoint[]> {
-  if (cache.has(workoutId)) {
-    return cache.get(workoutId)!;
+  const key = routeKey(uid, workoutId);
+  const epoch = sessionEpoch;
+  if (cache.has(key)) {
+    return cache.get(key)!;
   }
 
-  if (inFlight.has(workoutId)) {
-    return inFlight.get(workoutId)!;
+  if (inFlight.has(key)) {
+    return inFlight.get(key)!;
   }
 
   const promise = fetchRoutePoints(uid, workoutId)
     .then((points) => {
-      cache.set(workoutId, points);
-      inFlight.delete(workoutId);
+      if (epoch === sessionEpoch) cache.set(key, points);
       return points;
     })
-    .catch((err) => {
-      inFlight.delete(workoutId);
-      throw err;
+    .finally(() => {
+      // A retired request cannot delete a replacement request for the same key.
+      if (inFlight.get(key) === promise) inFlight.delete(key);
     });
 
-  inFlight.set(workoutId, promise);
+  inFlight.set(key, promise);
   return promise;
 }
 
@@ -50,12 +75,14 @@ export async function prefetchRoutes(
   workoutIds: string[],
   concurrency = 3
 ): Promise<void> {
+  const epoch = sessionEpoch;
   const needed = workoutIds.filter(
-    (id) => !cache.has(id) && !inFlight.has(id)
+    (id) => !cache.has(routeKey(uid, id)) && !inFlight.has(routeKey(uid, id))
   );
   if (needed.length === 0) return;
 
   for (let i = 0; i < needed.length; i += concurrency) {
+    if (epoch !== sessionEpoch) return;
     const batch = needed.slice(i, i + concurrency);
     await Promise.allSettled(
       batch.map((id) => getRoutePoints(uid, id).catch(() => {}))
@@ -66,9 +93,9 @@ export async function prefetchRoutes(
   }
 }
 
-/** Check if a workoutId is already cached */
-export function isRouteCached(workoutId: string): boolean {
-  return cache.has(workoutId);
+/** Check only this UID's current-session memory. UID cannot be omitted. */
+export function isRouteCached(uid: string, workoutId: string): boolean {
+  return cache.has(routeKey(uid, workoutId));
 }
 
 /**
@@ -81,8 +108,9 @@ export async function getRouteStartPoint(
   workoutId: string
 ): Promise<{ lat: number; lng: number } | null> {
   // If full route is cached, use its first point
-  if (cache.has(workoutId)) {
-    const pts = cache.get(workoutId)!;
+  const key = routeKey(uid, workoutId);
+  if (cache.has(key)) {
+    const pts = cache.get(key)!;
     if (pts.length > 0) return { lat: pts[0].lat, lng: pts[0].lng };
     return null;
   }

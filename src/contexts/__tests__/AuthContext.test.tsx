@@ -11,11 +11,15 @@ const h = vi.hoisted(() => ({
   unsubscribe: vi.fn(),
   onAuthChange: vi.fn(),
   signOut: vi.fn(),
+  setRouteCacheSession: vi.fn(),
 }));
 
 vi.mock("@/lib/auth", () => ({
   onAuthChange: h.onAuthChange,
   signOut: h.signOut,
+}));
+vi.mock("@/utils/routeCache", () => ({
+  setRouteCacheSession: h.setRouteCacheSession,
 }));
 
 import { AuthProvider, useAuthContext } from "@/contexts/AuthContext";
@@ -54,6 +58,7 @@ describe("AuthProvider", () => {
       return h.unsubscribe;
     });
     h.signOut.mockReset().mockResolvedValue(undefined);
+    h.setRouteCacheSession.mockReset();
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -82,6 +87,18 @@ describe("AuthProvider", () => {
 
     act(() => h.listener?.(null));
     expect(container.textContent).toBe("signed-outsigned-out");
+  });
+
+  it("hands every authorized/signed-out transition to the GPS session cache", () => {
+    act(() => root.render(<AuthProvider><Probe name="private" /></AuthProvider>));
+    act(() => h.listener?.(authUser({ uid: "A" })));
+    act(() => h.listener?.(authUser({ uid: "A" })));
+    act(() => h.listener?.(null));
+    act(() => h.listener?.(authUser({ uid: "A" })));
+    act(() => h.listener?.(authUser({ uid: "B" })));
+    expect(h.setRouteCacheSession.mock.calls).toEqual([["A"], ["A"], [null], ["A"], ["B"]]);
+    act(() => h.listener?.(authUser({ emailVerified: false })));
+    expect(h.setRouteCacheSession).toHaveBeenLastCalledWith(null);
   });
 
   it.each([
