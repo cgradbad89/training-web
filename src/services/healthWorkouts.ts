@@ -179,7 +179,7 @@ function bestEffortsEqual(
   );
 }
 
-function docToHealthWorkout(
+export function docToHealthWorkout(
   id: string,
   data: Record<string, unknown>
 ): HealthWorkout {
