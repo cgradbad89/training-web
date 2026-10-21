@@ -16,7 +16,7 @@
  * dedup), so a run whose route was already read elsewhere on the page is free.
  */
 
-import { getRoutePoints } from "@/utils/routeCache";
+import { getRouteCacheEpoch, getRoutePoints } from "@/utils/routeCache";
 import { getMileSplits } from "@/utils/mileSplitsCache";
 import { computeMileSplits, type MileSplit } from "@/utils/mileSplits";
 import {
@@ -81,19 +81,26 @@ export interface HydrateFastFinishResult {
 export async function hydrateFastFinishSplits(
   uid: string,
   runs: HealthWorkout[],
-  opts: { maxHr: number; restingHr: number; asOf?: Date }
+  opts: { maxHr: number; restingHr: number; asOf?: Date; isCurrent?: () => boolean }
 ): Promise<HydrateFastFinishResult> {
   const { maxHr, restingHr, asOf = new Date() } = opts;
+  const epoch = getRouteCacheEpoch();
+  const isCurrent = () => epoch === getRouteCacheEpoch() && (opts.isCurrent?.() ?? true);
   const cutoffMs = asOf.getTime() - BEST_EFFORT_RECENCY_DAYS * 86400000;
   const prefilterBpm = fastFinishPrefilterBpm(maxHr, restingHr);
 
   let routeFetches = 0;
 
-  const hydrated = await Promise.all(
-    runs.map(async (w) => {
+  const hydrated = [...runs];
+  // Route hydration belongs to its visible consumer. Bound parallelism and stop
+  // queued work when that consumer navigates away or its auth session retires.
+  const concurrency = 3;
+  for (let i = 0; i < runs.length; i += concurrency) {
+    if (!isCurrent()) break;
+    const batch = await Promise.all(runs.slice(i, i + concurrency).map(async (w) => {
       const inWindow = w.startDate.getTime() >= cutoffMs;
       if (
-        !inWindow ||
+        !isCurrent() || !inWindow ||
         !w.isRunLike ||
         !(w.distanceMiles > 0) ||
         (w.mileSplits && w.mileSplits.length > 0)
@@ -103,6 +110,7 @@ export async function hydrateFastFinishSplits(
 
       try {
         const hrRows = await fetchMileSplitHR(uid, w.workoutId);
+        if (!isCurrent()) return w;
         if (hrRows.length === 0) return w;
 
         // Pre-filter: at least one mile already at/above the gate by avgBpm.
@@ -111,6 +119,7 @@ export async function hydrateFastFinishSplits(
 
         const points = await getRoutePoints(uid, w.workoutId);
         routeFetches++;
+        if (!isCurrent()) return w;
         if (points.length < 2) return w;
 
         const hrByMile = new Map(hrRows.map((r) => [r.mile, r.avgBpm]));
@@ -125,8 +134,10 @@ export async function hydrateFastFinishSplits(
         console.error("[hydrateFastFinishSplits]", w.workoutId, err);
         return w;
       }
-    })
-  );
+    }));
+    if (!isCurrent()) break;
+    hydrated.splice(i, batch.length, ...batch);
+  }
 
   return { runs: hydrated, routeFetches };
 }

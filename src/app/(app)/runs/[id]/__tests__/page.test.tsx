@@ -26,6 +26,7 @@ import { fetchShoes, fetchManualShoeAssignmentsMap, saveManualAssignments } from
 // Mocks
 vi.mock("next/navigation", () => ({
   useParams: () => ({ id: "workout_123" }),
+  usePathname: () => "/runs/workout_123",
   useRouter: () => ({ back: vi.fn() }),
 }));
 
@@ -33,8 +34,9 @@ vi.mock("next/dynamic", () => ({
   default: () => () => null,
 }));
 
+const authBoundary = vi.hoisted(() => ({ isSessionCurrent: () => true }));
 vi.mock("@/hooks/useAuth", () => ({
-  useAuth: () => ({ user: { uid: "u1" } }),
+  useAuth: () => ({ user: { uid: "u1" }, sessionEpoch: 1, isSessionCurrent: authBoundary.isSessionCurrent }),
 }));
 
 const appData = vi.hoisted(() => ({
@@ -513,7 +515,8 @@ describe("RunDetailPage GAP/elevation sublabels", () => {
       "u1",
       "workout_123",
       expect.any(Array),
-      true
+      true,
+      expect.objectContaining({ isCurrent: expect.any(Function) })
     );
   });
 

@@ -59,7 +59,10 @@ describe("GPS memory identity and session ownership", () => {
     h.fetch.mockResolvedValueOnce(points(38)).mockResolvedValueOnce(points(42));
     await getRoutePoints("A", "X");
     expect(await getRoutePoints("B", "X")).toEqual(points(42));
-    expect(h.fetch.mock.calls).toEqual([["A", "X"], ["B", "X"]]);
+    expect(h.fetch.mock.calls).toEqual([
+      ["A", "X", { isCurrent: expect.any(Function) }],
+      ["B", "X", { isCurrent: expect.any(Function) }],
+    ]);
   });
 
   it("never deduplicates B into A's pending request for workout X", async () => {
@@ -168,6 +171,42 @@ describe("GPS memory identity and session ownership", () => {
     await prefetchRoutes("A", ["X"]);
     expect(await getRoutePoints("A", "X")).toEqual(points(40));
     expect(h.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops subsequent prefetch batches when their page navigates away", async () => {
+    vi.useFakeTimers();
+    let current = true;
+    const pending = deferred<RoutePoint[]>();
+    h.fetch.mockReturnValueOnce(pending.promise);
+    const prefetch = prefetchRoutes("A", ["X", "Y"], 1, { isCurrent: () => current });
+    expect(h.fetch).toHaveBeenCalledOnce();
+    current = false;
+    pending.resolve(points(38));
+    await vi.runAllTimersAsync();
+    await prefetch;
+    expect(h.fetch).toHaveBeenCalledOnce();
+    // Already-started shared work remains reusable by another current consumer.
+    expect(await getRoutePoints("A", "X")).toEqual(points(38));
+    expect(h.fetch).toHaveBeenCalledOnce();
+  });
+
+  it("does not begin prefetch for a retired page", async () => {
+    await prefetchRoutes("A", ["X"], 3, { isCurrent: () => false });
+    expect(h.fetch).not.toHaveBeenCalled();
+  });
+
+  it("passes synchronous auth retirement into an in-progress route acquisition", async () => {
+    setRouteCacheSession("A");
+    const pending = deferred<RoutePoint[]>();
+    h.fetch.mockReturnValue(pending.promise);
+    const read = getRoutePoints("A", "X");
+    const options = h.fetch.mock.calls[0][2];
+    expect(options.isCurrent()).toBe(true);
+    setRouteCacheSession(null);
+    expect(options.isCurrent()).toBe(false);
+    pending.resolve(points(38));
+    await read;
+    expect(isRouteCached("A", "X")).toBe(false);
   });
 });
 

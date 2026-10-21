@@ -504,20 +504,22 @@ export async function computeAndStoreBestEfforts(
   uid: string,
   workoutId: string,
   points: RoutePoint[],
-  routeComplete: boolean
+  routeComplete: boolean,
+  options: { isCurrent?: () => boolean } = {}
 ): Promise<BestEffortsMap> {
   const bestEfforts = withBestEffortsFreshness(
     computeBestEfforts(points),
     routeComplete,
     points.length
   );
+  if (options.isCurrent?.() === false) return bestEfforts;
   const ref = doc(db, "users", uid, "healthWorkouts", workoutId);
   const snap = await getDoc(ref);
   const existing = snap.exists()
     ? parseBestEfforts((snap.data() as Record<string, unknown>).bestEfforts)
     : undefined;
 
-  if (bestEffortsEqual(existing, bestEfforts)) {
+  if (options.isCurrent?.() === false || bestEffortsEqual(existing, bestEfforts)) {
     return bestEfforts;
   }
 
@@ -570,11 +572,16 @@ export interface EnrichedTrainingLoadResult extends TrainingLoadFields {
 export async function computeAndStoreTrainingLoad(
   uid: string,
   workoutId: string,
-  settings: UserSettings | null | undefined
+  settings: UserSettings | null | undefined,
+  options: { isCurrent?: () => boolean } = {}
 ): Promise<EnrichedTrainingLoadResult | null> {
+  // Background page consumers may retire while metadata/raw acquisition awaits.
+  // Explicit backfill/recompute callers retain the default uninterrupted writer.
+  const isCurrent = () => options.isCurrent?.() ?? true;
+  if (!isCurrent()) return null;
   const ref = doc(db, "users", uid, "healthWorkouts", workoutId);
   const snap = await getDoc(ref);
-  if (!snap.exists()) return null;
+  if (!isCurrent() || !snap.exists()) return null;
 
   const data = snap.data() as Record<string, unknown>;
   const maxHr = resolveMaxHr(settings);
@@ -596,7 +603,8 @@ export async function computeAndStoreTrainingLoad(
 
   // Tier 1 — route runs: per-second integral over route-point HR (UNCHANGED).
   if (hasRoute) {
-    const points = await fetchRoutePoints(uid, workoutId);
+    const points = await fetchRoutePoints(uid, workoutId, { isCurrent });
+    if (!isCurrent()) return null;
     const result = computeStreamedTrainingLoad(
       points.map((p) => ({ timestamp: p.timestamp, hr: p.hr })),
       durationSeconds,
@@ -613,6 +621,7 @@ export async function computeAndStoreTrainingLoad(
     // per-sample HR. The hrStream samples ARE the points array (reuse
     // computeStreamedTrainingLoad verbatim — same Δt-clamp/coverage logic).
     const samples = await fetchHRStream(uid, workoutId);
+    if (!isCurrent()) return null;
     if (samples.length >= MIN_HRSTREAM_SAMPLES) {
       const result = computeStreamedTrainingLoad(
         samples.map((s) => ({ timestamp: s.timestamp, hr: s.hr })),
@@ -652,6 +661,7 @@ export async function computeAndStoreTrainingLoad(
   // null load is stored (→ "—") rather than written as 0. trainingLoadBasisComplete
   // records the route-completeness this load was computed from, so a later
   // resume-completion can trigger exactly one recompute (shouldEnrichLoad case c).
+  if (!isCurrent()) return null;
   await setDoc(
     ref,
     stripUndefined({
@@ -820,23 +830,28 @@ export class TrainingLoadRecomputeError extends Error {
 export async function enrichTrainingLoads(
   uid: string,
   workouts: HealthWorkout[],
-  settings: UserSettings | null | undefined
+  settings: UserSettings | null | undefined,
+  options: { isCurrent?: () => boolean } = {}
 ): Promise<EnrichedTrainingLoadResult[]> {
+  const isCurrent = () => options.isCurrent?.() ?? true;
   // Resolve HR anchors once (same source as the writer) so shouldEnrichLoad's
   // branch (d) avg-HR reference matches what computeAndStoreTrainingLoad will use.
   const maxHr = resolveMaxHr(settings);
   const restingHr = resolveRestingHr(settings);
   const enriched: EnrichedTrainingLoadResult[] = [];
   for (const workout of workouts) {
+    if (!isCurrent()) break;
     if (!shouldEnrichLoad(workout, maxHr, restingHr)) continue;
     try {
       const result = await computeAndStoreTrainingLoad(
         uid,
         workout.workoutId,
-        settings
+        settings,
+        { isCurrent }
       );
       if (result) enriched.push(result);
     } catch (err) {
+      if (!isCurrent()) break;
       console.error(
         `[enrichTrainingLoads] ${workout.workoutId} failed`,
         err
@@ -932,8 +947,11 @@ export async function saveRunDetailCaches(
  */
 export async function backfillRouteClusterIds(
   uid: string,
-  workouts: HealthWorkout[]
+  workouts: HealthWorkout[],
+  options: { isCurrent?: () => boolean } = {}
 ): Promise<number> {
+  const isCurrent = () => options.isCurrent?.() !== false;
+  if (!isCurrent()) return 0;
   // A noloc ID on a routed run means the start point wasn't resolvable when
   // the ID was written — re-derive so it self-heals to a geographic ID.
   const missing = workouts.filter(
@@ -947,13 +965,14 @@ export async function backfillRouteClusterIds(
   // Resolve start points with bounded concurrency (mirrors clusterRoutesGeographic).
   const ids = new Map<string, string>();
   for (let i = 0; i < missing.length; i += 10) {
+    if (!isCurrent()) return 0;
     const batch = missing.slice(i, i + 10);
     await Promise.all(
       batch.map(async (w) => {
         const start = await getRouteStartPoint(uid, w.workoutId);
         // A null start is indistinguishable from a transient read failure —
         // never persist a distance-only ID for a routed run; retry next view.
-        if (!start) return;
+        if (!start || !isCurrent()) return;
         const id = deriveRouteClusterId(w.distanceMiles, start);
         if (id !== w.routeClusterId) ids.set(w.workoutId, id);
       })
@@ -962,7 +981,9 @@ export async function backfillRouteClusterIds(
 
   // Batched merge writes (Firestore caps a WriteBatch at 500 ops).
   const entries = [...ids.entries()];
+  let written = 0;
   for (let i = 0; i < entries.length; i += 400) {
+    if (!isCurrent()) return written;
     const batch = writeBatch(db);
     for (const [workoutId, routeClusterId] of entries.slice(i, i + 400)) {
       batch.set(
@@ -972,9 +993,10 @@ export async function backfillRouteClusterIds(
       );
     }
     await batch.commit();
+    written += Math.min(400, entries.length - i);
   }
 
-  return entries.length;
+  return written;
 }
 
 export async function backfillBestEfforts(uid: string): Promise<{

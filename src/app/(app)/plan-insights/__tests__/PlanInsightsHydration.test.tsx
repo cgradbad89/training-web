@@ -8,9 +8,13 @@ import type { UserSettings } from "@/types/userSettings";
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const h = vi.hoisted(() => ({
   workouts: vi.fn(), plans: vi.fn(), races: vi.fn(), overrides: vi.fn(), settings: vi.fn(), hydrate: vi.fn(),
+  sessionEpoch: 1,
+  pathname: "/plan-insights",
+  isSessionCurrent: vi.fn((epoch: number) => epoch === 1),
+  rawRoute: vi.fn(), mileSplits: vi.fn(),
 }));
-vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { uid: "u1" } }) }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { uid: "u1" }, sessionEpoch: h.sessionEpoch, isSessionCurrent: h.isSessionCurrent }) }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }), usePathname: () => h.pathname }));
 vi.mock("next/dynamic", () => ({ default: () => () => null }));
 vi.mock("@/services/healthWorkouts", () => ({ fetchHealthWorkouts: h.workouts, fetchHealthWorkoutsInRange: vi.fn() }));
 vi.mock("@/services/plans", () => ({ fetchPlans: h.plans }));
@@ -18,6 +22,8 @@ vi.mock("@/services/races", () => ({ fetchRaces: h.races }));
 vi.mock("@/services/workoutOverrides", () => ({ fetchAllOverrides: h.overrides }));
 vi.mock("@/services/userSettings", () => ({ fetchUserSettings: h.settings }));
 vi.mock("@/services/fastFinishSplits", () => ({ hydrateFastFinishSplits: h.hydrate }));
+vi.mock("@/utils/routeCache", () => ({ getRouteCacheEpoch: () => 0, getRoutePoints: h.rawRoute }));
+vi.mock("@/utils/mileSplitsCache", () => ({ getMileSplits: h.mileSplits }));
 vi.mock("@/utils/bestEffortExtraction", async importOriginal => {
   const actual = await importOriginal<typeof import("@/utils/bestEffortExtraction")>();
   return { ...actual, buildBestEffortSegments: vi.fn(actual.buildBestEffortSegments) };
@@ -60,6 +66,8 @@ async function mount() {
 }
 beforeEach(() => {
   vi.clearAllMocks();
+  h.isSessionCurrent.mockImplementation(epoch => epoch === h.sessionEpoch);
+  h.pathname = "/plan-insights";
   h.workouts.mockResolvedValue([run()]); h.plans.mockResolvedValue([]);
   h.races.mockResolvedValue([race()]); h.overrides.mockResolvedValue({}); h.settings.mockResolvedValue(null);
   h.hydrate.mockImplementation(async (_uid, runs) => ({ runs, routeFetches: 0 }));
@@ -85,6 +93,7 @@ describe("Plan Insights demand-gated fast-finish hydration", () => {
     expect(h.hydrate).toHaveBeenCalledOnce();
     expect(h.hydrate).toHaveBeenCalledWith("u1", [expect.objectContaining({ workoutId: "run" })], {
       maxHr: DEFAULT_MAX_HR, restingHr: DEFAULT_RESTING_HR,
+      isCurrent: expect.any(Function),
     });
   });
 
@@ -95,7 +104,7 @@ describe("Plan Insights demand-gated fast-finish hydration", () => {
     expect(h.hydrate).not.toHaveBeenCalled();
     settings.resolve({ maxHeartRate: 175, restingHeartRate: 65 } as UserSettings);
     await flush();
-    expect(h.hydrate).toHaveBeenCalledWith("u1", expect.any(Array), { maxHr: 175, restingHr: 65 });
+    expect(h.hydrate).toHaveBeenCalledWith("u1", expect.any(Array), { maxHr: 175, restingHr: 65, isCurrent: expect.any(Function) });
   });
 
   it("blocks hydration after failed settings", async () => {
@@ -149,5 +158,41 @@ describe("Plan Insights demand-gated fast-finish hydration", () => {
     current.resolve({ runs: [{ ...run(), workoutId: "current" }] });
     await flush();
     expect(vi.mocked(buildBestEffortSegments).mock.lastCall?.[0][0].workoutId).toBe("current");
+  });
+
+  it("retires child acquisition on navigation and synchronous auth invalidation", async () => {
+    await mount();
+    const isCurrent = h.hydrate.mock.calls[0][2].isCurrent as () => boolean;
+    expect(isCurrent()).toBe(true);
+    h.isSessionCurrent.mockReturnValue(false);
+    expect(isCurrent()).toBe(false);
+    h.isSessionCurrent.mockReturnValue(true);
+    await act(async () => root.unmount());
+    expect(isCurrent()).toBe(false);
+  });
+
+  it.each(["navigation", "auth session", "retained route"])("does not initiate raw GPS when %s retires a mounted page's real pending hydration", async retirement => {
+    const actual = await vi.importActual<typeof import("@/services/fastFinishSplits")>("@/services/fastFinishSplits");
+    h.hydrate.mockImplementation(actual.hydrateFastFinishSplits);
+    const prefilter = deferred<{ id: string; mile: number; avgBpm: number; sampleCount: number }[]>();
+    h.mileSplits.mockReturnValue(prefilter.promise);
+    await mount();
+    expect(h.mileSplits).toHaveBeenCalledOnce();
+    expect(h.rawRoute).not.toHaveBeenCalled();
+    if (retirement === "navigation") await act(async () => root.unmount());
+    else if (retirement === "retained route") {
+      h.pathname = "/personal-insights";
+      await act(async () => root.render(<AppDataProvider uid="u1"><Page /></AppDataProvider>));
+    }
+    else h.isSessionCurrent.mockReturnValue(false);
+    prefilter.resolve([{ id: "0", mile: 1, avgBpm: 190, sampleCount: 10 }]);
+    await flush();
+    expect(h.rawRoute).not.toHaveBeenCalled();
+  });
+
+  it("does not begin hydration while Plan Insights is retained under another pathname", async () => {
+    h.pathname = "/personal-insights";
+    await mount();
+    expect(h.hydrate).not.toHaveBeenCalled();
   });
 });

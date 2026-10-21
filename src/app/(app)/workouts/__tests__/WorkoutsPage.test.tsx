@@ -101,6 +101,7 @@ vi.mock("@/services/hrStream", () => ({
 vi.mock("next/dynamic", () => ({
   default: () => () => null,
 }));
+vi.mock("next/navigation", () => ({ usePathname: () => "/workouts" }));
 
 // Imported after the mocks are registered.
 import WorkoutsPage from "../page";
@@ -234,7 +235,7 @@ describe("WorkoutsPage — shared overrides wiring", () => {
     await act(async () => root.render(<WorkoutsPage />));
     await flush();
     expect(h.enrichTrainingLoads).toHaveBeenCalledOnce();
-    expect(h.enrichTrainingLoads).toHaveBeenCalledWith("u1", [source], null);
+    expect(h.enrichTrainingLoads).toHaveBeenCalledWith("u1", [source], null, { isCurrent: expect.any(Function) });
   });
 
   it("enriches raw non-run inputs with stored settings while displaying effective overrides", async () => {
@@ -248,7 +249,7 @@ describe("WorkoutsPage — shared overrides wiring", () => {
       w1: { ...buildOverride("w1", false), durationSecondsOverride: 7200 },
     };
     await mount();
-    expect(h.enrichTrainingLoads).toHaveBeenCalledWith("u1", [source], settings);
+    expect(h.enrichTrainingLoads).toHaveBeenCalledWith("u1", [source], settings, { isCurrent: expect.any(Function) });
     expect(h.enrichTrainingLoads.mock.calls[0][1][0]).toBe(source);
     // The writer uses 60 minutes, while the activity row still shows the
     // persisted 120-minute override through the existing effective selector.
