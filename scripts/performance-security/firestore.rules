@@ -1,0 +1,110 @@
+// ISOLATED TEST FIXTURE ONLY. Never deploy this file or replace the owner's Console rules.
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function performanceOwner(uid) {
+      return request.auth != null
+        && request.auth.uid == uid
+        && request.auth.uid == 'performance-owner' // Owner replaces with verified Console UID.
+        && request.auth.token.email_verified == true
+        && request.auth.token.email.lower() == 'folstromjohn@gmail.com';
+    }
+    function performanceDigest(value) {
+      return value is string && value.matches('^[a-f0-9]{64}$');
+    }
+    function performanceCurrentPath(uid) {
+      return /databases/$(database)/documents/users/$(uid)/performanceState/current;
+    }
+    function performanceSnapshotPath(uid, snapshotId) {
+      return /databases/$(database)/documents/users/$(uid)/performanceSnapshots/$(snapshotId);
+    }
+    function performanceFeatureValid(d, workoutId) {
+      return d.keys().hasOnly(['schemaVersion', 'workoutId', 'revision', 'featureDigest', 'feature', 'workout'])
+        && d.schemaVersion == 1 && d.workoutId == workoutId
+        && d.revision is int && d.revision > 0 && performanceDigest(d.featureDigest)
+        && d.feature is map && d.workout is map
+        && d.feature.keys().hasOnly(['workoutId', 'parentDigest', 'sourceInputDigest', 'telemetryDigest', 'extractorVersion', 'qualityPolicyVersion', 'qualityPolicyDigest', 'observedAt', 'extractedAt', 'completion', 'telemetryState', 'status', 'observations', 'reasons', 'quality', 'provenance', 'limitations'])
+        && d.workout.keys().hasOnly(['workoutId', 'startedAt', 'endedAt', 'availableAt', 'completion', 'excluded', 'isRun', 'runKind', 'distanceMeters', 'durationSeconds', 'averageHrBpm', 'ascentMeters', 'environment', 'parentDigest', 'telemetry', 'provenance', 'limitations'])
+        && d.feature.keys().hasAll(['completion', 'quality', 'provenance'])
+        && d.workout.keys().hasAll(['startedAt', 'endedAt', 'availableAt', 'completion', 'excluded', 'isRun', 'runKind', 'distanceMeters', 'durationSeconds', 'averageHrBpm', 'ascentMeters', 'environment', 'provenance', 'limitations'])
+        && d.feature.workoutId == workoutId && d.workout.workoutId == workoutId
+        && d.workout.startedAt is string && d.workout.endedAt is string
+        && (d.workout.availableAt == null || d.workout.availableAt is string)
+        && d.workout.excluded is bool && d.workout.isRun is bool
+        && d.workout.runKind in ['outdoor', 'treadmill', 'other']
+        && d.workout.completion in ['completed', 'incomplete', 'unknown']
+        && d.feature.completion == d.workout.completion
+        && d.feature.telemetryState in ['complete', 'absent', 'pending', 'failed', 'unknown']
+        && d.feature.quality is map && d.feature.provenance is map
+        && d.workout.environment is map && d.workout.provenance is map && d.workout.limitations is list
+        && d.feature.parentDigest == d.workout.parentDigest
+        && performanceDigest(d.feature.parentDigest) && performanceDigest(d.feature.sourceInputDigest)
+        && performanceDigest(d.feature.qualityPolicyDigest)
+        && d.feature.telemetryDigest == d.workout.telemetry.contentDigest
+        && d.feature.telemetryState == d.workout.telemetry.state
+        && d.feature.extractorVersion is string && d.feature.extractorVersion.size() <= 100
+        && d.feature.qualityPolicyVersion is string && d.feature.qualityPolicyVersion.size() <= 100
+        && d.feature.extractedAt is string && d.feature.observedAt is string
+        && d.feature.status in ['accepted', 'rejected', 'unresolved']
+        && d.feature.observations is list && d.feature.observations.size() <= 100
+        && d.feature.reasons is list && d.feature.reasons.size() <= 100
+        && d.feature.limitations is list && d.feature.limitations.size() <= 100;
+    }
+    function performancePublicationValid(d) {
+      return d.keys().hasOnly(['schemaVersion', 'revision', 'snapshotId', 'previousSnapshotId', 'publicationDigest', 'payload', 'featureRevisions', 'committedAt'])
+        && d.schemaVersion == 1 && d.revision is int && d.revision > 0
+        && performanceDigest(d.snapshotId) && performanceDigest(d.publicationDigest)
+        && (d.previousSnapshotId == null || performanceDigest(d.previousSnapshotId))
+        && d.committedAt == request.time
+        && d.featureRevisions is list && d.featureRevisions.size() <= 300
+        && d.payload is map
+        && d.payload.keys().hasOnly(['result', 'evidenceDigest', 'versions', 'reason', 'historyBasis', 'calculationStartedAt', 'calculationCompletedAt', 'evidenceAsOf', 'provenance', 'coverage'])
+        && d.payload.result is map && performanceDigest(d.payload.evidenceDigest)
+        && d.payload.evidenceDigest == d.payload.result.evidenceDigest
+        && d.payload.versions == d.payload.result.versions
+        && d.payload.versions.schema == 1 && d.payload.versions.model == 'manual-performance-v1'
+        && d.payload.historyBasis == 'actual_calculation'
+        && d.payload.reason in ['analyze_new_workouts', 'reprocess_selected_workouts']
+        && d.payload.calculationStartedAt is string && d.payload.calculationCompletedAt is string
+        && d.payload.evidenceAsOf is string && d.payload.evidenceAsOf == d.payload.result.asOf
+        && d.payload.result.capability.distance == 'half_marathon'
+        && d.payload.result.capability.status == 'unavailable'
+        && d.payload.result.capability.reason == 'no_validated_estimator'
+        && d.payload.result.capability.estimatedSeconds == null
+        && d.payload.result.capability.confidenceInterval == null;
+    }
+    function performanceNextRevision(uid, d) {
+      return (!exists(performanceCurrentPath(uid)) && d.revision == 1 && d.previousSnapshotId == null)
+        || (exists(performanceCurrentPath(uid))
+          && d.revision == get(performanceCurrentPath(uid)).data.revision + 1
+          && d.previousSnapshotId == get(performanceCurrentPath(uid)).data.snapshotId);
+    }
+    match /users/{uid}/performanceFeatures/{workoutId} {
+      allow read: if performanceOwner(uid);
+      allow create: if performanceOwner(uid) && performanceFeatureValid(request.resource.data, workoutId)
+        && request.resource.data.revision == 1;
+      allow update: if performanceOwner(uid) && performanceFeatureValid(request.resource.data, workoutId)
+        && request.resource.data.revision == resource.data.revision + 1
+        && request.resource.data.featureDigest != resource.data.featureDigest;
+      allow delete: if false;
+    }
+    match /users/{uid}/performanceState/{stateId} {
+      allow read: if performanceOwner(uid) && stateId == 'current';
+      allow create, update: if performanceOwner(uid) && stateId == 'current'
+        && performancePublicationValid(request.resource.data)
+        && performanceNextRevision(uid, request.resource.data)
+        && !exists(performanceSnapshotPath(uid, request.resource.data.snapshotId))
+        && getAfter(performanceSnapshotPath(uid, request.resource.data.snapshotId)).data == request.resource.data;
+      allow delete: if false;
+    }
+    match /users/{uid}/performanceSnapshots/{snapshotId} {
+      allow read: if performanceOwner(uid);
+      allow create: if performanceOwner(uid) && performanceDigest(snapshotId)
+        && performancePublicationValid(request.resource.data)
+        && request.resource.data.snapshotId == snapshotId
+        && performanceNextRevision(uid, request.resource.data)
+        && getAfter(performanceCurrentPath(uid)).data == request.resource.data;
+      allow update, delete: if false;
+    }
+  }
+}

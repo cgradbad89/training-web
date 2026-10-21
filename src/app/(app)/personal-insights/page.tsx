@@ -173,6 +173,10 @@ const WeatherImpactSection = dynamic(
   () => import("./WeatherImpactSection").then((m) => m.WeatherImpactSection),
   { ssr: false, loading: () => <ChartSkeleton height={340} /> },
 );
+const PerformanceAnalysisPanel = dynamic(
+  () => import("@/components/PerformanceAnalysisPanel").then((m) => m.PerformanceAnalysisPanel),
+  { ssr: false },
+);
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -1408,6 +1412,8 @@ export default function PersonalInsightsPage() {
           Ask AI Coach
         </button>
       </div>
+
+      <PerformanceAnalysisPanel />
 
       <InsightsTabsBar value={activeTab} onChange={selectTab} />
 
