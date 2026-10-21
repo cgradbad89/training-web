@@ -66,7 +66,7 @@ export async function getRoutePoints(
     return inFlight.get(key)!;
   }
 
-  const promise = fetchRoutePoints(uid, workoutId)
+  const promise = fetchRoutePoints(uid, workoutId, { isCurrent: () => epoch === sessionEpoch })
     .then((points) => {
       if (epoch === sessionEpoch) cache.set(key, points);
       return points;
@@ -83,25 +83,32 @@ export async function getRoutePoints(
 /**
  * Prefetch route points for a list of workoutIds in the background.
  * Respects concurrency limit to avoid hammering Firestore.
+ * Page retirement stops queued batches. Already-started acquisitions are shared
+ * with other consumers and may finish within the same authenticated session;
+ * the acquisition service checks the auth epoch before requesting another page.
  * Silent — errors are caught and ignored.
  */
 export async function prefetchRoutes(
   uid: string,
   workoutIds: string[],
-  concurrency = 3
+  concurrency = 3,
+  options: { isCurrent?: () => boolean } = {}
 ): Promise<void> {
   const epoch = sessionEpoch;
+  const isCurrent = () => epoch === sessionEpoch && (options.isCurrent?.() ?? true);
+  if (!isCurrent()) return;
   const needed = workoutIds.filter(
     (id) => !cache.has(routeKey(uid, id)) && !inFlight.has(routeKey(uid, id))
   );
   if (needed.length === 0) return;
 
   for (let i = 0; i < needed.length; i += concurrency) {
-    if (epoch !== sessionEpoch) return;
+    if (!isCurrent()) return;
     const batch = needed.slice(i, i + concurrency);
     await Promise.allSettled(
       batch.map((id) => getRoutePoints(uid, id).catch(() => {}))
     );
+    if (!isCurrent()) return;
     if (i + concurrency < needed.length) {
       await new Promise((r) => setTimeout(r, 300));
     }

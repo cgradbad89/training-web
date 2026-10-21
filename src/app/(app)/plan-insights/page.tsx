@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Target, TrendingUp, Calendar, AlertTriangle, Shield, Layers, BotMessageSquare, Table2, ChevronDown, ChevronRight } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
 import { PlanInsightsSkeleton } from "./PlanInsightsSkeleton";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -196,7 +196,8 @@ function PredictionCard({ label, distanceMiles, fit, targetPace }: PredictionCar
 // ─── Page ────────────────────────────────────────────────────────────────────
 
 export default function PlanInsightsPage() {
-  const { user } = useAuth();
+  const { user, sessionEpoch, isSessionCurrent } = useAuth();
+  const pageActive = usePathname() === "/plan-insights";
   const uid = user?.uid ?? null;
   const router = useRouter();
 
@@ -345,17 +346,18 @@ export default function PlanInsightsPage() {
   // pace + per-mile HR), behind the cheap avgBpm pre-filter so route reads are
   // spent only on runs with a genuinely hard mile. Read-only.
   useEffect(() => {
-    if (!uid || !needsFastFinish || runs.length === 0) return;
+    if (!uid || !pageActive || !needsFastFinish || runs.length === 0) return;
     let cancelled = false;
-    hydrateFastFinishSplits(uid, runs, { maxHr, restingHr })
+    const isCurrent = () => !cancelled && pageActive && isSessionCurrent(sessionEpoch);
+    hydrateFastFinishSplits(uid, runs, { maxHr, restingHr, isCurrent })
       .then((res) => {
-        if (!cancelled) setHydrated({ inputs: hydrationInputs, runs: res.runs });
+        if (isCurrent()) setHydrated({ inputs: hydrationInputs, runs: res.runs });
       })
       .catch(console.error);
     return () => {
       cancelled = true;
     };
-  }, [uid, runs, maxHr, restingHr, needsFastFinish, hydrationInputs]);
+  }, [uid, runs, maxHr, restingHr, needsFastFinish, hydrationInputs, sessionEpoch, isSessionCurrent, pageActive]);
 
   // Riegel fit for race prediction
   // Race inputs for ±1-day RACE-tier matching — shared by the live prediction

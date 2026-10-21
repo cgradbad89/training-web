@@ -711,7 +711,8 @@ export default function WorkoutsPage() {
     uid,
     nonRunWorkouts,
     settingsResolution === "success" ? userSettings : undefined,
-    patchTrainingLoad
+    patchTrainingLoad,
+    "/workouts"
   );
 
   const availableYears = useMemo(() => {

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useRef, useMemo } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { usePathname, useSearchParams } from 'next/navigation'
 import { useAuth } from '@/hooks/useAuth'
 import { useAppData, type AppDataResolution } from '@/contexts/AppDataContext'
 import { isRunningPlan } from '@/types/plan'
@@ -42,7 +42,8 @@ type ContextStatus = 'loading' | 'ready' | 'error'
 // ── Main page ────────────────────────────────────────────────────────────────
 
 export default function CoachPage() {
-  const { user } = useAuth()
+  const { user, sessionEpoch, isSessionCurrent } = useAuth()
+  const pageActive = usePathname() === '/coach'
   const userId = user?.uid ?? ''
 
   const searchParams = useSearchParams()
@@ -121,8 +122,9 @@ export default function CoachPage() {
   }, [userId])
 
   useEffect(() => {
-    if (!userId || !sourcesReady || !health) return
+    if (!userId || !pageActive || !sourcesReady || !health) return
     let cancelled = false
+    const isCurrent = () => !cancelled && pageActive && isSessionCurrent(sessionEpoch)
     setPreparationError(null)
     const prepare = async () => {
       const runs = selectEffectiveWorkouts(workouts, overrides)
@@ -162,7 +164,9 @@ export default function CoachPage() {
           maxHr,
           restingHr,
           asOf,
+          isCurrent,
         })
+        if (!isCurrent()) return
         bestEffortSegments = buildBestEffortSegments(
           hydrated.runs,
           asOf,
@@ -171,7 +175,7 @@ export default function CoachPage() {
         )
       }
 
-      if (cancelled) return
+      if (!isCurrent()) return
       setPrepared({ inputs, context: buildCoachContext(
           runs,
           activePlan,
@@ -183,13 +187,13 @@ export default function CoachPage() {
         ) })
     }
     void prepare().catch(err => {
-      if (cancelled) return
+      if (!isCurrent()) return
       setPreparationError({
         inputs, message: err instanceof Error ? err.message : 'Training context unavailable',
       })
     })
     return () => { cancelled = true }
-  }, [inputs, userId, sourcesReady, health, workouts, overrides, plans, races, maxHr, restingHr])
+  }, [inputs, userId, sourcesReady, health, workouts, overrides, plans, races, maxHr, restingHr, sessionEpoch, isSessionCurrent, pageActive])
 
   // Auto-ask if a question was passed via URL param
   useEffect(() => {

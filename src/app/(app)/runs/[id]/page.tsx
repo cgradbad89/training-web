@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, useRef } from "react";
-import { useParams, useRouter } from "next/navigation";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { useParams, usePathname, useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { ArrowLeft, Pencil, RotateCcw } from "lucide-react";
 
@@ -181,9 +181,17 @@ function parseDuration(s: string): number | null {
 export default function RunDetailPage() {
   const params = useParams();
   const router = useRouter();
+  const pathname = usePathname();
   const workoutId = params.id as string;
-  const { user } = useAuth();
+  const { user, sessionEpoch, isSessionCurrent } = useAuth();
   const uid = user?.uid ?? null;
+  // A router may retain a previous page. Its effects own work only while this
+  // exact detail route and authenticated session are current.
+  const pageActive = pathname === `/runs/${workoutId}`;
+  const isCurrentPage = useCallback(
+    () => pageActive && isSessionCurrent(sessionEpoch),
+    [pageActive, sessionEpoch, isSessionCurrent]
+  );
   // Shared, already-fetched workouts (AppDataContext one-time fetch) — used ONLY
   // to build the efficiency baselines below. No new Firestore read.
   const {
@@ -219,6 +227,7 @@ export default function RunDetailPage() {
   const [userSettings, setUserSettings] = useState<UserSettings | null>();
   const [loading, setLoading] = useState(true);
   const [routeLoading, setRouteLoading] = useState(true);
+  const [routeError, setRouteError] = useState<string | null>(null);
   const [activeRunningPlan, setActiveRunningPlan] = useState<RunningPlan | null>(null);
 
   // Route Performance + Run Impact data — loaded in a SEPARATE, non-blocking
@@ -398,10 +407,16 @@ export default function RunDetailPage() {
   );
 
   useEffect(() => {
-    if (!uid || !workoutId) return;
+    if (!uid || !workoutId || !isCurrentPage()) return;
     let cancelled = false;
+    const isCurrent = () => !cancelled && isCurrentPage();
     setLoading(true);
     setRouteLoading(true);
+    setRouteError(null);
+    setRoutePoints([]);
+    setMileSplitDocs(null);
+    setCachedSplits(null);
+    setPerMileHR({});
 
     void (async () => {
       // ── Wave 1: core doc + shoe/override/settings, and the mileSplits
@@ -421,7 +436,7 @@ export default function RunDetailPage() {
           fetchOverride(uid, workoutId),
           fetchUserSettings(uid),
         ]);
-        if (cancelled) return;
+        if (!isCurrent()) return;
         setWorkout(w);
         setShoes(s);
         setAssignments(a);
@@ -431,11 +446,11 @@ export default function RunDetailPage() {
       } catch (err) {
         console.error(err);
       } finally {
-        if (!cancelled) setLoading(false);
+        if (isCurrent()) setLoading(false);
       }
-      if (cancelled) return;
+      if (!isCurrent()) return;
       if (!core || !core.w) {
-        if (!cancelled) setRouteLoading(false);
+        if (isCurrent()) setRouteLoading(false);
         return;
       }
       const { w, o, settings } = core;
@@ -445,7 +460,7 @@ export default function RunDetailPage() {
       let splits: MileSplitDoc[] | null = null;
       try {
         splits = await getMileSplits(uid, workoutId);
-        if (cancelled) return;
+        if (!isCurrent()) return;
         setMileSplitDocs(splits);
         const hrMap: Record<number, number> = {};
         splits.forEach((data) => {
@@ -455,8 +470,11 @@ export default function RunDetailPage() {
         });
         setPerMileHR(hrMap);
       } catch (err) {
-        console.error(err);
+        if (isCurrent()) console.error(err);
       }
+      // Rejected reads also retire here; catch must not start a new route
+      // acquisition after navigation or a synchronous auth-session change.
+      if (!isCurrent()) return;
 
       const authoritativeMiles =
         o?.distanceMilesOverride ?? w.distanceMiles ?? 0;
@@ -492,7 +510,7 @@ export default function RunDetailPage() {
           }
         }
         // Fully cached — render map/GAP/zones/splits from the doc; no route read.
-        if (!cancelled) {
+        if (isCurrent()) {
           setRoutePoints([]);
           setRouteLoading(false);
         }
@@ -503,14 +521,17 @@ export default function RunDetailPage() {
       let points: RoutePoint[] | null = null;
       try {
         points = await getRoutePoints(uid, workoutId);
-        if (cancelled) return;
+        if (!isCurrent()) return;
         setRoutePoints(points);
       } catch (err) {
-        console.error(err);
+        if (isCurrent()) {
+          setRouteError(err instanceof Error ? err.message : "The complete route could not be loaded.");
+          console.error(err);
+        }
       } finally {
-        if (!cancelled) setRouteLoading(false);
+        if (isCurrent()) setRouteLoading(false);
       }
-      if (cancelled || !points) return;
+      if (!isCurrent() || !points) return;
 
       // Cached splits validation (distance/pace/HR) — unchanged.
       if (splits && isRoutePresent(points.length)) {
@@ -525,7 +546,7 @@ export default function RunDetailPage() {
       if (w.weather == null && points.length > 0) {
         fetchWeatherForRun(points[0].lat, points[0].lng, w.startDate)
           .then((weather) => {
-            if (cancelled || !weather) return;
+            if (!isCurrent() || !weather) return;
             setWorkout((current) =>
               current ? { ...current, weather } : current
             );
@@ -537,9 +558,9 @@ export default function RunDetailPage() {
       if (isRoutePresent(points.length)) {
         // Natural new-run hook: best efforts computed here (route already read).
         if (shouldRecomputeBestEfforts(w.bestEfforts, routeIsComplete)) {
-          computeAndStoreBestEfforts(uid, workoutId, points, routeIsComplete)
+          computeAndStoreBestEfforts(uid, workoutId, points, routeIsComplete, { isCurrent })
             .then((bestEfforts) => {
-              if (!cancelled) {
+              if (isCurrent()) {
                 setWorkout((current) =>
                   current ? { ...current, bestEfforts } : current
                 );
@@ -560,7 +581,7 @@ export default function RunDetailPage() {
           if (clusterId !== w.routeClusterId) {
             saveRouteClusterId(uid, workoutId, clusterId)
               .then(() => {
-                if (!cancelled) {
+                if (isCurrent()) {
                   setWorkout((current) =>
                     current ? { ...current, routeClusterId: clusterId } : current
                   );
@@ -642,7 +663,7 @@ export default function RunDetailPage() {
           if (Object.keys(updates).length > 0) {
             saveRunDetailCaches(uid, workoutId, updates)
               .then(() => {
-                if (!cancelled) {
+                if (isCurrent()) {
                   setWorkout((current) =>
                     current ? { ...current, ...updates } : current
                   );
@@ -657,7 +678,7 @@ export default function RunDetailPage() {
     return () => {
       cancelled = true;
     };
-  }, [uid, workoutId]);
+  }, [uid, workoutId, isCurrentPage]);
 
   // ── Route Performance + Run Impact data (deferred, non-blocking) ──────────
   // Two narrow, purpose-specific reads replace the old unconditional 500-doc
@@ -666,8 +687,9 @@ export default function RunDetailPage() {
   // VIEWED run's date (feeds plan-title mapping). No new collections/rules.
   const runStartMs = workout ? workout.startDate.getTime() : null;
   useEffect(() => {
-    if (!uid || runStartMs == null) return;
+    if (!uid || runStartMs == null || !isCurrentPage()) return;
     let cancelled = false;
+    const isCurrent = () => !cancelled && isCurrentPage();
 
     const recentSince = recentImpactWindowStart(new Date());
     const planWin = planTitleWindow(new Date(runStartMs));
@@ -679,7 +701,7 @@ export default function RunDetailPage() {
       fetchHealthWorkoutsInRange(uid, planWin.start, planWin.end),
     ])
       .then(([recent, overrides, fetchedRaces, planWorkouts]) => {
-        if (cancelled) return;
+        if (!isCurrent()) return;
         setAllWorkoutsRaw(recent);
         setAllOverrides(overrides);
         setRaces(fetchedRaces);
@@ -692,17 +714,17 @@ export default function RunDetailPage() {
         // closest still-running superset); any run viewed also self-heals its
         // own ID in Wave 1 above. Gates the narrow cluster query so first-view
         // membership is complete.
-        backfillRouteClusterIds(uid, recent)
+        backfillRouteClusterIds(uid, recent, { isCurrent })
           .catch(console.error)
           .then(() => {
-            if (!cancelled) setClusterBackfillDone(true);
+            if (isCurrent()) setClusterBackfillDone(true);
           });
       })
       .catch(console.error);
     return () => {
       cancelled = true;
     };
-  }, [uid, runStartMs]);
+  }, [uid, runStartMs, isCurrentPage]);
 
   // Route Performance membership — one narrow equality query on the current
   // run's deterministic routeClusterId (typically a handful of docs) instead
@@ -711,17 +733,17 @@ export default function RunDetailPage() {
   // the aggregate is cached.
   const currentClusterId = workout?.routeClusterId ?? null;
   useEffect(() => {
-    if (!uid || !currentClusterId || !clusterBackfillDone) return;
+    if (!uid || !currentClusterId || !clusterBackfillDone || !isCurrentPage()) return;
     let cancelled = false;
     fetchWorkoutsByRouteCluster(uid, currentClusterId)
       .then((runs) => {
-        if (!cancelled) setClusterRuns(runs);
+        if (!cancelled && isCurrentPage()) setClusterRuns(runs);
       })
       .catch(console.error);
     return () => {
       cancelled = true;
     };
-  }, [uid, currentClusterId, clusterBackfillDone]);
+  }, [uid, currentClusterId, clusterBackfillDone, isCurrentPage]);
 
   // Insights run set — overrides applied, excluded filtered (the same shaping
   // Personal/Plan Insights use), so the prediction here matches those pages.
@@ -735,7 +757,7 @@ export default function RunDetailPage() {
   // run the whole-run HR gate rejects. The avgBpm pre-filter keeps route reads to
   // runs with a genuinely hard mile; route reads are cached. Read-only.
   useEffect(() => {
-    if (!uid || !workoutsForInsights) {
+    if (!uid || !workoutsForInsights || !isCurrentPage()) {
       setHydratedInsightsRuns(null);
       return;
     }
@@ -743,15 +765,16 @@ export default function RunDetailPage() {
     hydrateFastFinishSplits(uid, workoutsForInsights, {
       maxHr: resolvedMaxHR,
       restingHr: resolvedRestingHR,
+      isCurrent: () => !cancelled && isCurrentPage(),
     })
       .then((res) => {
-        if (!cancelled) setHydratedInsightsRuns(res.runs);
+        if (!cancelled && isCurrentPage()) setHydratedInsightsRuns(res.runs);
       })
       .catch(console.error);
     return () => {
       cancelled = true;
     };
-  }, [uid, workoutsForInsights, resolvedMaxHR, resolvedRestingHR]);
+  }, [uid, workoutsForInsights, resolvedMaxHR, resolvedRestingHR, isCurrentPage]);
 
   const matchedSummaries = useMemo(
     () =>
@@ -787,7 +810,7 @@ export default function RunDetailPage() {
   // available (never persist an all-zero GAP).
   const wroteMileCacheFor = useRef<string | null>(null);
   useEffect(() => {
-    if (!uid || !workout || !displayWorkoutForSplits) return;
+    if (!uid || !workout || workout.workoutId !== workoutId || !displayWorkoutForSplits || !isCurrentPage()) return;
     if (workout.routeComplete === false) return;
     if (mileSplitDocs === null || mileSplits.length === 0) return;
     const basisMiles = displayWorkoutForSplits.distanceMiles;
@@ -817,6 +840,7 @@ export default function RunDetailPage() {
     mileSplits,
     gapPerMile,
     routePoints,
+    isCurrentPage,
   ]);
 
   // Active goal race + its distance/inputs (same mapping Plan Insights uses).
@@ -888,11 +912,12 @@ export default function RunDetailPage() {
   const runLoadV2 = workout?.trainingLoadV2 ?? null;
   const runAvgHr = workout?.avgHeartRate ?? null;
   useEffect(() => {
-    if (!uid || !workout) {
+    if (!uid || !workout || !isCurrentPage()) {
       setCtlImpact(null);
       return;
     }
     let cancelled = false;
+    const isCurrent = () => !cancelled && isCurrentPage();
     const viewedRun = applyOverride(workout, override);
 
     void (async () => {
@@ -900,7 +925,7 @@ export default function RunDetailPage() {
         getDoc(doc(db, `users/${uid}/insights/aggregatedStats`)),
         fetchLatestWorkoutId(uid),
       ]);
-      if (cancelled) return;
+      if (!isCurrent()) return;
 
       const cached = statsSnap.exists()
         ? reviveAggregatedStatsDates(statsSnap.data() as AggregatedStatsDoc)
@@ -914,7 +939,7 @@ export default function RunDetailPage() {
           resolvedMaxHR,
           resolvedRestingHR
         );
-        if (!cancelled) setCtlImpact(fromCache);
+        if (isCurrent()) setCtlImpact(fromCache);
         return;
       }
 
@@ -925,7 +950,7 @@ export default function RunDetailPage() {
         fetchHealthWorkoutsInRange(uid, ctlSeedWindowStart(new Date())),
         fetchAllOverrides(uid),
       ]);
-      if (cancelled) return;
+      if (!isCurrent()) return;
       const shaped = selectEffectiveWorkouts(seedWorkouts, overrides);
       const live = computeCtlImpact(
         shaped,
@@ -933,9 +958,9 @@ export default function RunDetailPage() {
         resolvedMaxHR,
         resolvedRestingHR
       );
-      if (!cancelled) setCtlImpact(live);
+      if (isCurrent()) setCtlImpact(live);
     })().catch((err) => {
-      if (!cancelled) console.error("[ctlImpact]", err);
+      if (isCurrent()) console.error("[ctlImpact]", err);
     });
 
     return () => {
@@ -951,17 +976,20 @@ export default function RunDetailPage() {
     override,
     resolvedMaxHR,
     resolvedRestingHR,
+    isCurrentPage,
   ]);
 
   // Active running plan → priority-1 plan label. Cheap one-shot fetch; the
   // match is computed over the deferred all-workouts set so this run gets the
   // SAME entry assignment the Runs list shows.
   useEffect(() => {
-    if (!uid) return;
+    if (!uid || !isCurrentPage()) return;
+    let cancelled = false;
     fetchPlans(uid)
-      .then((plans) => setActiveRunningPlan(findActiveRunningPlan(plans)))
+      .then((plans) => { if (!cancelled && isCurrentPage()) setActiveRunningPlan(findActiveRunningPlan(plans)); })
       .catch((err) => console.error("[fetchPlans]", err));
-  }, [uid]);
+    return () => { cancelled = true; };
+  }, [uid, isCurrentPage]);
 
   const effectivePlanWindowWorkouts = useMemo(
     () =>
@@ -1192,6 +1220,7 @@ export default function RunDetailPage() {
 
   return (
     <div className="max-w-4xl mx-auto px-2 py-4 lg:px-6 lg:py-6 flex flex-col gap-6">
+      {routeError && <p role="alert" className="rounded-xl border border-border p-3 text-sm text-textSecondary">Route details unavailable: {routeError} No partial route cache was saved.</p>}
       {/* ── Header ──────────────────────────────────────────── */}
       <div className="flex items-center gap-3">
         <button

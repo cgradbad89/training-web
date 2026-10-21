@@ -17,14 +17,18 @@ const h = vi.hoisted(() => ({
   getIdToken: vi.fn(),
   fetch: vi.fn(),
   searchParams: new URLSearchParams(),
+  sessionEpoch: 1,
+  pathname: '/coach',
+  isSessionCurrent: vi.fn((epoch: number) => epoch === 1),
 }))
 
 vi.mock('next/navigation', () => ({
   useSearchParams: () => h.searchParams,
+  usePathname: () => h.pathname,
 }))
 
 vi.mock('@/hooks/useAuth', () => ({
-  useAuth: () => ({ user: { uid: 'u1' }, loading: false }),
+  useAuth: () => ({ user: { uid: 'u1' }, loading: false, sessionEpoch: h.sessionEpoch, isSessionCurrent: h.isSessionCurrent }),
 }))
 
 vi.mock('@/services/healthWorkouts', () => ({
@@ -136,6 +140,8 @@ async function mount() {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  h.isSessionCurrent.mockImplementation(epoch => epoch === h.sessionEpoch)
+  h.pathname = '/coach'
   h.searchParams = new URLSearchParams()
   h.fetchHealthWorkouts.mockResolvedValue([])
   h.fetchHealthWorkoutsInRange.mockResolvedValue([])
@@ -251,6 +257,56 @@ describe('CoachPage provider behavior', () => {
     expect(container.textContent).toContain('5.0 mi')
     expect(container.textContent).not.toContain('3.0 mi')
     expect(h.fetch).not.toHaveBeenCalled()
+  })
+
+  it('retires hydration acquisition after navigation or synchronous auth invalidation', async () => {
+    h.fetchHealthWorkouts.mockResolvedValue([recentWorkout()])
+    h.fetchRaces.mockResolvedValue([{
+      id: 'race', name: 'Half', raceDate: '2099-01-01',
+      raceDistance: 'halfMarathon', isActive: true, createdAt: '',
+    }])
+    const pending = deferred<{ runs: HealthWorkout[] }>()
+    h.hydrateFastFinishSplits.mockReturnValue(pending.promise)
+    await mount()
+    const isCurrent = h.hydrateFastFinishSplits.mock.calls[0][2].isCurrent as () => boolean
+    expect(isCurrent()).toBe(true)
+    h.isSessionCurrent.mockReturnValue(false)
+    expect(isCurrent()).toBe(false)
+    h.isSessionCurrent.mockReturnValue(true)
+    await act(async () => root.unmount())
+    expect(isCurrent()).toBe(false)
+    pending.resolve({ runs: [recentWorkout() as HealthWorkout] })
+    await flush()
+  })
+
+  it('retires pending hydration when Coach stays mounted under another pathname', async () => {
+    h.fetchHealthWorkouts.mockResolvedValue([recentWorkout()])
+    h.fetchRaces.mockResolvedValue([{
+      id: 'race', name: 'Half', raceDate: '2099-01-01',
+      raceDistance: 'halfMarathon', isActive: true, createdAt: '',
+    }])
+    const pending = deferred<{ runs: HealthWorkout[] }>()
+    h.hydrateFastFinishSplits.mockReturnValue(pending.promise)
+    await mount()
+    const isCurrent = h.hydrateFastFinishSplits.mock.calls[0][2].isCurrent as () => boolean
+    expect(isCurrent()).toBe(true)
+    h.pathname = '/personal-insights'
+    await act(async () => root.render(coachTree()))
+    expect(isCurrent()).toBe(false)
+    pending.resolve({ runs: [recentWorkout() as HealthWorkout] })
+    await flush()
+    expect(buildCoachContext).not.toHaveBeenCalled()
+  })
+
+  it('does not start hydration while Coach is retained under another pathname', async () => {
+    h.pathname = '/personal-insights'
+    h.fetchHealthWorkouts.mockResolvedValue([recentWorkout()])
+    h.fetchRaces.mockResolvedValue([{
+      id: 'race', name: 'Half', raceDate: '2099-01-01',
+      raceDistance: 'halfMarathon', isActive: true, createdAt: '',
+    }])
+    await mount()
+    expect(h.hydrateFastFinishSplits).not.toHaveBeenCalled()
   })
 
   it('rejects preparation in flight when a canonical prerequisite fails', async () => {

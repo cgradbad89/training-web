@@ -7,7 +7,7 @@ import React, {
   useRef,
   useCallback,
 } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight, AlertTriangle, EyeOff, Download, RefreshCw } from "lucide-react";
 
 import { TrainingLoadBadge } from "@/components/ui/TrainingLoadBadge";
@@ -743,6 +743,7 @@ function ShoesUsed({ runs, shoes, manualAssignments }: ShoesUsedProps) {
 
 export default function RunsPage() {
   const router = useRouter();
+  const pageActive = usePathname() === "/runs";
   const { user, sessionEpoch, isSessionCurrent } = useAuth();
   const uid = user?.uid ?? null;
   const assignmentOwner = useRef(0);
@@ -864,7 +865,8 @@ export default function RunsPage() {
     uid,
     rawRuns,
     settingsResolution === "success" ? userSettings : undefined,
-    patchTrainingLoad
+    patchTrainingLoad,
+    "/runs"
   );
 
   useEffect(() => {
@@ -908,8 +910,11 @@ export default function RunsPage() {
   // Background prefetch — most recent 20 runs with routes. Previously ran inside
   // the local listener callback; now keyed off the shared runs array.
   useEffect(() => {
-    if (!uid || allRuns.length === 0) return;
+    if (!uid || !pageActive || allRuns.length === 0) return;
+    let cancelled = false;
+    const isCurrent = () => !cancelled && pageActive && isSessionCurrent(sessionEpoch);
     const timer = setTimeout(() => {
+      if (!isCurrent()) return;
       const recentWithRoutes = allRuns
         .filter((a) => a.hasRoute)
         .sort(
@@ -919,11 +924,14 @@ export default function RunsPage() {
         .slice(0, 20)
         .map((a) => a.workoutId);
       if (recentWithRoutes.length > 0) {
-        prefetchRoutes(uid, recentWithRoutes).catch(() => {});
+        prefetchRoutes(uid, recentWithRoutes, 3, { isCurrent }).catch(() => {});
       }
     }, 500);
-    return () => clearTimeout(timer);
-  }, [uid, allRuns]);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [uid, allRuns, sessionEpoch, isSessionCurrent, pageActive]);
 
   const activeShoes = useMemo(
     () => shoes.filter((s) => !s.isRetired),

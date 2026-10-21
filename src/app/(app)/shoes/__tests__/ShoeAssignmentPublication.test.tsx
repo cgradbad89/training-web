@@ -12,7 +12,7 @@ const h = vi.hoisted(() => ({
   save: vi.fn(), fetch: vi.fn(), refresh: vi.fn(),
 }));
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { uid: h.uid }, sessionEpoch: h.epoch, isSessionCurrent: h.current }) }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }), usePathname: () => "/runs" }));
 vi.mock("@/lib/firebase", () => ({ db: {} }));
 vi.mock("@/contexts/AppDataContext", () => ({ useAppData: () => ({
   workouts: h.workouts, overrides: h.overrides, plans: h.plans, maxHr: 185, restingHr: 60,

@@ -1,10 +1,12 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useReducer, useRef } from "react";
+import { usePathname } from "next/navigation";
 import {
   type HealthWorkout,
   type TrainingLoadFields,
 } from "@/types/healthWorkout";
 import { type UserSettings } from "@/types/userSettings";
 import { enrichTrainingLoads } from "@/services/healthWorkouts";
+import { getRouteCacheEpoch } from "@/utils/routeCache";
 import {
   shouldEnrichLoad,
   enrichBasisKey,
@@ -35,7 +37,12 @@ import {
  *     or a sparse stream) from re-writing the same value forever. A workout
  *     re-qualifies only when its basis changes (the hrStream finally lands) — which
  *     is exactly the UPGRADE we want, allowed through once.
- *   - `inFlightRef` prevents a second pass starting while one is running.
+ *   - `inFlightRef` prevents a second pass starting while one is running. Once it
+ *     settles, recheck candidates that arrived while the pass was in flight.
+ *
+ * A page/auth/HR-anchor lifetime owns each pass. Retirement stops subsequent
+ * acquisition and writes and prevents late AppData publication. Workout-list
+ * updates (including our own patches) retain that owner and its attempted bases.
  *
  * SETTLING GUARD — `settings === undefined` means the profile fetch hasn't resolved
  * yet; enriching then would store loads against the DEFAULT HR anchors, and the
@@ -51,20 +58,37 @@ export function useEnrichTrainingLoads(
   patchTrainingLoad: (
     workoutId: string,
     patch: TrainingLoadFields
-  ) => void
+  ) => void,
+  owningPathname: "/runs" | "/workouts"
 ): void {
   const attemptedRef = useRef<Set<string>>(new Set());
-  const inFlightRef = useRef(false);
+  const lifetimeRef = useRef<{ active: boolean; epoch: number } | null>(null);
+  const inFlightRef = useRef<object | null>(null);
+  const [completedPass, finishPass] = useReducer((value: number) => value + 1, 0);
+  const pathname = usePathname();
+  const epoch = getRouteCacheEpoch();
+  const maxHr = resolveMaxHr(settings);
+  const restingHr = resolveRestingHr(settings);
+  const profileSettled = settings !== undefined;
+
+  useEffect(() => {
+    if (!uid || !profileSettled || pathname !== owningPathname) return;
+    const lifetime = { active: true, epoch };
+    lifetimeRef.current = lifetime;
+    attemptedRef.current = new Set();
+    return () => {
+      lifetime.active = false;
+      if (lifetimeRef.current === lifetime) lifetimeRef.current = null;
+    };
+  }, [uid, pathname, owningPathname, epoch, maxHr, restingHr, profileSettled]);
 
   useEffect(() => {
     if (!uid) return;
     if (settings === undefined) return; // profile still loading — see SETTLING GUARD
-    if (inFlightRef.current) return;
-
-    // Resolve HR anchors once (same source as the writer) for branch (d)'s avg-HR
-    // reference + enrichBasisKey's load band. settings is UserSettings | null here.
-    const maxHr = resolveMaxHr(settings);
-    const restingHr = resolveRestingHr(settings);
+    const lifetime = lifetimeRef.current;
+    if (!lifetime) return;
+    const isCurrent = () => lifetime.active && lifetimeRef.current === lifetime && lifetime.epoch === getRouteCacheEpoch();
+    if (!isCurrent() || inFlightRef.current === lifetime) return;
 
     // Fresh candidates: need enrichment AND not already attempted for this basis.
     const fresh = workouts.filter(
@@ -78,10 +102,11 @@ export function useEnrichTrainingLoads(
     for (const w of fresh)
       attemptedRef.current.add(enrichBasisKey(w, maxHr, restingHr));
 
-    inFlightRef.current = true;
-    enrichTrainingLoads(uid, fresh, settings)
+    inFlightRef.current = lifetime;
+    enrichTrainingLoads(uid, fresh, settings, { isCurrent })
       .then((results) => {
         for (const result of results) {
+          if (!isCurrent()) return;
           patchTrainingLoad(result.workoutId, {
             trainingLoadV2: result.trainingLoadV2,
             trainingLoadMethod: result.trainingLoadMethod,
@@ -89,11 +114,14 @@ export function useEnrichTrainingLoads(
           });
         }
       })
-      .catch((err) =>
-        console.error("[useEnrichTrainingLoads] enrich failed", err)
-      )
+      .catch((err) => {
+        if (isCurrent()) console.error("[useEnrichTrainingLoads] enrich failed", err);
+      })
       .finally(() => {
-        inFlightRef.current = false;
+        if (inFlightRef.current === lifetime) inFlightRef.current = null;
+        // A changed basis/list may have rendered while the in-flight guard was
+        // held. Re-evaluate it once, with the same per-basis convergence guard.
+        if (isCurrent()) finishPass();
       });
-  }, [uid, workouts, settings, patchTrainingLoad]);
+  }, [uid, workouts, settings, patchTrainingLoad, pathname, owningPathname, epoch, maxHr, restingHr, completedPass]);
 }
