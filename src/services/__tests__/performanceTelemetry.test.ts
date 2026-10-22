@@ -40,7 +40,7 @@ import {
 
 const started = Date.parse("2026-10-18T12:00:00Z");
 const asOf = "2026-10-21T14:00:00Z";
-const versions: PerformanceVersions = { schema: 1, model: "manual-performance-v1", extractor: "steady-interval-v1", qualityPolicy: policy.version };
+const versions: PerformanceVersions = { schema: 1, model: "manual-performance-v1", extractor: "steady-interval-v2", qualityPolicy: policy.version };
 const ts = (seconds: number) => ({ toDate: () => new Date(started + seconds * 1000) });
 function route(count = 361, hr: number | null = 147): Record<string, unknown>[] {
   return Array.from({ length: count }, (_, index) => ({
@@ -103,6 +103,33 @@ describe("manual fresh performance telemetry", () => {
     const result = await extract({ source: { hasHRStream: true } });
     expect(result.source.hrSource).toBe("route");
     expect(state.reads.every(value => value.channel === "route")).toBe(true);
+  });
+
+  it("retains a pre-start timestamp and a 36-second gap while distinguishing measured from evaluable coverage", async () => {
+    // Fabricated equatorial positions, not a production route. The gap alone
+    // cannot establish a pause event without native pause/resume evidence.
+    state.route = Array.from({ length: 1801 }, (_, index) => ({
+      index, lat: 0, lng: (index * 3 / 6_371_000) * 180 / Math.PI,
+      timestamp: ts(index === 0 ? -0.144 : index + (index >= 900 ? 35 : 0)), hr: 147,
+    }));
+    const result = await extract({ workout: {
+      endedAt: new Date(started + 1836_000).toISOString(),
+      environment: { temperatureF: 85.3, dewPointF: 69.7, windMph: 4.8 },
+    } });
+
+    expect(result.reads).toEqual({ routeDocuments: 1801, hrDocuments: 0, totalDocuments: 1801 });
+    expect(result.source.measuredTimeCoverageFraction).toBeCloseTo(1799.144 / 1836);
+    expect(result.source.measuredHrCoverageFraction).toBe(1);
+    expect(result.workout.telemetry.state).toBe("unknown");
+    expect(result.feature.status).toBe("unresolved");
+    expect(result.feature.observations).toEqual([]);
+    expect(result.feature.quality).toMatchObject({ acceptedSeconds: 0, timeCoverageFraction: null, hrCoverageFraction: null });
+    expect(result.feature.reasons).toEqual([
+      "invalid_or_overlapping_intervals", "known_extreme_environment", "telemetry_completeness_unverified",
+    ]);
+    expect(result.feature.limitations).toContain("route_timestamp_outside_workout");
+    expect(result.feature.limitations).not.toContain("measured_telemetry_coverage_or_distance_consistency_incomplete");
+    expect((state.route[0].timestamp as ReturnType<typeof ts>).toDate().getTime()).toBe(started - 144);
   });
 
   it("fills missing route HR only from time-nearby fresh chunks even with a missing availability flag", async () => {

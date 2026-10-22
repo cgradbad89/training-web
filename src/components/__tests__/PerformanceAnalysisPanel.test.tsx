@@ -27,7 +27,7 @@ import { PerformanceAnalysisPanel } from "@/components/PerformanceAnalysisPanel"
 const dayWindow = { startDate: "2026-09-24", endDate: "2026-10-21" };
 function saved(calculatedAt = "2026-10-21T14:00:00Z"): StoredPerformanceCurrent {
   const result: PerformanceAnalysisResult = {
-    versions: { schema: 1, model: "manual-performance-v1", extractor: "steady-interval-v1", qualityPolicy: "observational-v1" },
+    versions: { schema: 1, model: "manual-performance-v1", extractor: "steady-interval-v2", qualityPolicy: "observational-v1" },
     asOf: calculatedAt, timeZone: "America/New_York", observationWindow: dayWindow,
     demonstratedRaces: [{ raceId: "race", workoutId: "race-run", raceDate: "2026-09-20", nominalDistanceMeters: 21097.5,
       copiedDurationSeconds: 7871, recordedDistanceMeters: 21409, durationSeconds: 7871, elapsedSeconds: 7871,

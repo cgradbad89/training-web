@@ -13,7 +13,7 @@ import {
 } from "@/utils/performanceEvidence";
 
 export const PERFORMANCE_VERSIONS: PerformanceVersions = Object.freeze({
-  schema: 1, model: "manual-performance-v1", extractor: "steady-interval-v1", qualityPolicy: "observational-v1",
+  schema: 1, model: "manual-performance-v1", extractor: "steady-interval-v2", qualityPolicy: "observational-v1",
 });
 
 export const PERFORMANCE_DEFAULTS = Object.freeze({

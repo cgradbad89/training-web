@@ -235,19 +235,26 @@ export async function extractWorkoutPerformanceFeature(input: {
     interval.startSeconds < 0 || interval.endSeconds <= interval.startSeconds || interval.endSeconds > elapsed ||
     (index > 0 && interval.startSeconds < ordered[index - 1].endSeconds));
   if (structuralFailure) reasons.push("invalid_or_overlapping_intervals");
-  const accepted = structuralFailure || invalidMeasurement ? [] : ordered.filter((interval) =>
+  const measurementsEvaluable = !structuralFailure && !invalidMeasurement;
+  const accepted = !measurementsEvaluable ? [] : ordered.filter((interval) =>
     interval.endSeconds - interval.startSeconds <= policy.maximumIntervalSeconds &&
     Number.isFinite(interval.speedMps) && interval.speedMps >= 0 && interval.speedMps <= policy.maximumSpeedMps);
   const acceptedSeconds = accepted.reduce((sum, interval) => sum + interval.endSeconds - interval.startSeconds, 0);
   const hrSeconds = accepted.reduce((sum, interval) => sum + (finite(interval.hrBpm) &&
     interval.hrBpm >= policy.minimumHrBpm && interval.hrBpm < policy.maximumHrBpmExclusive ? interval.endSeconds - interval.startSeconds : 0), 0);
   const span = ordered.length && !structuralFailure ? ordered[ordered.length - 1].endSeconds - ordered[0].startSeconds : 0;
-  const timeCoverageFraction = elapsed > 0 ? acceptedSeconds / elapsed : null;
+  const timeCoverageFraction = measurementsEvaluable && elapsed > 0 ? acceptedSeconds / elapsed : null;
   const hrCoverageFraction = acceptedSeconds > 0 ? hrSeconds / acceptedSeconds : null;
-  if (span <= 0 || elapsed <= 0 || span / elapsed < policy.minimumCoverageFraction || acceptedSeconds / span < policy.minimumCoverageFraction) reasons.push("insufficient_measured_time_coverage");
-  if (hrCoverageFraction === null || hrCoverageFraction < policy.minimumHrCoverageFraction) reasons.push("insufficient_measured_hr_coverage");
-  const pathDistance = accepted.reduce((sum, interval) => sum + interval.speedMps * (interval.endSeconds - interval.startSeconds), 0);
-  if (finite(workout.distanceMeters) && workout.distanceMeters > 0 && Math.abs(pathDistance / workout.distanceMeters - 1) > 0.1) reasons.push("measured_distance_disagreement");
+  if (measurementsEvaluable) {
+    if (span <= 0 || elapsed <= 0 || span / elapsed < policy.minimumCoverageFraction || acceptedSeconds / span < policy.minimumCoverageFraction) reasons.push("insufficient_measured_time_coverage");
+    if (hrCoverageFraction === null || hrCoverageFraction < policy.minimumHrCoverageFraction) reasons.push("insufficient_measured_hr_coverage");
+    const pathDistance = accepted.reduce((sum, interval) => sum + interval.speedMps * (interval.endSeconds - interval.startSeconds), 0);
+    if (finite(workout.distanceMeters) && workout.distanceMeters > 0 && Math.abs(pathDistance / workout.distanceMeters - 1) > 0.1) reasons.push("measured_distance_disagreement");
+  } else {
+    // Rejected intervals contribute no accepted seconds. That does not establish
+    // independently measured time/HR gaps or disagreement with parent distance.
+    limitations.push("measured_coverage_and_distance_not_evaluated_due_to_invalid_intervals");
+  }
 
   const windows: NonNullable<ReturnType<typeof summarizeWindow>>[] = [];
   if (reasons.length === 0 && unresolved.length === 0) {
