@@ -172,6 +172,20 @@ describe("atomic current and immutable calculation publication", () => {
     h.records.set(path("performanceFeatures/run-a"), { ...feature, revision: 2 });
     await expect(publishPerformance(session, input)).rejects.toThrow("changed in another");
   });
+  it("rechecks unresolved feature revisions without treating them as accepted observations", async () => {
+    const basis = await featureInput();
+    basis.workout.telemetry.state = "unknown";
+    basis.feature = await extractWorkoutPerformanceFeature({ workout: basis.workout, intervals: [], sourceSampleCount: 0,
+      asOf: now, extractedAt: now, versions: PERFORMANCE_VERSIONS, policy: DEFAULT_PERFORMANCE_QUALITY_POLICY });
+    const feature = await savePerformanceFeature(session, basis, null);
+    const input = await publication([feature]);
+    const first = await publishPerformance(session, input);
+    expect(first.current.featureRevisions).toEqual([{ workoutId: feature.workoutId, revision: feature.revision, featureDigest: feature.featureDigest }]);
+    expect(first.current.payload.result.completeness).toMatchObject({ acceptedFeatureCount: 0, unresolvedWorkoutIds: ["run-a"] });
+    h.records.set(path("performanceFeatures/run-a"), { ...feature, revision: feature.revision + 1 });
+    await expect(publishPerformance(session, input)).rejects.toThrow("changed in another");
+    expect((await getSavedPerformance(session)).current?.snapshotId).toBe(first.current.snapshotId);
+  });
   it("rejects incompatible feature versions", async () => {
     const feature = await savePerformanceFeature(session, await featureInput(), null);
     const input = await publication([feature]);

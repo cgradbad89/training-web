@@ -24,6 +24,7 @@ vi.mock("firebase/firestore", () => ({
 }));
 vi.mock("@/services/healthWorkouts", () => ({ docToHealthWorkout: (id:string,data:Record<string,unknown>)=>({...data,workoutId:data.workoutId??id}) }));
 vi.mock("@/services/performancePersistence", () => ({
+  PerformanceConflictError: class extends Error { constructor() { super("Performance evidence changed in another tab or device."); } },
   capturePerformanceSession: vi.fn(),
   assertPerformanceSession: () => {if(!h.validSession) throw new Error("session changed");},
   getSavedPerformance: async()=>({current:h.current,documentsRead:1}),
@@ -42,6 +43,18 @@ function parent(id="run-1",extra:Record<string,unknown>={}) {
     routeComplete:true,hasHRStream:true,syncedAt:new Date("2026-10-18T13:00:00Z"),calories:300,avgHeartRate:142,
     distanceMiles:5400/1609.344,distanceMeters:5400,avgPaceSecPerMile:null,avgSpeedMPS:3,hrDriftPct:null,
     cadenceSPM:null,efficiencyRaw:null,efficiencyScore:null,elevationGainM:20,...extra } };
+}
+function extractUnresolvedFeature() {
+  h.extract.mockImplementation(async(input:{workout:EffectivePerformanceWorkout;budget:{documentsRead:number}})=>{
+    input.budget.documentsRead+=181;
+    const intervals=Array.from({length:180},(_,i)=>({startSeconds:i*10,endSeconds:(i+1)*10,speedMps:3,hrBpm:142}));
+    const workout={...input.workout,telemetry:{state:"unknown" as const,verification:"supplied_content" as const,
+      contentDigest:await hashPerformanceValue({intervals,sourceSampleCount:181})},
+      limitations:[...input.workout.limitations,"synthetic_incomplete_child_stream"]};
+    const feature=await extractWorkoutPerformanceFeature({workout,intervals,sourceSampleCount:181,asOf:new Date().toISOString(),
+      extractedAt:new Date().toISOString(),versions:PERFORMANCE_VERSIONS,policy:PERFORMANCE_DEFAULTS.qualityPolicy});
+    return {workout,feature};
+  });
 }
 const options = {selectedWorkoutIds:["run-1"],forceReprocessWorkoutIds:[],userConfirmedReady:true as const,readBudget:5000};
 beforeEach(()=>{
@@ -84,6 +97,53 @@ describe("manual performance workflow",()=>{
     expect(input.payload.result.capability).toMatchObject({estimatedSeconds:null,confidenceInterval:null});
     expect(input.payload.result.completeness.coverage.telemetry).toBe("partial");expect(input.features).toHaveLength(1);
     expect(progress.mock.calls.at(-1)?.[0]).toMatchObject({completed:1,selected:1});
+  });
+  it("links newly saved unresolved evidence without accepting its observations",async()=>{
+    extractUnresolvedFeature();
+    const review=await prepareManualPerformanceReview(session);
+    const outcome=await runManualPerformanceUpdate(session,review,options,vi.fn());
+    const stored=h.features[0] as StoredPerformanceFeature;
+    const input=h.publish.mock.calls[0][1];
+    expect(input.features).toEqual([stored]);
+    expect(input.payload.provenance).toEqual([stored.feature.provenance]);
+    expect(input.payload.result.completeness).toMatchObject({acceptedFeatureCount:0,unresolvedWorkoutIds:["run-1"],rejectedWorkoutIds:[]});
+    expect(input.payload.result.aerobic.independentWorkoutCount).toBe(0);
+    expect(input.payload.result.capability).toMatchObject({estimatedSeconds:null,confidenceInterval:null});
+    expect(outcome).toMatchObject({processedWorkoutIds:["run-1"],skippedWorkoutIds:["run-1"]});
+    expect(await reusablePerformanceReceipt(stored.workout,stored)).toBeNull();
+  });
+  it("links rejected evidence and preserves its rejected classification",async()=>{
+    h.parents=[parent("run-1",{weather:{tempF:85,dewPointF:60,windMph:5}})];
+    const review=await prepareManualPerformanceReview(session);
+    await runManualPerformanceUpdate(session,review,options,vi.fn());
+    const input=h.publish.mock.calls[0][1];
+    expect(input.features[0].feature.status).toBe("rejected");
+    expect(input.payload.result.completeness).toMatchObject({acceptedFeatureCount:0,unresolvedWorkoutIds:[],rejectedWorkoutIds:["run-1"]});
+  });
+  it("retains an unselected unresolved dated receipt without acquiring its children",async()=>{
+    extractUnresolvedFeature();
+    let review=await prepareManualPerformanceReview(session);
+    await runManualPerformanceUpdate(session,review,options,vi.fn());
+    const prior=h.features[0];
+    h.parents.push(parent("run-2"));
+    review=await prepareManualPerformanceReview(session);h.extract.mockClear();
+    await runManualPerformanceUpdate(session,review,{...options,selectedWorkoutIds:["run-2"]},vi.fn());
+    expect(h.extract).toHaveBeenCalledOnce();expect(h.extract.mock.calls[0][0].workout.workoutId).toBe("run-2");
+    const input=h.publish.mock.calls[1][1];
+    expect(input.features).toContain(prior);expect(input.features).toHaveLength(2);
+    expect(input.payload.result.completeness).toMatchObject({acceptedFeatureCount:0,unresolvedWorkoutIds:["run-1","run-2"]});
+  });
+  it("aborts if the selected unresolved receipt changes before the saved-set refresh",async()=>{
+    extractUnresolvedFeature();
+    const save=h.save.getMockImplementation()!;
+    h.save.mockImplementationOnce(async(...args:unknown[])=>{
+      const stored=await save(...args) as StoredPerformanceFeature;
+      h.features=[{...stored,revision:stored.revision+1,featureDigest:"c".repeat(64)}];
+      return stored;
+    });
+    const review=await prepareManualPerformanceReview(session);
+    await expect(runManualPerformanceUpdate(session,review,options,vi.fn())).rejects.toThrow("changed in another");
+    expect(h.publish).not.toHaveBeenCalled();
   });
   it("always fetches fresh telemetry for selected previously analyzed workouts",async()=>{
     let review=await prepareManualPerformanceReview(session);await runManualPerformanceUpdate(session,review,options,vi.fn());

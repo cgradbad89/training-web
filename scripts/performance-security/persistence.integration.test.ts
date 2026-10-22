@@ -29,15 +29,15 @@ let app: FirebaseApp;
 let session: PerformanceSession;
 let epoch = 1;
 
-async function extracted(workoutId = "sdk-run-a", speedMps = 3) {
-  const intervals = Array.from({ length: 180 }, (_, index) => ({ startSeconds: index * 10, endSeconds: (index + 1) * 10, speedMps, hrBpm: 142 }));
+async function extracted(workoutId = "sdk-run-a", speedMps = 3, telemetryState: "complete" | "unknown" = "complete", hrBpm = 142) {
+  const intervals = Array.from({ length: 180 }, (_, index) => ({ startSeconds: index * 10, endSeconds: (index + 1) * 10, speedMps, hrBpm }));
   const workout: EffectivePerformanceWorkout = {
     workoutId, startedAt: "2026-10-18T12:00:00.000Z", endedAt: "2026-10-18T12:30:00.000Z", availableAt: null,
     completion: "completed", excluded: false, isRun: true, runKind: "outdoor", distanceMeters: speedMps * 1800,
     durationSeconds: 1800, averageHrBpm: 142, ascentMeters: 0,
     environment: { temperatureF: 55, dewPointF: 40, windMph: 2 },
     parentDigest: await hashPerformanceValue({ workoutId, speedMps }),
-    telemetry: { state: "complete", verification: "supplied_content", contentDigest: await hashPerformanceValue({ intervals, sourceSampleCount: 181 }) },
+    telemetry: { state: telemetryState, verification: "supplied_content", contentDigest: await hashPerformanceValue({ intervals, sourceSampleCount: 181 }) },
     provenance: { source: "synthetic emulator watch", sourceId: workoutId, notes: [] }, limitations: [],
   };
   const feature = await extractWorkoutPerformanceFeature({ workout, intervals, sourceSampleCount: 181, asOf, extractedAt: asOf,
@@ -138,6 +138,35 @@ describe.skipIf(!enabled)("real Firebase SDK manual performance persistence", ()
     await expect(publishPerformance(session, await publication([original], 1))).rejects.toThrow("changed in another");
     expect((await getSavedPerformance(session)).current?.snapshotId).toBe(first.current.snapshotId);
     expect(await snapshotCount()).toBe(1);
+  });
+
+  it("links unresolved receipts, deduplicates unchanged publication and rejects their corrected stale revision", async () => {
+    const original = await savePerformanceFeature(session, await extracted("unresolved-run", 3, "unknown"), null);
+    expect(original.feature.status).toBe("unresolved");
+    const input = await publication([original]);
+    await publishPerformance(session, input);
+    const current = (await getSavedPerformance(session)).current!;
+    expect(current.featureRevisions).toEqual([{ workoutId: original.workoutId, revision: 1, featureDigest: original.featureDigest }]);
+    expect(current.payload.result.completeness).toMatchObject({ acceptedFeatureCount: 0, unresolvedWorkoutIds: [original.workoutId] });
+    expect(current.payload.result.capability).toMatchObject({ estimatedSeconds: null, confidenceInterval: null });
+    const snapshots = collection(h.db!, "users", ownerUid, "performanceSnapshots");
+    const before = await getDocsFromServer(snapshots);
+    expect(before.size).toBe(1);
+    expect(before.docs[0].data()).toEqual(current);
+
+    expect(await publishPerformance(session, input)).toMatchObject({ snapshotCreated: false, documentsWritten: 0 });
+    expect(await snapshotCount()).toBe(1);
+
+    // Child HR content changes without a parent identity change; both receipts remain unresolved.
+    const corrected = await savePerformanceFeature(session, await extracted(original.workoutId, 3, "unknown", 145), 1);
+    expect(corrected).toMatchObject({ revision: 2, feature: { status: "unresolved", parentDigest: original.feature.parentDigest } });
+    expect(corrected.feature.telemetryDigest).not.toBe(original.feature.telemetryDigest);
+    await expect(publishPerformance(session, input)).rejects.toThrow("changed in another");
+    expect((await getSavedPerformance(session)).current).toEqual(current);
+    const after = await getDocsFromServer(snapshots);
+    expect(after.size).toBe(1);
+    expect(after.docs[0].id).toBe(before.docs[0].id);
+    expect(after.docs[0].data()).toEqual(before.docs[0].data());
   });
 
   it("disabled clients cannot write despite an authorized emulator owner connection", async () => {

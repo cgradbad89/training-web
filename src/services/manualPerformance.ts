@@ -7,7 +7,7 @@ import { getPerformanceUpdateGate, assertPerformanceUpdateEnabled } from "@/lib/
 import { docToHealthWorkout } from "@/services/healthWorkouts";
 import {
   assertPerformanceSession, capturePerformanceSession, getPerformanceFeatures,
-  getSavedPerformance, publishPerformance, savePerformanceFeature,
+  getSavedPerformance, PerformanceConflictError, publishPerformance, savePerformanceFeature,
   type PerformanceSession,
 } from "@/services/performancePersistence";
 import { createPerformanceReadBudget, extractFreshWorkoutPerformance } from "@/services/performanceTelemetry";
@@ -21,6 +21,7 @@ import type { SavedPerformanceCurrent, StoredPerformanceFeature } from "@/types/
 import {
   buildWorkoutInputDigest, comparePerformanceKeys, hashPerformanceValue, isPerformanceDate, isPerformanceInstant,
   performanceObservationWindow, selectWorkoutsForManualAnalysis, toEffectivePerformanceWorkout,
+  workoutIsCompletedAsOf,
 } from "@/utils/performanceEvidence";
 import {
   buildPerformanceSnapshotPayload, calculatePerformanceAnalysis, PERFORMANCE_DEFAULTS, PERFORMANCE_VERSIONS,
@@ -105,14 +106,31 @@ async function effectiveParent(parent: ParentRecord, override: WorkoutOverride |
   return workout;
 }
 
-/** Reuse the saved dated extraction receipt; never assert unchanged live children. */
-export async function reusablePerformanceReceipt(current: EffectivePerformanceWorkout, stored?: StoredPerformanceFeature): Promise<EffectivePerformanceWorkout | null> {
-  if (!stored || stored.feature.parentDigest !== current.parentDigest || stored.workout.parentDigest !== current.parentDigest) return null;
+/** Match a dated extraction basis independently of whether its observations are usable. */
+async function matchingPerformanceReceipt(current: EffectivePerformanceWorkout, stored: StoredPerformanceFeature | undefined, asOf: string): Promise<EffectivePerformanceWorkout | null> {
+  if (!stored || !workoutIsCompletedAsOf(current, asOf)
+    || stored.workoutId !== current.workoutId || stored.feature.workoutId !== current.workoutId || stored.workout.workoutId !== current.workoutId
+    || stored.feature.parentDigest !== current.parentDigest || stored.workout.parentDigest !== current.parentDigest
+    || stored.feature.extractorVersion !== PERFORMANCE_VERSIONS.extractor || stored.feature.qualityPolicyVersion !== PERFORMANCE_VERSIONS.qualityPolicy
+    || stored.feature.qualityPolicyDigest !== await hashPerformanceValue(PERFORMANCE_DEFAULTS.qualityPolicy)
+    || stored.feature.observedAt !== current.startedAt || stored.feature.completion !== current.completion
+    || stored.workout.telemetry.verification !== "supplied_content" || !/^[a-f0-9]{64}$/.test(stored.workout.telemetry.contentDigest ?? "")
+    || stored.feature.telemetryDigest !== stored.workout.telemetry.contentDigest || stored.feature.telemetryState !== stored.workout.telemetry.state) return null;
   const receipt = { ...current, telemetry: stored.workout.telemetry, limitations: stored.workout.limitations };
+  if (await buildWorkoutInputDigest(receipt) !== stored.feature.sourceInputDigest
+    || await buildWorkoutInputDigest(stored.workout) !== stored.feature.sourceInputDigest) return null;
+  return receipt;
+}
+
+/** Reuse eligible observations only; a matching unresolved receipt still needs review. */
+export async function reusablePerformanceReceipt(current: EffectivePerformanceWorkout, stored?: StoredPerformanceFeature): Promise<EffectivePerformanceWorkout | null> {
+  const asOf = new Date().toISOString();
+  const receipt = await matchingPerformanceReceipt(current, stored, asOf);
+  if (!receipt || !stored) return null;
   const selection = await selectWorkoutsForManualAnalysis({ workouts: [receipt], features: [stored.feature],
     versions: PERFORMANCE_VERSIONS, qualityPolicy: PERFORMANCE_DEFAULTS.qualityPolicy,
-    asOf: new Date().toISOString() });
-  if (selection[0]?.action !== "reuse" || await buildWorkoutInputDigest(receipt) !== stored.feature.sourceInputDigest) return null;
+    asOf });
+  if (selection[0]?.action !== "reuse") return null;
   return receipt;
 }
 
@@ -221,6 +239,7 @@ export async function runManualPerformanceUpdate(session: PerformanceSession, re
     const overrideResult = await loadOverrides(session, runs.map(p => p.raw.workoutId)); documentReads += overrideResult.documentsRead;
     const originals = await getPerformanceFeatures(session, runs.map(p => p.raw.workoutId)); documentReads += originals.documentsRead;
     const effective = new Map<string, EffectivePerformanceWorkout>();
+    const selectedReceipts = new Map<string, StoredPerformanceFeature>();
     const invalidIds: string[] = [];
     for (const parent of runs) {
       try { effective.set(parent.raw.workoutId, await effectiveParent(parent, overrideResult.overrides.get(parent.raw.workoutId) ?? null, asOf)); }
@@ -239,7 +258,8 @@ export async function runManualPerformanceUpdate(session: PerformanceSession, re
         asOf, extractedAt: new Date().toISOString(), versions: PERFORMANCE_VERSIONS,
         policy: PERFORMANCE_DEFAULTS.qualityPolicy, budget, assertSession: () => assertPerformanceSession(session) });
       const original = originals.features.find(f => f.workoutId === id);
-      await savePerformanceFeature(session, { feature: extracted.feature, workout: extracted.workout }, original?.revision ?? null);
+      const savedReceipt = await savePerformanceFeature(session, { feature: extracted.feature, workout: extracted.workout }, original?.revision ?? null);
+      selectedReceipts.set(id, savedReceipt);
       // A feature transaction reads the one feature document (including a missing doc).
       documentReads += 1;
       effective.set(id, extracted.workout);
@@ -251,7 +271,12 @@ export async function runManualPerformanceUpdate(session: PerformanceSession, re
     const verified: StoredPerformanceFeature[] = [];
     for (const [id, workout] of effective) {
       const stored = saved.features.find(f => f.workoutId === id);
-      const receipt = await reusablePerformanceReceipt(workout, stored);
+      const selectedReceipt = selectedReceipts.get(id);
+      if (selectedReceipt && (!stored || stored.revision !== selectedReceipt.revision || stored.featureDigest !== selectedReceipt.featureDigest)) {
+        throw new PerformanceConflictError();
+      }
+      const receipt = await matchingPerformanceReceipt(workout, stored, asOf);
+      if (selectedReceipt && !receipt) throw new PerformanceConflictError();
       if (receipt && stored) { effective.set(id, receipt); verified.push(stored); }
     }
     // Parent/override metadata is not a child revision, but changes we CAN detect

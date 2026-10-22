@@ -12,7 +12,7 @@ import {
 } from "../aerobicPerformance";
 import { hashPerformanceValue } from "../performanceEvidence";
 
-const versions: PerformanceVersions = { schema: 1, model: "manual-foundation-v1", extractor: "steady-interval-v1", qualityPolicy: policy.version };
+const versions: PerformanceVersions = { schema: 1, model: "manual-foundation-v1", extractor: "steady-interval-v2", qualityPolicy: policy.version };
 const asOf = "2026-10-21T14:00:00Z";
 const provenance = { source: "synthetic-position-derived-intervals", sourceId: "synthetic-workout", notes: [] };
 
@@ -199,6 +199,37 @@ describe("measured steady-running extraction", () => {
     const result = await extract({ intervals });
     expect(result.reasons).toContain("invalid_or_overlapping_intervals");
     expect(result.quality.acceptedSeconds).toBe(0);
+    expect(result.quality.timeCoverageFraction).toBeNull();
+    expect(result.reasons).not.toContain("insufficient_measured_time_coverage");
+  });
+
+  it("keeps a boundary-invalid hot workout unresolved without inventing measured coverage failures", async () => {
+    const intervals = intervalsFor();
+    intervals[0].startSeconds = -0.144;
+    const contentDigest = await hashPerformanceValue({ intervals, sourceSampleCount: intervals.length + 1 });
+    const result = await extract({ intervals, workout: {
+      environment: { temperatureF: 85.3, dewPointF: 69.7, windMph: 4.8 },
+      telemetry: { state: "unknown", verification: "supplied_content", contentDigest },
+    } });
+
+    expect(result.status).toBe("unresolved");
+    expect(result.observations).toEqual([]);
+    expect(result.reasons).toEqual([
+      "invalid_or_overlapping_intervals", "known_extreme_environment", "telemetry_completeness_unverified",
+    ]);
+    expect(result.quality).toMatchObject({ acceptedSeconds: 0, timeCoverageFraction: null, hrCoverageFraction: null });
+    expect(result.limitations).toContain("measured_coverage_and_distance_not_evaluated_due_to_invalid_intervals");
+    expect(intervals[0].startSeconds).toBe(-0.144);
+  });
+
+  it("preserves the heat rejection and measured coverage when intervals are valid", async () => {
+    const result = await extract({ workout: { environment: { temperatureF: 85.3, dewPointF: 69.7, windMph: 4.8 } } });
+    expect(result.status).toBe("rejected");
+    expect(result.observations).toEqual([]);
+    expect(result.reasons).toEqual(["known_extreme_environment"]);
+    expect(result.quality).toMatchObject({ acceptedSeconds: 1800, timeCoverageFraction: 1, hrCoverageFraction: 1 });
+    expect(result.limitations).not.toContain("measured_coverage_and_distance_not_evaluated_due_to_invalid_intervals");
+    expect((await extract({ workout: { environment: { temperatureF: 80, dewPointF: 69.7, windMph: 4.8 } } })).status).toBe("accepted");
   });
 
   it("rejects nonfinite measurements explicitly", async () => {
@@ -208,6 +239,9 @@ describe("measured steady-running extraction", () => {
     expect(result.status).toBe("rejected");
     expect(result.reasons).toContain("invalid_interval_measurement");
     expect(result.observations).toEqual([]);
+    expect(result.quality).toMatchObject({ acceptedSeconds: 0, timeCoverageFraction: null, hrCoverageFraction: null });
+    expect(result.reasons).not.toContain("measured_distance_disagreement");
+    expect(result.limitations).toContain("measured_coverage_and_distance_not_evaluated_due_to_invalid_intervals");
   });
 
   it("rejects invalid sample counts without serializing a nonfinite count", async () => {
