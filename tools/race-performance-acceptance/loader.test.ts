@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { ACCEPTANCE_CAPS, loadAcceptanceSources, parseAcceptanceOverride, parseAcceptancePlan, parseAcceptanceRace,
-  parseAcceptanceWorkout, type AcceptanceCollection, type AcceptanceReader, type ParentRead, type ParentRecord } from "./loader";
+  parseAcceptanceWorkout, classifyNumericField, scopeAcceptanceSources, type AcceptanceCollection, type AcceptanceReader, type ParentRead, type ParentRecord } from "./loader";
 import { buildRaceTrainingContext } from "../../src/utils/raceTrainingContext";
 import { evaluateRacePerformance } from "../../src/utils/racePerformance";
 
@@ -132,5 +132,128 @@ describe("bounded server source loading", () => {
     expect(evidence.currentCapability.estimatedSeconds).toBeNull();
     expect(evidence.raceDayForecast.estimatedSeconds).toBeNull();
     expect(evidence.evidence[0].status).not.toBe("verified");
+  });
+});
+
+const diagnosedIds = ["8A6341A4-D510-4E2B-906B-C0692248FE1F", "CA25BADB-53CA-424F-8062-EA0C871E49D9"];
+const scopeOptions = { asOfs: [new Date("2026-10-23T16:00:00Z"), new Date("2026-10-23T03:59:59.999Z")], timeZone: "America/New_York" };
+function distanceless(id = diagnosedIds[0], fields: Record<string, unknown> = {}): ParentRecord {
+  const result = workout(id, { source: "healthkit", sourceName: "Fixture watch", activityType: "running", durationSeconds: 300,
+    startDate: "2020-01-01T12:00:00Z", endDate: "2020-01-01T12:05:00Z", syncedAt: "2021-01-01T12:00:00Z", ...fields });
+  delete result.data.distanceMiles;
+  delete result.data.distanceMeters;
+  return result;
+}
+async function scopeFixture(invalid = diagnosedIds.map(id => distanceless(id)), extra: Partial<Record<AcceptanceCollection, ParentRecord[]>> = {}) {
+  return loadAcceptanceSources(reader({ healthWorkouts: [workout(), ...invalid], ...extra }), uid);
+}
+
+describe("narrow acceptance scope for the two diagnosed distance-less parents", () => {
+  it.each([
+    [{}, "absent"], [{ value: null }, "null"], [{ value: "3.1" }, "nonnumeric"], [{ value: undefined }, "nonnumeric"],
+    [{ value: NaN }, "nonfinite"], [{ value: Infinity }, "nonfinite"], [{ value: 3.1 }, "finite"],
+  ] as const)("distinguishes numeric field presence and validity before JSON serialization: %j", (data, expected) => {
+    expect(classifyNumericField(data, "value")).toBe(expected);
+  });
+  it("retains raw rejected parents and exact absent-field diagnostics without changing the invalid source status", async () => {
+    const raw = diagnosedIds.map(id => distanceless(id));
+    const result = await scopeFixture(raw);
+    expect(result.sourcesReady).toBe(false);
+    expect(result.invalidWorkouts.map(item => item.record)).toEqual(raw);
+    expect(result.invalidWorkouts[0].record).toBe(raw[0]);
+    expect(result.invalidWorkouts[0].numericFields).toEqual({ durationSeconds: "finite", distanceMiles: "absent", distanceMeters: "absent" });
+    const scoped = scopeAcceptanceSources(result, scopeOptions);
+    expect(scoped.sourcesReady).toBe(true);
+    expect(scoped.invalidWorkouts).toBe(result.invalidWorkouts);
+    expect(scoped.diagnostics.find(item => item.source === "healthWorkouts")?.status).toBe("invalid");
+    expect(scoped.reportingScope).toMatchObject({ accepted: true, fullHistoryComplete: false });
+    expect(scoped.reportingScope?.excludedWorkouts.map(item => item.id)).toEqual(diagnosedIds);
+    expect(scoped.workouts).toHaveLength(1);
+    expect(Object.hasOwn(raw[0].data, "distanceMiles")).toBe(false);
+    expect(buildRaceTrainingContext({ ...scoped, asOf: scopeOptions.asOfs[0], timeZone: scopeOptions.timeZone }).recentFourWeeks.miles).toBe(6);
+  });
+  it("declares both current and saved reporting periods and protects the earliest prior-window boundary", async () => {
+    const scoped = scopeAcceptanceSources(await scopeFixture(), scopeOptions);
+    expect(scoped.reportingScope?.periods).toMatchObject([
+      { localDate: "2026-10-23", chartStart: "2026-08-31", recentStart: "2026-09-26", priorStart: "2026-08-29", priorEnd: "2026-09-25", consistencyEnd: "2026-10-18" },
+      { localDate: "2026-10-22", chartStart: "2026-08-31", recentStart: "2026-09-25", priorStart: "2026-08-28", priorEnd: "2026-09-24", consistencyEnd: "2026-10-18" },
+    ]);
+    const before = await scopeFixture([distanceless(diagnosedIds[0], { startDate: "2026-08-27T12:00:00Z", endDate: "2026-08-27T12:05:00Z" })]);
+    expect(scopeAcceptanceSources(before, scopeOptions).sourcesReady).toBe(true);
+    const boundary = await scopeFixture([distanceless(diagnosedIds[0], { startDate: "2026-08-28T12:00:00Z", endDate: "2026-08-28T12:05:00Z" })]);
+    expect(scopeAcceptanceSources(boundary, scopeOptions).sourcesReady).toBe(false);
+  });
+  it("recomputes for changed reporting clocks instead of reusing an earlier acceptance grant", async () => {
+    const result = scopeAcceptanceSources(await scopeFixture(), scopeOptions);
+    expect(result.sourcesReady).toBe(true);
+    const earlierClock = { asOfs: [new Date("2020-01-02T12:00:00Z")], timeZone: scopeOptions.timeZone };
+    const rescope = scopeAcceptanceSources(result, earlierClock);
+    expect(rescope.sourcesReady).toBe(false);
+    expect(rescope.reportingScope?.blockers.join(" ")).toContain("unproven");
+  });
+  it("keeps unknown identities, non-distance parser errors, mismatched workout IDs and invalid dates blocked", async () => {
+    expect(scopeAcceptanceSources(await scopeFixture([distanceless("unknown")]), scopeOptions).sourcesReady).toBe(false);
+    const result = await scopeFixture();
+    result.invalidWorkouts[0].error = "A different schema defect";
+    expect(scopeAcceptanceSources(result, scopeOptions).sourcesReady).toBe(false);
+    for (const fields of [{ workoutId: "wrong" }, { startDate: "invalid" }, { endDate: null }, { syncedAt: undefined }, { durationSeconds: NaN }]) {
+      expect(scopeAcceptanceSources(await scopeFixture([distanceless(diagnosedIds[0], fields)]), scopeOptions).sourcesReady).toBe(false);
+    }
+  });
+  it.each([null, "unknown", NaN])("does not widen the absent-field exception when distance is null, nonnumeric or nonfinite: %j", async distance => {
+    const invalid = distanceless();
+    invalid.data.distanceMiles = distance;
+    expect(scopeAcceptanceSources(await scopeFixture([invalid]), scopeOptions).sourcesReady).toBe(false);
+  });
+  it("requires separate review when a rejected parent has an alternative meters summary", async () => {
+    const invalid = distanceless();
+    invalid.data.distanceMeters = 5000;
+    expect(scopeAcceptanceSources(await scopeFixture([invalid]), scopeOptions).sourcesReady).toBe(false);
+  });
+  it("blocks an existing override or a race/plan reference, including legacy links and metadata references", async () => {
+    const overridden = await scopeFixture(undefined, { workoutOverrides: [{ id: diagnosedIds[0], data: {
+      workoutId: diagnosedIds[0], userId: uid, isExcluded: true, updatedAt: "2021-01-01T12:00:00Z",
+    } }] });
+    expect(scopeAcceptanceSources(overridden, scopeOptions).sourcesReady).toBe(false);
+    const linked = await scopeFixture(undefined, { halfMarathonRaces: [race({ linkedStravaActivityId: diagnosedIds[0] })] });
+    expect(scopeAcceptanceSources(linked, scopeOptions).sourcesReady).toBe(false);
+    const referenced = await scopeFixture(undefined, { activePlans: [{ id: "p", data: { ...planData, notes: diagnosedIds[1] } }] });
+    expect(scopeAcceptanceSources(referenced, scopeOptions).sourcesReady).toBe(false);
+  });
+  it("checks all selectable plans and protects canonical one-day matching before the earliest due entry", async () => {
+    const plan = { ...planData, startDate: "2020-01-02", weeks: [{ weekNumber: 1, entries: [{ id: "e", weekIndex: 0, weekday: 1, distanceMiles: 3 }] }] };
+    const oldPlan = await scopeFixture(undefined, { activePlans: [{ id: "p", data: plan }] });
+    const blocked = scopeAcceptanceSources(oldPlan, scopeOptions);
+    expect(blocked.reportingScope?.earliestPlanMatchingDate).toBe("2020-01-01");
+    expect(blocked.sourcesReady).toBe(false);
+    expect(blocked.reportingScope?.blockers.join(" ")).toContain("historical matching displacement");
+    const safePlan = await scopeFixture(undefined, { activePlans: [{ id: "p", data: { ...plan, startDate: "2020-01-03" } }] });
+    expect(scopeAcceptanceSources(safePlan, scopeOptions).sourcesReady).toBe(true);
+  });
+  it("checks an older completed linked plan even when a newer active plan is safe", async () => {
+    const source = reader({ healthWorkouts: [workout(), distanceless()],
+      halfMarathonRaces: [race({ linkedPlanId: "completed" })], activePlans: [{ id: "active", data: planData }] });
+    source.plan = vi.fn(async id => read([{ id, data: { ...planData, status: "completed", startDate: "2020-01-01",
+      weeks: [{ weekNumber: 1, entries: [{ id: "e", weekIndex: 0, weekday: 1, distanceMiles: 3 }] }] } }], 1));
+    expect(scopeAcceptanceSources(await loadAcceptanceSources(source, uid), scopeOptions).sourcesReady).toBe(false);
+  });
+  it("withholds scope when a required source, linked plan, capped read or server provenance is unproven", async () => {
+    const result = await scopeFixture();
+    for (const source of ["halfMarathonRaces", "workoutOverrides", "activePlans"]) {
+      const missing = { ...result, diagnostics: result.diagnostics.filter(item => item.source !== source) };
+      expect(scopeAcceptanceSources(missing, scopeOptions).sourcesReady).toBe(false);
+    }
+    const capped = { ...result, diagnostics: result.diagnostics.map(item => item.source === "healthWorkouts" ? { ...item, readCapped: true } : item) };
+    expect(scopeAcceptanceSources(capped, scopeOptions).sourcesReady).toBe(false);
+    const cache = { ...result, diagnostics: result.diagnostics.map(item => ({ ...item, fromServer: false })) };
+    expect(scopeAcceptanceSources(cache, scopeOptions).sourcesReady).toBe(false);
+    const missingPlan = await scopeFixture(undefined, { halfMarathonRaces: [race({ linkedPlanId: "absent" })] });
+    expect(scopeAcceptanceSources(missingPlan, scopeOptions).sourcesReady).toBe(false);
+  });
+  it("cannot change consistency's null-versus-zero guard by silently discarding the only possible running history", async () => {
+    const onlyUnknown = await loadAcceptanceSources(reader({ healthWorkouts: [distanceless()] }), uid);
+    expect(scopeAcceptanceSources(onlyUnknown, scopeOptions).sourcesReady).toBe(false);
+    expect(scopeAcceptanceSources(await scopeFixture(), { ...scopeOptions, asOfs: [] }).sourcesReady).toBe(false);
+    expect(scopeAcceptanceSources(await scopeFixture(), { ...scopeOptions, timeZone: "invalid" }).sourcesReady).toBe(false);
   });
 });

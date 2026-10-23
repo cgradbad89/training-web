@@ -7,6 +7,7 @@ import { loadAcceptanceSources, type AcceptanceSources, type ParentRead, type Ac
 export interface AcceptanceIdentity { uid: string; email: string; appName: string }
 export interface AcceptanceSession {
   signIn(): Promise<AcceptanceIdentity>;
+  inspectInvalidParents(): Promise<ParentRead[]>;
   load(): Promise<AcceptanceSources>;
   dispose(): Promise<void>;
 }
@@ -74,6 +75,20 @@ export function createAcceptanceSession(config: FirebaseOptions, onInvalidated?:
       cap, capped: result.size > cap, fromServer: true, readStartedAt, readCompletedAt: new Date().toISOString() };
   }
   return {
+    async inspectInvalidParents() {
+      const currentEpoch = epoch;
+      const owner = assertOwner(currentEpoch);
+      const results: ParentRead[] = [];
+      for (const id of ['8A6341A4-D510-4E2B-906B-C0692248FE1F', 'CA25BADB-53CA-424F-8062-EA0C871E49D9']) {
+        assertOwner(currentEpoch);
+        const readStartedAt = new Date().toISOString();
+        const result = await getDoc(doc(firestore, 'users', owner.uid, 'healthWorkouts', id));
+        assertOwner(currentEpoch);
+        results.push({ records: result.exists() ? [{ id: result.id, data: result.data() }] : [], cap: 1,
+          capped: false, fromServer: true, readStartedAt, readCompletedAt: new Date().toISOString() });
+      }
+      return results;
+    },
     async signIn() {
       if (disposed || signingIn) throw new Error("Acceptance sign-in is unavailable");
       if (identity) return assertOwner();

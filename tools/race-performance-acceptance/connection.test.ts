@@ -48,7 +48,7 @@ describe("isolated read-only owner connection", () => {
     expect(h.initializeApp).toHaveBeenCalledWith(config, expect.stringMatching(/^training-web-read-only-acceptance-/));
     expect(h.initializeAuth).toHaveBeenCalledWith(expect.anything(), { persistence: h.memory, popupRedirectResolver: h.resolver });
     expect(h.getFirestore).toHaveBeenCalledWith(h.initializeApp.mock.results[0].value);
-    expect(Object.keys(first).sort()).toEqual(["dispose", "load", "signIn"]);
+    expect(Object.keys(first).sort()).toEqual(["dispose", "inspectInvalidParents", "load", "signIn"]);
     expect(h.signInWithPopup).not.toHaveBeenCalled();
     expect(h.getDocs).not.toHaveBeenCalled();
     await first.dispose();
@@ -66,6 +66,8 @@ describe("isolated read-only owner connection", () => {
   it("does not issue reads before explicit verified-owner popup authentication", async () => {
     const session = createAcceptanceSession(config);
     await expect(session.load()).rejects.toThrow("read refused");
+    await expect(session.inspectInvalidParents()).rejects.toThrow("read refused");
+    expect(h.getDoc).not.toHaveBeenCalled();
     expect(h.getDocs).not.toHaveBeenCalled();
     const identity = await session.signIn();
     expect(identity).toMatchObject({ uid: "owner", email: owner.email });
@@ -79,6 +81,30 @@ describe("isolated read-only owner connection", () => {
     ]);
     expect(h.orderBy).toHaveBeenCalledWith("startDate", "desc");
     expect(h.limit).toHaveBeenCalledWith(1001);
+    await session.dispose();
+  });
+  it("inspects only the two explicit owner parents without any collection or child reads", async () => {
+    const session = createAcceptanceSession(config);
+    await session.signIn();
+    h.getDoc.mockImplementation(async (ref: {path: string}) => ({ exists: () => true, id: ref.path.split('/').at(-1), data: () => ({ distanceMiles: null }) }));
+    const results = await session.inspectInvalidParents();
+    expect(h.doc.mock.calls.map(call => call.slice(1))).toEqual([
+      ['users', 'owner', 'healthWorkouts', '8A6341A4-D510-4E2B-906B-C0692248FE1F'],
+      ['users', 'owner', 'healthWorkouts', 'CA25BADB-53CA-424F-8062-EA0C871E49D9'],
+    ]);
+    expect(h.getDocs).not.toHaveBeenCalled();
+    expect(results).toHaveLength(2);
+    expect(results.every(item => item.fromServer && item.cap === 1 && item.records[0].data.distanceMiles === null)).toBe(true);
+    await session.dispose();
+    await expect(session.inspectInvalidParents()).rejects.toThrow('read refused');
+    expect(h.getDoc).toHaveBeenCalledTimes(2);
+  });
+  it("stops the two-parent inspection immediately when owner identity changes", async () => {
+    const session = createAcceptanceSession(config);
+    await session.signIn();
+    h.getDoc.mockImplementation(async () => { h.auth.currentUser = {...owner, uid: 'changed'}; return {exists: () => false}; });
+    await expect(session.inspectInvalidParents()).rejects.toThrow('read refused');
+    expect(h.getDoc).toHaveBeenCalledTimes(1);
     await session.dispose();
   });
   it.each([
