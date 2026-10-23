@@ -72,9 +72,33 @@ beforeEach(() => {
   h.races.mockResolvedValue([race()]); h.overrides.mockResolvedValue({}); h.settings.mockResolvedValue(null);
   h.hydrate.mockImplementation(async (_uid, runs) => ({ runs, routeFetches: 0 }));
 });
-afterEach(() => { act(() => root?.unmount()); container?.remove(); vi.restoreAllMocks(); });
+afterEach(() => { act(() => root?.unmount()); container?.remove(); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 describe("Plan Insights demand-gated fast-finish hydration", () => {
+  it("replaces predictions and does no legacy child hydration with Phase 3A enabled", async () => {
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", "true");
+    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "preview");
+    await mount();
+    expect(container.textContent).toContain("Current Performance");
+    expect(container.textContent).toContain("Training Progress");
+    expect(container.textContent).toContain("Race-Day Outlook");
+    expect(container.textContent).toContain("Historical Performance Timeline");
+    expect(container.textContent).not.toContain("Race Predictions");
+    expect(container.textContent).not.toContain("Pace Readiness");
+    expect(h.hydrate).not.toHaveBeenCalled();
+    expect(h.rawRoute).not.toHaveBeenCalled();
+    expect(h.mileSplits).not.toHaveBeenCalled();
+    expect(buildBestEffortSegments).not.toHaveBeenCalled();
+  });
+
+  it("retains legacy behavior when the opt-in is present in Production", async () => {
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", "true");
+    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "production");
+    await mount();
+    expect(container.textContent).toContain("Race Predictions");
+    expect(container.textContent).not.toContain("Current Performance");
+    expect(h.hydrate).toHaveBeenCalledOnce();
+  });
   it.each([
     { races: [] },
     { races: [race({ raceDistance: "5k" })] },

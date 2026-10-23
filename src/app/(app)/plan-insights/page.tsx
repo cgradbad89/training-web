@@ -9,6 +9,8 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { MetricBadge } from "@/components/ui/MetricBadge";
 import { useAuth } from "@/hooks/useAuth";
 import { useAppData } from "@/contexts/AppDataContext";
+import { isRacePerformanceEnabled } from "@/lib/racePerformanceGate";
+import { RacePerformancePanel } from "@/components/insights/RacePerformancePanel";
 import { selectEffectiveWorkouts } from "@/utils/selectActiveWorkouts";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { type RunningPlan, type PlanRunType, isRunningPlan } from "@/types/plan";
@@ -196,6 +198,7 @@ function PredictionCard({ label, distanceMiles, fit, targetPace }: PredictionCar
 // ─── Page ────────────────────────────────────────────────────────────────────
 
 export default function PlanInsightsPage() {
+  const racePerformanceEnabled = isRacePerformanceEnabled();
   const { user, sessionEpoch, isSessionCurrent } = useAuth();
   const pageActive = usePathname() === "/plan-insights";
   const uid = user?.uid ?? null;
@@ -329,7 +332,7 @@ export default function PlanInsightsPage() {
     workoutsResolution, overridesResolution, plansResolution,
     racesResolution, settingsResolution,
   ].every((status) => status === "success");
-  const needsFastFinish = hydrationReady && !!raceDistanceMiles &&
+  const needsFastFinish = !racePerformanceEnabled && hydrationReady && !!raceDistanceMiles &&
     raceDistanceMiles >= HALF_MARATHON_MILES;
   // Invalidate settled results during render when the selection or anchors
   // change, before the next effect can cancel an in-flight hydration.
@@ -385,7 +388,7 @@ export default function PlanInsightsPage() {
   // segments use their own shorter floor. See src/utils/bestEffortExtraction.ts.
   // HR anchors come from prefs.
   const bestEffortSegments = useMemo(() => {
-    if (!raceDistanceMiles || raceDistanceMiles < HALF_MARATHON_MILES) return [];
+    if (racePerformanceEnabled || !raceDistanceMiles || raceDistanceMiles < HALF_MARATHON_MILES) return [];
     // Shared recipe — identical to the Run Detail impact tile so the two never
     // diverge. Uses the fast-finish-hydrated run set when available (route-derived
     // per-mile pace + HR), falling back to the full-run-only path until hydration
@@ -397,7 +400,7 @@ export default function PlanInsightsPage() {
       maxHr,
       restingHr
     );
-  }, [hydratedRuns, runs, raceDistanceMiles, maxHr, restingHr]);
+  }, [racePerformanceEnabled, hydratedRuns, runs, raceDistanceMiles, maxHr, restingHr]);
 
   // Riegel fit for the LIVE race prediction (asOf = now). Routed through the
   // shared pure predictRaceTime so the card and the weekly trend can never
@@ -408,13 +411,13 @@ export default function PlanInsightsPage() {
   // One prediction call feeds BOTH the card's fit and the projection's anchor,
   // so the dashed line can never diverge from the displayed number.
   const livePrediction = useMemo(() => {
-    if (!raceDistanceMiles) return null;
+    if (racePerformanceEnabled || !raceDistanceMiles) return null;
     return predictRaceTime(runs, {
       raceDistanceMiles,
       races: raceInputs,
       bestEffortSegments,
     });
-  }, [runs, raceDistanceMiles, raceInputs, bestEffortSegments]);
+  }, [racePerformanceEnabled, runs, raceDistanceMiles, raceInputs, bestEffortSegments]);
   const raceFit = livePrediction?.fit ?? null;
   const liveBaselineSeconds = livePrediction?.predictedSeconds ?? null;
 
@@ -433,14 +436,14 @@ export default function PlanInsightsPage() {
   // Weekly prediction trend — predicted finish recomputed as of each plan
   // week's end (in-memory, no storage). Empty without a plan + race distance.
   const predictionTrend = useMemo(() => {
-    if (!activePlan || !raceDistanceMiles) return [];
+    if (racePerformanceEnabled || !activePlan || !raceDistanceMiles) return [];
     return buildPredictionTrend(activePlan, runs, {
       raceDistanceMiles,
       races: raceInputs,
       goalSeconds,
       bestEffortSegments,
     });
-  }, [activePlan, runs, raceDistanceMiles, raceInputs, goalSeconds, bestEffortSegments]);
+  }, [racePerformanceEnabled, activePlan, runs, raceDistanceMiles, raceInputs, goalSeconds, bestEffortSegments]);
 
   // Plan-completion projection — dashed line extending the trend to race day.
   // Anchored to today's live prediction (liveBaselineSeconds) with the raw
@@ -449,7 +452,7 @@ export default function PlanInsightsPage() {
   // for past races / no remaining entries / no live prediction → the chart
   // renders the historical line only. See predictionTrend.ts.
   const predictionProjection = useMemo(() => {
-    if (!activePlan || !raceDistanceMiles || !activeRace) return [];
+    if (racePerformanceEnabled || !activePlan || !raceDistanceMiles || !activeRace) return [];
     return buildAnchoredPredictionProjection({
       plan: activePlan,
       historicalRuns: runs,
@@ -457,7 +460,7 @@ export default function PlanInsightsPage() {
       raceDate: parseLocalDate(activeRace.raceDate),
       liveBaselineSeconds,
     });
-  }, [activePlan, runs, raceDistanceMiles, raceInputs, bestEffortSegments, activeRace, liveBaselineSeconds]);
+  }, [racePerformanceEnabled, activePlan, runs, raceDistanceMiles, raceInputs, bestEffortSegments, activeRace, liveBaselineSeconds]);
 
   // Plan adherence — weekly planned vs actual (±1 day matching). Single source
   // is buildPlanAdherence; the page passes throughDate = getWeekStart(now) to
@@ -520,7 +523,7 @@ export default function PlanInsightsPage() {
   // `runs`) matches buildDailyLoadMap's convention of counting both run and
   // non-run load into totalLoad.
   const ctlTrend = useMemo(() => {
-    if (workouts.length === 0) return null;
+    if (racePerformanceEnabled || workouts.length === 0) return null;
     const today = new Date();
     const todayLocal = new Date(today.getFullYear(), today.getMonth(), today.getDate());
     const earliestMs = workouts.reduce(
@@ -539,20 +542,20 @@ export default function PlanInsightsPage() {
     const last = series[series.length - 1];
     const ctl4wAgo = valueNWeeksAgo(series, 4, "ctl");
     return last && ctl4wAgo != null ? trendVsPast(last.ctl, ctl4wAgo) : null;
-  }, [workouts, maxHr, restingHr]);
+  }, [racePerformanceEnabled, workouts, maxHr, restingHr]);
 
   // Consistency credit — a SEPARATE, bounded (±2%) post-hoc adjustment on top
   // of the anchored projection, computed ONCE (today) and applied uniformly
   // to every future week. Never folded into the Riegel fit itself. See
   // src/utils/planConsistency.ts for the full blend/bound rationale.
   const consistencyScore = useMemo(() => {
-    if (!planStats) return 0;
+    if (racePerformanceEnabled || !planStats) return 0;
     return computeConsistencyScore({
       weeksHitTarget: planStats.weeksHit,
       weeksWithPlan: planStats.weeksWithPlan,
       ctlTrend,
     });
-  }, [planStats, ctlTrend]);
+  }, [racePerformanceEnabled, planStats, ctlTrend]);
 
   const consistencyAdjustmentPct = useMemo(
     () => computeConsistencyAdjustmentPct(consistencyScore),
@@ -986,7 +989,17 @@ export default function PlanInsightsPage() {
       )}
 
       {/* ── Race Predictions ─────────────────────────────── */}
-      {activeRace && (
+      {racePerformanceEnabled && (
+        <RacePerformancePanel
+          races={races}
+          workouts={rawWorkouts}
+          overrides={overrides}
+          plan={activePlan}
+          selectedRace={activeRace}
+          sourcesReady={[workoutsResolution, overridesResolution, racesResolution, plansResolution].every(status => status === "success")}
+        />
+      )}
+      {!racePerformanceEnabled && activeRace && (
         <>
           <SectionHeader icon={Target} title="Race Predictions" />
 
@@ -1428,6 +1441,7 @@ export default function PlanInsightsPage() {
       {activeRace && (
         <>
       {/* ── Half Marathon Readiness ─────────────────────────── */}
+      {!racePerformanceEnabled && <>
       <SectionHeader icon={Shield} title={`${raceDistanceLabel} Readiness`} />
 
       <div className="bg-card rounded-2xl border border-border p-6">
@@ -1494,6 +1508,8 @@ export default function PlanInsightsPage() {
           Ask about my readiness
         </button>
       </div>
+
+      </>}
 
       {/* ── Performance by Run Type ─────────────────────────── */}
       <SectionHeader icon={Layers} title="Performance by Run Type" />

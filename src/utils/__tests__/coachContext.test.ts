@@ -132,6 +132,7 @@ function coachAdherence(plannedMiles: number, actualMiles: number) {
 }
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.useRealTimers();
 });
 
@@ -225,6 +226,45 @@ describe("buildCoachContext — canonical race prediction parity", () => {
       }
     ).activeRace?.predictedTime ?? null;
   }
+
+  it("withholds forecasts and skips the legacy model under the preview gate", () => {
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", "true");
+    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "preview");
+    const legacy = vi.spyOn(racePrediction, "predictRaceTime");
+    const context = buildCoachContext(fixture, null, race(), [], 185, 60, { races: [], asOf });
+    expect(context.activeRace).toMatchObject({
+      predictedTime: null,
+      comparisonStatus: null,
+      performanceEvidence: { currentCapabilitySeconds: null, raceDayForecastSeconds: null },
+    });
+    expect(context.activeRace?.performanceEvidence?.reason).toContain("withheld");
+    expect(legacy).not.toHaveBeenCalled();
+    legacy.mockRestore();
+  });
+
+  it("labels a confirmed race time as dated historical evidence without a current estimate", () => {
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", "true");
+    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "preview");
+    const pastRace = race({
+      id: "past-half", name: "Historical Half", raceDate: "2026-04-26",
+      raceDistance: "halfMarathon", isActive: false,
+      performanceEvidence: {
+        status: "verified", kind: "official_race", knownAt: "2026-04-27T12:00:00Z",
+        raceDate: "2026-04-26", distanceMeters: 21097.5, finishSeconds: 8100,
+        effort: "maximal", conditions: "Recorded course conditions", source: "Official result fixture",
+      },
+    });
+    const activeRace = race({ raceDistance: "halfMarathon" });
+    const context = buildCoachContext([], null, activeRace, [], 185, 60, {
+      races: [], raceRecords: [pastRace, activeRace], asOf, timeZone: "America/New_York",
+    });
+    expect(context.activeRace?.performanceEvidence?.historicalBenchmark).toMatchObject({
+      name: "Historical Half", date: "2026-04-26", finishTime: "2:15:00",
+      evidenceStatus: "verified", stale: true,
+    });
+    expect(context.activeRace?.predictedTime).toBeNull();
+    expect(context.activeRace?.performanceEvidence?.currentCapabilitySeconds).toBeNull();
+  });
 
   it("equals predictRaceTime on the same fixture and routes through that entry point", () => {
     const activeRace = race();

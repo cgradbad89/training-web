@@ -67,11 +67,29 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   act(() => root.unmount());
   container.remove();
 });
 
 describe("SettingsPage recompute concurrency", () => {
+  it("withholds a prediction-derived threshold while keeping manual pace entry editable", async () => {
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", "true");
+    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "preview");
+    await act(async () => root.unmount());
+    await act(async () => { root = createRoot(container); root.render(<SettingsPage />); });
+    await flush();
+    expect(container.textContent).toContain("A numerical threshold suggestion is withheld");
+    const threshold = container.querySelector<HTMLInputElement>("#threshold-pace")!;
+    expect(threshold.disabled).toBe(false);
+    expect(threshold.readOnly).toBe(false);
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    await act(async () => {
+      setter.call(threshold, "9:30");
+      threshold.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(threshold.value).toBe("9:30");
+  });
   it("does not start overlapping recomputations on repeated Save actions", async () => {
     let finish!: (value: {
       processed: number;

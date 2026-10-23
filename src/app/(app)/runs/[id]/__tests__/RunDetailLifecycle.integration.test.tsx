@@ -11,6 +11,7 @@ const h = vi.hoisted(() => ({
   workout: null as HealthWorkout | null,
   splitRead: vi.fn(), routeRead: vi.fn(), cacheWrite: vi.fn(), splitWrite: vi.fn(),
   bestEfforts: vi.fn(), weather: vi.fn(), cluster: vi.fn(), backfill: vi.fn(),
+  hydrate: vi.fn(), impact: vi.fn(), fetchRaces: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({ useParams: () => ({ id: "synthetic-run" }), usePathname: () => h.path, useRouter: () => ({ back: vi.fn() }) }));
 vi.mock("next/dynamic", () => ({ default: () => () => null }));
@@ -29,9 +30,10 @@ vi.mock("@/services/healthWorkouts", () => ({
 vi.mock("@/services/shoes", () => ({ fetchShoes: async () => [], fetchManualShoeAssignmentsMap: async () => ({}), saveManualAssignments: vi.fn() }));
 vi.mock("@/services/workoutOverrides", () => ({ fetchOverride: async () => null, fetchAllOverrides: async () => ({}), saveOverride: vi.fn(), deleteOverride: vi.fn(), excludeWorkout: vi.fn(), restoreWorkout: vi.fn() }));
 vi.mock("@/services/userSettings", () => ({ fetchUserSettings: async () => null }));
-vi.mock("@/services/races", () => ({ fetchRaces: async () => [] }));
+vi.mock("@/services/races", () => ({ fetchRaces: h.fetchRaces }));
 vi.mock("@/services/plans", () => ({ fetchPlans: async () => [] }));
-vi.mock("@/services/fastFinishSplits", () => ({ hydrateFastFinishSplits: async () => ({ runs: [], routeFetches: 0 }) }));
+vi.mock("@/services/fastFinishSplits", () => ({ hydrateFastFinishSplits: h.hydrate }));
+vi.mock("@/utils/runImpact", async importOriginal => ({ ...await importOriginal<typeof import("@/utils/runImpact")>(), computeRunImpact: h.impact }));
 vi.mock("@/utils/routeCache", () => ({ getRoutePoints: h.routeRead }));
 vi.mock("@/utils/mileSplitsCache", () => ({ getMileSplits: h.splitRead, saveMileSplitCache: h.splitWrite }));
 vi.mock("@/utils/bestEfforts", async importOriginal => ({ ...await importOriginal<typeof import("@/utils/bestEfforts")>(), shouldRecomputeBestEfforts: () => false }));
@@ -57,13 +59,35 @@ beforeEach(() => {
   h.sessionGuard.mockImplementation((epoch: number) => epoch === h.currentEpoch);
   h.workout = { workoutId: "synthetic-run", name: "Synthetic Run", displayType: "Run", activityType: "running", startDate: new Date("2026-10-14T12:00:00Z"), endDate: new Date("2026-10-14T12:10:00Z"), syncedAt: new Date(), durationSeconds: 600, distanceMiles: 1.3, distanceMeters: 2092, hasRoute: true, routeComplete: true, isRunLike: true, avgHeartRate: 140, avgPaceSecPerMile: 460, avgSpeedMPS: 3.5, calories: 100, sourceName: "Synthetic", hrDriftPct: null, cadenceSPM: null, efficiencyRaw: null, efficiencyScore: null, elevationGainM: 0, routeClusterId: "already-clustered" };
   for (const fn of [h.splitRead, h.routeRead, h.cacheWrite, h.splitWrite, h.bestEfforts, h.weather, h.cluster, h.backfill]) fn.mockReset();
+  h.hydrate.mockReset().mockResolvedValue({ runs: [], routeFetches: 0 });
+  h.impact.mockReset().mockReturnValue(null);
+  h.fetchRaces.mockReset().mockResolvedValue([]);
   h.splitRead.mockResolvedValue([]); h.routeRead.mockResolvedValue(points);
   h.cacheWrite.mockResolvedValue(undefined); h.splitWrite.mockResolvedValue(undefined); h.backfill.mockResolvedValue(0);
   container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
 });
-afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.restoreAllMocks(); });
+afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 describe("Run Detail operation ownership at page boundaries", () => {
+  it("withholds prediction impact without best-effort hydration under the preview gate", async () => {
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", "true");
+    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "preview");
+    h.fetchRaces.mockResolvedValue([{ id: "target", name: "Half", raceDate: "2027-03-20", raceDistance: "halfMarathon", isActive: true }]);
+    await render();
+    expect(h.hydrate).not.toHaveBeenCalled();
+    expect(h.impact).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("Numerical estimate unavailable");
+    // The unrelated visible map/splits flow still works.
+    expect(h.routeRead).toHaveBeenCalledOnce();
+  });
+  it("retains legacy hydration and impact calculation when the gate is off", async () => {
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", "false");
+    h.fetchRaces.mockResolvedValue([{ id: "target", name: "Half", raceDate: "2027-03-20", raceDistance: "halfMarathon", isActive: true }]);
+    await render();
+    expect(h.hydrate).toHaveBeenCalled();
+    expect(h.impact).toHaveBeenCalled();
+    expect(container.textContent).not.toContain("Numerical estimate unavailable");
+  });
   it("does not start a route query when a pending split read fails after unmount", async () => {
     const pending = deferred<never>(); h.splitRead.mockReturnValue(pending.promise);
     vi.spyOn(console, "error").mockImplementation(() => {});

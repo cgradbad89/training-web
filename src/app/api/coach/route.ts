@@ -7,6 +7,7 @@ import {
   MAX_COACH_REQUEST_BYTES,
 } from './coachConfig'
 import { isAuthorizedTrainingUser } from '@/lib/trainingAuthorization'
+import { isRacePerformanceEnabled, RACE_PERFORMANCE_UNAVAILABLE_REASON } from '@/lib/racePerformanceGate'
 
 const PRIVATE_NO_STORE = 'private, no-store'
 
@@ -203,6 +204,16 @@ function buildSystemPrompt(context: CoachContext): string {
     stats,
   } = context
 
+  const racePerformanceEnabled = isRacePerformanceEnabled()
+  const historicalBenchmark = activeRace?.performanceEvidence?.historicalBenchmark
+  const historicalBenchmarkSection = historicalBenchmark
+    ? `Historical demonstrated benchmark: ${historicalBenchmark.name}, ${historicalBenchmark.date}, ${historicalBenchmark.finishTime ?? 'time unavailable'}; evidence status: ${historicalBenchmark.evidenceStatus}; stale: ${historicalBenchmark.stale ? 'yes' : 'no'}. This is a dated historical observation, not proof of current capability.`
+    : 'Historical demonstrated benchmark: unavailable in the submitted evidence.'
+  // Enforce the deployment policy server-side: older clients or posted context
+  // cannot reactivate a withheld legacy forecast.
+  const racePerformanceSection = racePerformanceEnabled
+    ? `- ${historicalBenchmarkSection}\n- Current capability estimate: Unavailable\n- Race-day forecast: Unavailable\n- Evidence policy: ${RACE_PERFORMANCE_UNAVAILABLE_REASON}`
+    : `- Predicted finish time: ${activeRace?.predictedTime ?? 'Not enough data'}\n- Status: ${activeRace?.comparisonStatus ?? 'Unknown'}`
   const raceSection = activeRace
     ? `
 ## Active Race Goal
@@ -212,8 +223,7 @@ function buildSystemPrompt(context: CoachContext): string {
 - Distance: ${activeRace.distanceLabel ?? 'Unknown'}
 - Target pace: ${activeRace.targetPace ?? '—'} /mi
 - Goal finish time: ${activeRace.goalTime ?? '—'}
-- Predicted finish time: ${activeRace.predictedTime ?? 'Not enough data'}
-- Status: ${activeRace.comparisonStatus ?? 'Unknown'}
+${racePerformanceSection}
 `.trim()
     : 'No active race goal set.'
 
@@ -315,7 +325,9 @@ ${healthSection}
 
 When asked about sleep, weight, steps, or other health metrics, use the actual numbers above. Connect health data to running performance — e.g. poor sleep correlating with slower paces, elevated resting HR suggesting fatigue or illness, low steps on rest days being appropriate vs concerning.
 
-When asked about plan changes, consider the runner's current fitness, race timeline, and adherence patterns. When asked about predictions, use the data provided. Always ground advice in the actual numbers shown above.`
+When asked about plan changes, consider the runner's current fitness, race timeline, and adherence patterns. ${racePerformanceEnabled
+    ? 'Numerical current-capability estimates, race-day forecasts, prediction confidence intervals, and per-run finish-time credits are withheld. Do not invent or infer any of these from training paces, mileage, adherence, elapsed time, or the goal finish time. Explain the evidence limitation and discuss completed training descriptively. A target is an owner-set goal, not a predicted outcome.'
+    : 'When asked about predictions, use the data provided.'} Always ground advice in the actual numbers shown above.`
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -355,6 +367,15 @@ interface CoachContext {
     goalTime: string | null
     predictedTime: string | null
     comparisonStatus: string | null
+    performanceEvidence?: {
+      historicalBenchmark: {
+        name: string
+        date: string
+        finishTime: string | null
+        evidenceStatus: string
+        stale: boolean
+      } | null
+    }
   } | null
   stats: {
     totalRuns: number

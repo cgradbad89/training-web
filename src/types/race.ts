@@ -1,3 +1,5 @@
+import type { RacePerformanceConfirmation } from "@/types/racePerformance";
+
 export type RaceDistance =
   | "5K"
   | "10K"
@@ -43,6 +45,8 @@ export interface Race {
   actualRunDistanceMiles?: number;
   actualRunDurationSeconds?: number;
   actualRunAvgPace?: number;
+  /** Optional explicit evidence revision; legacy result/link fields imply no verification. */
+  performanceEvidence?: RacePerformanceConfirmation;
 }
 
 /** Legacy alias */

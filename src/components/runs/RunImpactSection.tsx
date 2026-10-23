@@ -18,6 +18,8 @@ interface RunImpactSectionProps {
   } | null;
   /** Fitness (CTL) tile inputs; null hides the tile. */
   ctl: CtlImpact | null;
+  /** Explains abstention without replacing it with a legacy prediction. */
+  predictionUnavailableReason?: string | null;
 }
 
 /** "31s" under a minute, else "1:31" (m:ss). Deltas are small by nature. */
@@ -41,8 +43,8 @@ function formatRaceDate(iso: string): string {
  * a run that worsens the prediction shows its unfavorable delta in the
  * negative color, never suppressed.
  */
-export function RunImpactSection({ prediction, ctl }: RunImpactSectionProps) {
-  if (!prediction && !ctl) return null;
+export function RunImpactSection({ prediction, ctl, predictionUnavailableReason }: RunImpactSectionProps) {
+  if (!prediction && !ctl && !predictionUnavailableReason) return null;
 
   return (
     <div className="bg-card rounded-2xl border border-border p-5">
@@ -50,7 +52,15 @@ export function RunImpactSection({ prediction, ctl }: RunImpactSectionProps) {
         This Run&rsquo;s Impact
       </h2>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {prediction && (
+        {predictionUnavailableReason ? (
+          <div className="bg-surface rounded-xl p-4 flex flex-col gap-1.5">
+            <span className="text-[10px] font-semibold text-textSecondary uppercase tracking-wide">
+              Race-performance impact
+            </span>
+            <span className="text-sm font-semibold text-textPrimary">Numerical estimate unavailable</span>
+            <p className="text-xs text-textSecondary">{predictionUnavailableReason}</p>
+          </div>
+        ) : prediction && (
           <div className="bg-surface rounded-xl p-4 flex flex-col gap-1.5">
             <span className="text-[10px] font-semibold text-textSecondary uppercase tracking-wide">
               🎯 {prediction.raceName} Prediction &middot;{" "}

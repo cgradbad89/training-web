@@ -162,6 +162,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.unstubAllEnvs()
   act(() => root?.unmount())
   container?.remove()
   vi.unstubAllGlobals()
@@ -169,6 +170,23 @@ afterEach(() => {
 })
 
 describe('CoachPage provider behavior', () => {
+  it('uses only summary context and withholds forecasts when race performance is enabled', async () => {
+    vi.stubEnv('NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE', 'true')
+    vi.stubEnv('NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV', 'preview')
+    h.fetchHealthWorkouts.mockResolvedValue([recentWorkout()])
+    h.fetchRaces.mockResolvedValue([{
+      id: 'race', name: 'Half', raceDate: '2099-01-01',
+      raceDistance: 'halfMarathon', isActive: true, createdAt: '',
+    }])
+    h.searchParams = new URLSearchParams('q=How+am+I+tracking')
+    await mount()
+    const body = JSON.parse(String((h.fetch.mock.calls[0][1] as RequestInit).body))
+    expect(h.hydrateFastFinishSplits).not.toHaveBeenCalled()
+    expect(body.context.activeRace.predictedTime).toBeNull()
+    expect(body.context.activeRace.performanceEvidence.raceDayForecastSeconds).toBeNull()
+    expect(body.context.stats.totalRuns).toBe(1)
+  })
+
   it('eliminates all five page-owned training queries while retaining the 30-day Health read', async () => {
     await mount()
     for (const loader of [h.fetchHealthWorkouts, h.fetchAllOverrides, h.fetchPlans, h.fetchRaces, h.fetchUserSettings]) {

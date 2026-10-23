@@ -7,6 +7,7 @@ import { useAppData, type AppDataResolution } from '@/contexts/AppDataContext'
 import { isRunningPlan } from '@/types/plan'
 import { fetchHealthMetrics, type HealthMetric } from '@/services/healthMetrics'
 import { buildCoachContext } from '@/utils/coachContext'
+import { isRacePerformanceEnabled, RACE_PERFORMANCE_UNAVAILABLE_REASON } from '@/lib/racePerformanceGate'
 import { parseLocalDate, daysUntil } from '@/utils/dates'
 import { selectEffectiveWorkouts } from '@/utils/selectActiveWorkouts'
 import {
@@ -159,7 +160,7 @@ export default function CoachPage() {
         .filter(r => r.distanceMiles > 0)
 
       let bestEffortSegments: BestEffortSegment[] = []
-      if (raceDistanceMiles && raceDistanceMiles >= HALF_MARATHON_MILES) {
+      if (!isRacePerformanceEnabled() && raceDistanceMiles && raceDistanceMiles >= HALF_MARATHON_MILES) {
         const hydrated = await hydrateFastFinishSplits(userId, runs, {
           maxHr,
           restingHr,
@@ -183,7 +184,7 @@ export default function CoachPage() {
           health.metrics,
           maxHr,
           restingHr,
-          { races: raceInputs, bestEffortSegments, asOf }
+          { races: raceInputs, raceRecords: races, bestEffortSegments, asOf }
         ) })
     }
     void prepare().catch(err => {
@@ -361,6 +362,9 @@ export default function CoachPage() {
               </span>
             )}
           </div>
+          {isRacePerformanceEnabled() && (
+            <p className="text-xs text-textSecondary mt-3">{RACE_PERFORMANCE_UNAVAILABLE_REASON}</p>
+          )}
         </div>
       )}
 

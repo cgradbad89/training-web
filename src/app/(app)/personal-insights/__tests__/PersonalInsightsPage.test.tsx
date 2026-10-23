@@ -142,11 +142,23 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   act(() => root.unmount());
   container.remove();
 });
 
 describe("PersonalInsightsPage tabs", () => {
+  it("replaces legacy race numbers and confidence without fitting hidden predictions", () => {
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", "true");
+    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "preview");
+    h.searchParams = new URLSearchParams("tab=performance");
+    mount();
+    expect(hasText("Numerical race predictions unavailable")).toBe(true);
+    expect(hasText("Predicted Race Times")).toBe(false);
+    expect(hasText("Confidence")).toBe(false);
+    expect(h.riegelCalls).toBe(0);
+    expect(hasText("Personal Records by Year")).toBe(true);
+  });
   it("defaults to the Fitness & Load tab when no ?tab= param is present", () => {
     mount();
     // Fitness content is shown…
