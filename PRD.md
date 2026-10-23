@@ -358,6 +358,8 @@ Production Firestore rules are manually maintained in Firebase Console by the pr
 
 ## Section 6 — Known Sharp Edges
 
+- **Isolated owner acceptance (Phase 3A):** the normal shell mounts automatic writers and persistent Firestore caching, so it cannot satisfy a strict no-write acceptance session. `tools/race-performance-acceptance/` is a localhost-only developer harness using the actual panel, a unique Firebase app, in-memory Auth, cache-free Firestore Lite server reads, guarded storage/network access and a transitive import audit. It is excluded from Next Production builds. Required parent-source errors/caps withhold the panel and dispose the session; missing running distance/duration is not zero. Owner-panel acceptance and full-shell integration are separate outcomes. See its README; no Production flag, rules, indexes or data changes are authorized by this workflow.
+
 1. **Per-point HR now exists on the `route` subcollection** (field `hr: number | null`, added iOS commit 84dfbf3). Run Detail HR-zone breakdown (`ZoneBreakdown`) and Training Load consumers now read `users/{uid}/settings/prefs.maxHeartRate` when set and otherwise fall back to `DEFAULT_MAX_HR=185` through `resolveMaxHr(settings)`. Per-mile HR is still sourced separately from the `mileSplits` subcollection (Section 3).
 
 2. **Firestore subcollection security rules**: Every subcollection needs an explicit Firestore security rule. Missing rules produce permission-denied failures, which can be silent or surface as empty data. Always add rules when adding a new subcollection. (`src/lib/firebase.ts` comment)
