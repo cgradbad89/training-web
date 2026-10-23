@@ -249,7 +249,17 @@ export function evaluateRacePerformance(input: RacePerformanceInput): RacePerfor
   const sameDistance = historicalBenchmarks.filter(e => e.distanceMeters !== null
     && Math.abs(e.distanceMeters - targetDistanceMeters) <= policy.sameDistanceToleranceMeters);
   const confirmed = sameDistance.filter(e => e.eligibleSameDistanceBenchmark);
-  const latestBenchmark = confirmed.at(-1) ?? sameDistance.at(-1) ?? null;
+  const tierRank: Record<RacePerformanceEvidence["tier"], number> = {
+    official_result: 0, confirmed_race_or_time_trial: 1, linked_race_workout: 2,
+    identified_high_effort: 3, insufficient: 4,
+  };
+  // Trust first, then the latest observation within that evidence level. The
+  // full timeline remains chronological and preserves newer lower-tier results.
+  const preferred = (candidates: RacePerformanceEvidence[]) => [...candidates].sort((a, b) =>
+    tierRank[a.tier] - tierRank[b.tier]
+    || Number(b.status === "verified") - Number(a.status === "verified")
+    || compare(b.raceDate, a.raceDate) || compare(a.raceId, b.raceId))[0] ?? null;
+  const latestBenchmark = preferred(confirmed) ?? preferred(sameDistance);
   const researchEquivalences: RaceResearchEquivalence[] = evidence.flatMap(e => {
     if (!e.eligibleForEquivalence || e.distanceMeters === null || e.finishSeconds === null
       || Math.abs(e.distanceMeters - targetDistanceMeters) <= policy.sameDistanceToleranceMeters) return [];

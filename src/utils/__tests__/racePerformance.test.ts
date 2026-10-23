@@ -130,6 +130,20 @@ describe("Phase 3A race evidence hierarchy", () => {
     expect(first.latestBenchmark?.raceId).toBe("later");
     expect(first.historicalBenchmarks.map(e => e.raceId)).toEqual(["earlier", "later"]);
   });
+  it("prefers verified official evidence over a newer owner-confirmed time trial", () => {
+    const official = race({ id: "official", actualRunId: undefined, raceDate: "2026-05-01",
+      performanceEvidence: confirmation({ raceDate: "2026-05-01", finishSeconds: 7300 }) });
+    const trial = race({ performanceEvidence: confirmation({ status: "owner_confirmed", kind: "time_trial" }) });
+    const result = evaluateRacePerformance(input({ races: [trial, official] }));
+    expect(result.latestBenchmark?.raceId).toBe("official");
+    expect(result.historicalBenchmarks.map(e => e.raceId)).toEqual(["official", "race-a"]);
+  });
+  it("prefers a confirmed race over a newer specifically identified high effort", () => {
+    const confirmedRace = race({ id: "confirmed-race", actualRunId: undefined, raceDate: "2026-05-01",
+      performanceEvidence: confirmation({ raceDate: "2026-05-01", status: "owner_confirmed", kind: "race", finishSeconds: 7300 }) });
+    const effort = race({ performanceEvidence: confirmation({ status: "owner_confirmed", kind: "high_effort" }) });
+    expect(evaluateRacePerformance(input({ races: [effort, confirmedRace] })).latestBenchmark?.raceId).toBe("confirmed-race");
+  });
   it("abstains for missing results rather than fabricating zero or a flat forecast", () => {
     const result = evaluateRacePerformance(input({ races: [race({ actualRunId: undefined })], workouts: [] }));
     expect(result.latestBenchmark).toBeNull();
