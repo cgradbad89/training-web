@@ -69,6 +69,7 @@ import {
 } from "@/utils/trainingLoad";
 import { InfoTooltip } from "@/components/ui/InfoTooltip";
 import { type Vo2Entry } from "@/utils/vo2History";
+import { isRacePerformanceEnabled, RACE_PERFORMANCE_UNAVAILABLE_REASON } from "@/lib/racePerformanceGate";
 
 // ─── Training Load KPI tooltip copy ───────────────────────────────────────────
 // Single source of truth so the four KPI cards and any future surfaces stay
@@ -1172,6 +1173,7 @@ function PerformanceTabScope({
   statsData: AggregatedStatsDoc | null;
   children: (data: PerformanceTabData) => React.ReactNode;
 }) {
+  const racePerformanceEnabled = isRacePerformanceEnabled();
   const runs = useMemo(
     () => workouts.filter((workout) => workout.isRunLike),
     [workouts]
@@ -1204,24 +1206,24 @@ function PerformanceTabScope({
     [runs]
   );
   const efforts = useMemo(
-    () => buildQualifyingEfforts(runInputs, 56, { races: raceInputs }),
-    [runInputs, raceInputs]
+    () => racePerformanceEnabled ? [] : buildQualifyingEfforts(runInputs, 56, { races: raceInputs }),
+    [runInputs, raceInputs, racePerformanceEnabled]
   );
   const fit5k = useMemo(
-    () => fitRiegel(efforts, 3.1069, 0, { min: 0.9, max: 1.3 }),
-    [efforts]
+    () => racePerformanceEnabled ? null : fitRiegel(efforts, 3.1069, 0, { min: 0.9, max: 1.3 }),
+    [efforts, racePerformanceEnabled]
   );
   const fitTen = useMemo(
-    () => fitRiegel(efforts, 10.0, 3.0, { min: 1.04, max: 1.10 }),
-    [efforts]
+    () => racePerformanceEnabled ? null : fitRiegel(efforts, 10.0, 3.0, { min: 1.04, max: 1.10 }),
+    [efforts, racePerformanceEnabled]
   );
   const fitHalf = useMemo(
-    () => fitRiegel(efforts, 13.109, 3.0, { min: 1.04, max: 1.10 }),
-    [efforts]
+    () => racePerformanceEnabled ? null : fitRiegel(efforts, 13.109, 3.0, { min: 1.04, max: 1.10 }),
+    [efforts, racePerformanceEnabled]
   );
   const fitMarathon = useMemo(
-    () => fitRiegel(efforts, 26.219, 3.0, { min: 1.04, max: 1.10 }),
-    [efforts]
+    () => racePerformanceEnabled ? null : fitRiegel(efforts, 26.219, 3.0, { min: 1.04, max: 1.10 }),
+    [efforts, racePerformanceEnabled]
   );
   const yearRuns = useMemo(
     () => runs.filter((run) => run.startDate.getFullYear() === selectedYear),
@@ -1401,7 +1403,9 @@ export default function PersonalInsightsPage() {
         <h1 className="text-2xl font-bold text-textPrimary">Personal Insights</h1>
         <button
           onClick={() => askCoach(
-            'Analyze my personal running trends and fitness ' +
+            isRacePerformanceEnabled()
+              ? 'Analyze my completed training, pace trends, and personal records. What do they describe about my preparation, and what race evidence is still needed?'
+              : 'Analyze my personal running trends and fitness ' +
             'progression. What do my pace trends, PRs, and ' +
             'predicted race times suggest about my fitness ' +
             'development over time?'
@@ -1454,9 +1458,17 @@ export default function PersonalInsightsPage() {
           }) => (
         <>
       {/* ── Predicted Race Times ─────────────────────────── */}
-      <SectionHeader icon={Timer} title="Predicted Race Times" />
+      <SectionHeader icon={Timer} title={isRacePerformanceEnabled() ? "Race Performance" : "Predicted Race Times"} />
 
-      <Card>
+      {isRacePerformanceEnabled() ? (
+        <Card>
+          <p className="font-semibold text-textPrimary">Numerical race predictions unavailable</p>
+          <p className="text-sm text-textSecondary mt-2">{RACE_PERFORMANCE_UNAVAILABLE_REASON}</p>
+          <button type="button" className="text-sm text-primary hover:underline mt-3" onClick={() => router.push('/plan-insights')}>
+            Review race evidence and training progress
+          </button>
+        </Card>
+      ) : <Card>
         <div className="flex items-center justify-between mb-5">
           <p className="text-xs text-textSecondary">Based on last 8 weeks of training</p>
           <MetricBadge label="Confidence" value={confidence} level={confidenceLevel} />
@@ -1509,7 +1521,7 @@ export default function PersonalInsightsPage() {
           <BotMessageSquare className="w-3 h-3" />
           Ask about my race predictions
         </button>
-      </Card>
+      </Card>}
 
       {/* Best Efforts hidden per product decision (overlaps the PR table below).
           Calc + data retained (./BestEffortsSection); restore by uncommenting. */}

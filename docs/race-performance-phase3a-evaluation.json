@@ -1,0 +1,301 @@
+{
+  "source": {
+    "format": "local_firestore_snapshot",
+    "inputSha256": "30624103f8c831bcf168e97c6fca6c6c2ca7b78619a5782c3ed0b012050788ec",
+    "exportedAt": "2026-09-22T15:56:29.587Z",
+    "parentWorkoutCount": 786,
+    "runningSummaryCount": 415,
+    "raceRecordCount": 0,
+    "overrideRecordCount": 0,
+    "missingCollections": [
+      "halfMarathonRaces",
+      "workoutOverrides"
+    ],
+    "childCollectionsUsed": [],
+    "completeness": "Only supplied records were evaluated. Missing race identities, verification, exclusions, or revision history were not fabricated."
+  },
+  "report": {
+    "version": "phase3a-chronological-research-v1",
+    "asOf": "2026-09-22T15:56:29.587Z",
+    "timeZone": "America/New_York",
+    "researchOnly": true,
+    "inputRaceCount": 0,
+    "inputWorkoutCount": 786,
+    "eligibleOutcomeCount": 0,
+    "evidenceStatusCounts": {
+      "verified": 0,
+      "owner_confirmed": 0,
+      "recorded_unverified": 0,
+      "inconsistent": 0,
+      "insufficient_evidence": 0
+    },
+    "excludedOutcomes": [],
+    "largeErrorThresholdSeconds": 300,
+    "methods": {
+      "recent_same_distance": {
+        "attempts": 0,
+        "predictions": 0,
+        "abstentions": 0,
+        "abstentionRate": null,
+        "meanAbsoluteErrorSeconds": null,
+        "meanSignedErrorSeconds": null,
+        "largeErrors": 0
+      },
+      "riegel_fixed_1_06": {
+        "attempts": 0,
+        "predictions": 0,
+        "abstentions": 0,
+        "abstentionRate": null,
+        "meanAbsoluteErrorSeconds": null,
+        "meanSignedErrorSeconds": null,
+        "largeErrors": 0
+      },
+      "vdot_style": {
+        "attempts": 0,
+        "predictions": 0,
+        "abstentions": 0,
+        "abstentionRate": null,
+        "meanAbsoluteErrorSeconds": null,
+        "meanSignedErrorSeconds": null,
+        "largeErrors": 0
+      },
+      "legacy_summary_only": {
+        "attempts": 0,
+        "predictions": 0,
+        "abstentions": 0,
+        "abstentionRate": null,
+        "meanAbsoluteErrorSeconds": null,
+        "meanSignedErrorSeconds": null,
+        "largeErrors": 0
+      }
+    },
+    "cases": [],
+    "raceAgeSensitivity": [
+      {
+        "age": "0–90 days",
+        "methods": {
+          "recent_same_distance": {
+            "attempts": 0,
+            "predictions": 0,
+            "abstentions": 0,
+            "abstentionRate": null,
+            "meanAbsoluteErrorSeconds": null,
+            "meanSignedErrorSeconds": null,
+            "largeErrors": 0
+          },
+          "riegel_fixed_1_06": {
+            "attempts": 0,
+            "predictions": 0,
+            "abstentions": 0,
+            "abstentionRate": null,
+            "meanAbsoluteErrorSeconds": null,
+            "meanSignedErrorSeconds": null,
+            "largeErrors": 0
+          },
+          "vdot_style": {
+            "attempts": 0,
+            "predictions": 0,
+            "abstentions": 0,
+            "abstentionRate": null,
+            "meanAbsoluteErrorSeconds": null,
+            "meanSignedErrorSeconds": null,
+            "largeErrors": 0
+          },
+          "legacy_summary_only": {
+            "attempts": 0,
+            "predictions": 0,
+            "abstentions": 0,
+            "abstentionRate": null,
+            "meanAbsoluteErrorSeconds": null,
+            "meanSignedErrorSeconds": null,
+            "largeErrors": 0
+          }
+        }
+      },
+      {
+        "age": "91–180 days",
+        "methods": {
+          "recent_same_distance": {
+            "attempts": 0,
+            "predictions": 0,
+            "abstentions": 0,
+            "abstentionRate": null,
+            "meanAbsoluteErrorSeconds": null,
+            "meanSignedErrorSeconds": null,
+            "largeErrors": 0
+          },
+          "riegel_fixed_1_06": {
+            "attempts": 0,
+            "predictions": 0,
+            "abstentions": 0,
+            "abstentionRate": null,
+            "meanAbsoluteErrorSeconds": null,
+            "meanSignedErrorSeconds": null,
+            "largeErrors": 0
+          },
+          "vdot_style": {
+            "attempts": 0,
+            "predictions": 0,
+            "abstentions": 0,
+            "abstentionRate": null,
+            "meanAbsoluteErrorSeconds": null,
+            "meanSignedErrorSeconds": null,
+            "largeErrors": 0
+          },
+          "legacy_summary_only": {
+            "attempts": 0,
+            "predictions": 0,
+            "abstentions": 0,
+            "abstentionRate": null,
+            "meanAbsoluteErrorSeconds": null,
+            "meanSignedErrorSeconds": null,
+            "largeErrors": 0
+          }
+        }
+      },
+      {
+        "age": "over 180 days",
+        "methods": {
+          "recent_same_distance": {
+            "attempts": 0,
+            "predictions": 0,
+            "abstentions": 0,
+            "abstentionRate": null,
+            "meanAbsoluteErrorSeconds": null,
+            "meanSignedErrorSeconds": null,
+            "largeErrors": 0
+          },
+          "riegel_fixed_1_06": {
+            "attempts": 0,
+            "predictions": 0,
+            "abstentions": 0,
+            "abstentionRate": null,
+            "meanAbsoluteErrorSeconds": null,
+            "meanSignedErrorSeconds": null,
+            "largeErrors": 0
+          },
+          "vdot_style": {
+            "attempts": 0,
+            "predictions": 0,
+            "abstentions": 0,
+            "abstentionRate": null,
+            "meanAbsoluteErrorSeconds": null,
+            "meanSignedErrorSeconds": null,
+            "largeErrors": 0
+          },
+          "legacy_summary_only": {
+            "attempts": 0,
+            "predictions": 0,
+            "abstentions": 0,
+            "abstentionRate": null,
+            "meanAbsoluteErrorSeconds": null,
+            "meanSignedErrorSeconds": null,
+            "largeErrors": 0
+          }
+        }
+      }
+    ],
+    "verificationSensitivity": [
+      {
+        "mode": "verified_only",
+        "methods": {
+          "recent_same_distance": {
+            "attempts": 0,
+            "predictions": 0,
+            "abstentions": 0,
+            "abstentionRate": null,
+            "meanAbsoluteErrorSeconds": null,
+            "meanSignedErrorSeconds": null,
+            "largeErrors": 0
+          },
+          "riegel_fixed_1_06": {
+            "attempts": 0,
+            "predictions": 0,
+            "abstentions": 0,
+            "abstentionRate": null,
+            "meanAbsoluteErrorSeconds": null,
+            "meanSignedErrorSeconds": null,
+            "largeErrors": 0
+          },
+          "vdot_style": {
+            "attempts": 0,
+            "predictions": 0,
+            "abstentions": 0,
+            "abstentionRate": null,
+            "meanAbsoluteErrorSeconds": null,
+            "meanSignedErrorSeconds": null,
+            "largeErrors": 0
+          },
+          "legacy_summary_only": {
+            "attempts": 0,
+            "predictions": 0,
+            "abstentions": 0,
+            "abstentionRate": null,
+            "meanAbsoluteErrorSeconds": null,
+            "meanSignedErrorSeconds": null,
+            "largeErrors": 0
+          }
+        }
+      },
+      {
+        "mode": "verified_and_owner_confirmed",
+        "methods": {
+          "recent_same_distance": {
+            "attempts": 0,
+            "predictions": 0,
+            "abstentions": 0,
+            "abstentionRate": null,
+            "meanAbsoluteErrorSeconds": null,
+            "meanSignedErrorSeconds": null,
+            "largeErrors": 0
+          },
+          "riegel_fixed_1_06": {
+            "attempts": 0,
+            "predictions": 0,
+            "abstentions": 0,
+            "abstentionRate": null,
+            "meanAbsoluteErrorSeconds": null,
+            "meanSignedErrorSeconds": null,
+            "largeErrors": 0
+          },
+          "vdot_style": {
+            "attempts": 0,
+            "predictions": 0,
+            "abstentions": 0,
+            "abstentionRate": null,
+            "meanAbsoluteErrorSeconds": null,
+            "meanSignedErrorSeconds": null,
+            "largeErrors": 0
+          },
+          "legacy_summary_only": {
+            "attempts": 0,
+            "predictions": 0,
+            "abstentions": 0,
+            "abstentionRate": null,
+            "meanAbsoluteErrorSeconds": null,
+            "meanSignedErrorSeconds": null,
+            "largeErrors": 0
+          }
+        }
+      }
+    ],
+    "limitations": [
+      "A held-out target may use only confirmed prior race revisions known before its local race day. Later corrections and unknown revision times cannot be reconstructed.",
+      "All outputs are research comparators, not current-capability estimates or race-day forecasts.",
+      "Distance-equivalence comparisons use the latest qualifying different-distance maximal performance; they do not fit an individualized distance exponent.",
+      "Legacy comparison uses only completed parent summaries with known availability and canonical overrides; it excludes GPS/HR children, best-effort segments, synthetic planned workouts, and future consistency credits. It is not a reproduction of the full legacy live projection.",
+      "No personalized prediction interval, fit-R² confidence, or forecast validation is established by this report.",
+      "No race identity/result/verification records were supplied; workout distance alone is not a race outcome label.",
+      "Only 0 eligible held-out race outcome(s) are available. This cannot validate a personalized model or uncertainty interval.",
+      "The five-minute large-error threshold is a reporting choice, not a calibrated uncertainty bound.",
+      "Unknown history coverage and excluded unverified outcomes can cause selection bias. Age and verification slices describe this sample only."
+    ],
+    "calibrationRequirements": [
+      "Reconcile official chip/elapsed timing, nominal distance, date, linkage, maximal effort, conditions, and provenance for each candidate outcome; record when each exact evidence revision became known.",
+      "Preserve dated parent-summary and override revisions or pre-race snapshots to reconstruct only information actually available at each target cutoff.",
+      "Accumulate multiple independent held-out half-marathon outcomes across race ages and conditions, with qualifying different-distance maximal efforts where available; report the number of evaluable pairs and abstentions.",
+      "Pre-register eligibility, freshness, comparison methods, error tolerances and calibration splits. Compare race-only methods with training-context additions on untouched later outcomes; require repeatable incremental accuracy before numerical current-capability estimates.",
+      "Validate race-day forecasting and uncertainty coverage separately with pre-race snapshots at useful forecast horizons. Mileage, adherence and future planned runs cannot supply assumed improvement credits."
+    ]
+  }
+}

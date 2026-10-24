@@ -5,6 +5,10 @@ import { fileURLToPath } from "node:url";
 const repositoryRoot = dirname(fileURLToPath(import.meta.url));
 
 const nextConfig: NextConfig = {
+  env: {
+    // Share the deployment identity with client and server gate evaluations.
+    NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV: process.env.VERCEL_ENV ?? "",
+  },
   // Avoid Next inferring an unrelated parent lockfile as the Turbopack root.
   turbopack: {
     root: repositoryRoot,

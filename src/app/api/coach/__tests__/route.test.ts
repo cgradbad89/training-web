@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { NextRequest } from 'next/server'
 
 const h = vi.hoisted(() => ({
@@ -140,7 +140,38 @@ beforeEach(() => {
   })
 })
 
+afterEach(() => vi.unstubAllEnvs())
+
 describe('POST /api/coach', () => {
+  it('ignores posted legacy forecasts when the race-performance gate is enabled', async () => {
+    vi.stubEnv('NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE', 'true')
+    vi.stubEnv('NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV', 'preview')
+    const activeRace = {
+      name: 'Target Half', raceDate: 'Mar 20, 2027', daysAway: 148,
+      distanceLabel: 'Half Marathon', targetPace: '10:00', goalTime: '2:11:05',
+      predictedTime: '1:42:03', comparisonStatus: 'Ahead by 20 minutes',
+    }
+    const response = await POST(request({ question: 'Predict my race', context: { ...CONTEXT, activeRace } }, { token: 'valid' }))
+    expect(response.status).toBe(200)
+    const prompt = h.getCoachResponseStream.mock.calls[0][0].systemPrompt as string
+    expect(prompt).not.toContain('1:42:03')
+    expect(prompt).not.toContain('Ahead by 20 minutes')
+    expect(prompt).toContain('Race-day forecast: Unavailable')
+    expect(prompt).toContain('Do not invent or infer')
+    expect(prompt).toContain('Goal finish time: 2:11:05')
+  })
+
+  it('preserves the legacy forecast prompt when the gate is disabled', async () => {
+    vi.stubEnv('NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE', 'false')
+    const activeRace = {
+      name: 'Target Half', raceDate: 'Mar 20, 2027', daysAway: 148,
+      distanceLabel: 'Half Marathon', targetPace: null, goalTime: null,
+      predictedTime: '2:15:00', comparisonStatus: 'On pace',
+    }
+    await POST(request({ question: 'Predict my race', context: { ...CONTEXT, activeRace } }, { token: 'valid' }))
+    expect(h.getCoachResponseStream.mock.calls[0][0].systemPrompt).toContain('Predicted finish time: 2:15:00')
+  })
+
   it('requires Firebase authentication', async () => {
     const response = await POST(request({ question: 'Q', context: CONTEXT }))
 

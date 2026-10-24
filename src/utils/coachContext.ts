@@ -15,6 +15,8 @@ import type { BestEffortSegment } from '@/utils/bestEffortExtraction'
 import { weekStart as getWeekStart, parseLocalDate, daysUntil } from '@/utils/dates'
 import { resolveActivityTitle } from '@/utils/resolveActivityTitle'
 import { buildRunTitleMap } from '@/utils/runPlanTitle'
+import { isRacePerformanceEnabled, RACE_PERFORMANCE_UNAVAILABLE_REASON } from '@/lib/racePerformanceGate'
+import { evaluateRacePerformance } from '@/utils/racePerformance'
 import { planWeekIndexFor } from '@/utils/planMatching'
 import { weekHitsMileageTarget } from '@/utils/planAdherence'
 import {
@@ -45,6 +47,9 @@ function getRaceDistanceMiles(race: Race): number | null {
 
 export interface CoachPredictionInputs {
   races: RaceMatchInput[]
+  /** Existing parent race records, including provenance and linked results. */
+  raceRecords?: Race[]
+  timeZone?: string
   bestEffortSegments?: BestEffortSegment[]
   asOf?: Date
 }
@@ -235,7 +240,8 @@ export function buildCoachContext(
     const defaultRaceInputs = distanceMiles
       ? [{ raceDate: activeRace.raceDate, distanceMiles }]
       : []
-    const prediction: RacePredictionResult | null = distanceMiles
+    const racePerformanceEnabled = isRacePerformanceEnabled()
+    const prediction: RacePredictionResult | null = !racePerformanceEnabled && distanceMiles
       ? predictRaceTime(
           allRuns,
           {
@@ -250,6 +256,16 @@ export function buildCoachContext(
     const predictedTime = predictedSeconds
       ? formatRaceTime(predictedSeconds)
       : null
+    const raceEvidence = racePerformanceEnabled
+      ? evaluateRacePerformance({
+          races: predictionInputs?.raceRecords ?? [activeRace],
+          workouts: allRuns,
+          asOf: (predictionInputs?.asOf ?? new Date(now)).toISOString(),
+          timeZone: predictionInputs?.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+          ...(distanceMiles ? { targetDistanceMeters: distanceMiles * 1609.344 } : {}),
+        })
+      : null
+    const benchmark = raceEvidence?.latestBenchmark
 
     // Target pace
     const targetPace = activeRace.targetPaceSecondsPerMile
@@ -280,6 +296,20 @@ export function buildCoachContext(
       goalTime,
       predictedTime,
       comparisonStatus,
+      ...(racePerformanceEnabled ? {
+        performanceEvidence: {
+          currentCapabilitySeconds: null,
+          raceDayForecastSeconds: null,
+          reason: RACE_PERFORMANCE_UNAVAILABLE_REASON,
+          historicalBenchmark: benchmark ? {
+            name: benchmark.name,
+            date: benchmark.raceDate,
+            finishTime: benchmark.finishSeconds == null ? null : formatRaceTime(benchmark.finishSeconds),
+            evidenceStatus: benchmark.status,
+            stale: benchmark.stale,
+          } : null,
+        },
+      } : {}),
     }
   }
 
