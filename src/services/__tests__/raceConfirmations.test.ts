@@ -1,3 +1,4 @@
+import { isRacePerformanceDisplayEnabled } from "@/lib/racePerformanceGate";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { User } from "firebase/auth";
 import type { Race } from "@/types/race";
@@ -69,6 +70,7 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
 describe("race confirmation authorization and online write boundary", () => {
   it.each(["production"])("performs no reads/writes in %s even when opted in", async deployment => {
     vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", deployment);
+    expect(isRacePerformanceDisplayEnabled()).toBe(true);
     await expect(saveRaceConfirmation("owner", input())).rejects.toThrow("disabled");
     expect(h.reads).toEqual([]); expect(h.updates).toEqual([]); expect(h.token).not.toHaveBeenCalled();
   });

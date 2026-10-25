@@ -1,6 +1,6 @@
 "use client";
 
-import { isRacePerformanceEnabled } from "@/lib/racePerformanceGate";
+import { isRacePerformanceDisplayEnabled } from "@/lib/racePerformanceGate";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Activity, HeartPulse, Save, Sparkles } from "lucide-react";
@@ -170,7 +170,7 @@ export default function SettingsPage() {
     );
     setSuggestedMaxHeartRate(settings?.suggestedMaxHeartRate ?? null);
 
-    if (isRacePerformanceEnabled()) {
+    if (isRacePerformanceDisplayEnabled()) {
       setThresholdSuggestion(null);
       return;
     }
@@ -471,13 +471,13 @@ export default function SettingsPage() {
         <SectionTitle
           icon={Activity}
           title="Threshold Pace"
-          subtitle={isRacePerformanceEnabled() ? "Owner-entered threshold pace." : "Manual threshold pace, with a prediction-based suggestion."}
+          subtitle={isRacePerformanceDisplayEnabled() ? "Owner-entered threshold pace." : "Manual threshold pace, with a prediction-based suggestion."}
         />
 
         <FieldLabel
           htmlFor="threshold-pace"
           label="Threshold pace"
-          tooltip={isRacePerformanceEnabled() ? "Your owner-entered reference pace for pace-based training zones. Race-based threshold suggestions are unavailable until the method is validated." : "Roughly the fastest pace you could hold for about an hour (near 10-mile to half-marathon race effort). Used as the reference point for pace-based training zones. The suggested value comes from your predicted 10-mile pace; override it if you have a more accurate number."}
+          tooltip={isRacePerformanceDisplayEnabled() ? "Your owner-entered reference pace for pace-based training zones. Race-based threshold suggestions are unavailable until the method is validated." : "Roughly the fastest pace you could hold for about an hour (near 10-mile to half-marathon race effort). Used as the reference point for pace-based training zones. The suggested value comes from your predicted 10-mile pace; override it if you have a more accurate number."}
         />
         <input
           id="threshold-pace"
@@ -510,7 +510,7 @@ export default function SettingsPage() {
           </div>
         ) : (
           <p className="text-sm text-textSecondary mt-3">
-            {isRacePerformanceEnabled() ? "A numerical threshold suggestion is withheld until the race-based method is validated. You can still enter your own threshold pace." : "No prediction-based threshold suggestion is available yet."}
+            {isRacePerformanceDisplayEnabled() ? "A numerical threshold suggestion is withheld until the race-based method is validated. You can still enter your own threshold pace." : "No prediction-based threshold suggestion is available yet."}
           </p>
         )}
       </Card>

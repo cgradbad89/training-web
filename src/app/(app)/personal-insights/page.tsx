@@ -69,7 +69,7 @@ import {
 } from "@/utils/trainingLoad";
 import { InfoTooltip } from "@/components/ui/InfoTooltip";
 import { type Vo2Entry } from "@/utils/vo2History";
-import { isRacePerformanceEnabled, RACE_PERFORMANCE_UNAVAILABLE_REASON } from "@/lib/racePerformanceGate";
+import { isRacePerformanceDisplayEnabled, RACE_PERFORMANCE_UNAVAILABLE_REASON } from "@/lib/racePerformanceGate";
 
 // ─── Training Load KPI tooltip copy ───────────────────────────────────────────
 // Single source of truth so the four KPI cards and any future surfaces stay
@@ -1173,7 +1173,7 @@ function PerformanceTabScope({
   statsData: AggregatedStatsDoc | null;
   children: (data: PerformanceTabData) => React.ReactNode;
 }) {
-  const racePerformanceEnabled = isRacePerformanceEnabled();
+  const racePerformanceEnabled = isRacePerformanceDisplayEnabled();
   const runs = useMemo(
     () => workouts.filter((workout) => workout.isRunLike),
     [workouts]
@@ -1403,7 +1403,7 @@ export default function PersonalInsightsPage() {
         <h1 className="text-2xl font-bold text-textPrimary">Personal Insights</h1>
         <button
           onClick={() => askCoach(
-            isRacePerformanceEnabled()
+            isRacePerformanceDisplayEnabled()
               ? 'Analyze my completed training, pace trends, and personal records. What do they describe about my preparation, and what race evidence is still needed?'
               : 'Analyze my personal running trends and fitness ' +
             'progression. What do my pace trends, PRs, and ' +
@@ -1458,9 +1458,9 @@ export default function PersonalInsightsPage() {
           }) => (
         <>
       {/* ── Predicted Race Times ─────────────────────────── */}
-      <SectionHeader icon={Timer} title={isRacePerformanceEnabled() ? "Race Performance" : "Predicted Race Times"} />
+      <SectionHeader icon={Timer} title={isRacePerformanceDisplayEnabled() ? "Race Performance" : "Predicted Race Times"} />
 
-      {isRacePerformanceEnabled() ? (
+      {isRacePerformanceDisplayEnabled() ? (
         <Card>
           <p className="font-semibold text-textPrimary">Numerical race predictions unavailable</p>
           <p className="text-sm text-textSecondary mt-2">{RACE_PERFORMANCE_UNAVAILABLE_REASON}</p>

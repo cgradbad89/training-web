@@ -1,23 +1,28 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { isRacePerformanceEnabled } from "../racePerformanceGate";
+import { isRacePerformanceDisplayEnabled, isRaceConfirmationEnabled, isRacePerformanceResearchEnabled } from "../racePerformanceGate";
 
 afterEach(() => vi.unstubAllEnvs());
 
-describe("race-performance preview build gate", () => {
-  it.each([undefined, "false", "1", "TRUE", ""])("defaults off for %s", (flag) => {
+describe("independent race-performance capabilities", () => {
+  it.each([undefined, "false", "1", "TRUE", "", "true"])("Production enables only read-only display with flag %s", flag => {
     vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", flag);
-    expect(isRacePerformanceEnabled()).toBe(false);
+    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "production");
+    expect(isRacePerformanceDisplayEnabled()).toBe(true);
+    expect(isRaceConfirmationEnabled()).toBe(false);
+    expect(isRacePerformanceResearchEnabled()).toBe(false);
   });
-
-  it.each([undefined, "development", "preview"])("allows exact opt-in for %s", (deployment) => {
+  it.each([undefined, "development", "preview"])("preserves opted-in developer capabilities for %s", deployment => {
     vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", "true");
     vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", deployment);
-    expect(isRacePerformanceEnabled()).toBe(true);
+    expect(isRacePerformanceDisplayEnabled()).toBe(true);
+    expect(isRaceConfirmationEnabled()).toBe(true);
+    expect(isRacePerformanceResearchEnabled()).toBe(true);
   });
-
-  it("keeps Production off even when the opt-in is accidentally set", () => {
-    vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", "true");
-    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "production");
-    expect(isRacePerformanceEnabled()).toBe(false);
+  it.each([undefined, "false", "1", "TRUE", ""])("keeps preview capabilities off without exact opt-in %s", flag => {
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", flag);
+    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "preview");
+    expect(isRacePerformanceDisplayEnabled()).toBe(false);
+    expect(isRaceConfirmationEnabled()).toBe(false);
+    expect(isRacePerformanceResearchEnabled()).toBe(false);
   });
 });

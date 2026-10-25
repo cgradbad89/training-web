@@ -1,13 +1,24 @@
-/**
- * Phase 3A is a build-time development/preview opt-in. The deployment identity
- * is baked into both bundles by next.config.ts, so client and server agree.
- * Production activation requires a separately reviewed code/config change.
- */
-export function isRacePerformanceEnabled(): boolean {
-  return (
-    process.env.NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE === "true" &&
-    process.env.NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV !== "production"
-  );
+/** Deployment identity is baked into client/server bundles by next.config.ts.
+ * Production release authorizes summary display only. Non-Production builds
+ * retain the existing explicit opt-in for comparison and developer review. */
+export function isRacePerformanceDisplayEnabled(): boolean {
+  return process.env.NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV === "production"
+    || isPreviewRaceCapabilityEnabled();
+}
+
+/** Editing/persistence must never inherit read-only display authorization. */
+export function isRaceConfirmationEnabled(): boolean {
+  return isPreviewRaceCapabilityEnabled();
+}
+
+/** Experimental numbers are a separate developer capability, never app output. */
+export function isRacePerformanceResearchEnabled(): boolean {
+  return isPreviewRaceCapabilityEnabled();
+}
+
+function isPreviewRaceCapabilityEnabled(): boolean {
+  return process.env.NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE === "true"
+    && process.env.NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV !== "production";
 }
 
 export const RACE_PERFORMANCE_UNAVAILABLE_REASON =

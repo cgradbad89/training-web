@@ -148,9 +148,9 @@ afterEach(() => {
 });
 
 describe("PersonalInsightsPage tabs", () => {
-  it("replaces legacy race numbers and confidence without fitting hidden predictions", () => {
-    vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", "true");
-    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "preview");
+  it.each(["preview", "production"])("replaces legacy race numbers and confidence without fitting hidden predictions in %s", deployment => {
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", deployment === "production" ? undefined : "true");
+    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", deployment);
     h.searchParams = new URLSearchParams("tab=performance");
     mount();
     expect(hasText("Numerical race predictions unavailable")).toBe(true);

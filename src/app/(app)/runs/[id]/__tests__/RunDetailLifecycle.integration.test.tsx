@@ -69,9 +69,9 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 describe("Run Detail operation ownership at page boundaries", () => {
-  it("withholds prediction impact without best-effort hydration under the preview gate", async () => {
-    vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", "true");
-    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "preview");
+  it.each(["preview", "production"])("withholds prediction impact without best-effort hydration under the preview gate in %s", async deployment => {
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", deployment === "production" ? undefined : "true");
+    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", deployment);
     h.fetchRaces.mockResolvedValue([{ id: "target", name: "Half", raceDate: "2027-03-20", raceDistance: "halfMarathon", isActive: true }]);
     await render();
     expect(h.hydrate).not.toHaveBeenCalled();

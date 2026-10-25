@@ -15,7 +15,7 @@ import type { BestEffortSegment } from '@/utils/bestEffortExtraction'
 import { weekStart as getWeekStart, parseLocalDate, daysUntil } from '@/utils/dates'
 import { resolveActivityTitle } from '@/utils/resolveActivityTitle'
 import { buildRunTitleMap } from '@/utils/runPlanTitle'
-import { isRacePerformanceEnabled, RACE_PERFORMANCE_UNAVAILABLE_REASON } from '@/lib/racePerformanceGate'
+import { isRacePerformanceDisplayEnabled, RACE_PERFORMANCE_UNAVAILABLE_REASON } from '@/lib/racePerformanceGate'
 import { evaluateRacePerformance } from '@/utils/racePerformance'
 import { planWeekIndexFor } from '@/utils/planMatching'
 import { weekHitsMileageTarget } from '@/utils/planAdherence'
@@ -240,7 +240,7 @@ export function buildCoachContext(
     const defaultRaceInputs = distanceMiles
       ? [{ raceDate: activeRace.raceDate, distanceMiles }]
       : []
-    const racePerformanceEnabled = isRacePerformanceEnabled()
+    const racePerformanceEnabled = isRacePerformanceDisplayEnabled()
     const prediction: RacePredictionResult | null = !racePerformanceEnabled && distanceMiles
       ? predictRaceTime(
           allRuns,

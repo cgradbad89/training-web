@@ -60,7 +60,7 @@ function dateLabel(date: string): string {
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return <section className="bg-card rounded-2xl border border-border p-5 space-y-4">
+  return <section className="min-w-0 break-words bg-card rounded-2xl border border-border p-5 space-y-4">
     <h2 className="text-lg font-bold text-textPrimary">{title}</h2>
     {children}
   </section>;
@@ -103,7 +103,7 @@ export function RacePerformancePanel(props: RacePerformancePanelProps) {
     <p role="status" className="text-sm text-textSecondary">Race performance is unavailable until race records, workouts, overrides and plans have loaded successfully.</p>
   </Section>;
 
-  return <div className="space-y-6" data-testid="race-performance-experience">
+  return <div className="min-w-0 space-y-6" data-testid="race-performance-experience">
     <Section title="Current Performance">
       <p className="text-xs text-textSecondary">Evidence as of {dateLabel(training.recentFourWeeks.endDate)} · {timeZone}</p>
       <div className="grid gap-5 md:grid-cols-2">
@@ -127,7 +127,7 @@ export function RacePerformancePanel(props: RacePerformancePanelProps) {
       <details className="text-sm text-textSecondary">
         <summary className="cursor-pointer font-semibold text-primary">How to strengthen the race evidence</summary>
         <p className="mt-2">Confirm the event, date, official distance, finish time, maximal effort and conditions. Reconcile any difference between recorded duration and elapsed time. Existing race links alone do not verify an official result.</p>
-        <p className="mt-2">Phase 3A displays the supplied records provisionally; confirmation persistence is a follow-on task. No race record is changed by this view.</p>
+        <p className="mt-2">This read-only view displays the supplied records provisionally. No race record is changed by this view.</p>
         <Link href="/races" className="inline-block mt-2 text-primary hover:underline">Review existing race records</Link>
       </details>
     </Section>

@@ -227,9 +227,9 @@ describe("buildCoachContext — canonical race prediction parity", () => {
     ).activeRace?.predictedTime ?? null;
   }
 
-  it("withholds forecasts and skips the legacy model under the preview gate", () => {
-    vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", "true");
-    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "preview");
+  it.each(["preview", "production"])("withholds forecasts and skips the legacy model under the preview gate in %s", deployment => {
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", deployment === "production" ? undefined : "true");
+    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", deployment);
     const legacy = vi.spyOn(racePrediction, "predictRaceTime");
     const context = buildCoachContext(fixture, null, race(), [], 185, 60, { races: [], asOf });
     expect(context.activeRace).toMatchObject({
