@@ -1,5 +1,5 @@
 import React,{useMemo,useState} from "react";
-import {isRacePerformanceEnabled} from "@/lib/racePerformanceGate";
+import {isRacePerformanceResearchEnabled} from "@/lib/racePerformanceGate";
 import type { WorkoutRaceResearchInput } from "@/types/workoutRaceResearch";
 import { estimateWorkoutRaceResearch,researchRaceCutoff,WORKOUT_RESEARCH_POLICY } from "@/utils/workoutRaceResearch";
 import { performanceLocalDate,shiftPerformanceDate } from "@/utils/performanceEvidence";
@@ -8,7 +8,7 @@ import { explainWorkoutRemoval } from "@/utils/workoutRaceResearchEvaluation";
 const finish=(minutes:number|null)=>minutes===null?"Withheld":`${Math.floor(minutes/60)}h ${String(minutes%60).padStart(2,"0")}m`;
 const pace=(seconds:number|null)=>seconds===null?"—":`${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,"0")}/mi`;
 export function ResearchPanel({input}:{input:WorkoutRaceResearchInput}) {
-  return isRacePerformanceEnabled()?<ResearchView input={input}/>:<p role="alert">Research output disabled by the Production-off feature gate.</p>;
+  return isRacePerformanceResearchEnabled()?<ResearchView input={input}/>:<p role="alert">Research output disabled by the Production-off feature gate.</p>;
 }
 function ResearchView({input}:{input:WorkoutRaceResearchInput}) {
   const [asOf,setAsOf]=useState(input.asOf);

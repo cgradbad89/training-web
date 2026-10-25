@@ -9,7 +9,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { MetricBadge } from "@/components/ui/MetricBadge";
 import { useAuth } from "@/hooks/useAuth";
 import { useAppData } from "@/contexts/AppDataContext";
-import { isRacePerformanceEnabled } from "@/lib/racePerformanceGate";
+import { isRacePerformanceDisplayEnabled } from "@/lib/racePerformanceGate";
 import { RacePerformancePanel } from "@/components/insights/RacePerformancePanel";
 import { selectEffectiveWorkouts } from "@/utils/selectActiveWorkouts";
 import { type HealthWorkout } from "@/types/healthWorkout";
@@ -198,7 +198,7 @@ function PredictionCard({ label, distanceMiles, fit, targetPace }: PredictionCar
 // ─── Page ────────────────────────────────────────────────────────────────────
 
 export default function PlanInsightsPage() {
-  const racePerformanceEnabled = isRacePerformanceEnabled();
+  const racePerformanceEnabled = isRacePerformanceDisplayEnabled();
   const { user, sessionEpoch, isSessionCurrent } = useAuth();
   const pageActive = usePathname() === "/plan-insights";
   const uid = user?.uid ?? null;

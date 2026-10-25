@@ -134,7 +134,7 @@ import {
 } from "@/utils/mileSplitsCache";
 import { fetchWeatherForRun } from "@/lib/weather";
 import { selectEffectiveWorkouts } from "@/utils/selectActiveWorkouts";
-import { isRacePerformanceEnabled, RACE_PERFORMANCE_UNAVAILABLE_REASON } from "@/lib/racePerformanceGate";
+import { isRacePerformanceDisplayEnabled, RACE_PERFORMANCE_UNAVAILABLE_REASON } from "@/lib/racePerformanceGate";
 
 const RunMap = dynamic(() => import("@/components/RunMap"), { ssr: false });
 
@@ -758,7 +758,7 @@ export default function RunDetailPage() {
   // run the whole-run HR gate rejects. The avgBpm pre-filter keeps route reads to
   // runs with a genuinely hard mile; route reads are cached. Read-only.
   useEffect(() => {
-    if (isRacePerformanceEnabled() || !uid || !workoutsForInsights || !isCurrentPage()) {
+    if (isRacePerformanceDisplayEnabled() || !uid || !workoutsForInsights || !isCurrentPage()) {
       setHydratedInsightsRuns(null);
       return;
     }
@@ -876,7 +876,7 @@ export default function RunDetailPage() {
   // segments hydrated above), so the "with" number matches the dashboard's
   // projection.
   const predictionImpact = useMemo(() => {
-    if (isRacePerformanceEnabled()) return null;
+    if (isRacePerformanceDisplayEnabled()) return null;
     const insightsRuns = hydratedInsightsRuns ?? workoutsForInsights;
     if (!insightsRuns || !activeRace || !raceDistanceMiles) return null;
     const cutoff = parseLocalDate(activeRace.raceDate);
@@ -1644,9 +1644,9 @@ export default function RunDetailPage() {
       )}
 
       {/* ── This Run's Impact (independent of route matching) ── */}
-      {displayWorkout.isRunLike && (predictionImpact || ctlImpact || isRacePerformanceEnabled()) && (
+      {displayWorkout.isRunLike && (predictionImpact || ctlImpact || isRacePerformanceDisplayEnabled()) && (
         <RunImpactSection
-          predictionUnavailableReason={isRacePerformanceEnabled() ? RACE_PERFORMANCE_UNAVAILABLE_REASON : null}
+          predictionUnavailableReason={isRacePerformanceDisplayEnabled() ? RACE_PERFORMANCE_UNAVAILABLE_REASON : null}
           prediction={
             predictionImpact && activeRace
               ? {

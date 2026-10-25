@@ -27,12 +27,23 @@ function change(label: string, value: string) {
 }
 async function submit() { await act(async () => { container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); }); }
 beforeEach(() => {
+  vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", "true");
+  vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "preview");
   container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
   save.mockReset().mockResolvedValue(undefined); close.mockReset();
 });
-afterEach(() => { act(() => root.unmount()); container.remove(); });
+afterEach(() => { act(() => root.unmount()); container.remove(); vi.unstubAllEnvs(); });
 
 describe("race confirmation editor", () => {
+  it.each([undefined, "false", "true"])("cannot expose a form or submit callback in Production with opt-in %s", flag => {
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", flag);
+    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "production");
+    render();
+    expect(container.querySelector("form")).toBeNull();
+    expect(container.textContent).toContain("Race confirmation editing is disabled");
+    expect(save).not.toHaveBeenCalled();
+  });
+
   it("never fills official finish from workout timing or saves on mount", () => {
     render();
     expect(field("Confirmed finish time").value).toBe("");

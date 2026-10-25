@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { RaceConfirmationEditor, type RaceConfirmationEditorProps } from "@/components/races/RaceConfirmationEditor";
-import { isRacePerformanceEnabled } from "@/lib/racePerformanceGate";
+import { isRaceConfirmationEnabled } from "@/lib/racePerformanceGate";
 import { buildRaceConfirmationInput } from "@/utils/raceConfirmation";
 import type { RaceConfirmationDraft } from "@/types/raceConfirmation";
 import type { WorkoutOverride } from "@/types/workoutOverride";
@@ -966,7 +966,7 @@ export default function RacesPage() {
     overridesLoading,
     overridesResolution,
   } = useAppData();
-  const confirmationEnabled = isRacePerformanceEnabled();
+  const confirmationEnabled = isRaceConfirmationEnabled();
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [confirmation, setConfirmation] = useState<{

@@ -170,9 +170,9 @@ afterEach(() => {
 })
 
 describe('CoachPage provider behavior', () => {
-  it('uses only summary context and withholds forecasts when race performance is enabled', async () => {
-    vi.stubEnv('NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE', 'true')
-    vi.stubEnv('NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV', 'preview')
+  it.each(["preview", "production"])('uses only summary context and withholds forecasts when race performance is enabled in %s', async deployment => {
+    vi.stubEnv('NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE', deployment === "production" ? undefined : "true")
+    vi.stubEnv('NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV', deployment)
     h.fetchHealthWorkouts.mockResolvedValue([recentWorkout()])
     h.fetchRaces.mockResolvedValue([{
       id: 'race', name: 'Half', raceDate: '2099-01-01',

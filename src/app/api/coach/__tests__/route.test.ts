@@ -143,9 +143,9 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs())
 
 describe('POST /api/coach', () => {
-  it('ignores posted legacy forecasts when the race-performance gate is enabled', async () => {
-    vi.stubEnv('NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE', 'true')
-    vi.stubEnv('NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV', 'preview')
+  it.each(["preview", "production"])('ignores posted legacy forecasts when the race-performance gate is enabled in %s', async deployment => {
+    vi.stubEnv('NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE', deployment === "production" ? undefined : "true")
+    vi.stubEnv('NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV', deployment)
     const activeRace = {
       name: 'Target Half', raceDate: 'Mar 20, 2027', daysAway: 148,
       distanceLabel: 'Half Marathon', targetPace: '10:00', goalTime: '2:11:05',

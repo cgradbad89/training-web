@@ -7,7 +7,7 @@ import {
   MAX_COACH_REQUEST_BYTES,
 } from './coachConfig'
 import { isAuthorizedTrainingUser } from '@/lib/trainingAuthorization'
-import { isRacePerformanceEnabled, RACE_PERFORMANCE_UNAVAILABLE_REASON } from '@/lib/racePerformanceGate'
+import { isRacePerformanceDisplayEnabled, RACE_PERFORMANCE_UNAVAILABLE_REASON } from '@/lib/racePerformanceGate'
 
 const PRIVATE_NO_STORE = 'private, no-store'
 
@@ -204,7 +204,7 @@ function buildSystemPrompt(context: CoachContext): string {
     stats,
   } = context
 
-  const racePerformanceEnabled = isRacePerformanceEnabled()
+  const racePerformanceEnabled = isRacePerformanceDisplayEnabled()
   const historicalBenchmark = activeRace?.performanceEvidence?.historicalBenchmark
   const historicalBenchmarkSection = historicalBenchmark
     ? `Historical demonstrated benchmark: ${historicalBenchmark.name}, ${historicalBenchmark.date}, ${historicalBenchmark.finishTime ?? 'time unavailable'}; evidence status: ${historicalBenchmark.evidenceStatus}; stale: ${historicalBenchmark.stale ? 'yes' : 'no'}. This is a dated historical observation, not proof of current capability.`

@@ -1,5 +1,6 @@
 "use client";
 
+import { isRaceConfirmationEnabled } from "@/lib/racePerformanceGate";
 import { useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import type { Race } from "@/types/race";
 import type { HealthWorkout } from "@/types/healthWorkout";
@@ -24,7 +25,12 @@ const inputClass = "w-full min-w-0 rounded-lg border border-border bg-card px-3 
 const duration = (seconds: number | null | undefined) => typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0 ? formatDuration(seconds) : "Unavailable";
 
 /** Pure editor: no authentication, database, storage, or automatic save effects. */
-export function RaceConfirmationEditor({ race, workout, override = null, onSave, onClose, timeZone = "America/New_York", submitLabel }: RaceConfirmationEditorProps) {
+export function RaceConfirmationEditor(props: RaceConfirmationEditorProps) {
+  if (!isRaceConfirmationEnabled()) return <p role="alert">Race confirmation editing is disabled in this build. Race records remain unchanged.</p>;
+  return <EnabledRaceConfirmationEditor {...props} />;
+}
+
+function EnabledRaceConfirmationEditor({ race, workout, override = null, onSave, onClose, timeZone = "America/New_York", submitLabel }: RaceConfirmationEditorProps) {
   const prefix = useId();
   const revisions = Object.values(race.confirmationHistory?.revisions ?? {}).sort((a, b) => b.revisionNumber - a.revisionNumber);
   const current = race.confirmationHistory?.revisions[race.confirmationHistory.currentRevisionId];

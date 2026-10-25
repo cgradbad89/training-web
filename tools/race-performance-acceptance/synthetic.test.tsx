@@ -7,10 +7,12 @@ import { RaceConfirmationPreview } from "./synthetic";
 let root: Root;
 let container: HTMLDivElement;
 beforeEach(() => {
+  vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", "true");
+  vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "preview");
   container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
   act(() => root.render(<RaceConfirmationPreview />));
 });
-afterEach(() => { act(() => root.unmount()); container.remove(); vi.restoreAllMocks(); });
+afterEach(() => { act(() => root.unmount()); container.remove(); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 function field(label: string) {
   const associated = [...container.querySelectorAll("label")].find(node => node.textContent === label);

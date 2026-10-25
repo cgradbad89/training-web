@@ -72,12 +72,12 @@ beforeEach(() => {
   h.races.mockResolvedValue([race()]); h.overrides.mockResolvedValue({}); h.settings.mockResolvedValue(null);
   h.hydrate.mockImplementation(async (_uid, runs) => ({ runs, routeFetches: 0 }));
 });
-afterEach(() => { act(() => root?.unmount()); container?.remove(); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
+afterEach(() => { act(() => root?.unmount()); container?.remove(); vi.restoreAllMocks(); vi.useRealTimers(); vi.unstubAllEnvs(); });
 
 describe("Plan Insights demand-gated fast-finish hydration", () => {
-  it("replaces predictions and does no legacy child hydration with Phase 3A enabled", async () => {
+  it.each(["preview", "production"])("renders the summary panel with no legacy child hydration in %s", async deployment => {
     vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", "true");
-    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "preview");
+    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", deployment);
     await mount();
     expect(container.textContent).toContain("Current Performance");
     expect(container.textContent).toContain("Training Progress");
@@ -91,14 +91,60 @@ describe("Plan Insights demand-gated fast-finish hydration", () => {
     expect(buildBestEffortSegments).not.toHaveBeenCalled();
   });
 
-  it("retains legacy behavior when the opt-in is present in Production", async () => {
-    vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", "true");
+  it("enables Production display without an environment opt-in", async () => {
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", undefined);
     vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "production");
     await mount();
-    expect(container.textContent).toContain("Race Predictions");
-    expect(container.textContent).not.toContain("Current Performance");
-    expect(h.hydrate).toHaveBeenCalledOnce();
+    expect(container.textContent).not.toContain("Race Predictions");
+    expect(container.textContent).toContain("Current Performance");
+    expect(h.hydrate).not.toHaveBeenCalled();
   });
+  it("renders stored race evidence, canonical completed training and the goal without numerical forecasts in Production", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-10-25T16:00:00Z"));
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", undefined);
+    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "production");
+    const completed = (id: string, date: string, miles: number, seconds = miles * 600): HealthWorkout => ({
+      ...run(), workoutId: id, startDate: new Date(date + "T12:00:00Z"),
+      endDate: new Date(Date.parse(date + "T12:00:00Z") + seconds * 1000),
+      syncedAt: new Date(Date.parse(date + "T12:00:00Z") + seconds * 1000 + 1000),
+      durationSeconds: seconds, distanceMiles: miles, distanceMeters: miles * 1609.344,
+    });
+    const april = completed("april-run", "2026-04-26", 13.2, 8130);
+    april.endDate = new Date("2026-04-26T14:25:59Z");
+    h.workouts.mockResolvedValue([april, completed("september-run", "2026-09-20", 13.2, 7871),
+      completed("planned", "2026-10-19", 6), completed("unplanned", "2026-10-23", 4),
+      completed("excluded", "2026-10-22", 11), completed("future", "2026-11-01", 50),
+      { ...completed("unknown-distance", "2025-06-09", 1), distanceMiles: undefined },
+      { ...completed("unknown-distance-older", "2019-08-10", 1), distanceMiles: 0 }]);
+    h.overrides.mockResolvedValue({
+      unplanned: { workoutId: "unplanned", isExcluded: false, distanceMilesOverride: 5, updatedAt: "2026-10-24T12:00:00Z" },
+      excluded: { workoutId: "excluded", isExcluded: true, updatedAt: "2026-10-24T12:00:00Z" },
+    });
+    h.races.mockResolvedValue([
+      race({ id: "april", name: "PNC Half Marathon", raceDate: "2026-04-26", isActive: false, createdAt: "2026-04-27T00:00:00Z", actualRunId: "april-run" }),
+      race({ id: "september", name: "DC Half Marathon", raceDate: "2026-09-20", isActive: false, createdAt: "2026-09-21T00:00:00Z", actualRunId: "september-run" }),
+      race({ id: "goal", name: "Rock and Roll Half Marathon", raceDate: "2027-03-20", linkedPlanId: "stored-plan", targetPaceSecondsPerMile: 600 }),
+    ]);
+    h.plans.mockResolvedValue([{ id: "stored-plan", name: "Stored plan", startDate: "2026-10-19", status: "active", isActive: true,
+      weeks: [{ weekNumber: 1, entries: [{ id: "completed", weekIndex: 0, weekday: 1, dayOfWeek: 0, distanceMiles: 6, runType: "outdoor" }] },
+        { weekNumber: 2, entries: [{ id: "future-plan", weekIndex: 1, weekday: 1, dayOfWeek: 0, distanceMiles: 100, runType: "outdoor" }] }] }]);
+    await mount();
+    const panel = container.querySelector('[data-testid="race-performance-experience"]')!;
+    expect(panel).toBeTruthy();
+    const text = panel.textContent;
+    expect(text).toContain("PNC Half Marathon"); expect(text).toContain("Apr 26, 2026");
+    expect(text).toContain("Recorded duration 2:15:30; elapsed 2:25:59");
+    expect(text).toContain("DC Half Marathon"); expect(text).toContain("2:11:11");
+    expect(text).toContain("Recorded, unverified"); expect(text).toContain("Current capability estimateUnavailable");
+    expect(text).toContain("Race-day forecastWithheld"); expect(text).toContain("Rock and Roll Half Marathon");
+    expect(text).toContain("Recent 4 weeks11.0"); expect(text).toContain("Completed sessions · 4 weeks2");
+    expect(text).toContain("Longest recent run6.0 mi"); expect(text).toContain("Plan adherence: 1 of 1");
+    expect(container.textContent).not.toContain("Race Predictions"); expect(container.textContent).not.toContain("Race-Day Projection");
+    expect(container.textContent).not.toContain("Pace Readiness"); expect(container.textContent).not.toContain("R²");
+    expect(h.hydrate).not.toHaveBeenCalled(); expect(h.rawRoute).not.toHaveBeenCalled(); expect(h.mileSplits).not.toHaveBeenCalled();
+    expect(buildBestEffortSegments).not.toHaveBeenCalled();
+  });
+
   it.each([
     { races: [] },
     { races: [race({ raceDistance: "5k" })] },

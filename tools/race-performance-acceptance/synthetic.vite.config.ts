@@ -21,6 +21,7 @@ export default defineConfig({
   root: directory,
   envDir: false,
   publicDir: false,
+  define: { "process.env.NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE": '"true"', "process.env.NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV": '"development"' },
   resolve: { alias: { "@": path.join(repoRoot, "src") } },
   server: { host: "localhost", port: 4187, strictPort: true, hmr: false, fs: { allow: [repoRoot] } },
   plugins: [{ name: "synthetic-editor-styling", configureServer(server) {

@@ -2,7 +2,7 @@ import { getIdTokenResult, type User } from "firebase/auth";
 import { doc, getDocFromServer, runTransaction, serverTimestamp } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
 import { isAuthorizedTrainingUser } from "@/lib/trainingAuthorization";
-import { isRacePerformanceEnabled } from "@/lib/racePerformanceGate";
+import { isRaceConfirmationEnabled } from "@/lib/racePerformanceGate";
 import { canonicalizePerformanceValue } from "@/utils/performanceEvidence";
 import { buildRaceConfirmationRevision, buildRaceConfirmationSnapshot, isRaceConfirmationDocumentId, MAX_RACE_CONFIRMATION_BYTES, normalizeRaceConfirmationHistory, validateRaceConfirmationInput } from "@/utils/raceConfirmation";
 import { normalizeRaceDocument } from "@/services/races";
@@ -18,7 +18,7 @@ export class RaceConfirmationConflictError extends Error {
 }
 
 function assertSession(uid: string, user: User | null): asserts user is User {
-  if (!isRacePerformanceEnabled()) throw new Error("Race confirmation is disabled outside opted-in development/preview builds.");
+  if (!isRaceConfirmationEnabled()) throw new Error("Race confirmation is disabled outside opted-in development/preview builds.");
   if (!isRaceConfirmationDocumentId(uid) || !user || auth.currentUser !== user || user.uid !== uid
     || !isAuthorizedTrainingUser(user.email, user.emailVerified)) throw new Error("Race confirmation requires the current verified owner session.");
 }
