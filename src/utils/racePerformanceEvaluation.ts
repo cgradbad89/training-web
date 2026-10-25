@@ -12,11 +12,14 @@ export interface RaceEvaluationCase {
   targetRaceId: string;
   targetRaceDate: string;
   targetStatus: RaceEvidenceStatus;
+  targetConfirmationRevisionId: string | null;
+  targetAvailableAt: string | null;
   actualSeconds: number;
   cutoff: string;
   method: RaceResearchMethod;
   sourceRaceId: string | null;
   sourceStatus: RaceEvidenceStatus | null;
+  sourceConfirmationRevisionId: string | null;
   sourceAgeDays: number | null;
   eligiblePriorRaces: number;
   predictedSeconds: number | null;
@@ -43,6 +46,8 @@ export interface RacePerformanceEvaluationReport {
   inputRaceCount: number;
   inputWorkoutCount: number;
   eligibleOutcomeCount: number;
+  /** These labels can be reviewed now, but cannot establish historical inputs. */
+  untrustedChronologyRaceCount: number;
   evidenceStatusCounts: Record<RaceEvidenceStatus, number>;
   excludedOutcomes: { raceId: string; status: RaceEvidenceStatus; reasons: readonly string[] }[];
   largeErrorThresholdSeconds: number;
@@ -113,6 +118,7 @@ export function evaluateRacePerformanceHistory(input: {
     "All outputs are research comparators, not current-capability estimates or race-day forecasts.",
     "No personalized prediction interval, fit-R² confidence, or forecast validation is established by this report.",
     "A held-out target may use only confirmed prior race revisions known before its local race day. Later corrections and unknown revision times cannot be reconstructed.",
+    "Phase 3B client-document confirmation histories can supply dated outcome labels after the selected revision becomes available, but cannot prove immutable historical chronology. They never supply historical race predictor inputs.",
     "Legacy comparison uses only completed parent summaries with known availability and canonical overrides; it excludes GPS/HR children, best-effort segments, synthetic planned workouts, and future consistency credits. It is not a reproduction of the full legacy live projection.",
     "The five-minute large-error threshold is a reporting choice, not a calibrated uncertainty bound.",
     "Distance-equivalence comparisons use the latest qualifying different-distance maximal performance; they do not fit an individualized distance exponent.",
@@ -124,6 +130,8 @@ export function evaluateRacePerformanceHistory(input: {
     const historical = buildRaceEvidence({ ...input, asOf: cutoff, asOfMode: "historical", targetDistanceMeters: target.distanceMeters! });
     const eligible = historical.filter((evidence) => evidence.raceDate < target.raceDate && evidence.eligibleForEquivalence
       && (!verifiedOnly || evidence.status === "verified"));
+    const untrustedPrior = historical.some(evidence => evidence.raceDate < target.raceDate
+      && evidence.confirmationChronology === "client_document_untrusted");
     const candidates = method === "recent_same_distance"
       ? eligible.filter((evidence) => evidence.eligibleSameDistanceBenchmark)
       : eligible.filter((evidence) => evidence.distanceMeters !== null
@@ -166,14 +174,16 @@ export function evaluateRacePerformanceHistory(input: {
     const signed = predictedSeconds === null ? null : predictedSeconds - target.finishSeconds!;
     return {
       targetRaceId: target.raceId, targetRaceDate: target.raceDate, targetStatus: target.status,
+      targetConfirmationRevisionId: target.confirmationRevisionId ?? null, targetAvailableAt: target.knownAt,
       actualSeconds: target.finishSeconds!, cutoff, method,
       sourceRaceId: method === "legacy_summary_only" ? null : source?.raceId ?? null,
       sourceStatus: method === "legacy_summary_only" ? null : source?.status ?? null,
+      sourceConfirmationRevisionId: method === "legacy_summary_only" ? null : source?.confirmationRevisionId ?? null,
       sourceAgeDays: method === "legacy_summary_only" ? null : source?.ageDays ?? null,
       eligiblePriorRaces: eligible.length, predictedSeconds, signedErrorSeconds: signed,
       absoluteErrorSeconds: signed === null ? null : Math.abs(signed), largeError: signed === null ? null : Math.abs(signed) >= threshold,
       abstentionReason: predictedSeconds !== null ? null : method === "legacy_summary_only" ? "insufficient_reproducible_parent_summaries"
-        : source ? "equivalence_outside_supported_range" : "no_eligible_known_prior_race",
+        : source ? "equivalence_outside_supported_range" : untrustedPrior ? "untrusted_confirmation_chronology" : "no_eligible_known_prior_race",
     };
   }
 
@@ -184,6 +194,7 @@ export function evaluateRacePerformanceHistory(input: {
   return {
     version: "phase3a-chronological-research-v1", asOf: input.asOf, timeZone: input.timeZone, researchOnly: true,
     inputRaceCount: input.races.length, inputWorkoutCount: input.workouts.length, eligibleOutcomeCount: outcomes.length,
+    untrustedChronologyRaceCount: current.filter(evidence => evidence.confirmationChronology === "client_document_untrusted").length,
     evidenceStatusCounts: statusCounts, excludedOutcomes, largeErrorThresholdSeconds: threshold,
     methods: methodMetrics(cases), cases,
     raceAgeSensitivity: [
@@ -199,6 +210,7 @@ export function evaluateRacePerformanceHistory(input: {
     calibrationRequirements: [
       "Reconcile official chip/elapsed timing, nominal distance, date, linkage, maximal effort, conditions, and provenance for each candidate outcome; record when each exact evidence revision became known.",
       "Preserve dated parent-summary and override revisions or pre-race snapshots to reconstruct only information actually available at each target cutoff.",
+      "Establish independently trustworthy immutable revision chronology before client-document confirmations can become historical predictor inputs; server receipt timestamps alone in an owner-writable document do not establish it.",
       "Accumulate multiple independent held-out half-marathon outcomes across race ages and conditions, with qualifying different-distance maximal efforts where available; report the number of evaluable pairs and abstentions.",
       "Pre-register eligibility, freshness, comparison methods, error tolerances and calibration splits. Compare race-only methods with training-context additions on untouched later outcomes; require repeatable incremental accuracy before numerical current-capability estimates.",
       "Validate race-day forecasting and uncertainty coverage separately with pre-race snapshots at useful forecast horizons. Mileage, adherence and future planned runs cannot supply assumed improvement credits.",

@@ -52,3 +52,9 @@ npx eslint tools/race-performance-acceptance --max-warnings 0
 The Vite config runs the transitive import and application-exclusion audits before serving anything. Tests cover unsafe imports, the real panel/full harness graph, actual Next build exclusion, auth authorization/lifecycle, source bounds/completeness and runtime network/storage guards. Full normal-shell integration must be reported separately; this harness cannot establish it.
 
 Actual owner snapshots/screenshots belong in private local evidence files, never in Git. Owner-panel acceptance and merge approval must be reported separately from infrastructure test success. No merge or Production activation is authorized by this tool.
+
+## Phase 3B.1 synthetic editor (no owner data)
+
+After a Next build, run `npx vite --config tools/race-performance-acceptance/synthetic.vite.config.ts` and open `http://localhost:4187/synthetic.html`. This separate entry renders invented races with the real confirmation editor and memory-only saves. It needs no Firebase config, environment file, authentication or backend. Its config audits the complete emitted entry graph before serving. Nothing imports it from `src/`, and it adds no Next route or root authentication exception. The normal application's eager AuthProvider remains unchanged. The earlier hosted `/race-confirmation-preview` is retired from the application.
+
+Run `TZ=America/New_York npx vitest run tools/race-performance-acceptance/synthetic` for synthetic workflow and isolation regressions. The TypeScript command above also covers this entry.

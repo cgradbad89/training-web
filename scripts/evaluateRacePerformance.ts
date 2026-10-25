@@ -10,6 +10,7 @@ import type { HealthWorkout } from "../src/types/healthWorkout";
 import type { Race } from "../src/types/race";
 import type { WorkoutOverride } from "../src/types/workoutOverride";
 import { evaluateRacePerformanceHistory } from "../src/utils/racePerformanceEvaluation";
+import { normalizeRaceConfirmationHistory } from "../src/utils/raceConfirmation";
 
 interface OfflineInput {
   exportedAt?: string;
@@ -48,7 +49,13 @@ export function runOfflineRaceEvaluation(inputPath: string, outputPath: string) 
     displayType: typeof doc.displayType === "string" ? doc.displayType : "Unknown",
     sourceName: typeof doc.sourceName === "string" ? doc.sourceName : "Unknown", isRunLike: doc.isRunLike === true,
   } as HealthWorkout));
-  const races = input.races ?? input.halfMarathonRaces?.map(({ id, doc }) => ({ ...doc, id })) ?? [];
+  const races = (input.races ?? input.halfMarathonRaces?.map(({ id, doc }) => ({ ...doc, id })) ?? []).map(race => ({
+    ...race,
+    // Normalize server Timestamp export shapes without manufacturing availability
+    // or changing the stored client-document chronology into a trusted history.
+    ...(Object.hasOwn(race, "confirmationHistory")
+      ? { confirmationHistory: normalizeRaceConfirmationHistory(race.confirmationHistory) } : {}),
+  }));
   const overrides = input.overrides ?? Object.fromEntries((input.workoutOverrides ?? []).map(({ id, doc }) => [id, doc]));
   const report = evaluateRacePerformanceHistory({ races, workouts, overrides, asOf, timeZone: input.timeZone ?? "America/New_York" });
   const result = {
@@ -59,6 +66,7 @@ export function runOfflineRaceEvaluation(inputPath: string, outputPath: string) 
       parentWorkoutCount: workouts.length,
       runningSummaryCount: workouts.filter((workout) => workout.isRunLike).length,
       raceRecordCount: races.length,
+      confirmationHistoryCount: races.filter(race => Object.hasOwn(race, "confirmationHistory")).length,
       overrideRecordCount: Object.keys(overrides).length,
       missingCollections: [
         ...(!input.races && !input.halfMarathonRaces ? ["halfMarathonRaces"] : []),
