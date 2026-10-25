@@ -1,8 +1,8 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { RaceConfirmationEditor, type RaceConfirmationEditorProps } from "../RaceConfirmationEditor";
-import { createRaceConfirmationPreviewFixtures } from "../raceConfirmationPreviewFixtures";
+import { RaceConfirmationEditor, type RaceConfirmationEditorProps } from "@/components/races/RaceConfirmationEditor";
+import { createRaceConfirmationPreviewFixtures } from "./syntheticFixtures";
 import { buildRaceConfirmationInput } from "@/utils/raceConfirmation";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

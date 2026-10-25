@@ -4,8 +4,8 @@ import { useRef, useState } from "react";
 import type { RaceConfirmationDraft } from "@/types/raceConfirmation";
 import { buildRaceConfirmationInput, buildRaceConfirmationRevision } from "@/utils/raceConfirmation";
 import { evaluateRacePerformance } from "@/utils/racePerformance";
-import { RaceConfirmationEditor } from "./RaceConfirmationEditor";
-import { createRaceConfirmationPreviewFixtures, SYNTHETIC_AS_OF, SYNTHETIC_TIME_ZONE } from "./raceConfirmationPreviewFixtures";
+import { RaceConfirmationEditor } from "@/components/races/RaceConfirmationEditor";
+import { createRaceConfirmationPreviewFixtures, SYNTHETIC_AS_OF, SYNTHETIC_TIME_ZONE } from "./syntheticFixtures";
 
 const statusLabels = {
   verified: "Official result verified",

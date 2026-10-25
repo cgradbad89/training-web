@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { evaluateRacePerformance } from "@/utils/racePerformance";
-import { createRaceConfirmationPreviewFixtures, SYNTHETIC_AS_OF, SYNTHETIC_TIME_ZONE } from "../raceConfirmationPreviewFixtures";
+import { createRaceConfirmationPreviewFixtures, SYNTHETIC_AS_OF, SYNTHETIC_TIME_ZONE } from "./syntheticFixtures";
 
 describe("invented preview observations", () => {
   it("starts with an excluded timing conflict and an unverified consistent result", () => {

@@ -91,11 +91,26 @@ export async function setActiveRace(uid: string, raceId: string): Promise<void> 
   await batch.commit();
 }
 
-/** Legacy full-save helper — kept for backward compat */
+// Exhaustive ordinary schema: a newly added Race field must declare full-save
+// behavior here. Evidence is owned exclusively by the confirmation workflow.
+const ordinaryRaceFields = {
+  id: true, name: true, raceDate: true, raceDistance: true,
+  customDistanceMiles: true, location: true, targetPaceSecondsPerMile: true,
+  linkedStravaActivityId: true, result: true, notes: true, isActive: true,
+  createdAt: true, linkedPlanId: true, actualRunId: true, actualRunDate: true,
+  actualRunDistanceMiles: true, actualRunDurationSeconds: true, actualRunAvgPace: true,
+} satisfies Record<keyof Omit<Race, "performanceEvidence" | "confirmationHistory">, true>;
+
+/** Full-save ordinary fields, preserving independently saved evidence. */
 export async function saveRace(uid: string, race: Race): Promise<void> {
   assertOrdinaryRaceFields(race);
-  // Legacy saves must not erase a confirmation added concurrently by another tab.
-  await setDoc(doc(db, COLLECTIONS.halfMarathonRaces(uid), race.id), race, { merge: true });
+  // Explicit deletion preserves full-save clearing without a read/transaction
+  // or changes to offline write behavior. Never send evidence, even a stale copy.
+  const writes = Object.fromEntries(
+    (Object.keys(ordinaryRaceFields) as (keyof typeof ordinaryRaceFields)[])
+      .map(key => [key, race[key] === undefined ? deleteField() : race[key]])
+  );
+  await setDoc(doc(db, COLLECTIONS.halfMarathonRaces(uid), race.id), writes, { merge: true });
 }
 
 export async function associateRunWithRace(

@@ -184,6 +184,26 @@ describe("RacesPage confirmation gate", () => {
 });
 
 describe("RacesPage shared race freshness", () => {
+  it("edits and clears ordinary fields in Production while retaining confirmation history", async () => {
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", "true");
+    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "production");
+    const confirmationHistory = { schemaVersion: 1 as const, chronology: "client_document_untrusted" as const, currentRevisionId: "kept", revisions: {} };
+    h.races = [baseRace({ linkedPlanId: "p1", result: "2:00:00", actualRunId: "w1", confirmationHistory })];
+    await mount();
+    expect(container.textContent).not.toContain("Review result confirmation");
+    clickTitle("Edit");
+    setInput(container.querySelector<HTMLInputElement>('input[type="text"]')!, "Ordinary edit");
+    setSelect(Array.from(container.querySelectorAll("select")).at(-1)!, "");
+    clickText("Save"); await flush();
+    const writes = h.updateRace.mock.calls[0][2];
+    expect(writes).not.toHaveProperty("confirmationHistory");
+    expect(writes).not.toHaveProperty("performanceEvidence");
+    expect(writes.linkedPlanId).toBeUndefined();
+    expect(h.races[0]).toMatchObject({ name: "Ordinary edit", actualRunId: "w1", result: "2:00:00", confirmationHistory });
+    expect(h.races[0]).not.toHaveProperty("linkedPlanId");
+    expect(h.saveRaceConfirmation).not.toHaveBeenCalled();
+  });
+
   it("publishes create and edit mutations to shared races", async () => {
     await mount();
     clickText("Add Race");
