@@ -6,6 +6,8 @@ import type {
 } from "@/types/racePerformance";
 import { isPerformanceDate, isPerformanceInstant, performanceLocalDate } from "@/utils/performanceEvidence";
 import { selectEffectiveWorkouts } from "@/utils/selectActiveWorkouts";
+import { selectRaceConfirmationEvidence } from "@/utils/raceConfirmationEvidence";
+import { buildRaceConfirmationSnapshot } from "@/utils/raceConfirmation";
 
 export const HALF_MARATHON_METERS = 21_097.5;
 export const DEFAULT_RACE_PERFORMANCE_POLICY: Readonly<RacePerformancePolicy> = Object.freeze({
@@ -75,6 +77,7 @@ export function buildRaceEvidence(input: RacePerformanceInput): RacePerformanceE
     r.performanceEvidence && [r.performanceEvidence.status, r.performanceEvidence.kind, r.performanceEvidence.knownAt,
       r.performanceEvidence.raceDate, r.performanceEvidence.distanceMeters, r.performanceEvidence.finishSeconds,
       r.performanceEvidence.effort, r.performanceEvidence.conditions, r.performanceEvidence.source, r.performanceEvidence.timingReconciliation],
+    r.confirmationHistory,
   ]));
   const workoutIndex = indexRecords(input.workouts, w => w.workoutId, w => JSON.stringify([
     dateMs(w.startDate), dateMs(w.endDate), dateMs(w.syncedAt), w.isRunLike, w.distanceMiles, w.distanceMeters, w.durationSeconds,
@@ -96,7 +99,16 @@ export function buildRaceEvidence(input: RacePerformanceInput): RacePerformanceE
     if (dateValid && !raceInPast) continue;
     if (!dateValid) reasons.push("invalid_race_date");
     if (!positive(nominal)) reasons.push("invalid_race_distance");
-    const confirmation = race.performanceEvidence;
+    const selected = selectRaceConfirmationEvidence(race, input.asOf, input.timeZone);
+    reasons.push(...selected.reasons);
+    if (selected.reasons.includes("invalid_confirmation_history")) inconsistent = true;
+    // A saved Phase 3B history replaces the legacy input, including when invalid
+    // or unavailable. Otherwise an old knownAt could bypass its weaker chronology.
+    const confirmation = selected.present ? selected.confirmation : race.performanceEvidence;
+    if (selected.present) reasons.push("confirmation_chronology_untrusted");
+    if (selected.revision && selected.revision.details.linkedWorkoutId !== race.actualRunId) {
+      reasons.push("confirmation_workout_identity_mismatch"); inconsistent = true;
+    }
     const confirmationTimeValid = !!confirmation && isPerformanceInstant(confirmation.knownAt);
     const confirmationAvailable = confirmationTimeValid && Date.parse(confirmation!.knownAt) <= asOfMs;
     const raceCreatedValid = isPerformanceInstant(race.createdAt);
@@ -127,6 +139,18 @@ export function buildRaceEvidence(input: RacePerformanceInput): RacePerformanceE
     if (override && override.workoutId !== race.actualRunId) { reasons.push("override_identity_mismatch"); inconsistent = true; }
     if (override?.isExcluded) { reasons.push("linked_workout_excluded"); inconsistent = true; }
     if (race.actualRunId && !rawLink) reasons.push("linked_workout_unavailable");
+    if (selected.revision) {
+      try {
+        // Reconciliation applies to these exact original observations. A later
+        // same-ID workout/race/override edit requires a new owner review, never
+        // automatic reuse of an earlier explanation or confirmed finish time.
+        if (!rawLink || rawLink.conflict || selected.revision.observations.timeZone !== input.timeZone
+          || buildRaceConfirmationSnapshot(race, rawLink.record, override ?? null, selected.revision.observations.timeZone).snapshotToken
+            !== selected.revision.snapshotToken) throw new Error("Changed confirmation observations");
+      } catch {
+        reasons.push("confirmation_observations_changed"); inconsistent = true; confirmationValid = false;
+      }
+    }
     const startMs = dateMs(workout?.startDate);
     const endMs = dateMs(workout?.endDate);
     const syncedMs = dateMs(workout?.syncedAt);
@@ -170,7 +194,7 @@ export function buildRaceEvidence(input: RacePerformanceInput): RacePerformanceE
       }
     }
     const availableAsOf = raceInPast && !raceCreatedInFuture && (input.asOfMode === "historical"
-      ? confirmationValid && confirmationAvailable && (!workout || workoutAvailable)
+      ? !selected.present && confirmationValid && confirmationAvailable && (!workout || workoutAvailable)
       : (!workout || workoutAvailable));
     const linkedUsable = !!workout && workoutAvailable && duration !== null && elapsed !== null;
     const finishSeconds = confirmationValid ? confirmed!.finishSeconds : linkedUsable ? duration : entered;
@@ -188,7 +212,8 @@ export function buildRaceEvidence(input: RacePerformanceInput): RacePerformanceE
     const stale = ageDays !== null && ageDays > policy.staleAfterDays;
     if (stale) reasons.push("historical_benchmark_not_current_capability");
     evidence.push({
-      raceId: race.id, name: race.name, raceDate: race.raceDate, distanceMeters: nominal,
+      raceId: race.id, name: confirmationValid && selected.revision ? selected.revision.details.officialEventName : race.name,
+      raceDate: race.raceDate, distanceMeters: nominal,
       finishSeconds, workoutId: race.actualRunId ?? null, recordedDistanceMeters: recordedDistance,
       durationSeconds: duration, elapsedSeconds: elapsed,
       timingBasis: confirmationValid ? "confirmed_result" : linkedUsable ? "recorded_workout_duration" : entered !== null ? "unverified_entered_result" : "none",
@@ -196,6 +221,8 @@ export function buildRaceEvidence(input: RacePerformanceInput): RacePerformanceE
       tier: confirmationValid ? confirmed!.kind === "official_race" ? "official_result" : confirmed!.kind === "high_effort" ? "identified_high_effort" : "confirmed_race_or_time_trial"
         : linkedUsable ? "linked_race_workout" : "insufficient",
       effort, conditions, knownAt: confirmationValid ? confirmed!.knownAt : null, availableAsOf,
+      confirmationRevisionId: confirmationValid ? selected.revision?.revisionId ?? null : null,
+      confirmationChronology: selected.present ? "client_document_untrusted" : confirmationValid ? "legacy_known_at" : "unconfirmed",
       ageDays, stale, eligibleSameDistanceBenchmark: eligible && Math.abs(nominal! - target) <= policy.sameDistanceToleranceMeters,
       eligibleForEquivalence: eligible, reasons: [...new Set(reasons)],
       provenance: { source: workout?.sourceName || "race_record", sourceId: race.actualRunId ?? race.id, confirmationSource: confirmationValid ? confirmed!.source : null },
@@ -280,6 +307,7 @@ export function evaluateRacePerformance(input: RacePerformanceInput): RacePerfor
     limitations: ["Historical finish times describe the race on its date, not proof of current capability.",
       "Recorded workout duration is not a verified official result or confirmation of maximal effort.",
       "Legacy race records lack revision history; strict historical evaluation abstains without known-then evidence.",
+      "Saved client-document confirmation histories preserve observations but do not prove immutable chronology; historical predictors abstain on these revisions.",
       "Training summaries do not adjust race times; no planned-workout, mileage or consistency credit is applied."],
   };
 }

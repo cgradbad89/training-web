@@ -4,7 +4,8 @@ import type { WorkoutOverride } from "@/types/workoutOverride";
 
 /** An explicit evidence revision, not inferred from a race name or a workout pace.
  * knownAt must move forward whenever any confirmed field or source is corrected.
- * No persistence or confirmation write path is introduced by Phase 3A. */
+ * Legacy Phase 3A offline input. New saved confirmations use the explicitly
+ * untrusted chronology in Race.confirmationHistory instead. */
 export interface RacePerformanceConfirmation {
   status: "verified" | "owner_confirmed";
   kind: "official_race" | "race" | "time_trial" | "high_effort";
@@ -65,6 +66,9 @@ export interface RacePerformanceEvidence {
   effort: RacePerformanceConfirmation["effort"];
   conditions: string | null;
   knownAt: string | null;
+  /** Exact selected Phase 3B revision; absent for legacy Phase 3A fixtures. */
+  confirmationRevisionId?: string | null;
+  confirmationChronology?: "client_document_untrusted" | "legacy_known_at" | "unconfirmed";
   availableAsOf: boolean;
   ageDays: number | null;
   stale: boolean;

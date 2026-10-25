@@ -19,7 +19,8 @@ vi.mock("firebase/firestore", () => ({
   writeBatch: vi.fn(),
 }));
 
-import { associateRunWithRace, updateRace } from "@/services/races";
+import { associateRunWithRace, createRace, normalizeRaceDocument, saveRace, updateRace } from "@/services/races";
+import type { Race } from "@/types/race";
 
 beforeEach(() => {
   h.setDoc.mockReset().mockResolvedValue(undefined);
@@ -48,5 +49,21 @@ describe("race persistence continuity", () => {
     expect(h.setDoc.mock.calls[0][1]).toEqual({
       linkedPlanId: h.deleteSentinel,
     });
+  });
+
+  it.each(["confirmationHistory", "performanceEvidence", "confirmationHistory.currentRevisionId"])("prevents generic writes to %s", async key => {
+    await expect(updateRace("u1", "r1", { [key]: undefined })).rejects.toThrow("versioned confirmation");
+    await expect(createRace("u1", { [key]: null } as unknown as Omit<Race, "id" | "createdAt">)).rejects.toThrow("versioned confirmation");
+    await expect(saveRace("u1", { id: "r1", [key]: null } as unknown as Race)).rejects.toThrow("versioned confirmation");
+    expect(h.setDoc).not.toHaveBeenCalled();
+  });
+
+  it("keeps legacy ordinary saves as merges so concurrent evidence is never replaced", async () => {
+    await saveRace("u1", { id: "r1", name: "Changed name" } as Race);
+    expect(h.setDoc.mock.calls[0][2]).toEqual({ merge: true });
+  });
+
+  it("retains invalid history presence rather than silently reverting to legacy evidence", () => {
+    expect(normalizeRaceDocument("r1", { raceDate: "2026-09-20", createdAt: "2026-09-01", confirmationHistory: { schemaVersion: 99 } }).confirmationHistory).toBeNull();
   });
 });

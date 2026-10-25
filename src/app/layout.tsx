@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { AuthProvider } from "@/contexts/AuthContext";
+import { AppAuthBoundary } from "@/components/AppAuthBoundary";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -33,7 +33,7 @@ export default function RootLayout({
         <meta name="training-deployment-sha" content={deploymentSha} />
       </head>
       <body className="min-h-full flex flex-col bg-gray-50 text-gray-900">
-        <AuthProvider>{children}</AuthProvider>
+        <AppAuthBoundary>{children}</AppAuthBoundary>
       </body>
     </html>
   );

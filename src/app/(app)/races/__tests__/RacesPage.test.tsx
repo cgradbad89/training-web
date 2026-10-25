@@ -17,10 +17,11 @@ const h = vi.hoisted(() => ({
   setActiveRace: vi.fn(),
   associateRunWithRace: vi.fn(),
   disassociateRunFromRace: vi.fn(),
+  saveRaceConfirmation: vi.fn(),
 }));
 
 vi.mock("@/hooks/useAuth", () => ({
-  useAuth: () => ({ user: { uid: "u1" } }),
+  useAuth: () => ({ user: { uid: "u1" }, sessionEpoch: 1, isSessionCurrent: () => true }),
 }));
 
 vi.mock("@/contexts/AppDataContext", () => ({
@@ -32,8 +33,11 @@ vi.mock("@/contexts/AppDataContext", () => ({
     workoutsLoading: false,
     plansLoading: false,
     patchRaces: h.patchRaces,
+    overrides: {}, overridesLoading: false, overridesResolution: "success",
   }),
 }));
+
+vi.mock("@/services/raceConfirmations", () => ({ saveRaceConfirmation: h.saveRaceConfirmation }));
 
 vi.mock("@/services/races", () => ({
   createRace: h.createRace,
@@ -132,6 +136,9 @@ async function mount() {
 }
 
 beforeEach(() => {
+  vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", "false");
+  vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "preview");
+  h.saveRaceConfirmation.mockReset();
   vi.useFakeTimers();
   vi.setSystemTime(new Date(2026, 7, 29, 12));
   h.races = [baseRace()];
@@ -153,6 +160,27 @@ afterEach(() => {
   container?.remove();
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
+
+describe("RacesPage confirmation gate", () => {
+  it.each(["production", "preview"])("does not expose confirmation without the required opt-in in %s", async (deployment) => {
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", deployment === "production" ? "true" : "false");
+    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", deployment);
+    await mount();
+    expect(container.textContent).not.toContain("Confirm race result");
+    expect(h.saveRaceConfirmation).not.toHaveBeenCalled();
+  });
+
+  it("opens the actual race confirmation without making a write", async () => {
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", "true");
+    h.races = [baseRace({ actualRunId: "w1" })];
+    await mount(); clickText("Confirm race result"); await flush();
+    expect(container.querySelector('[role="dialog"][aria-label="Confirm race result"]')).toBeTruthy();
+    expect(container.textContent).toContain("Linked workout: w1");
+    expect(h.saveRaceConfirmation).not.toHaveBeenCalled();
+    expect(h.updateRace).not.toHaveBeenCalled();
+  });
 });
 
 describe("RacesPage shared race freshness", () => {

@@ -4,6 +4,7 @@ import type { Race } from "@/types/race";
 import type { WorkoutOverride } from "@/types/workoutOverride";
 import { evaluateRacePerformanceHistory, raceEvaluationCutoff } from "@/utils/racePerformanceEvaluation";
 import { HALF_MARATHON_METERS } from "@/utils/racePerformance";
+import { confirmedRaceFixture, correctRaceFixture } from "./fixtures/raceConfirmationFixture";
 
 const asOf = "2026-10-23T16:00:00.000Z";
 function race(id: string, date: string, seconds: number, fields: Partial<Race> = {}): Race {
@@ -20,6 +21,39 @@ function row(result: ReturnType<typeof evaluate>, id: string, method = "recent_s
 }
 
 describe("chronological race research evaluation", () => {
+  it("counts two confirmed outcomes without claiming historically evaluable pairs from client-writable receipts", () => {
+    const april = confirmedRaceFixture({ id: "synthetic-april", date: "2026-04-26", seconds: 8130, availableAt: "2026-04-27T16:00:00.000Z" });
+    const september = confirmedRaceFixture({ availableAt: "2026-09-21T16:00:00.000Z" });
+    const report = evaluate([april.race, september.race], [april.workout, september.workout]);
+    expect(report.eligibleOutcomeCount).toBe(2);
+    expect(report.untrustedChronologyRaceCount).toBe(2);
+    expect(report.methods.recent_same_distance).toMatchObject({ attempts: 2, predictions: 0, abstentions: 2,
+      meanAbsoluteErrorSeconds: null, meanSignedErrorSeconds: null });
+    expect(row(report, september.race.id)).toMatchObject({ predictedSeconds: null, eligiblePriorRaces: 0,
+      abstentionReason: "untrusted_confirmation_chronology", targetConfirmationRevisionId: september.revision.revisionId,
+      targetAvailableAt: september.revision.availableAt });
+    expect(report.limitations.some(text => text.includes("Only 2") && text.includes("cannot validate"))).toBe(true);
+  });
+
+  it("uses only the available outcome-label revision and keeps later corrections out of an earlier report", () => {
+    const fixture = confirmedRaceFixture({ availableAt: "2026-09-21T16:00:00.000Z" });
+    const correction = correctRaceFixture(fixture.race, { finishSeconds: 7800 }, "2026-10-24T16:00:00.000Z");
+    const before = evaluate([fixture.race], [fixture.workout]);
+    expect(row(before, fixture.race.id)).toMatchObject({ actualSeconds: 7871, targetConfirmationRevisionId: fixture.revision.revisionId });
+    const after = evaluateRacePerformanceHistory({ races: [fixture.race], workouts: [fixture.workout], asOf: "2026-10-25T16:00:00.000Z", timeZone: "America/New_York" });
+    expect(row(after, fixture.race.id)).toMatchObject({ actualSeconds: 7800, targetConfirmationRevisionId: correction.revisionId });
+    expect(before.methods.recent_same_distance.predictions).toBe(0);
+    expect(after.methods.recent_same_distance.predictions).toBe(0);
+  });
+
+  it("does not label a confirmed outcome before its first receipt becomes available", () => {
+    const fixture = confirmedRaceFixture({ availableAt: "2026-10-24T16:00:00.000Z" });
+    const report = evaluate([fixture.race], [fixture.workout]);
+    expect(report.eligibleOutcomeCount).toBe(0);
+    expect(report.methods.recent_same_distance.attempts).toBe(0);
+    expect(report.excludedOutcomes[0].reasons).toContain("confirmation_not_available_as_of");
+  });
+
   it("evaluates only prior known same-distance results and reports signed/absolute/large errors and abstentions", () => {
     const report = evaluate([race("first", "2026-04-26", 8100), race("second", "2026-09-20", 7800)]);
     expect(row(report, "first").predictedSeconds).toBeNull();

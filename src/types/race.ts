@@ -1,4 +1,5 @@
 import type { RacePerformanceConfirmation } from "@/types/racePerformance";
+import type { RaceConfirmationHistory } from "@/types/raceConfirmation";
 
 export type RaceDistance =
   | "5K"
@@ -47,6 +48,9 @@ export interface Race {
   actualRunAvgPace?: number;
   /** Optional explicit evidence revision; legacy result/link fields imply no verification. */
   performanceEvidence?: RacePerformanceConfirmation;
+  /** Versioned explicit confirmations. Null preserves invalid history presence
+   * so consumers cannot fall back to a seemingly trusted legacy revision. */
+  confirmationHistory?: RaceConfirmationHistory | null;
 }
 
 /** Legacy alias */

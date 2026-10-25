@@ -1,6 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { RaceConfirmationEditor, type RaceConfirmationEditorProps } from "@/components/races/RaceConfirmationEditor";
+import { isRacePerformanceEnabled } from "@/lib/racePerformanceGate";
+import { buildRaceConfirmationInput } from "@/utils/raceConfirmation";
+import type { RaceConfirmationDraft } from "@/types/raceConfirmation";
+import type { WorkoutOverride } from "@/types/workoutOverride";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useAuth } from "@/hooks/useAuth";
 import { useUnsavedChanges } from "@/hooks/useUnsavedChanges";
@@ -311,6 +316,7 @@ interface RaceCardProps {
   onSetActive: (race: Race) => void;
   onAssociate: (race: Race) => void;
   onDisassociate: (raceId: string) => void;
+  onConfirmResult?: (race: Race) => void;
 }
 
 function RaceCard({
@@ -321,6 +327,7 @@ function RaceCard({
   onSetActive,
   onAssociate,
   onDisassociate,
+  onConfirmResult,
 }: RaceCardProps) {
   const days = daysFromToday(race.raceDate);
   const miles = raceMiles(race);
@@ -449,6 +456,11 @@ function RaceCard({
       )}
 
       {/* Footer actions */}
+      {onConfirmResult && (isPast || days === 0) ? (
+        <button onClick={() => onConfirmResult(race)} className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm font-medium text-primary">
+          {race.confirmationHistory ? "Review result confirmation" : "Confirm race result"}
+        </button>
+      ) : null}
       <div className="flex items-center gap-2 pt-1 border-t border-border">
         {!isPast && (
           <button
@@ -921,8 +933,27 @@ function RunPickerModal({
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
+function RaceConfirmationModal(props: RaceConfirmationEditorProps) {
+  const dialog = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    dialog.current?.querySelector<HTMLInputElement>("input")?.focus();
+    return () => previous?.focus();
+  }, []);
+  return <div ref={dialog} role="dialog" aria-modal="true" aria-label="Confirm race result" className="fixed inset-0 z-40 bg-black/40 p-4 overflow-y-auto" onKeyDown={(event) => {
+    if ((event.target as HTMLElement).closest('[role="dialog"]') !== event.currentTarget) return;
+    if (event.key === "Escape") { event.preventDefault(); dialog.current?.querySelector<HTMLButtonElement>("[data-confirmation-cancel]")?.click(); }
+    if (event.key === "Tab") {
+      const items = Array.from(dialog.current?.querySelectorAll<HTMLElement>("input:not(:disabled), select:not(:disabled), textarea:not(:disabled), button:not(:disabled), summary") ?? []).filter((item) => !item.closest('fieldset[disabled]'));
+      const first = items[0], last = items.at(-1);
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    }
+  }}><div className="mx-auto my-4 max-w-2xl rounded-2xl bg-card p-5 sm:p-7 shadow-xl"><RaceConfirmationEditor {...props} /></div></div>;
+}
+
 export default function RacesPage() {
-  const { user } = useAuth();
+  const { user, sessionEpoch, isSessionCurrent } = useAuth();
   const {
     races,
     workouts: activities,
@@ -931,7 +962,17 @@ export default function RacesPage() {
     workoutsLoading,
     plansLoading,
     patchRaces,
+    overrides,
+    overridesLoading,
+    overridesResolution,
   } = useAppData();
+  const confirmationEnabled = isRacePerformanceEnabled();
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const [confirmation, setConfirmation] = useState<{
+    race: Race; workout: HealthWorkout | null; override: WorkoutOverride | null;
+    requestId: string; timeZone: string;
+  } | null>(null);
   const runningPlans = plans.filter(isRunningPlan) as RunningPlan[];
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -942,10 +983,32 @@ export default function RacesPage() {
   const [pickerRaceId, setPickerRaceId] = useState<string | null>(null);
 
   useEffect(() => {
-    const isOpen = modalOpen || !!deletingRace || !!pickerRaceId;
+    const isOpen = modalOpen || !!deletingRace || !!pickerRaceId || !!confirmation;
     document.body.style.overflow = isOpen ? "hidden" : "";
     return () => { document.body.style.overflow = ""; };
-  }, [modalOpen, deletingRace, pickerRaceId]);
+  }, [modalOpen, deletingRace, pickerRaceId, confirmation]);
+
+  function openConfirmation(race: Race) {
+    if (!confirmationEnabled || !user) return;
+    if (overridesLoading || overridesResolution !== "success") { setError("Load workout overrides successfully before confirming a race. Reload and try again."); return; }
+    setConfirmation({
+      race, workout: activities.find((workout) => workout.workoutId === race.actualRunId) ?? null,
+      override: race.actualRunId ? overrides?.[race.actualRunId] ?? null : null,
+      requestId: crypto.randomUUID(), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    });
+  }
+
+  async function handleConfirmation(draft: RaceConfirmationDraft) {
+    if (!user || !confirmation || !confirmationEnabled || !confirmation.workout) throw new Error("The owner session or linked workout is unavailable. Reopen this race.");
+    const epoch = sessionEpoch;
+    const input = buildRaceConfirmationInput({ ...confirmation, workout: confirmation.workout, draft });
+    const { saveRaceConfirmation } = await import("@/services/raceConfirmations");
+    if (!mounted.current || !isSessionCurrent(epoch)) throw new Error("The owner session changed. Reopen this race before saving.");
+    const savedRace = await saveRaceConfirmation(user.uid, input);
+    if (!mounted.current || !isSessionCurrent(epoch)) return;
+    patchRaces((previous) => previous.map((race) => race.id === savedRace.id ? savedRace : race));
+    setConfirmation(null);
+  }
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -1145,6 +1208,7 @@ export default function RacesPage() {
                   onSetActive={handleSetActive}
                   onAssociate={(r) => setPickerRaceId(r.id)}
                   onDisassociate={handleDisassociate}
+                  onConfirmResult={confirmationEnabled ? openConfirmation : undefined}
                 />
               ))}
             </div>
@@ -1170,6 +1234,7 @@ export default function RacesPage() {
                   onSetActive={handleSetActive}
                   onAssociate={(r) => setPickerRaceId(r.id)}
                   onDisassociate={handleDisassociate}
+                  onConfirmResult={confirmationEnabled ? openConfirmation : undefined}
                 />
               ))}
             </div>
@@ -1178,6 +1243,9 @@ export default function RacesPage() {
       </div>
 
       {/* Add/Edit modal */}
+      {confirmation && confirmationEnabled ? (
+        <RaceConfirmationModal race={confirmation.race} workout={confirmation.workout} override={confirmation.override} timeZone={confirmation.timeZone} onSave={handleConfirmation} onClose={() => setConfirmation(null)} />
+      ) : null}
       {modalOpen && (
         <RaceModal
           editing={editingRace}
