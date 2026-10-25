@@ -7,6 +7,7 @@ const HARNESS = "tools/race-performance-acceptance/";
 const PURE_SOURCE_FILES = new Set([
   "src/components/insights/RacePerformancePanel.tsx",
   "src/lib/trainingAuthorization.ts",
+  "src/lib/racePerformanceGate.ts",
   "src/types/plan.ts",
   "src/types/workoutOverride.ts",
   "src/utils/dates.ts",
@@ -17,6 +18,9 @@ const PURE_SOURCE_FILES = new Set([
   "src/utils/raceConfirmation.ts",
   "src/utils/raceConfirmationEvidence.ts",
   "src/utils/raceTrainingContext.ts",
+  "src/utils/workoutResearchInput.ts",
+  "src/utils/workoutRaceResearch.ts",
+  "src/utils/workoutRaceResearchEvaluation.ts",
   "src/utils/riegelFit.ts",
   "src/utils/selectActiveWorkouts.ts",
 ]);
