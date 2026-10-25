@@ -58,3 +58,26 @@ Actual owner snapshots/screenshots belong in private local evidence files, never
 After a Next build, run `npx vite --config tools/race-performance-acceptance/synthetic.vite.config.ts` and open `http://localhost:4187/synthetic.html`. This separate entry renders invented races with the real confirmation editor and memory-only saves. It needs no Firebase config, environment file, authentication or backend. Its config audits the complete emitted entry graph before serving. Nothing imports it from `src/`, and it adds no Next route or root authentication exception. The normal application's eager AuthProvider remains unchanged. The earlier hosted `/race-confirmation-preview` is retired from the application.
 
 Run `TZ=America/New_York npx vitest run tools/race-performance-acceptance/synthetic` for synthetic workflow and isolation regressions. The TypeScript command above also covers this entry.
+
+## Phase 3B.2 workout-aware research (no database connection)
+
+Run `npx vite --config tools/race-performance-acceptance/research/vite.config.ts` and open **http://localhost:4188/**. No Next/CSS build, config file, sign-in or environment file is required. The standalone entry starts with invented observations and optionally reads an existing parent-only JSON export through a local file chooser into memory. Its emitted graph rejects Firebase/services, network, storage and mutation APIs. Never upload actual owner exports as static assets. `npx vite build --config tools/race-performance-acceptance/research/vite.config.ts` creates the invented-only static review artifact under `/private/tmp/training-3b2-research-preview`.
+
+The owner harness at 4186 additionally renders the same research panel from its existing bounded read, without a new request or writer. It preserves parent route-cluster/weather summaries for comparison, while accepting no child telemetry. Its original Production panel, source guards and no-write requirements remain unchanged. A scoped historical-distance exclusion is retained in the research exclusions; supplied query coverage is never lifetime completeness. Do not edit/reload during a signed-in owner session.
+
+Offline evaluation uses no SDK, network or database:
+
+```sh
+TZ=America/New_York \
+WORKOUT_RESEARCH_INPUT=/absolute/private/parent-export.json \
+WORKOUT_RESEARCH_OUTPUT=/private/tmp/workout-research-report.json \
+npx vitest run scripts/evaluateWorkoutRaceResearch.test.ts
+```
+
+The source must have fixed `capturedAt`, `loadedAt` or `exportedAt`, with optional explicit `asOf`/IANA `timeZone`. It accepts normalized `workouts`/`races`/`overrides`, or the existing `healthWorkouts`/`halfMarathonRaces`/`workoutOverrides` snapshot arrays. Omitted collections withhold numerical output. Full raw archive children/caches/settings are ignored by an explicit parent projection. A past date on a later snapshot withholds numerical replay. The optional assumption starts off for imported owner data. Reports expose a separate selected-assumption comparison, exclusions, actual source scope, conditional contributions and null real accuracy.
+
+```sh
+TZ=America/New_York npx vitest run src/utils/__tests__/workoutRaceResearch.test.ts scripts/evaluateWorkoutRaceResearch.test.ts scripts/racePredictionStability.test.ts tools/race-performance-acceptance/research
+```
+
+See `docs/workout-aware-race-research-phase3b2.md` for methodology, source limitations, simulated stability, research citations and promotion requirements. No merge, confirmation write or Production activation is authorized by this preview.

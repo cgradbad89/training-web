@@ -30,6 +30,9 @@ describe("isolated acceptance source conversion", () => {
     expect(result.startDate.toISOString()).toBe("2026-10-18T13:00:00.000Z");
     expect(result.durationSeconds).toBe(3600);
     expect(result.hasRoute).toBe(false);
+    const context = parseAcceptanceWorkout(workout("context",{routeClusterId:"supplied-loop",weather:{tempF:61,fetchedAt:"2026-10-18T15:00:00Z"}}));
+    expect(context.routeClusterId).toBe("supplied-loop");
+    expect(context.weather?.tempF).toBe(61);
     expect(parseAcceptanceRace(race()).createdAt).toBe("1970-01-01T00:00:00.000Z");
     expect(parseAcceptancePlan({ id: "p1", data: planData })).toMatchObject({ id: "p1", status: "active", isActive: true, planType: "running" });
     expect(parseAcceptancePlan({ id: "legacy", data: { ...planData, status: undefined, isActive: true } })).toMatchObject({ status: "active" });

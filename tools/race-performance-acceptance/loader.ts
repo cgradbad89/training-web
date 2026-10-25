@@ -113,6 +113,8 @@ export function parseAcceptanceWorkout(record: ParentRecord): HealthWorkout {
     avgHeartRate: finite(data.avgHeartRate), avgSpeedMPS: finite(data.avgSpeedMPS), hrDriftPct: finite(data.hrDriftPct),
     cadenceSPM: finite(data.cadenceSPM), efficiencyRaw: finite(data.efficiencyRaw), efficiencyScore: finite(data.efficiencyScore),
     elevationGainM: finite(data.elevationGainM),
+    routeClusterId: typeof data.routeClusterId === "string" ? data.routeClusterId : undefined,
+    weather: data.weather && typeof data.weather === "object" ? data.weather as HealthWorkout["weather"] : null,
   };
 }
 

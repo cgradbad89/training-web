@@ -1,0 +1,351 @@
+{
+  "kind": "synthetic_mechanism_and_stability_experiments",
+  "realAthleteAccuracy": null,
+  "legacy": {
+    "ordinaryRun": {
+      "paceSecondsPerMile": 569,
+      "distanceMiles": 3,
+      "beforeSeconds": 7865.263476181027,
+      "afterSeconds": 7870.632120569562,
+      "deltaSeconds": 5.368644388535358,
+      "explanation": "Weighted log-distance/log-time regression changes slope/intercept and normalized weights after an ordinary training observation. Training pace is being treated as performance evidence, so a 9:29/mi run can move the fitted finish slower by approximately five seconds."
+    },
+    "futurePlan": {
+      "beforeSeconds": 7865.263476181027,
+      "agedRacePlusSyntheticPlanSeconds": 9261.41766607161,
+      "syntheticPlannedRuns": 32,
+      "explanation": "The real anchor ages by 56 days while 32 synthetic planned easy efforts have fresh weights. The fit moves toward easy training pace. This isolates the underlying legacy weighted fit; it is not the final anchored/consistency-wrapped Production chart."
+    }
+  },
+  "scenarios": [
+    {
+      "name": "Baseline",
+      "asOf": "2026-10-25T16:00:00.000Z",
+      "models": [
+        {
+          "method": "A",
+          "minutes": 130,
+          "status": "comparator_only",
+          "reason": "Most recent eligible same-distance benchmark, or fixed Riegel equivalence."
+        },
+        {
+          "method": "B",
+          "minutes": 125,
+          "status": "experimental",
+          "reason": "Apply the median recent/baseline matched-summary pace ratio once to the original race anchor. No cumulative mileage/plan credits."
+        },
+        {
+          "method": "C",
+          "minutes": null,
+          "status": "unavailable",
+          "reason": "Morton–Fitz-Clarke–Banister impulse-response modeling requires athlete-specific performance/load calibration. Existing CTL/ATL is not a finish-time equation; two unverified half marathons cannot identify or independently validate the gains and time constants."
+        }
+      ],
+      "signalRuns": 6,
+      "recentMiles": 30,
+      "longestRecentMiles": 5,
+      "matchedPairs": 6
+    },
+    {
+      "name": "Add 9:29 easy run, no comparable effort evidence",
+      "asOf": "2026-10-25T16:00:00.000Z",
+      "models": [
+        {
+          "method": "A",
+          "minutes": 130,
+          "status": "comparator_only",
+          "reason": "Most recent eligible same-distance benchmark, or fixed Riegel equivalence."
+        },
+        {
+          "method": "B",
+          "minutes": 125,
+          "status": "experimental",
+          "reason": "Apply the median recent/baseline matched-summary pace ratio once to the original race anchor. No cumulative mileage/plan credits."
+        },
+        {
+          "method": "C",
+          "minutes": null,
+          "status": "unavailable",
+          "reason": "Morton–Fitz-Clarke–Banister impulse-response modeling requires athlete-specific performance/load calibration. Existing CTL/ATL is not a finish-time equation; two unverified half marathons cannot identify or independently validate the gains and time constants."
+        }
+      ],
+      "signalRuns": 7,
+      "recentMiles": 35,
+      "longestRecentMiles": 5,
+      "matchedPairs": 6
+    },
+    {
+      "name": "Add strong tempo at higher HR",
+      "asOf": "2026-10-25T16:00:00.000Z",
+      "models": [
+        {
+          "method": "A",
+          "minutes": 130,
+          "status": "comparator_only",
+          "reason": "Most recent eligible same-distance benchmark, or fixed Riegel equivalence."
+        },
+        {
+          "method": "B",
+          "minutes": 125,
+          "status": "experimental",
+          "reason": "Apply the median recent/baseline matched-summary pace ratio once to the original race anchor. No cumulative mileage/plan credits."
+        },
+        {
+          "method": "C",
+          "minutes": null,
+          "status": "unavailable",
+          "reason": "Morton–Fitz-Clarke–Banister impulse-response modeling requires athlete-specific performance/load calibration. Existing CTL/ATL is not a finish-time equation; two unverified half marathons cannot identify or independently validate the gains and time constants."
+        }
+      ],
+      "signalRuns": 7,
+      "recentMiles": 35,
+      "longestRecentMiles": 5,
+      "matchedPairs": 6
+    },
+    {
+      "name": "Complete longer endurance run",
+      "asOf": "2026-10-25T16:00:00.000Z",
+      "models": [
+        {
+          "method": "A",
+          "minutes": 130,
+          "status": "comparator_only",
+          "reason": "Most recent eligible same-distance benchmark, or fixed Riegel equivalence."
+        },
+        {
+          "method": "B",
+          "minutes": 125,
+          "status": "experimental",
+          "reason": "Apply the median recent/baseline matched-summary pace ratio once to the original race anchor. No cumulative mileage/plan credits."
+        },
+        {
+          "method": "C",
+          "minutes": null,
+          "status": "unavailable",
+          "reason": "Morton–Fitz-Clarke–Banister impulse-response modeling requires athlete-specific performance/load calibration. Existing CTL/ATL is not a finish-time equation; two unverified half marathons cannot identify or independently validate the gains and time constants."
+        }
+      ],
+      "signalRuns": 7,
+      "recentMiles": 40,
+      "longestRecentMiles": 10,
+      "matchedPairs": 6
+    },
+    {
+      "name": "Improve consistency across several weeks",
+      "asOf": "2026-10-25T16:00:00.000Z",
+      "models": [
+        {
+          "method": "A",
+          "minutes": 130,
+          "status": "comparator_only",
+          "reason": "Most recent eligible same-distance benchmark, or fixed Riegel equivalence."
+        },
+        {
+          "method": "B",
+          "minutes": 125,
+          "status": "experimental",
+          "reason": "Apply the median recent/baseline matched-summary pace ratio once to the original race anchor. No cumulative mileage/plan credits."
+        },
+        {
+          "method": "C",
+          "minutes": null,
+          "status": "unavailable",
+          "reason": "Morton–Fitz-Clarke–Banister impulse-response modeling requires athlete-specific performance/load calibration. Existing CTL/ATL is not a finish-time equation; two unverified half marathons cannot identify or independently validate the gains and time constants."
+        }
+      ],
+      "signalRuns": 14,
+      "recentMiles": 70,
+      "longestRecentMiles": 5,
+      "matchedPairs": 6
+    },
+    {
+      "name": "No supplied running for several weeks",
+      "asOf": "2026-10-25T16:00:00.000Z",
+      "models": [
+        {
+          "method": "A",
+          "minutes": 130,
+          "status": "comparator_only",
+          "reason": "Most recent eligible same-distance benchmark, or fixed Riegel equivalence."
+        },
+        {
+          "method": "B",
+          "minutes": 130,
+          "status": "comparator_only",
+          "reason": "Fewer than three independent matched pairs spanning three recent weeks; no reliable training pace contrast."
+        },
+        {
+          "method": "C",
+          "minutes": null,
+          "status": "unavailable",
+          "reason": "Morton–Fitz-Clarke–Banister impulse-response modeling requires athlete-specific performance/load calibration. Existing CTL/ATL is not a finish-time equation; two unverified half marathons cannot identify or independently validate the gains and time constants."
+        }
+      ],
+      "signalRuns": 0,
+      "recentMiles": 0,
+      "longestRecentMiles": null,
+      "matchedPairs": 0
+    },
+    {
+      "name": "Add a new confirmed maximal race",
+      "asOf": "2026-10-25T16:00:00.000Z",
+      "models": [
+        {
+          "method": "A",
+          "minutes": 124,
+          "status": "comparator_only",
+          "reason": "Most recent eligible same-distance benchmark, or fixed Riegel equivalence."
+        },
+        {
+          "method": "B",
+          "minutes": 124,
+          "status": "comparator_only",
+          "reason": "Fewer than three independent matched pairs spanning three recent weeks; no reliable training pace contrast."
+        },
+        {
+          "method": "C",
+          "minutes": null,
+          "status": "unavailable",
+          "reason": "Morton–Fitz-Clarke–Banister impulse-response modeling requires athlete-specific performance/load calibration. Existing CTL/ATL is not a finish-time equation; two unverified half marathons cannot identify or independently validate the gains and time constants."
+        }
+      ],
+      "signalRuns": 7,
+      "recentMiles": 43.109,
+      "longestRecentMiles": 13.109,
+      "matchedPairs": 0
+    },
+    {
+      "name": "Advance 51 days without new observations",
+      "asOf": "2026-12-15T16:00:00Z",
+      "models": [
+        {
+          "method": "A",
+          "minutes": 130,
+          "status": "comparator_only",
+          "reason": "Most recent eligible same-distance benchmark, or fixed Riegel equivalence."
+        },
+        {
+          "method": "B",
+          "minutes": 130,
+          "status": "comparator_only",
+          "reason": "Fewer than three independent matched pairs spanning three recent weeks; no reliable training pace contrast."
+        },
+        {
+          "method": "C",
+          "minutes": null,
+          "status": "unavailable",
+          "reason": "Morton–Fitz-Clarke–Banister impulse-response modeling requires athlete-specific performance/load calibration. Existing CTL/ATL is not a finish-time equation; two unverified half marathons cannot identify or independently validate the gains and time constants."
+        }
+      ],
+      "signalRuns": 1,
+      "recentMiles": 0,
+      "longestRecentMiles": null,
+      "matchedPairs": 0
+    }
+  ],
+  "chronology": {
+    "kind": "simulated_chronological_evaluation",
+    "eligibleOutcomeCount": 2,
+    "independentlyVerifiedRealComparisonCount": 0,
+    "realAccuracy": null,
+    "methods": {
+      "A": {
+        "attempts": 2,
+        "predictions": 1,
+        "abstentions": 1,
+        "abstentionRate": 0.5,
+        "meanAbsoluteErrorMinutes": 5,
+        "biasMinutes": 5
+      },
+      "B": {
+        "attempts": 2,
+        "predictions": 1,
+        "abstentions": 1,
+        "abstentionRate": 0.5,
+        "meanAbsoluteErrorMinutes": 0,
+        "biasMinutes": 0
+      },
+      "C": {
+        "attempts": 2,
+        "predictions": 0,
+        "abstentions": 2,
+        "abstentionRate": 1,
+        "meanAbsoluteErrorMinutes": null,
+        "biasMinutes": null
+      }
+    },
+    "cases": [
+      {
+        "outcomeId": "baseline-half",
+        "cutoff": "2026-08-30T03:59:59.999Z",
+        "snapshotLabel": null,
+        "capturedAt": null,
+        "model": "A",
+        "predictedMinutes": null,
+        "actualMinutes": 130,
+        "errorMinutes": null,
+        "reason": "No snapshot captured before the outcome cutoff."
+      },
+      {
+        "outcomeId": "baseline-half",
+        "cutoff": "2026-08-30T03:59:59.999Z",
+        "snapshotLabel": null,
+        "capturedAt": null,
+        "model": "B",
+        "predictedMinutes": null,
+        "actualMinutes": 130,
+        "errorMinutes": null,
+        "reason": "No snapshot captured before the outcome cutoff."
+      },
+      {
+        "outcomeId": "baseline-half",
+        "cutoff": "2026-08-30T03:59:59.999Z",
+        "snapshotLabel": null,
+        "capturedAt": null,
+        "model": "C",
+        "predictedMinutes": null,
+        "actualMinutes": 130,
+        "errorMinutes": null,
+        "reason": "No snapshot captured before the outcome cutoff."
+      },
+      {
+        "outcomeId": "synthetic-held-out",
+        "cutoff": "2026-10-26T03:59:59.999Z",
+        "snapshotLabel": "invented pre-race snapshot",
+        "capturedAt": "2026-10-25T16:00:00.000Z",
+        "model": "A",
+        "predictedMinutes": 130,
+        "actualMinutes": 125,
+        "errorMinutes": 5,
+        "reason": "Most recent eligible same-distance benchmark, or fixed Riegel equivalence."
+      },
+      {
+        "outcomeId": "synthetic-held-out",
+        "cutoff": "2026-10-26T03:59:59.999Z",
+        "snapshotLabel": "invented pre-race snapshot",
+        "capturedAt": "2026-10-25T16:00:00.000Z",
+        "model": "B",
+        "predictedMinutes": 125,
+        "actualMinutes": 125,
+        "errorMinutes": 0,
+        "reason": "Apply the median recent/baseline matched-summary pace ratio once to the original race anchor. No cumulative mileage/plan credits."
+      },
+      {
+        "outcomeId": "synthetic-held-out",
+        "cutoff": "2026-10-26T03:59:59.999Z",
+        "snapshotLabel": "invented pre-race snapshot",
+        "capturedAt": "2026-10-25T16:00:00.000Z",
+        "model": "C",
+        "predictedMinutes": null,
+        "actualMinutes": 125,
+        "errorMinutes": null,
+        "reason": "Morton–Fitz-Clarke–Banister impulse-response modeling requires athlete-specific performance/load calibration. Existing CTL/ATL is not a finish-time equation; two unverified half marathons cannot identify or independently validate the gains and time constants."
+      }
+    ],
+    "limitations": [
+      "Simulated outcomes test calculation and chronology, not athlete accuracy.",
+      "Current writable parent/confirmation revisions cannot prove pre-race availability.",
+      "No uncertainty interval or personalized calibration is inferred from two half marathons."
+    ]
+  }
+}

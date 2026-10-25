@@ -1,3 +1,6 @@
+import "./research/style.css";
+import { normalizeWorkoutResearchExport } from "../../src/utils/workoutResearchInput";
+import { ResearchPanel } from "./research/ResearchPanel";
 import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { RacePerformancePanel } from '../../src/components/insights/RacePerformancePanel';
@@ -105,6 +108,9 @@ function Acceptance({ guard, config }: { guard: Guard; config: Config }) {
     </section>
     {sources?.reportingScope && <section className="acceptance-controls"><p>Scoped source disclosure: {sources.workouts.length} valid parents retained; {sources.invalidWorkouts.length} historical parents with unknown distance excluded. Unknown distance is not zero. Scope proof covers both reporting clocks and every selectable plan.</p><details><summary>Reporting-window exclusion proof</summary><pre data-testid="reporting-scope">{JSON.stringify(sources.reportingScope, null, 2)}</pre></details></section>}
     <div data-testid="actual-panel"><RacePerformancePanel {...props} sourcesReady={ready} asOf={asOf} timeZone={TIME_ZONE} /></div>
+    {sources?.sourcesReady && <ResearchPanel input={normalizeWorkoutResearchExport({ races: sources.races, workouts: sources.workouts, overrides: sources.overrides, invalidWorkouts: sources.invalidWorkouts, reportingScope: sources.reportingScope,
+      asOf: asOf.toISOString(), capturedAt: sources.loadedAt, timeZone: TIME_ZONE, source: "owner_parent_export",
+      complete: {workouts: true, races: true, overrides: true} })} />}
     {sources && <section className="acceptance-controls"><h2>Server provenance and canonical parent records</h2>
       <p>Plans loaded: {sources.plans.length}. Target race matches: {targets.length}. Multiple target matches require explicit reconciliation.</p>
       <details open><summary>Source completeness</summary><pre data-testid="source-diagnostics">{JSON.stringify(sources.diagnostics, null, 2)}</pre></details>
