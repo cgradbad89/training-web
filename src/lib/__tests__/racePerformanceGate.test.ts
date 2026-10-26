@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { isRacePerformanceDisplayEnabled, isRaceConfirmationEnabled, isRacePerformanceResearchEnabled } from "../racePerformanceGate";
+import { isExperimentalCurrentEstimateEnabled, isRacePerformanceDisplayEnabled, isRaceConfirmationEnabled, isRacePerformanceResearchEnabled } from "../racePerformanceGate";
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -8,6 +8,7 @@ describe("independent race-performance capabilities", () => {
     vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", flag);
     vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "production");
     expect(isRacePerformanceDisplayEnabled()).toBe(true);
+    expect(isExperimentalCurrentEstimateEnabled()).toBe(true);
     expect(isRaceConfirmationEnabled()).toBe(false);
     expect(isRacePerformanceResearchEnabled()).toBe(false);
   });

@@ -6,12 +6,17 @@ export function isRacePerformanceDisplayEnabled(): boolean {
     || isPreviewRaceCapabilityEnabled();
 }
 
+/** Read-only current HM experiment; never authorizes other consumers or writes. */
+export function isExperimentalCurrentEstimateEnabled(): boolean {
+  return isRacePerformanceDisplayEnabled();
+}
+
 /** Editing/persistence must never inherit read-only display authorization. */
 export function isRaceConfirmationEnabled(): boolean {
   return isPreviewRaceCapabilityEnabled();
 }
 
-/** Experimental numbers are a separate developer capability, never app output. */
+/** The full Phase 3B.2 developer research interface remains Production-off. */
 export function isRacePerformanceResearchEnabled(): boolean {
   return isPreviewRaceCapabilityEnabled();
 }
