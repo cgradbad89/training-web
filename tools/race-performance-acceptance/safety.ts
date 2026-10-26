@@ -20,6 +20,7 @@ const PURE_SOURCE_FILES = new Set([
   "src/utils/raceTrainingContext.ts",
   "src/utils/workoutResearchInput.ts",
   "src/utils/workoutRaceResearch.ts",
+  "src/utils/experimentalCurrentPerformance.ts",
   "src/utils/workoutRaceResearchEvaluation.ts",
   "src/utils/riegelFit.ts",
   "src/utils/selectActiveWorkouts.ts",

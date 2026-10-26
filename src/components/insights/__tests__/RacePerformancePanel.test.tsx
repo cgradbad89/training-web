@@ -3,6 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HealthWorkout } from "@/types/healthWorkout";
 import type { Race } from "@/types/race";
+import { currentFixture } from "@/utils/__tests__/fixtures/currentPerformanceFixture";
 import { RacePerformancePanel, type RacePerformancePanelProps } from "../RacePerformancePanel";
 
 vi.mock("next/link", () => ({ default: ({ href, children, ...rest }: React.AnchorHTMLAttributes<HTMLAnchorElement>) => <a href={href} {...rest}>{children}</a> }));
@@ -32,9 +33,38 @@ function render(partial: Partial<RacePerformancePanelProps> = {}) {
 beforeEach(() => {
   container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
 });
-afterEach(() => { act(() => root.unmount()); container.remove(); });
+afterEach(() => { act(() => root.unmount()); container.remove(); vi.unstubAllEnvs(); });
 
-describe("Phase 3A summary presentation", () => {
+describe("Race performance summary presentation", () => {
+
+  it("renders the numerical Production estimate, provisional baseline and compact explanation", () => {
+    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "production");
+    const input = currentFixture(1.5, 4, 9);
+    const text = render({ races: [...input.races], workouts: [...input.workouts], asOf: new Date(input.asOf) });
+    const card = container.querySelector('[data-testid="experimental-current-estimate"]')!;
+    expect(card.textContent).toContain("~2:09"); expect(card.textContent).toContain("~9:50/mile");
+    expect(text).toContain("2:11:11"); expect(text).toContain("Historical demonstrated performance");
+    expect(text).toContain("Recorded, unverified"); expect(text).toContain("Unvalidated training adjustment");
+    expect(text).toContain("Why this estimate?"); expect(text).toContain("Volume and frequency");
+    expect(text).toContain("Endurance preparation"); expect(text).toContain("No confidence interval is supported");
+    expect(text).toContain("Race-day forecastWithheld");
+    const why = [...container.querySelectorAll("details")].find(d => d.querySelector("summary")?.textContent === "Why this estimate?")!;
+    expect(why.open).toBe(false); act(() => { why.open = true; }); expect(why.open).toBe(true);
+    expect(container.querySelector("form")).toBeNull();
+  });
+  it("shows the explicit minimum-evidence reason in Production", () => {
+    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "production");
+    const text = render(); expect(text).toContain("Insufficient evidence");
+    expect(text).toContain("three completed training runs"); expect(text).toContain("2:11:11");
+  });
+  it("preserves compact responsive card classes and contained weekly-table overflow", () => {
+    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "production");
+    const input = currentFixture(); render({ races: [...input.races], workouts: [...input.workouts], asOf: new Date(input.asOf) });
+    expect(container.querySelector('[data-testid="experimental-current-estimate"]')?.className).toContain("min-w-0");
+    expect(container.querySelector('[data-testid="experimental-current-estimate"]')?.parentElement?.className).toContain("md:grid-cols-2");
+    expect(container.querySelector("table")?.parentElement?.className).toContain("overflow-x-auto");
+  });
+
   it("shows the provisional historical time and withholds both numerical estimates", () => {
     const text = render();
     expect(text).toContain("2:11:11");
@@ -43,7 +73,7 @@ describe("Phase 3A summary presentation", () => {
     expect(text).toContain("Current capability estimateUnavailable");
     expect(text).toContain("Race-day forecastWithheld");
     expect(text).toContain("Mar 20, 2027");
-    expect(text).toContain("No confidence interval is supported");
+    expect(text).toContain("not enabled in this build");
     expect(container.querySelectorAll("ol > li")).toHaveLength(1);
   });
 

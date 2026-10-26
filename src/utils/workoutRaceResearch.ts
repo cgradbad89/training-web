@@ -100,13 +100,13 @@ function comparableContext(a: ResearchRun,b: ResearchRun,asOf: string): string |
   return "Same supplied route, comparable climb/duration/mean HR and available weather; steady effort remains an explicit unvalidated assumption.";
 }
 
-function pairRuns(runs: ResearchRun[],anchorDate: string,asOfDate: string,asOf: string,raceIds: Set<string>) {
+export function pairResearchRuns(runs: ResearchRun[],anchorDate: string,asOfDate: string,asOf: string,raceIds: Set<string>,recentDays: number = WORKOUT_RESEARCH_POLICY.recentDays) {
   const p=WORKOUT_RESEARCH_POLICY;
   const baselineStart=shiftPerformanceDate(anchorDate,-p.baselineDays);
   const eligible=(r:ResearchRun)=>!raceIds.has(r.workout.workoutId)&&!hardLabel(r.workout)
     && r.workout.durationSeconds>=p.minimumDurationSeconds&&r.workout.durationSeconds<=p.maximumDurationSeconds;
   const baseline=runs.filter(r=>r.date>=baselineStart&&r.date<anchorDate&&eligible(r));
-  const recent=runs.filter(r=>r.date>=shiftPerformanceDate(asOfDate,-p.recentDays+1)&&r.date>anchorDate&&eligible(r));
+  const recent=runs.filter(r=>r.date>=shiftPerformanceDate(asOfDate,-recentDays+1)&&r.date>anchorDate&&eligible(r));
   const unused=new Set(baseline.map(r=>r.workout.workoutId));
   const pairs:ResearchPair[]=[];
   const rejected:{workoutId:string;reason:string}[]=[];
@@ -159,7 +159,7 @@ export function estimateWorkoutRaceResearch(input: WorkoutRaceResearchInput): Wo
     adjustmentMinutes:minutes===null||referenceMinutes===null?null:minutes-referenceMinutes,reason,assumptions});
   const withheld=!complete?"Required parent collection coverage is incomplete; exclusion/race context cannot be assumed empty.":retrospective?"This snapshot was captured after the requested cutoff. Earlier parent/confirmation revisions cannot be reconstructed; numerical replay is withheld.":!anchor?"No usable confirmed or consistent provisional race anchor.":null;
   const modelA=estimate("A","Race-only comparator",referenceMinutes,withheld??(anchor!.status==="recorded_unverified"?"Provisional recorded race duration, not a checked official result or proof of maximal effort.":"Most recent eligible same-distance benchmark, or fixed Riegel equivalence."),["Race equivalence is not proof of current fitness; stale anchors are not automatically decayed."],"comparator_only");
-  const pairResult=anchor?pairRuns(runs,anchor.raceDate,asOfDate,new Date(Math.min(Date.parse(input.asOf),Date.parse(input.capturedAt))).toISOString(),new Set(input.races.flatMap(r=>r.actualRunId?[r.actualRunId]:[]))):{pairs:[],rejected:[]};
+  const pairResult=anchor?pairResearchRuns(runs,anchor.raceDate,asOfDate,new Date(Math.min(Date.parse(input.asOf),Date.parse(input.capturedAt))).toISOString(),new Set(input.races.flatMap(r=>r.actualRunId?[r.actualRunId]:[]))):{pairs:[],rejected:[]};
   const ratios=pairResult.pairs.map(p=>p.paceRatio);
   const ratio=ratios.length?median(ratios):null;
   const weeks=new Set(pairResult.pairs.map(p=>monday(p.recentDate))).size;

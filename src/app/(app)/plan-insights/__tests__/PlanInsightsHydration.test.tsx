@@ -30,6 +30,7 @@ vi.mock("@/utils/bestEffortExtraction", async importOriginal => {
 });
 
 import PlanInsightsPage from "../page";
+import { currentFixture } from "@/utils/__tests__/fixtures/currentPerformanceFixture";
 import { AppDataProvider, useAppData, type AppDataContextValue } from "@/contexts/AppDataContext";
 import { buildBestEffortSegments } from "@/utils/bestEffortExtraction";
 import { DEFAULT_MAX_HR, DEFAULT_RESTING_HR } from "@/utils/trainingLoad";
@@ -135,12 +136,26 @@ describe("Plan Insights demand-gated fast-finish hydration", () => {
     expect(text).toContain("PNC Half Marathon"); expect(text).toContain("Apr 26, 2026");
     expect(text).toContain("Recorded duration 2:15:30; elapsed 2:25:59");
     expect(text).toContain("DC Half Marathon"); expect(text).toContain("2:11:11");
-    expect(text).toContain("Recorded, unverified"); expect(text).toContain("Current capability estimateUnavailable");
+    expect(text).toContain("Recorded, unverified"); expect(text).toContain("Experimental current half-marathon estimateInsufficient evidence");
     expect(text).toContain("Race-day forecastWithheld"); expect(text).toContain("Rock and Roll Half Marathon");
     expect(text).toContain("Recent 4 weeks11.0"); expect(text).toContain("Completed sessions · 4 weeks2");
     expect(text).toContain("Longest recent run6.0 mi"); expect(text).toContain("Plan adherence: 1 of 1");
     expect(container.textContent).not.toContain("Race Predictions"); expect(container.textContent).not.toContain("Race-Day Projection");
     expect(container.textContent).not.toContain("Pace Readiness"); expect(container.textContent).not.toContain("R²");
+    expect(h.hydrate).not.toHaveBeenCalled(); expect(h.rawRoute).not.toHaveBeenCalled(); expect(h.mileSplits).not.toHaveBeenCalled();
+    expect(buildBestEffortSegments).not.toHaveBeenCalled();
+  });
+
+  it("selects the working numerical experiment from parent collections in actual Production Plan Insights", async () => {
+    const input = currentFixture(1.5, 4, 9);
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date(input.asOf));
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", undefined);
+    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "production");
+    h.workouts.mockResolvedValue(input.workouts); h.races.mockResolvedValue(input.races);
+    await mount();
+    expect(container.querySelector('[data-testid="experimental-current-estimate"]')?.textContent).toContain("~2:09");
+    expect(container.textContent).toContain("2:11:11"); expect(container.textContent).toContain("Why this estimate?");
+    expect(container.textContent).toContain("Race-day forecastWithheld");
     expect(h.hydrate).not.toHaveBeenCalled(); expect(h.rawRoute).not.toHaveBeenCalled(); expect(h.mileSplits).not.toHaveBeenCalled();
     expect(buildBestEffortSegments).not.toHaveBeenCalled();
   });

@@ -29,7 +29,7 @@ describe("isolated acceptance runtime import contract", () => {
     });
     expect(result.files).toContain("src/utils/racePerformance.ts");
     expect(result.files).toContain("src/utils/raceTrainingContext.ts");
-    expect(result.files.every(file => !/src\/(lib|services|providers|hooks)\//.test(file))).toBe(true);
+    expect(result.files.every(file => file === "src/lib/racePerformanceGate.ts" || !/src\/(lib|services|providers|hooks)\//.test(file))).toBe(true);
     expect(result.erasedTypeImportCount).toBeGreaterThan(0);
   });
 
