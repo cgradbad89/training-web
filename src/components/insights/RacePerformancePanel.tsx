@@ -11,7 +11,8 @@ import { evaluateRacePerformance, nominalRaceDistanceMeters } from "@/utils/race
 import { buildRaceTrainingContext } from "@/utils/raceTrainingContext";
 import { formatRaceTime } from "@/utils/riegelFit";
 import { isExperimentalCurrentEstimateEnabled } from "@/lib/racePerformanceGate";
-import { estimateCurrentHalfMarathon } from "@/utils/experimentalCurrentPerformance";
+import { estimateCurrentHalfMarathon, type CurrentHalfEstimate } from "@/utils/experimentalCurrentPerformance";
+import { performanceLocalDate } from "@/utils/performanceEvidence";
 
 const STATUS_LABEL: Record<RaceEvidenceStatus, string> = {
   verified: "Verified",
@@ -61,8 +62,29 @@ function dateLabel(date: string): string {
   });
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return <section className="min-w-0 break-words bg-card rounded-2xl border border-border p-5 space-y-4">
+/** Format the supplied adjustment only; never subtract rounded finish times. */
+function adjustmentLabel(seconds: number, decimals = 0): string {
+  const minutes = decimals ? Number((seconds / 60).toFixed(decimals)) : Math.round(seconds / 60);
+  return `${minutes < 0 ? "−" : minutes > 0 ? "+" : ""}${Math.abs(minutes).toFixed(decimals)} min`;
+}
+
+function adjustmentReason(current: CurrentHalfEstimate): string {
+  if (current.finishMinutes === null) return current.reason;
+  if (current.adjustmentMethod === "withheld" && current.adjustmentSeconds === 0 && current.anchor) {
+    const month = new Date(`${current.anchor.raceDate}T12:00:00Z`).toLocaleDateString("en-US", { month: "long", timeZone: "UTC" });
+    return `Not enough sustained evidence to adjust your ${month} race baseline.`;
+  }
+  const features = current.contributions.filter(c => c.seconds !== 0).map(c => c.feature.toLowerCase());
+  const reason = features.length
+    ? `${current.adjustmentMethod === "summary" ? "Sustained " : ""}${features.join(" and ")} evidence contributes to this experimental adjustment.`
+    : current.reason;
+  const roundedZero = current.adjustmentSeconds !== 0 && Math.round(current.adjustmentSeconds / 60) === 0;
+  const text = reason.charAt(0).toUpperCase() + reason.slice(1);
+  return roundedZero ? `A sub-minute adjustment rounds to 0 min. ${text}` : text;
+}
+
+function Section({ title, children, compact = false }: { title: string; children: React.ReactNode; compact?: boolean }) {
+  return <section className={`min-w-0 break-words bg-card rounded-2xl border border-border ${compact ? "p-4 sm:p-5 space-y-3" : "p-5 space-y-4"}`}>
     <h2 className="text-lg font-bold text-textPrimary">{title}</h2>
     {children}
   </section>;
@@ -101,6 +123,7 @@ export function RacePerformancePanel(props: RacePerformancePanelProps) {
     races, workouts, overrides, asOf: asOfIso, timeZone,
   }) : null, [currentEnabled, sourcesReady, races, workouts, overrides, asOfIso, timeZone]);
   const benchmark = performance.latestBenchmark;
+  const displayedAnchor = current?.anchor ?? benchmark;
   const maxWeeklyMiles = Math.max(1, ...training.weekly.map(week => week.miles));
   const targetSeconds = targetRace?.targetPaceSecondsPerMile && targetRace.targetPaceSecondsPerMile > 0
     ? targetRace.targetPaceSecondsPerMile * (targetDistanceMeters / 1609.344) : null;
@@ -110,47 +133,76 @@ export function RacePerformancePanel(props: RacePerformancePanelProps) {
   </Section>;
 
   return <div className="min-w-0 space-y-6" data-testid="race-performance-experience">
-    <Section title="Current Performance">
-      <p className="text-xs text-textSecondary">Evidence as of {dateLabel(training.recentFourWeeks.endDate)} · {timeZone}</p>
-      <div className="grid min-w-0 gap-4 md:grid-cols-2">
-        {currentEnabled ? <div className="min-w-0 rounded-xl border border-primary/30 bg-primary/5 p-4 space-y-2" data-testid="experimental-current-estimate">
-          <h3 className="text-sm font-semibold text-textSecondary">Experimental current half-marathon estimate</h3>
+    <Section title="Current Performance" compact>
+      <div className="min-w-0 space-y-3" data-testid={currentEnabled ? "experimental-current-estimate" : undefined}>
+        {currentEnabled ? <>
+          <div className="flex items-start justify-between gap-3">
+            <h3 className="text-sm font-semibold text-textSecondary">Current half-marathon estimate</h3>
+            <span className="shrink-0 rounded-md bg-surface px-2 py-1 text-xs font-medium text-textSecondary">Experimental</span>
+          </div>
           {current?.finishMinutes != null ? <>
-            <p className="text-3xl font-bold tabular-nums">~{Math.floor(current.finishMinutes / 60)}:{String(current.finishMinutes % 60).padStart(2, "0")}</p>
-            <p className="font-semibold tabular-nums">~{Math.floor(current.paceSecondsPerMile! / 60)}:{String(current.paceSecondsPerMile! % 60).padStart(2, "0")}/mile</p>
-            <p className="text-sm text-textSecondary">Based on {current.anchor!.name} ({dateLabel(current.anchor!.raceDate)}) and completed training through {dateLabel(current.dataThrough!)}.</p>
-            <p className="text-xs text-textSecondary">{STATUS_LABEL[current.anchor!.status]} anchor · Unvalidated training adjustment · Rounded to the nearest minute</p>
-          </> : <><p className="font-semibold">Insufficient evidence</p><p className="text-sm text-textSecondary">{current?.reason}</p></>}
-        </div> : <div className="min-w-0 rounded-xl border border-border p-4 space-y-2">
+            <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 tabular-nums" data-testid="estimate-values">
+              <p className="text-4xl sm:text-5xl font-bold tracking-tight text-textPrimary">~{Math.floor(current.finishMinutes / 60)}:{String(current.finishMinutes % 60).padStart(2, "0")}</p>
+              <p className="text-lg font-semibold text-textSecondary">~{Math.floor(current.paceSecondsPerMile! / 60)}:{String(current.paceSecondsPerMile! % 60).padStart(2, "0")}<span className="text-sm font-normal">/mi</span></p>
+            </div>
+            <p className="text-sm text-textSecondary">Based on your {dateLabel(current.anchor!.raceDate)} race and completed training.</p>
+          </> : <p className="font-semibold">Insufficient evidence</p>}
+          <dl className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-textSecondary">
+            <div className="flex flex-wrap gap-x-1"><dt>Calculated as of:</dt><dd>{current ? dateLabel(performanceLocalDate(current.asOf, timeZone)) : "Unavailable"}</dd></div>
+            <div className="flex flex-wrap gap-x-1"><dt>Latest included run:</dt><dd>{current?.dataThrough ? dateLabel(current.dataThrough) : "Unavailable"}</dd></div>
+          </dl>
+        </> : <>
           <h3 className="text-sm font-semibold text-textSecondary">Current capability estimate</h3>
           <p className="text-xl font-bold">Unavailable</p>
           <p className="text-sm text-textSecondary">An experimental current estimate is not enabled in this build.</p>
-        </div>}
-        <div className="min-w-0 rounded-xl border border-border p-4 space-y-2">
-          <h3 className="text-sm font-semibold text-textSecondary">Historical demonstrated performance</h3>
-          {benchmark ? <>
-            <p className="text-3xl font-bold tabular-nums">{formatRaceTime(benchmark.finishSeconds)}</p>
-            <p className="text-sm">{benchmark.name} · {dateLabel(benchmark.raceDate)}</p>
-            <p className="text-sm font-semibold text-primary">{STATUS_LABEL[benchmark.status]}{benchmark.stale ? " · Older benchmark" : ""}</p>
-            <p className="text-xs text-textSecondary">{benchmark.timingBasis === "confirmed_result" ? "Confirmed result time" : "Recorded time; official result and maximal effort need confirmation"}. {benchmark.ageDays} days old.</p>
-            {benchmark.distanceMeters !== targetDistanceMeters && <p className="text-xs text-textSecondary">This result is at a different distance from the selected target.</p>}
-          </> : <p className="text-sm text-textSecondary">No usable race benchmark is available. Review the evidence timeline below for missing or inconsistent records.</p>}
-        </div>
+        </>}
+        <dl className="border-y border-border py-3 space-y-2 text-sm">
+          <div className="flex items-start justify-between gap-4">
+            <dt className="text-textSecondary">Historical race{displayedAnchor && <span className="block text-xs">{STATUS_LABEL[displayedAnchor.status]}{displayedAnchor.stale ? " · Older benchmark" : ""}</span>}</dt>
+            <dd className="shrink-0 font-semibold tabular-nums">{displayedAnchor?.finishSeconds != null ? formatRaceTime(displayedAnchor.finishSeconds) : "Unavailable"}</dd>
+          </div>
+          {current?.baselineSeconds != null && current.anchor?.finishSeconds !== current.baselineSeconds && <div className="flex justify-between gap-4">
+            <dt className="text-textSecondary">Half-marathon equivalent</dt><dd className="shrink-0 font-semibold tabular-nums">{formatRaceTime(current.baselineSeconds)}</dd>
+          </div>}
+          {currentEnabled && <div className="flex items-start justify-between gap-4">
+            <dt className="text-textSecondary">Training adjustment</dt>
+            <dd className="text-right" data-testid="training-adjustment"><span className="font-semibold tabular-nums">{current?.finishMinutes != null ? adjustmentLabel(current.adjustmentSeconds) : "Unavailable"}</span>
+              {current?.finishMinutes != null && current.adjustmentSeconds !== 0 && <span className="block text-xs text-textSecondary">{Math.round(current.adjustmentSeconds / 60) === 0 ? "Rounded · " : ""}Estimated {current.adjustmentSeconds < 0 ? "faster" : "slower"}</span>}
+            </dd>
+          </div>}
+        </dl>
+        {current && <p className="text-sm text-textSecondary" data-testid="adjustment-reason">{adjustmentReason(current)}</p>}
+        {!displayedAnchor && <p className="text-sm text-textSecondary">No usable race benchmark is available. Review the evidence timeline below for missing or inconsistent records.</p>}
+        {!currentEnabled && displayedAnchor && <p className="text-sm text-textSecondary">{displayedAnchor.name} · {dateLabel(displayedAnchor.raceDate)}</p>}
       </div>
-      {current && <>
-        <p className="text-sm text-textSecondary">{current.reason} {current.finishMinutes !== null && `Estimated training adjustment: ${current.adjustmentSeconds > 0 ? "+" : ""}${(current.adjustmentSeconds / 60).toFixed(1)} min (${current.adjustmentSeconds < 0 ? "faster" : current.adjustmentSeconds > 0 ? "slower" : "unchanged"}) before finish-time rounding.`}</p>
+      {current &&
         <details className="text-sm text-textSecondary">
-          <summary className="cursor-pointer font-semibold text-primary">Why this estimate?</summary>
+          <summary className="cursor-pointer py-2 font-semibold text-primary rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">Why this estimate?</summary>
           <div className="mt-3 space-y-3">
-            <p>Race-equivalent baseline: {current.baselineSeconds === null ? "Unavailable" : formatRaceTime(current.baselineSeconds)}. Since that race: {current.sinceAnchor.sessions} completed training runs, {current.sinceAnchor.miles.toFixed(1)} mi. Recent 4 / 8 weeks: {training.recentFourWeeks.miles.toFixed(1)} / {(training.recentFourWeeks.miles + training.priorFourWeeks.miles).toFixed(1)} mi.</p>
-            <ul className="space-y-2">{current.contributions.map(c => <li key={c.feature}><span className="font-semibold">{c.feature}: {c.seconds > 0 ? "+" : ""}{(c.seconds / 60).toFixed(1)} min.</span> {c.explanation}</li>)}</ul>
-            <p>No confidence interval is supported. This estimate is experimental and has not been validated for your individual accuracy. Rounded values can remain unchanged despite a small underlying adjustment.</p>
-            <ul className="space-y-1">{current.gaps.map(gap => <li key={gap}>{gap}</li>)}</ul>
-            <details><summary className="cursor-pointer">Model assumptions</summary><ul className="mt-2 space-y-1">{current.assumptions.map(a => <li key={a}>{a}</li>)}</ul></details>
-            <p className="text-xs">Model {current.version} · Evidence quality: {current.evidenceQuality.replaceAll("_", " ")} · Calculation cutoff {dateLabel(training.asOfDate)}</p>
+            <div className="grid grid-cols-1 min-w-0 gap-3 md:grid-cols-2">
+              <div className="min-w-0 space-y-1"><h4 className="font-semibold text-textPrimary">Race anchor</h4>
+                {current.anchor ? <><p>{current.anchor.name} · {dateLabel(current.anchor.raceDate)} · {STATUS_LABEL[current.anchor.status]}{current.anchor.stale ? " · Older benchmark" : ""}.</p>
+                  <p>{current.anchor.timingBasis === "confirmed_result" ? "Confirmed result time" : "Recorded time; official result and maximal effort need confirmation"}. {current.anchor.ageDays} days old.</p></> : <p>No usable race anchor.</p>}
+                <p>Race-equivalent baseline: {current.baselineSeconds === null ? "Unavailable" : formatRaceTime(current.baselineSeconds)}.</p>
+              </div>
+              <div className="min-w-0 space-y-1"><h4 className="font-semibold text-textPrimary">Training evidence</h4>
+                <p>Since that race: {current.sinceAnchor.sessions} completed training runs, {current.sinceAnchor.miles.toFixed(1)} mi. Recent 4 / 8 weeks: {current.training.recentFourWeeks.miles.toFixed(1)} / {(current.training.recentFourWeeks.miles + current.training.priorFourWeeks.miles).toFixed(1)} mi.</p>
+                <p>Training adjustment before rounding: {current.finishMinutes === null ? "Unavailable" : `${adjustmentLabel(current.adjustmentSeconds, 1)} (${current.adjustmentSeconds} seconds)`}.</p>
+                <p>{current.reason}</p>
+              </div>
+            </div>
+            <div className="space-y-2"><h4 className="font-semibold text-textPrimary">Adjustment evidence</h4>
+              <ul className="space-y-2">{current.contributions.map(c => <li key={c.feature}><span className="font-semibold">{c.feature}: {adjustmentLabel(c.seconds, 1)}.</span> {c.explanation}</li>)}</ul>
+            </div>
+            <div className="space-y-2"><h4 className="font-semibold text-textPrimary">Evidence limitations</h4><ul className="list-disc pl-5 space-y-1">{current.gaps.map(gap => <li key={gap}>{gap}</li>)}</ul></div>
+            <div className="space-y-1"><h4 className="font-semibold text-textPrimary">Experimental methodology</h4>
+              <p>Unvalidated training adjustment. Finish time rounds to the nearest minute; pace derives from that time and rounds to five seconds per mile. Adjustment minutes round separately from the model’s unrounded adjustment. No confidence interval is supported. This estimate has not been validated for your individual accuracy.</p>
+            </div>
+            <details><summary className="cursor-pointer py-2">Model assumptions</summary><ul className="mt-2 space-y-1">{current.assumptions.map(a => <li key={a}>{a}</li>)}</ul></details>
+            <p className="text-xs">Model {current.version} · Evidence quality: {current.evidenceQuality.replaceAll("_", " ")} · Calculation cutoff {current.asOf} · {timeZone}</p>
           </div>
         </details>
-      </>}
+      }
       <details className="text-sm text-textSecondary">
         <summary className="cursor-pointer font-semibold text-primary">How to strengthen the race evidence</summary>
         <p className="mt-2">Confirm the event, date, official distance, finish time, maximal effort and conditions. Reconcile any difference between recorded duration and elapsed time. Existing race links alone do not verify an official result.</p>

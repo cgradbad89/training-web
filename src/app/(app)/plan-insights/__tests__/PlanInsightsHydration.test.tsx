@@ -136,7 +136,7 @@ describe("Plan Insights demand-gated fast-finish hydration", () => {
     expect(text).toContain("PNC Half Marathon"); expect(text).toContain("Apr 26, 2026");
     expect(text).toContain("Recorded duration 2:15:30; elapsed 2:25:59");
     expect(text).toContain("DC Half Marathon"); expect(text).toContain("2:11:11");
-    expect(text).toContain("Recorded, unverified"); expect(text).toContain("Experimental current half-marathon estimateInsufficient evidence");
+    expect(text).toContain("Recorded, unverified"); expect(text).toContain("Current half-marathon estimateExperimentalInsufficient evidence");
     expect(text).toContain("Race-day forecastWithheld"); expect(text).toContain("Rock and Roll Half Marathon");
     expect(text).toContain("Recent 4 weeks11.0"); expect(text).toContain("Completed sessions · 4 weeks2");
     expect(text).toContain("Longest recent run6.0 mi"); expect(text).toContain("Plan adherence: 1 of 1");
@@ -154,6 +154,12 @@ describe("Plan Insights demand-gated fast-finish hydration", () => {
     h.workouts.mockResolvedValue(input.workouts); h.races.mockResolvedValue(input.races);
     await mount();
     expect(container.querySelector('[data-testid="experimental-current-estimate"]')?.textContent).toContain("~2:09");
+    expect(container.querySelector('[data-testid="experimental-current-estimate"]')?.textContent).toContain("~9:50/mi");
+    expect(container.querySelector('[data-testid="experimental-current-estimate"]')?.textContent).toContain("Historical raceRecorded, unverified2:11:11");
+    // The adjustment rounds independently; subtracting the rounded finish times would incorrectly give −2.
+    expect(container.querySelector('[data-testid="training-adjustment"]')?.textContent).toContain("−3 minEstimated faster");
+    expect(container.querySelector('[data-testid="adjustment-reason"]')?.textContent).toContain("Sustained volume and frequency");
+    expect(container.querySelector('[data-testid="experimental-current-estimate"]')?.textContent).toContain("Calculated as of:Oct 26, 2026");
     expect(container.textContent).toContain("2:11:11"); expect(container.textContent).toContain("Why this estimate?");
     expect(container.textContent).toContain("Race-day forecastWithheld");
     expect(h.hydrate).not.toHaveBeenCalled(); expect(h.rawRoute).not.toHaveBeenCalled(); expect(h.mileSplits).not.toHaveBeenCalled();
