@@ -8,7 +8,6 @@ import { ChevronDown, ChevronUp, Map as MapIcon, Plus, Trash2 } from "lucide-rea
 import { EmptyState } from "@/components/ui/EmptyState";
 import { RoutesSkeleton } from "./RoutesSkeleton";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { StaticRouteMap } from "@/components/StaticRouteMap";
 import { useAuth } from "@/hooks/useAuth";
 import { useAppData } from "@/contexts/AppDataContext";
 import { type RoutePoint } from "@/services/routes";
@@ -99,19 +98,17 @@ function formatShortDate(d: Date): string {
 
 interface RouteCardProps {
   cluster: RouteCluster;
-  uid: string;
   maxHr: number;
   restingHr: number;
-  onExpand: () => void;
+  onViewMap: () => void;
   onOpenTrend: () => void;
 }
 
 function RouteCard({
   cluster,
-  uid,
   maxHr,
   restingHr,
-  onExpand,
+  onViewMap,
   onOpenTrend,
 }: RouteCardProps) {
   const router = useRouter();
@@ -127,14 +124,22 @@ function RouteCard({
 
   return (
     <div className="bg-card rounded-2xl border border-border overflow-hidden shadow-sm">
-      <StaticRouteMap
-        uid={uid}
-        workoutId={run.workoutId}
-        className="h-48"
-        onClick={onExpand}
-      />
-      {/* Card body opens the pace-trend drawer; the map, "View on map →" and
-          the similar-runs expander keep their own actions (stopPropagation). */}
+      <div className="h-48 bg-surface border-b border-border flex flex-col items-center justify-center gap-3 p-4">
+        <MapIcon className="w-8 h-8 text-textSecondary" aria-hidden="true" />
+        <p className="text-xs text-textSecondary">Open the map to view this route</p>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onViewMap();
+          }}
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-white text-sm font-semibold hover:bg-primary/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary transition-colors"
+        >
+          View Map
+        </button>
+      </div>
+      {/* Card body opens the pace-trend drawer; View Map and the similar-runs
+          expander keep their own actions. No preview GPS or tiles are loaded. */}
       <div className="p-4 flex flex-col gap-3 cursor-pointer" onClick={onOpenTrend}>
         {/* Row 1: distance + run count */}
         <div className="flex items-center gap-2">
@@ -181,17 +186,6 @@ function RouteCard({
 
         {/* Pace trend sparkline (renders only with ≥3 runs in window) */}
         <RouteTrendSparkline runs={matchedSummaries} />
-
-        {/* Row 3: view link */}
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onExpand();
-          }}
-          className="text-xs text-primary font-medium text-left hover:underline"
-        >
-          View on map &rarr;
-        </button>
 
         {/* Similar runs */}
         {otherRuns.length > 0 && (
@@ -255,6 +249,7 @@ function RouteDetailModal({ cluster, uid, onClose, onUseAsTemplate }: RouteDetai
   const run = cluster.representativeRun;
   const [routePoints, setRoutePoints] = useState<RoutePoint[]>([]);
   const [routeLoading, setRouteLoading] = useState(true);
+  const [routeError, setRouteError] = useState(false);
 
   useEffect(() => {
     document.body.style.overflow = "hidden";
@@ -267,7 +262,7 @@ function RouteDetailModal({ cluster, uid, onClose, onUseAsTemplate }: RouteDetai
     let cancelled = false;
     getRoutePoints(uid, run.workoutId)
       .then((pts) => { if (!cancelled) setRoutePoints(pts); })
-      .catch(() => {})
+      .catch(() => { if (!cancelled) setRouteError(true); })
       .finally(() => { if (!cancelled) setRouteLoading(false); });
     return () => { cancelled = true; };
   }, [uid, run.workoutId]);
@@ -288,6 +283,9 @@ function RouteDetailModal({ cluster, uid, onClose, onUseAsTemplate }: RouteDetai
       onClick={onClose}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Route Detail"
         className="bg-card rounded-2xl border border-border w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
@@ -316,7 +314,13 @@ function RouteDetailModal({ cluster, uid, onClose, onUseAsTemplate }: RouteDetai
         {/* Map */}
         <div className="overflow-hidden">
           {routeLoading ? (
-            <div className="h-[50vh] bg-surface animate-pulse" />
+            <div role="status" aria-label="Loading route map" className="h-[50vh] bg-surface animate-pulse" />
+          ) : routeError ? (
+            <div className="h-40 flex items-center justify-center p-4 text-center">
+              <p role="alert" className="text-sm text-textSecondary">
+                Unable to load route data. Close and reopen the map to try again.
+              </p>
+            </div>
           ) : routePoints.length > 0 ? (
             <RunMap points={routePoints} className="h-[50vh]" />
           ) : (
@@ -626,10 +630,9 @@ export default function RoutesPage() {
             <RouteCard
               key={cluster.id}
               cluster={cluster}
-              uid={uid!}
               maxHr={resolvedMaxHr}
               restingHr={resolvedRestingHr}
-              onExpand={() => setExpandedCluster(cluster)}
+              onViewMap={() => setExpandedCluster(cluster)}
               onOpenTrend={() => setTrendCluster(cluster)}
             />
           ))}

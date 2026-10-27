@@ -7,7 +7,7 @@ import React, {
   useRef,
   useCallback,
 } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight, AlertTriangle, EyeOff, Download, RefreshCw } from "lucide-react";
 
 import { TrainingLoadBadge } from "@/components/ui/TrainingLoadBadge";
@@ -50,7 +50,6 @@ import {
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { type RunningShoe } from "@/types/shoe";
 import { evaluateAutoAssignRules } from "@/utils/shoeAutoAssign";
-import { prefetchRoutes } from "@/utils/routeCache";
 import { excludeWorkout } from "@/services/workoutOverrides";
 import { ExcludedItemsModal } from "@/components/ExcludedItemsModal";
 import { ExportModal } from "@/components/ExportModal";
@@ -743,7 +742,6 @@ function ShoesUsed({ runs, shoes, manualAssignments }: ShoesUsedProps) {
 
 export default function RunsPage() {
   const router = useRouter();
-  const pageActive = usePathname() === "/runs";
   const { user, sessionEpoch, isSessionCurrent } = useAuth();
   const uid = user?.uid ?? null;
   const assignmentOwner = useRef(0);
@@ -906,32 +904,6 @@ export default function RunsPage() {
     const autoAssigned = evaluateAutoAssignRules(allRuns, shoes, rawAssignments);
     return { ...autoAssigned, ...rawAssignments };
   }, [allRuns, shoes, rawAssignments]);
-
-  // Background prefetch — most recent 20 runs with routes. Previously ran inside
-  // the local listener callback; now keyed off the shared runs array.
-  useEffect(() => {
-    if (!uid || !pageActive || allRuns.length === 0) return;
-    let cancelled = false;
-    const isCurrent = () => !cancelled && pageActive && isSessionCurrent(sessionEpoch);
-    const timer = setTimeout(() => {
-      if (!isCurrent()) return;
-      const recentWithRoutes = allRuns
-        .filter((a) => a.hasRoute)
-        .sort(
-          (a, b) =>
-            new Date(b.startDate).getTime() - new Date(a.startDate).getTime()
-        )
-        .slice(0, 20)
-        .map((a) => a.workoutId);
-      if (recentWithRoutes.length > 0) {
-        prefetchRoutes(uid, recentWithRoutes, 3, { isCurrent }).catch(() => {});
-      }
-    }, 500);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [uid, allRuns, sessionEpoch, isSessionCurrent, pageActive]);
 
   const activeShoes = useMemo(
     () => shoes.filter((s) => !s.isRetired),
