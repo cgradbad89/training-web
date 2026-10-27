@@ -89,7 +89,7 @@ describe("Routes canonical metadata and geographic parity", () => {
     expect(h.created).toHaveBeenCalledOnce();
     expect(h.created).toHaveBeenCalledWith("u1");
     expect(h.gps).not.toHaveBeenCalled();
-    await click("View on map");
+    await click("View Map");
     expect(h.gps).toHaveBeenCalledOnce();
     expect(h.gps).toHaveBeenCalledWith("u1", "r1");
   });
