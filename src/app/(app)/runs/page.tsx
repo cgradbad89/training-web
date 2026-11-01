@@ -13,6 +13,8 @@ import { ChevronLeft, ChevronRight, AlertTriangle, EyeOff, Download, RefreshCw }
 import { TrainingLoadBadge } from "@/components/ui/TrainingLoadBadge";
 import { EfficiencyScoreBadge } from "@/components/runs/EfficiencyScoreBadge";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { AddActivityButton } from "@/components/manualActivity/AddActivityButton";
+import { ManualSourceBadge } from "@/components/manualActivity/ManualSourceBadge";
 import { RunsSkeleton } from "./RunsSkeleton";
 import { MiniCalendar, toLocalIsoDateForCalendar } from "@/components/MiniCalendar";
 import { useAuth } from "@/hooks/useAuth";
@@ -428,6 +430,7 @@ function RunRow({
           <div className="flex items-center gap-1.5">
             <span className="text-sm font-medium text-textPrimary truncate max-w-[180px]">
               {resolveActivityTitle({
+                customTitle: run.customTitle,
                 activityType: run.displayType,
                 distanceMiles: run.distanceMiles,
                 matchedPlanEntry,
@@ -554,9 +557,10 @@ function RunRow({
         </span>
       </div>
 
-      {/* PR badges — render below the data row, aligned with Col 2 */}
-      {prBadges.length > 0 && (
+      {/* PR badges and Manual label — below the data row, aligned with Col 2 */}
+      {(prBadges.length > 0 || run.entrySource === "manual") && (
         <div className="flex flex-wrap gap-1 mt-1 ml-12">
+          <ManualSourceBadge workout={run} />
           {prBadges.map((badge) => (
             <span
               key={badge}
@@ -1116,17 +1120,29 @@ export default function RunsPage() {
       <aside className="w-full lg:w-64 shrink-0 flex flex-col gap-5">
         <div className="flex items-center justify-between">
           <h1 className="text-lg font-bold text-textPrimary">Runs</h1>
-          <button
-            onClick={handleManualRefresh}
-            disabled={isRefreshing}
-            className="p-2 rounded-xl hover:bg-surface text-textSecondary
-                       transition-colors disabled:opacity-50"
-            title="Refresh runs"
-          >
-            <RefreshCw
-              className={`w-4 h-4 ${isRefreshing ? "animate-spin" : ""}`}
+          <div className="flex items-center gap-1">
+            <AddActivityButton
+              defaultKind="outdoor_run"
+              onCreated={(workout) => {
+                // Reveal a backdated entry. A workout saved from here lives on Workouts.
+                if (workout.isRunLike) {
+                  setSelectedYear(getLocalDate(workout).getFullYear());
+                  setSelectedMonth(null);
+                }
+              }}
             />
-          </button>
+            <button
+              onClick={handleManualRefresh}
+              disabled={isRefreshing}
+              className="p-2 rounded-xl hover:bg-surface text-textSecondary
+                         transition-colors disabled:opacity-50"
+              title="Refresh runs"
+            >
+              <RefreshCw
+                className={`w-4 h-4 ${isRefreshing ? "animate-spin" : ""}`}
+              />
+            </button>
+          </div>
         </div>
 
         {/* Year + Month selector */}

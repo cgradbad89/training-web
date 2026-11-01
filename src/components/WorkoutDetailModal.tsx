@@ -9,10 +9,16 @@ import {
   Watch,
   Calendar,
   AlertTriangle,
+  Pencil,
+  Trash2,
 } from "lucide-react";
-import { type HealthWorkout } from "@/types/healthWorkout";
+import { isManualActivity, type HealthWorkout } from "@/types/healthWorkout";
+import { ManualActivityModal } from "@/components/manualActivity/ManualActivityModal";
+import { ManualSourceBadge } from "@/components/manualActivity/ManualSourceBadge";
+import { useManualActivityActions } from "@/hooks/useManualActivityActions";
+import { resolveActivityTitle } from "@/utils/resolveActivityTitle";
 import { type WorkoutOverride } from "@/types/workoutOverride";
-import { formatDuration } from "@/utils/pace";
+import { formatDuration, formatMiles, formatPace } from "@/utils/pace";
 import {
   excludeWorkout,
   restoreWorkout,
@@ -41,7 +47,7 @@ interface WorkoutDetailModalProps {
 }
 
 export function WorkoutDetailModal({
-  workout,
+  workout: workoutProp,
   override,
   userId,
   maxHr,
@@ -52,6 +58,16 @@ export function WorkoutDetailModal({
   const [saving, setSaving] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const isExcluded = override?.isExcluded === true;
+  // Callers hold a snapshot of the selected workout; show an edit straight away.
+  const [editedWorkout, setEditedWorkout] = useState<HealthWorkout | null>(null);
+  const workout =
+    editedWorkout?.workoutId === workoutProp.workoutId ? editedWorkout : workoutProp;
+  const isManual = isManualActivity(workout);
+  const { remove: removeManualActivity } = useManualActivityActions();
+  const [isEditingManual, setIsEditingManual] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // Per-sample HR stream for non-route workouts (hrStream subcollection).
   // Only fetched when the workout actually has a stream — avoids a wasted
@@ -110,6 +126,22 @@ export function WorkoutDetailModal({
     }
   }
 
+  async function handleDeleteManual() {
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await removeManualActivity(workout.workoutId);
+      onClose();
+    } catch (e) {
+      setDeleteError(
+        e instanceof Error ? e.message : "This activity couldn't be deleted."
+      );
+      setShowDeleteConfirm(false);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   const startDate = new Date(workout.startDate);
   const endDate = new Date(workout.endDate);
 
@@ -150,13 +182,23 @@ export function WorkoutDetailModal({
               id="workout-detail-title"
               className="text-base font-semibold text-textPrimary"
             >
-              {workout.displayType}
+              {isManual
+                ? resolveActivityTitle({
+                    customTitle: workout.customTitle,
+                    activityType: workout.displayType,
+                    rawActivityType: workout.isRunLike ? undefined : workout.activityType,
+                    distanceMiles: workout.distanceMiles,
+                  })
+                : workout.displayType}
             </h2>
-            {isExcluded && (
-              <span className="text-xs bg-danger/10 text-danger px-2 py-0.5 rounded-full">
-                Excluded
-              </span>
-            )}
+            <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
+              <ManualSourceBadge workout={workout} />
+              {isExcluded && (
+                <span className="text-xs bg-danger/10 text-danger px-2 py-0.5 rounded-full">
+                  Excluded
+                </span>
+              )}
+            </div>
           </div>
           <button
             onClick={onClose}
@@ -263,11 +305,85 @@ export function WorkoutDetailModal({
             </div>
           </div>
 
+          {isManual && workout.distanceMiles > 0 && (
+            <div className="px-5 pb-4">
+              <p className="text-sm text-textSecondary">
+                {formatMiles(workout.distanceMiles)} mi
+                {workout.avgPaceSecPerMile
+                  ? ` · ${formatPace(workout.avgPaceSecPerMile)} /mi`
+                  : ""}
+              </p>
+            </div>
+          )}
+
+          {workout.notes && (
+            <div className="px-5 pb-4">
+              <p className="mb-1 text-xs text-textSecondary uppercase tracking-widest font-semibold">
+                Notes
+              </p>
+              <p className="whitespace-pre-wrap text-sm text-textPrimary">
+                {workout.notes}
+              </p>
+            </div>
+          )}
+
           {/* Full-workout HR line (non-route workouts with an hrStream).
               Self-hides when fewer than 2 samples are available. */}
           {hrSamples.length > 0 && (
             <div className="px-5 pb-4">
               <WorkoutHRChart samples={hrSamples} />
+            </div>
+          )}
+
+          {/* Edit / Delete — manually entered activities only */}
+          {isManual && (
+            <div className="px-5 pb-3">
+              {deleteError && (
+                <p role="alert" className="mb-3 rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger">
+                  {deleteError}
+                </p>
+              )}
+              {showDeleteConfirm ? (
+                <div className="bg-danger/5 border border-danger/20 rounded-xl p-4">
+                  <div className="flex items-start gap-2 mb-3">
+                    <AlertTriangle size={16} className="text-danger mt-0.5 shrink-0" />
+                    <p className="text-sm text-textPrimary">
+                      Permanently delete this activity? This can&apos;t be undone.
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setShowDeleteConfirm(false)}
+                      disabled={deleting}
+                      className="flex-1 py-2 rounded-lg border border-border text-sm text-textSecondary hover:bg-surface transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleDeleteManual}
+                      disabled={deleting}
+                      className="flex-1 py-2 rounded-lg bg-danger text-white text-sm font-medium hover:bg-danger/90 disabled:opacity-50 transition-colors"
+                    >
+                      {deleting ? "Deleting\u2026" : "Delete"}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setIsEditingManual(true)}
+                    className="flex-1 inline-flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-border text-sm font-medium text-textPrimary hover:bg-surface transition-colors"
+                  >
+                    <Pencil size={14} /> Edit
+                  </button>
+                  <button
+                    onClick={() => { setDeleteError(null); setShowDeleteConfirm(true); }}
+                    className="flex-1 inline-flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-danger text-danger text-sm font-medium hover:bg-danger/5 transition-colors"
+                  >
+                    <Trash2 size={14} /> Delete
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -324,6 +440,19 @@ export function WorkoutDetailModal({
           </div>
         </div>
       </div>
+      {isEditingManual && (
+        // Stops the backdrop click-to-close above from also closing this modal.
+        <div onClick={(event) => event.stopPropagation()}>
+          <ManualActivityModal
+            mode={{ type: "edit", workout }}
+            onClose={() => setIsEditingManual(false)}
+            onSaved={(saved) => {
+              setEditedWorkout(saved);
+              setIsEditingManual(false);
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 }

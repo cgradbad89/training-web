@@ -382,6 +382,7 @@ export function WeeklyLoadTile({
                   <span className="flex flex-col min-w-0 text-left">
                     <span className="text-sm font-medium text-textPrimary truncate">
                       {resolveActivityTitle({
+                        customTitle: a.customTitle,
                         activityType: a.name,
                         rawActivityType: a.activityType,
                         distanceMiles: a.distanceMiles,

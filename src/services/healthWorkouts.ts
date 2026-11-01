@@ -2,7 +2,8 @@
  * HealthWorkout service.
  *
  * Firestore collection: users/{uid}/healthWorkouts
- * Doc ID: workout UUID (from HealthKit)
+ * Doc ID: workout UUID (from HealthKit), or manual_<UUID> for manual activities
+ *         (entrySource "manual" — see src/services/manualActivities.ts)
  *
  * Schema (Firestore field names written by iOS HealthKitSyncService):
  *   workoutId         string   (UUID)
@@ -186,8 +187,21 @@ export function docToHealthWorkout(
   const displayType = (data.displayType as string) ?? "Workout";
   const distanceMiles = (data.distanceMiles as number) ?? 0;
 
+  const isManual = data.entrySource === "manual";
+
   return {
     workoutId: (data.workoutId as string) ?? id,
+    entrySource: isManual ? "manual" : undefined,
+    customTitle:
+      isManual && typeof data.customTitle === "string" && data.customTitle.length > 0
+        ? data.customTitle
+        : undefined,
+    notes:
+      isManual && typeof data.notes === "string" && data.notes.length > 0
+        ? data.notes
+        : undefined,
+    createdAt: isManual && data.createdAt ? toDate(data.createdAt) : undefined,
+    updatedAt: isManual && data.updatedAt ? toDate(data.updatedAt) : undefined,
     name: displayType,
     activityType: (data.activityType as string) ?? "",
     displayType,
@@ -204,7 +218,9 @@ export function docToHealthWorkout(
         ? (data.routeComplete as boolean)
         : undefined,
     hasHRStream: (data.hasHRStream as boolean) ?? false,
-    syncedAt: toDate(data.syncedAt),
+    // Manual docs never store syncedAt (iOS anchors incremental sync on the newest
+    // one). updatedAt stands in so same-id edits still change derived revisions.
+    syncedAt: toDate(isManual ? data.updatedAt : data.syncedAt),
     sourceBundle: data.sourceBundle as string | undefined,
     calories: (data.calories as number) ?? 0,
     avgHeartRate: (data.avgHeartRate as number | null) ?? null,

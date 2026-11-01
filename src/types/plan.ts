@@ -116,7 +116,14 @@ export const WORKOUT_CATEGORY_HK_TYPES: Record<WorkoutCategory, string[]> = {
   cycling: ['cycling', 'indoorCycling'],
   pilates: ['pilates', 'mindAndBody', 'mind_and_body'],
   yoga: ['yoga'],
-  hiit: ['highIntensityIntervalTraining', 'crossTraining', 'workout'],
+  hiit: [
+    'highIntensityIntervalTraining',
+    'crossTraining',
+    'workout',
+    // snake_case variants — the form manual activities and the Workouts page use
+    'high_intensity_interval_training',
+    'cross_training',
+  ],
 }
 
 // ─── Workout plan types (unified — includes former Pilates) ─────────────────

@@ -96,6 +96,20 @@ export function mergeWorkoutDelta(
     .slice(0, limitCount);
 }
 
+/** Persisted manual-activity writes a pending source read must not undo. A null
+ *  value is a deletion, which a read started before the delete would resurrect. */
+export function applyWorkoutMutations(
+  workouts: HealthWorkout[],
+  mutations: ReadonlyMap<string, HealthWorkout | null>
+): HealthWorkout[] {
+  if (mutations.size === 0) return workouts;
+  const retained = workouts.filter((workout) => !mutations.has(workout.workoutId));
+  const published = [...mutations.values()].filter(
+    (workout): workout is HealthWorkout => workout !== null
+  );
+  return mergeWorkoutDelta(retained, published);
+}
+
 interface AppDataRefreshOptions {
   afterMutation?: boolean;
 }
@@ -150,6 +164,14 @@ export interface AppDataContextValue {
   patchOverrides: (
     updater: (prev: Record<string, WorkoutOverride>) => Record<string, WorkoutOverride>
   ) => void;
+  /** Persistence-first publication of a saved manual activity (add or replace),
+   *  so backdated records outside the focus-delta window still appear at once. */
+  publishWorkout: (workout: HealthWorkout) => void;
+  /** Persistence-first removal of a deleted manual activity. The delta merge can
+   *  never remove a record, so this is the only same-session removal path. */
+  removeWorkout: (workoutId: string) => void;
+  /** Advances on each publishWorkout/removeWorkout. */
+  workoutsMutationVersion: number;
   /** Local-only targeted publication after the matching enrichment merge write
    *  succeeds. Raw source identity, ordering, and all unrelated fields remain. */
   patchTrainingLoad: (
@@ -218,6 +240,8 @@ function AppDataProviderGeneration({
   const lastSuccessfulFullDateRef = useRef<string | null>(null);
   const workoutsRef = useRef<HealthWorkout[]>([]);
   const workoutsPendingPatchesRef = useRef(new Map<string, TrainingLoadFields>());
+  const workoutsPendingMutationsRef = useRef(new Map<string, HealthWorkout | null>());
+  const [workoutsMutationVersion, setWorkoutsMutationVersion] = useState(0);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [plansLoading, setPlansLoading] = useState(trainingActive);
   const [plansResolution, setPlansResolution] =
@@ -294,6 +318,7 @@ function AppDataProviderGeneration({
     // ownership before the data effects start their new generation's reads.
     activeUidRef.current = uid;
     const pendingWorkoutPatches = workoutsPendingPatchesRef.current;
+    const pendingWorkoutMutations = workoutsPendingMutationsRef.current;
     return () => {
       activeUidRef.current = null;
       activatedRef.current = false;
@@ -313,6 +338,7 @@ function AppDataProviderGeneration({
       lastSuccessfulFullDateRef.current = null;
       workoutsRef.current = [];
       pendingWorkoutPatches.clear();
+      pendingWorkoutMutations.clear();
     };
   }, [uid]);
   const appDataReady =
@@ -347,6 +373,7 @@ function AppDataProviderGeneration({
 
       lastAutomaticWorkoutRefreshRef.current = Date.now();
       workoutsPendingPatchesRef.current.clear();
+      workoutsPendingMutationsRef.current.clear();
       const isInitialLoad = !workoutsLoadedRef.current;
       if (isInitialLoad) setWorkoutsLoading(true);
       else setWorkoutsRefreshing(true);
@@ -359,10 +386,10 @@ function AppDataProviderGeneration({
               limitCount: APP_DATA_WORKOUTS_LIMIT,
             });
             if (!isCurrentRequest(requestUid, generation)) return;
-            setWorkouts(loaded.map(workout => {
+            setWorkouts(applyWorkoutMutations(loaded.map(workout => {
               const patch = workoutsPendingPatchesRef.current.get(workout.workoutId);
               return patch ? { ...workout, ...patch } : workout;
-            }));
+            }), workoutsPendingMutationsRef.current));
             setWorkoutsHistoryComplete(
               loaded.length < APP_DATA_WORKOUTS_LIMIT
             );
@@ -380,7 +407,11 @@ function AppDataProviderGeneration({
               const patch = workoutsPendingPatchesRef.current.get(workout.workoutId);
               return patch ? { ...workout, ...patch } : workout;
             });
-            setWorkouts((current) => mergeWorkoutDelta(current, patchedDelta));
+            const pendingMutations = new Map(workoutsPendingMutationsRef.current);
+            setWorkouts((current) => applyWorkoutMutations(
+              mergeWorkoutDelta(current, patchedDelta),
+              pendingMutations
+            ));
           }
           setWorkoutsResolution("success");
         } catch (err) {
@@ -405,6 +436,7 @@ function AppDataProviderGeneration({
         if (workoutsInFlightRef.current === request) {
           workoutsInFlightRef.current = null;
           workoutsPendingPatchesRef.current.clear();
+          workoutsPendingMutationsRef.current.clear();
         }
       };
       void promise.then(clearRequest, clearRequest);
@@ -720,6 +752,39 @@ function AppDataProviderGeneration({
     [isCurrentRequest, uid]
   );
 
+  const publishWorkout = useCallback(
+    (workout: HealthWorkout) => {
+      const generation = requestGenerationRef.current;
+      if (!isCurrentRequest(uid, generation)) return;
+      if (workoutsInFlightRef.current) {
+        workoutsPendingMutationsRef.current.set(workout.workoutId, workout);
+      }
+      workoutsPendingPatchesRef.current.delete(workout.workoutId);
+      setWorkouts((current) =>
+        mergeWorkoutDelta(
+          current.filter((w) => w.workoutId !== workout.workoutId),
+          [workout]
+        )
+      );
+      setWorkoutsMutationVersion((current) => current + 1);
+    },
+    [isCurrentRequest, uid]
+  );
+
+  const removeWorkout = useCallback(
+    (workoutId: string) => {
+      const generation = requestGenerationRef.current;
+      if (!isCurrentRequest(uid, generation)) return;
+      if (workoutsInFlightRef.current) {
+        workoutsPendingMutationsRef.current.set(workoutId, null);
+      }
+      workoutsPendingPatchesRef.current.delete(workoutId);
+      setWorkouts((current) => current.filter((w) => w.workoutId !== workoutId));
+      setWorkoutsMutationVersion((current) => current + 1);
+    },
+    [isCurrentRequest, uid]
+  );
+
   const maxHr = resolveMaxHr(userSettings);
   const restingHr = resolveRestingHr(userSettings);
 
@@ -766,6 +831,9 @@ function AppDataProviderGeneration({
       refreshSettings,
       patchRaces,
       patchOverrides,
+      publishWorkout,
+      removeWorkout,
+      workoutsMutationVersion,
       patchTrainingLoad,
     }),
     [
@@ -804,6 +872,9 @@ function AppDataProviderGeneration({
       refreshSettings,
       patchRaces,
       patchOverrides,
+      publishWorkout,
+      removeWorkout,
+      workoutsMutationVersion,
       patchTrainingLoad,
     ]
   );

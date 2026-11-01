@@ -1,0 +1,19 @@
+// LOCAL EMULATOR FIXTURE ONLY — never deployed. Excerpt of the owner match blocks
+// from the repository's non-authoritative firestore.rules snapshot, covering the
+// paths the manual activity workflow touches. Firebase Console is authoritative.
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() { return request.auth != null; }
+    function isOwner(uid) { return isSignedIn() && request.auth.uid == uid; }
+
+    match /users/{uid}/healthWorkouts/{docId} { allow read, write: if isOwner(uid); }
+    match /users/{uid}/workoutOverrides/{docId} { allow read, write: if isOwner(uid); }
+    match /users/{uid}/shoeAssignments/{docId} { allow read, write: if isOwner(uid); }
+    match /users/{uid}/plans/{planId} { allow read, write: if isOwner(uid); }
+    match /users/{uid}/halfMarathonRaces/{raceId} { allow read, write: if isOwner(uid); }
+    match /users/{uid}/dismissedDuplicates/{docId} { allow read, write: if isOwner(uid); }
+    match /users/{uid}/insights/{docId} { allow read, write: if isOwner(uid); }
+    match /users/{uid}/performanceFeatures/{workoutId} { allow read: if isOwner(uid); }
+  }
+}

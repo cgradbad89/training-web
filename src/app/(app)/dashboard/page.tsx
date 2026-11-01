@@ -76,6 +76,8 @@ import { type HealthWorkout } from "@/types/healthWorkout";
 import { type WorkoutOverride } from "@/types/workoutOverride";
 import { RunStatusIcon } from "@/components/RunStatusIcon";
 import { WorkoutDetailModal } from "@/components/WorkoutDetailModal";
+import { AddActivityButton } from "@/components/manualActivity/AddActivityButton";
+import { ManualSourceBadge } from "@/components/manualActivity/ManualSourceBadge";
 import { RunActivityModal } from "@/components/runs/RunActivityModal";
 import {
   computeWeekScore,
@@ -549,11 +551,13 @@ function WorkoutSummaryCard({
                     <span className="text-xs text-textSecondary w-7 shrink-0">{dayLabel}</span>
                     <span className="text-sm text-textPrimary truncate">
                       {resolveActivityTitle({
+                        customTitle: w.customTitle,
                         activityType: w.displayType,
                         rawActivityType: w.activityType,
                         distanceMiles: w.distanceMiles,
                       })}
                     </span>
+                    <ManualSourceBadge workout={w} />
                   </div>
                   <div className="flex items-center gap-2 text-xs text-textSecondary whitespace-nowrap">
                     <span>{formatDuration(w.durationSeconds)}</span>
@@ -1940,17 +1944,20 @@ export default function DashboardPage() {
       {/* Page title */}
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-textPrimary">{pageTitle}</h1>
-        <button
-          onClick={handleManualRefresh}
-          disabled={isRefreshing}
-          className="p-2 rounded-xl hover:bg-surface text-textSecondary
-                     transition-colors disabled:opacity-50"
-          title="Refresh workouts"
-        >
-          <RefreshCw
-            className={`w-4 h-4 ${isRefreshing ? "animate-spin" : ""}`}
-          />
-        </button>
+        <div className="flex items-center gap-1">
+          <AddActivityButton defaultKind="outdoor_run" />
+          <button
+            onClick={handleManualRefresh}
+            disabled={isRefreshing}
+            className="p-2 rounded-xl hover:bg-surface text-textSecondary
+                       transition-colors disabled:opacity-50"
+            title="Refresh workouts"
+          >
+            <RefreshCw
+              className={`w-4 h-4 ${isRefreshing ? "animate-spin" : ""}`}
+            />
+          </button>
+        </div>
       </div>
 
       {/* Row 1: Week Navigator — allow past & future navigation; "Today" pill

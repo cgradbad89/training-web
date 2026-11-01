@@ -9,11 +9,26 @@ import { type SimplifiedPathPoint } from "@/utils/simplifyPolyline";
  * HealthWorkout — mirrors the Firestore document stored at
  * users/{uid}/healthWorkouts/{workoutId}
  *
- * Written by iOS HealthKitSyncService from HealthKit data.
+ * Written by iOS HealthKitSyncService from HealthKit data, or by the web app's
+ * manual activity workflow (`entrySource: "manual"`, src/services/manualActivities.ts).
  */
+
+/** Display label written to `sourceName` on manually entered activities. */
+export const MANUAL_ACTIVITY_SOURCE_NAME = "Manual Entry";
 
 export interface HealthWorkout {
   workoutId: string;
+  /** Provenance marker: "manual" = entered by the owner in the web app. Absent
+   *  on every Apple Health record, which is the only other source. This, never
+   *  the title or activity type, decides whether a record may be edited/deleted. */
+  entrySource?: "manual";
+  /** Owner-entered title (manual activities only). */
+  customTitle?: string;
+  /** Owner-entered notes (manual activities only). */
+  notes?: string;
+  /** Manual activities only — iOS docs carry `syncedAt` instead. */
+  createdAt?: Date;
+  updatedAt?: Date;
   /** Equals displayType — used as a display name across the UI */
   name: string;
   activityType: string;   // raw HK activity type string
@@ -117,6 +132,10 @@ export interface TrainingLoadFields {
   trainingLoadV2: number | null;
   trainingLoadMethod: TrainingLoadMethod;
   trainingLoadBasisComplete: boolean;
+}
+
+export function isManualActivity(w: Pick<HealthWorkout, "entrySource">): boolean {
+  return w.entrySource === "manual";
 }
 
 export function isRunWorkout(w: HealthWorkout): boolean {

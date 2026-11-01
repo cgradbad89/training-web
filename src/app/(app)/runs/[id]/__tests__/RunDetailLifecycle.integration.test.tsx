@@ -124,6 +124,26 @@ describe("Run Detail operation ownership at page boundaries", () => {
     await act(async () => root.unmount()); root = createRoot(container); await render();
     expect(h.routeRead).toHaveBeenCalledOnce(); expect(h.cacheWrite).toHaveBeenCalledOnce(); expect(h.splitWrite).toHaveBeenCalledOnce();
   });
+  it("makes no telemetry reads or back-fills for a manual run and shows honest no-GPS copy", async () => {
+    h.workout = { ...h.workout!, entrySource: "manual", sourceName: "Manual Entry", hasRoute: false, routeComplete: undefined, routeClusterId: undefined, elevationGainM: null, notes: "Felt strong", customTitle: "Birthday run" };
+    await render();
+    expect(h.routeRead).not.toHaveBeenCalled(); expect(h.splitRead).not.toHaveBeenCalled();
+    expect(h.cacheWrite).not.toHaveBeenCalled(); expect(h.splitWrite).not.toHaveBeenCalled();
+    expect(h.bestEfforts).not.toHaveBeenCalled(); expect(h.weather).not.toHaveBeenCalled(); expect(h.cluster).not.toHaveBeenCalled();
+    const text = container.textContent ?? "";
+    expect(text).toContain("Birthday run"); expect(text).toContain("Manual"); expect(text).toContain("Felt strong");
+    expect(text).toContain("no GPS route, splits, or elevation");
+    expect(text).not.toContain("Route still syncing"); expect(text).not.toContain("Route data not yet synced");
+    expect(text).not.toContain("Mile Splits");
+    expect(text).toContain("Delete");
+  });
+  it("keeps Apple Health runs on the override workflow with no Delete action", async () => {
+    await render();
+    expect(container.textContent).toContain("Exclude");
+    expect([...container.querySelectorAll("button")].some(button => button.textContent?.trim() === "Delete")).toBe(false);
+    expect(container.querySelector('[title="Edit workout"]')).not.toBeNull();
+    expect(container.querySelector('[title="Edit activity"]')).toBeNull();
+  });
   it("shows acquisition failure without publishing an incomplete route cache", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     h.routeRead.mockRejectedValue(new Error("The route exceeds the 25,000-document detail limit."));

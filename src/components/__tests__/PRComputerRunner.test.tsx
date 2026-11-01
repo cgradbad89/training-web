@@ -12,6 +12,7 @@ const h = vi.hoisted(() => ({
   workoutsLoading: false,
   workoutsHistoryComplete: true,
   trainingActivated: true,
+  workoutsMutationVersion: 0,
   fetchHealthWorkouts: vi.fn(),
   computeAllPRs: vi.fn(),
   buildPRBadgeMap: vi.fn(),
@@ -29,6 +30,7 @@ vi.mock("@/contexts/AppDataContext", () => ({
     workoutsLoading: h.workoutsLoading,
     workoutsHistoryComplete: h.workoutsHistoryComplete,
     trainingActivated: h.trainingActivated,
+    workoutsMutationVersion: h.workoutsMutationVersion,
   }),
 }));
 vi.mock("@/services/healthWorkouts", () => ({
@@ -86,6 +88,7 @@ beforeEach(() => {
   h.workoutsLoading = false;
   h.workoutsHistoryComplete = true;
   h.trainingActivated = true;
+  h.workoutsMutationVersion = 0;
   h.runIdle = null;
   h.fetchHealthWorkouts.mockReset().mockResolvedValue([]);
   h.computeAllPRs.mockReset().mockReturnValue([]);
@@ -201,4 +204,16 @@ describe("PRComputerRunner", () => {
     expect(h.computeAllPRs).toHaveBeenCalledTimes(1);
   });
 
+  it("reruns inside the daily throttle after a manual activity changes", async () => {
+    localStorage.setItem("pr_last_computed", String(Date.now()));
+    await mount();
+    await runIdleWork();
+    expect(h.computeAllPRs).not.toHaveBeenCalled();
+
+    h.workoutsMutationVersion = 1;
+    await act(async () => { root.render(<PRComputerRunner />); });
+    await runIdleWork();
+
+    expect(h.computeAllPRs).toHaveBeenCalledOnce();
+  });
 });

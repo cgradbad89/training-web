@@ -10,6 +10,9 @@ import { MileSplitsTable } from "@/components/MileSplitsTable";
 import { ChartSkeleton } from "@/components/ui/ChartSkeleton";
 import { ZoneBreakdown } from "@/components/ZoneBreakdown";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { ManualActivityModal } from "@/components/manualActivity/ManualActivityModal";
+import { ManualSourceBadge } from "@/components/manualActivity/ManualSourceBadge";
+import { useManualActivityActions } from "@/hooks/useManualActivityActions";
 import { StatBlock } from "@/components/ui/StatBlock";
 import { MetricBadge } from "@/components/ui/MetricBadge";
 import { InfoTooltip } from "@/components/ui/InfoTooltip";
@@ -205,6 +208,11 @@ export default function RunDetailPage() {
     [sharedWorkouts, sharedOverrides]
   );
 
+  const { remove: removeManualActivity } = useManualActivityActions();
+  const [isEditingManual, setIsEditingManual] = useState(false);
+  const [showManualDeleteConfirm, setShowManualDeleteConfirm] = useState(false);
+  const [deletingManual, setDeletingManual] = useState(false);
+  const [manualDeleteError, setManualDeleteError] = useState<string | null>(null);
   const [workout, setWorkout] = useState<HealthWorkout | null>(null);
   const [routePoints, setRoutePoints] = useState<RoutePoint[]>([]);
   const [shoes, setShoes] = useState<RunningShoe[]>([]);
@@ -455,6 +463,13 @@ export default function RunDetailPage() {
         return;
       }
       const { w, o, settings } = core;
+
+      // A manual activity has no telemetry by definition: no route, split, or
+      // cache reads, and nothing route-derived to back-fill onto the doc.
+      if (w.entrySource === "manual") {
+        setRouteLoading(false);
+        return;
+      }
 
       // mileSplits subcollection (per-mile HR + the web app's cached
       // distance/pace/GAP). For routeless workouts this is empty and safe.
@@ -1052,6 +1067,7 @@ export default function RunDetailPage() {
   // false`. We still render every point we have — this never gates rendering.
   // Absent (legacy) or true → no hint.
   const routeSyncing = isRouteSyncing(displayWorkout.routeComplete);
+  const isManual = displayWorkout.entrySource === "manual";
   const isExcluded = override?.isExcluded === true;
   const hasOverrides =
     override != null &&
@@ -1234,12 +1250,14 @@ export default function RunDetailPage() {
         <div className="flex-1 min-w-0 flex items-center gap-2">
           <h1 className="text-lg font-bold text-textPrimary truncate">
             {resolveActivityTitle({
+              customTitle: displayWorkout.customTitle,
               activityType: displayWorkout.displayType,
               distanceMiles: displayWorkout.distanceMiles,
               matchedPlanEntry,
             })}{" "}
             &middot; {dateDisplay}
           </h1>
+          <ManualSourceBadge workout={displayWorkout} />
           {hasOverrides && (
             <span className="text-[10px] bg-warning/15 text-warning px-2 py-0.5 rounded-full font-semibold shrink-0">
               Edited
@@ -1257,14 +1275,32 @@ export default function RunDetailPage() {
               {shoeName}
             </span>
           )}
-          {!isEditing && (
-            <button
-              onClick={openEdit}
-              className="p-2 rounded-xl hover:bg-surface transition-colors text-textSecondary"
-              title="Edit workout"
-            >
-              <Pencil size={16} />
-            </button>
+          {isManual ? (
+            <>
+              <button
+                onClick={() => setIsEditingManual(true)}
+                className="p-2 rounded-xl hover:bg-surface transition-colors text-textSecondary"
+                title="Edit activity"
+              >
+                <Pencil size={16} />
+              </button>
+              <button
+                onClick={() => { setManualDeleteError(null); setShowManualDeleteConfirm(true); }}
+                className="text-xs text-danger font-medium hover:underline"
+              >
+                Delete
+              </button>
+            </>
+          ) : (
+            !isEditing && (
+              <button
+                onClick={openEdit}
+                className="p-2 rounded-xl hover:bg-surface transition-colors text-textSecondary"
+                title="Edit workout"
+              >
+                <Pencil size={16} />
+              </button>
+            )
           )}
           {isExcluded ? (
             <button
@@ -1284,6 +1320,47 @@ export default function RunDetailPage() {
           )}
         </div>
       </div>
+
+      {manualDeleteError && (
+        <p role="alert" className="rounded-xl bg-danger/10 p-3 text-sm text-danger">
+          {manualDeleteError}
+        </p>
+      )}
+      <ConfirmDialog
+        isOpen={showManualDeleteConfirm}
+        title="Delete this run?"
+        message="This manually entered run will be permanently deleted. This can't be undone."
+        confirmLabel="Delete"
+        confirmVariant="danger"
+        onConfirm={async () => {
+          setDeletingManual(true);
+          try {
+            await removeManualActivity(workoutId);
+            router.replace("/runs");
+          } catch (err) {
+            setManualDeleteError(
+              err instanceof Error ? err.message : "This activity couldn't be deleted."
+            );
+          } finally {
+            setDeletingManual(false);
+            setShowManualDeleteConfirm(false);
+          }
+        }}
+        onCancel={() => setShowManualDeleteConfirm(false)}
+        loading={deletingManual}
+      />
+      {isEditingManual && (
+        <ManualActivityModal
+          mode={{ type: "edit", workout: workout! }}
+          onClose={() => setIsEditingManual(false)}
+          onSaved={(saved) => {
+            setWorkout(saved);
+            setIsEditingManual(false);
+            // The save clears any field override that would have hidden this edit.
+            fetchOverride(uid!, workoutId).then(setOverride).catch(console.error);
+          }}
+        />
+      )}
 
       {/* ── Exclude confirm ─────────────────────────────────── */}
       <ConfirmDialog
@@ -1660,6 +1737,23 @@ export default function RunDetailPage() {
         />
       )}
 
+      {isManual && displayWorkout.notes && (
+        <div className="bg-card rounded-2xl border border-border p-5">
+          <h2 className="text-sm font-semibold text-textPrimary mb-2">Notes</h2>
+          <p className="whitespace-pre-wrap text-sm text-textSecondary">
+            {displayWorkout.notes}
+          </p>
+        </div>
+      )}
+
+      {isManual ? (
+        <div className="bg-card rounded-2xl border border-border p-5">
+          <p className="text-sm text-textSecondary">
+            Manually entered — no GPS route, splits, or elevation were recorded for this run.
+          </p>
+        </div>
+      ) : (
+      <>
       {/* ── Route Map ───────────────────────────────────────── */}
       <div className="bg-card rounded-2xl border border-border overflow-hidden">
         {routeLoading ? (
@@ -1706,6 +1800,8 @@ export default function RunDetailPage() {
         splits={mileSplits}
         hasRoute={effectiveHasRoute}
       />
+      </>
+      )}
 
       {/* ── Overlaid Analysis Chart (elevation + pace + GAP + HR) ─
           Renders from the persisted decimated cache while the route
