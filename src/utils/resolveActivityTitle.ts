@@ -43,6 +43,9 @@ import {
 } from "@/types/plan";
 
 export interface ActivityTitleInputs {
+  /** Owner-entered title on a manual activity. Wins over every derived title. */
+  customTitle?: string | null;
+
   /** Raw/display type for the activity, e.g. "Run", "Workout", "Strength".
    *  Callers pass `HealthWorkout.displayType` here (post-override). */
   activityType: string;
@@ -160,8 +163,11 @@ export function friendlyWorkoutLabel(rawActivityType?: string | null): string | 
 // ─── Resolver ────────────────────────────────────────────────────────────────
 
 export function resolveActivityTitle(inputs: ActivityTitleInputs): string {
-  const { activityType, rawActivityType, matchedPlanEntry, routeCluster, distanceMiles } =
+  const { customTitle, activityType, rawActivityType, matchedPlanEntry, routeCluster, distanceMiles } =
     inputs;
+
+  const custom = customTitle?.trim();
+  if (custom) return custom;
 
   // 1. Plan-entry label wins. Prefix the run's rounded distance only when the
   //    label has no number of its own (so "Long Run" → "8mi Long Run" but

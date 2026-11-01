@@ -1223,3 +1223,93 @@ describe("useAppData", () => {
     spy.mockRestore();
   });
 });
+
+describe("AppDataProvider manual activity publication", () => {
+  const baseWorkout = (id: string, startMs: number) => ({
+    workoutId: id, startDate: new Date(startMs), endDate: new Date(startMs), isRunLike: true,
+    distanceMiles: 3, durationSeconds: 1800, displayType: "Run", activityType: "running",
+  });
+  let captured: AppDataContextValue;
+  let host: HTMLDivElement;
+  let hostRoot: Root;
+  function Capture() { captured = useAppData(); return null; }
+
+  beforeEach(async () => {
+    h.fetchHealthWorkouts.mockReset().mockResolvedValue([baseWorkout("hk-old", 1000)]);
+    h.fetchHealthWorkoutsInRange.mockReset().mockResolvedValue([]);
+    h.fetchPlans.mockReset().mockResolvedValue([]);
+    h.fetchRaces.mockReset().mockResolvedValue([]);
+    h.fetchAllOverrides.mockReset().mockResolvedValue({});
+    h.fetchUserSettings.mockReset().mockResolvedValue(null);
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    hostRoot = createRoot(host);
+    await act(async () => {
+      hostRoot.render(<AppDataProvider uid="owner"><Capture /></AppDataProvider>);
+    });
+  });
+  afterEach(async () => {
+    await act(async () => hostRoot.unmount());
+    host.remove();
+  });
+
+  const ids = () => captured.workouts.map((w) => w.workoutId);
+
+  it("publishes a backdated create immediately, in date order, with no read", async () => {
+    const reads = h.fetchHealthWorkouts.mock.calls.length;
+    await act(async () => { captured.publishWorkout(baseWorkout("manual_a", 500) as never); });
+    expect(ids()).toEqual(["hk-old", "manual_a"]);
+    expect(h.fetchHealthWorkouts.mock.calls.length).toBe(reads);
+    expect(captured.workoutsMutationVersion).toBe(1);
+  });
+
+  it("replaces an edited record rather than adding a second one", async () => {
+    await act(async () => { captured.publishWorkout(baseWorkout("manual_a", 500) as never); });
+    await act(async () => { captured.publishWorkout({ ...baseWorkout("manual_a", 2000), distanceMiles: 9 } as never); });
+    expect(ids()).toEqual(["manual_a", "hk-old"]);
+    expect(captured.workouts[0].distanceMiles).toBe(9);
+  });
+
+  it("removes a deleted record", async () => {
+    await act(async () => { captured.publishWorkout(baseWorkout("manual_a", 500) as never); });
+    await act(async () => { captured.removeWorkout("manual_a"); });
+    expect(ids()).toEqual(["hk-old"]);
+    expect(captured.workoutsMutationVersion).toBe(2);
+  });
+
+  it("a full read already in flight can't resurrect a record deleted meanwhile", async () => {
+    await act(async () => { captured.publishWorkout(baseWorkout("manual_a", 500) as never); });
+    let release!: (value: unknown[]) => void;
+    h.fetchHealthWorkouts.mockReturnValue(new Promise((resolve) => { release = resolve; }));
+    let pending!: Promise<void>;
+    await act(async () => { pending = captured.refreshWorkouts(); });
+    await act(async () => { captured.removeWorkout("manual_a"); });
+    await act(async () => {
+      release([baseWorkout("hk-old", 1000), baseWorkout("manual_a", 500)]);
+      await pending;
+    });
+    expect(ids()).toEqual(["hk-old"]);
+  });
+
+  it("a full read already in flight can't undo an edit saved meanwhile", async () => {
+    await act(async () => { captured.publishWorkout(baseWorkout("manual_a", 500) as never); });
+    let release!: (value: unknown[]) => void;
+    h.fetchHealthWorkouts.mockReturnValue(new Promise((resolve) => { release = resolve; }));
+    let pending!: Promise<void>;
+    await act(async () => { pending = captured.refreshWorkouts(); });
+    await act(async () => { captured.publishWorkout({ ...baseWorkout("manual_a", 500), distanceMiles: 7 } as never); });
+    await act(async () => {
+      release([baseWorkout("hk-old", 1000), baseWorkout("manual_a", 500)]);
+      await pending;
+    });
+    expect(captured.workouts.find((w) => w.workoutId === "manual_a")?.distanceMiles).toBe(7);
+    expect(ids().filter((id) => id === "manual_a")).toHaveLength(1);
+  });
+
+  it("a later refresh reflects server truth again", async () => {
+    await act(async () => { captured.publishWorkout(baseWorkout("manual_a", 500) as never); });
+    h.fetchHealthWorkouts.mockResolvedValue([baseWorkout("hk-old", 1000), { ...baseWorkout("manual_a", 500), distanceMiles: 11 }]);
+    await act(async () => { await captured.refreshWorkouts(); });
+    expect(captured.workouts.find((w) => w.workoutId === "manual_a")?.distanceMiles).toBe(11);
+  });
+});

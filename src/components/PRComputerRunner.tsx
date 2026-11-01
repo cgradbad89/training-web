@@ -34,10 +34,22 @@ function scheduleWhenIdle(callback: () => void): () => void {
  */
 export default function PRComputerRunner() {
   const { user, sessionEpoch, isSessionCurrent } = useAuth()
-  const { workouts, workoutsLoading, workoutsHistoryComplete, trainingActivated } = useAppData()
+  const { workouts, workoutsLoading, workoutsHistoryComplete, trainingActivated, workoutsMutationVersion } = useAppData()
   const hasRun = useRef(false)
+  const lastMutationVersion = useRef(workoutsMutationVersion)
 
   useEffect(() => {
+    // A manual activity create/edit/delete can move a PR, so it bypasses the
+    // once-per-day throttle (and this session's once-only guard).
+    if (lastMutationVersion.current !== workoutsMutationVersion) {
+      lastMutationVersion.current = workoutsMutationVersion
+      hasRun.current = false
+      try {
+        window.localStorage.removeItem(PR_THROTTLE_KEY)
+      } catch {
+        // localStorage unavailable — the throttle read below is already tolerant.
+      }
+    }
     if (!user || trainingActivated === false || workoutsLoading || hasRun.current) return
 
     // Throttle — skip if we already ran in the last 24 hours.
@@ -121,7 +133,7 @@ export default function PRComputerRunner() {
       // Strict replay and a refreshed snapshot must be able to reschedule it.
       if (!completed) hasRun.current = false
     }
-  }, [user, workouts, workoutsHistoryComplete, workoutsLoading, trainingActivated, sessionEpoch, isSessionCurrent])
+  }, [user, workouts, workoutsHistoryComplete, workoutsLoading, trainingActivated, workoutsMutationVersion, sessionEpoch, isSessionCurrent])
 
   return null
 }

@@ -156,6 +156,7 @@ export async function prepareManualPerformanceReview(session: PerformanceSession
         concerns.push(effective.excluded ? "Excluded by a saved workout override." : "Workout or route is still incomplete; telemetry may still be syncing.");
       }
       if (parent.raw.routeComplete === undefined) concerns.push("Route completion marker is absent; ingestion completeness is unknown.");
+      if (parent.raw.entrySource === "manual") concerns.push("Manually entered: no device telemetry exists for this run.");
       if (!parent.raw.hasRoute) concerns.push("No GPS route is advertised; steady pace-at-HR evidence may be unavailable.");
       if (!parent.raw.hasHRStream && parent.hasRouteHR !== true) concerns.push("HR coverage is unknown until selected telemetry is read.");
       if (stored) concerns.push(...stored.feature.reasons, ...stored.feature.limitations);
@@ -165,7 +166,8 @@ export async function prepareManualPerformanceReview(session: PerformanceSession
     candidates.push({ workoutId: id, startedAt: Number.isFinite(parent.raw.startDate.getTime()) ? parent.raw.startDate.toISOString() : "",
       label: parent.raw.displayType, status, concerns: [...new Set(concerns)], preselected: false });
   }
-  candidates.filter(c => c.status === "new").slice(0, 3).forEach(c => { c.preselected = true; });
+  const manualRunIds = new Set(runs.filter(parent => parent.raw.entrySource === "manual").map(parent => parent.raw.workoutId));
+  candidates.filter(c => c.status === "new" && !manualRunIds.has(c.workoutId)).slice(0, 3).forEach(c => { c.preselected = true; });
   const review: ManualPerformanceReview = { candidates, expectedCurrentRevision: current.current?.revision ?? null,
     documentsRead: parentReads + overrideReads + saved.documentsRead + current.documentsRead,
     limitations: [

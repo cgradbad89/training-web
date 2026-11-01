@@ -35,6 +35,8 @@ import { resolveActivityTitle } from "@/utils/resolveActivityTitle";
 import { weekStart } from "@/utils/dates";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { WorkoutDetailModal } from "@/components/WorkoutDetailModal";
+import { AddActivityButton } from "@/components/manualActivity/AddActivityButton";
+import { ManualSourceBadge } from "@/components/manualActivity/ManualSourceBadge";
 import { MiniCalendar, toLocalIsoDateForCalendar } from "@/components/MiniCalendar";
 import { ExportModal } from "@/components/ExportModal";
 import { TrainingLoadBadge } from "@/components/ui/TrainingLoadBadge";
@@ -422,6 +424,7 @@ function WorkoutRow({
         <Icon size={16} className="text-textSecondary shrink-0" />
         <span className="text-sm font-medium truncate max-w-[200px]">
           {resolveActivityTitle({
+            customTitle: workout.customTitle,
             activityType: workout.displayType,
             rawActivityType: workout.activityType,
             distanceMiles: workout.distanceMiles,
@@ -430,9 +433,12 @@ function WorkoutRow({
       </div>
 
       {/* Col 3: Type Badge */}
-      <span className={`shrink-0 text-xs font-semibold px-2 py-0.5 rounded-full ${badge.cls}`}>
-        {badge.label}
-      </span>
+      <div className="flex shrink-0 flex-col items-end gap-0.5">
+        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${badge.cls}`}>
+          {badge.label}
+        </span>
+        <ManualSourceBadge workout={workout} />
+      </div>
 
       {/* Col 4: Duration */}
       <div className="w-16 shrink-0 text-sm font-semibold tabular-nums text-right">
@@ -792,17 +798,29 @@ export default function WorkoutsPage() {
       <aside className="w-full lg:w-64 shrink-0 flex flex-col gap-5">
         <div className="flex items-center justify-between">
           <h1 className="text-lg font-bold text-textPrimary">Workouts</h1>
-          <button
-            onClick={handleManualRefresh}
-            disabled={isRefreshing}
-            className="p-2 rounded-xl hover:bg-surface text-textSecondary
-                       transition-colors disabled:opacity-50"
-            title="Refresh workouts"
-          >
-            <RefreshCw
-              className={`w-4 h-4 ${isRefreshing ? "animate-spin" : ""}`}
+          <div className="flex items-center gap-1">
+            <AddActivityButton
+              defaultKind="other"
+              onCreated={(workout) => {
+                // Reveal a backdated entry. A run saved from here lives on Runs.
+                if (!workout.isRunLike) {
+                  setSelectedYear(getLocalDate(workout).getFullYear());
+                  setActiveTab("all");
+                }
+              }}
             />
-          </button>
+            <button
+              onClick={handleManualRefresh}
+              disabled={isRefreshing}
+              className="p-2 rounded-xl hover:bg-surface text-textSecondary
+                         transition-colors disabled:opacity-50"
+              title="Refresh workouts"
+            >
+              <RefreshCw
+                className={`w-4 h-4 ${isRefreshing ? "animate-spin" : ""}`}
+              />
+            </button>
+          </div>
         </div>
 
         {/* Filters card — Year navigator + category tabs. Same shell as

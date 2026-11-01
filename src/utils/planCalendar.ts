@@ -154,6 +154,7 @@ export function buildCalendarEvents(
       actualEvents.push({
         kind: "actual-run", date: workout.startDate, activity: workout,
         label: resolveActivityTitle({
+          customTitle: workout.customTitle,
           activityType: workout.displayType,
           distanceMiles: workout.distanceMiles,
         }),
@@ -164,6 +165,7 @@ export function buildCalendarEvents(
       actualEvents.push({
         kind: "actual-workout", date: workout.startDate, activity: workout,
         label: resolveActivityTitle({
+          customTitle: workout.customTitle,
           activityType: workout.displayType,
           rawActivityType: workout.activityType,
           distanceMiles: workout.distanceMiles,

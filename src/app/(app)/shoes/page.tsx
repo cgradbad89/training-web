@@ -1006,6 +1006,7 @@ function RunsPanel({
                             </span>
                             <span className="text-sm font-medium text-textPrimary truncate">
                               {resolveActivityTitle({
+                                customTitle: run.customTitle,
                                 activityType: run.displayType,
                                 distanceMiles: run.distanceMiles,
                                 matchedPlanEntry: runTitleMap.get(run.workoutId) ?? null,
@@ -1064,6 +1065,7 @@ function RunsPanel({
                           </span>
                           <span className="text-sm font-medium text-textPrimary truncate">
                             {resolveActivityTitle({
+                              customTitle: run.customTitle,
                               activityType: run.displayType,
                               distanceMiles: run.distanceMiles,
                               matchedPlanEntry: runTitleMap.get(run.workoutId) ?? null,

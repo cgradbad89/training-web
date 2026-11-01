@@ -122,6 +122,8 @@ export async function toEffectivePerformanceWorkout(input: {
     averageHrBpm: finite(workout.avgHeartRate), ascentMeters: finite(workout.elevationGainM),
     routeComplete: workout.routeComplete ?? null, hasRoute: workout.hasRoute,
     sourceName: workout.sourceName, sourceBundle: workout.sourceBundle ?? null,
+    // Absent for Apple Health records so their existing parent digests are unchanged.
+    ...(workout.entrySource === "manual" ? { entrySource: "manual" } : {}),
     environment: { temperatureF: finite(workout.weather?.tempF), dewPointF: finite(workout.weather?.dewPointF), windMph: finite(workout.weather?.windMph) },
   };
   const changes = { excluded: override?.isExcluded ?? false, distanceMiles: finite(override?.distanceMilesOverride), durationSeconds: finite(override?.durationSecondsOverride), runType: override?.runTypeOverride ?? null };
@@ -138,7 +140,7 @@ export async function toEffectivePerformanceWorkout(input: {
     distanceMeters: finite(effective.distanceMeters ?? effective.distanceMiles * 1609.344), durationSeconds: finite(effective.durationSeconds),
     averageHrBpm: finite(effective.avgHeartRate), ascentMeters: finite(effective.elevationGainM), environment: raw.environment,
     parentDigest: await hashPerformanceValue({ raw, changes }), telemetry: { ...telemetry },
-    provenance: { source: workout.sourceName || null, sourceId: workout.workoutId, notes: ["HealthKit workout with canonical user overrides applied."] }, limitations,
+    provenance: { source: workout.sourceName || null, sourceId: workout.workoutId, notes: [workout.entrySource === "manual" ? "Manually entered workout with canonical user overrides applied; no device telemetry." : "HealthKit workout with canonical user overrides applied."] }, limitations,
   };
 }
 

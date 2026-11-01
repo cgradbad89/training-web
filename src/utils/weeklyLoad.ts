@@ -20,6 +20,8 @@ export interface WeekActivity {
   kind: "run" | "workout";
   /** Existing display-name logic: HealthWorkout.name (== displayType). */
   name: string;
+  /** Owner-entered title on a manual activity. */
+  customTitle?: string;
   /** Raw HK activityType — drives the workout friendly-label tier. In-memory
    *  only (no extra read); absent on legacy in-memory rows. */
   activityType?: string;
@@ -129,6 +131,7 @@ export function buildWeeklyLoadModel(
       id: w.workoutId,
       kind: w.isRunLike ? "run" : "workout",
       name: w.name || w.displayType,
+      customTitle: w.customTitle,
       activityType: w.activityType,
       distanceMiles: w.distanceMiles,
       date: toLocalIsoDate(w.startDate),

@@ -102,6 +102,7 @@ export async function hydrateFastFinishSplits(
       if (
         !isCurrent() || !inWindow ||
         !w.isRunLike ||
+        w.entrySource === "manual" ||
         !(w.distanceMiles > 0) ||
         (w.mileSplits && w.mileSplits.length > 0)
       ) {
