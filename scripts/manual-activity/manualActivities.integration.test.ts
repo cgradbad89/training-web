@@ -14,8 +14,12 @@ import { deleteApp, initializeApp, type FirebaseApp } from "firebase/app";
 import {
   connectFirestoreEmulator,
   doc,
+  getDoc,
+  getDocFromCache,
   getDocFromServer,
   initializeFirestore,
+  memoryLocalCache,
+  memoryLruGarbageCollector,
   setDoc,
   terminate,
   Timestamp,
@@ -152,6 +156,32 @@ describe.skipIf(!enabled)("manual activities against the Firestore emulator", ()
     await expect(deleteManualActivity(OWNER_UID, id)).rejects.toMatchObject({ code: "linked_race" });
     expect(await exists(workoutPath(id))).toBe(true);
     await setDoc(doc(ownerDb, race), { actualRunId: null }, { merge: true });
+  });
+
+  it("leaves no cached copy for AutoMatch's listener to replay after releasing a plan session", async () => {
+    const cacheApp = initializeApp({ projectId, apiKey: "demo" }, "manual-cache");
+    const cacheDb = initializeFirestore(cacheApp, {
+      localCache: memoryLocalCache({ garbageCollector: memoryLruGarbageCollector() }),
+    });
+    connectFirestoreEmulator(cacheDb, HOST, PORT, {
+      mockUserToken: { sub: OWNER_UID, user_id: OWNER_UID, email: OWNER_EMAIL, email_verified: true },
+    });
+    h.db = cacheDb;
+    try {
+      const id = createManualActivityId();
+      await createManualActivity(OWNER_UID, input({ kind: "hiit", distanceMiles: null }), id);
+      const cached = doc(cacheDb, workoutPath(id));
+      await getDoc(cached);
+      await setDoc(doc(cacheDb, `users/${OWNER_UID}/plans/synthetic-release`), {
+        name: "Synthetic", planType: "workout", startDate: "2026-01-05", status: "active", isActive: true,
+        weeks: [{ weekNumber: 1, entries: [{ id: "e1", weekIndex: 0, weekday: 6, dayOfWeek: 5, type: "workout", category: "hiit", completed: true, completedAt: "2026-01-10T12:30:00.000Z", matchedWorkoutId: id }] }],
+      });
+      await deleteManualActivity(OWNER_UID, id);
+      expect((await getDocFromCache(cached)).exists()).toBe(false);
+    } finally {
+      await terminate(cacheDb);
+      await deleteApp(cacheApp);
+    }
   });
 
   it("the snapshot rules deny another signed-in user's writes, surfaced as a failure", async () => {

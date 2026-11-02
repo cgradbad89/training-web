@@ -14,6 +14,7 @@ import {
   deleteField,
   doc,
   getDoc,
+  getDocFromServer,
   getDocs,
   runTransaction,
   Timestamp,
@@ -153,6 +154,18 @@ function invalidateAggregatedStats(uid: string): void {
         console.warn("[manualActivities] aggregated stats not invalidated", err);
       }
     });
+}
+
+/** A transaction commit never reaches the local cache, and releasing a session
+ *  reopens AutoMatch's listener, whose first snapshot comes from that cache. Bring
+ *  the record up to date first, or the old copy would re-complete the session.
+ *  Best-effort: the change has already succeeded. */
+async function refreshCachedWorkout(uid: string, workoutId: string): Promise<void> {
+  try {
+    await getDocFromServer(workoutRef(uid, workoutId));
+  } catch (err) {
+    console.warn("[manualActivities] cached record not refreshed", err);
+  }
 }
 
 export async function createManualActivity(
@@ -306,6 +319,7 @@ export async function updateManualActivity(
         plans: releasedPlans,
       };
     });
+    if (result.plans.length > 0) await refreshCachedWorkout(uid, workoutId);
     invalidateAggregatedStats(uid);
     return result;
   } catch (cause) {
@@ -371,6 +385,7 @@ export async function deleteManualActivity(
       }
       return { overrideRemoved: ovSnap.exists(), plans: releasedPlans };
     });
+    if (result.plans.length > 0) await refreshCachedWorkout(uid, workoutId);
     invalidateAggregatedStats(uid);
     return result;
   } catch (cause) {
