@@ -10,6 +10,8 @@ const h = vi.hoisted(() => ({
   failNextCommit: null as { code: string } | null,
   loseAcknowledgement: false,
   statsUpdates: [] as string[],
+  serverReads: [] as { path: string; commitsAtRead: number }[],
+  failServerRead: false,
   DELETE: Symbol("deleteField"),
 }));
 
@@ -31,6 +33,11 @@ vi.mock("firebase/firestore", () => ({
   getDoc: async (ref: { path: string }) => ({
     exists: () => h.records.has(ref.path), id: ref.path.split("/").pop(), data: () => h.records.get(ref.path),
   }),
+  getDocFromServer: async (ref: { path: string }) => {
+    h.serverReads.push({ path: ref.path, commitsAtRead: h.commits });
+    if (h.failServerRead) throw Object.assign(new Error("offline"), { code: "unavailable" });
+    return { exists: () => h.records.has(ref.path) };
+  },
   getDocs: async (ref: { path: string }) => ({
     docs: [...h.records.keys()]
       .filter((path) => path.startsWith(`${ref.path}/`))
@@ -108,6 +115,7 @@ beforeEach(() => {
   h.records.clear();
   h.user = { uid: UID, email: "folstromjohn@gmail.com", emailVerified: true };
   h.races = []; h.plans = []; h.commits = 0; h.failNextCommit = null;
+  h.serverReads = []; h.failServerRead = false;
   h.loseAcknowledgement = false; h.statsUpdates = [];
   vi.spyOn(console, "warn").mockImplementation(() => {});
 });
@@ -270,6 +278,12 @@ describe("updateManualActivity", () => {
     expect(result.override).toMatchObject({ isExcluded: true, distanceMilesOverride: null });
   });
 
+  it("refreshes the cached record when an edit releases a session", async () => {
+    h.plans = [plan()];
+    await updateManualActivity(UID, ID, input({ localDate: "2026-01-11" }));
+    expect(h.serverReads).toEqual([{ path: WORKOUT_PATH, commitsAtRead: h.commits }]);
+  });
+
   it("releases a matched plan session when the date moves", async () => {
     h.plans = [plan()];
     const result = await updateManualActivity(UID, ID, input({ localDate: "2026-01-12" }));
@@ -358,6 +372,24 @@ describe("deleteManualActivity", () => {
     expect(matched.completed).toBe(false);
     expect(matched).not.toHaveProperty("completedAt");
     expect(manual.completed).toBe(true);
+  });
+
+  it("refreshes the cached record after releasing a session, so AutoMatch can't replay it", async () => {
+    h.plans = [plan()];
+    await deleteManualActivity(UID, ID);
+    expect(h.serverReads).toEqual([{ path: WORKOUT_PATH, commitsAtRead: h.commits }]);
+  });
+
+  it("skips the extra read when no session was released", async () => {
+    await deleteManualActivity(UID, ID);
+    expect(h.serverReads).toEqual([]);
+  });
+
+  it("still reports the delete as done if that refresh fails", async () => {
+    h.plans = [plan()];
+    h.failServerRead = true;
+    await expect(deleteManualActivity(UID, ID)).resolves.toMatchObject({ plans: [expect.anything()] });
+    expect(h.records.has(WORKOUT_PATH)).toBe(false);
   });
 
   it("blocks deletion of a race-linked activity with an actionable message", async () => {
