@@ -124,6 +124,12 @@ function SessionPerformancePanel({ auth, user }: { auth: AuthState; user: NonNul
   const [progress, setProgress] = useState<ManualPerformanceProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<{ snapshotCreated: boolean; processedWorkoutIds: string[]; skippedWorkoutIds: string[]; documentReads: number } | null>(null);
+  const updateButton = useRef<HTMLButtonElement>(null);
+  const reviewHeading = useRef<HTMLHeadingElement>(null);
+  const errorMessage = useRef<HTMLParagraphElement>(null);
+  const completion = useRef<HTMLDivElement>(null);
+  const progressMessage = useRef<HTMLDivElement>(null);
+  const attention = useRef<"review" | "error" | "completion" | "progress" | "trigger" | null>(null);
   const active = useRef(false);
   const mounted = useRef(false);
   const reviewSession = useRef<PerformanceSession | null>(null);
@@ -151,6 +157,18 @@ function SessionPerformancePanel({ auth, user }: { auth: AuthState; user: NonNul
 
   function currentSession() { return mounted.current && isSessionCurrent(sessionEpoch); }
 
+  // Consume only explicit action transitions, after their DOM has committed.
+  // Mounting or receiving ordinary progress must never move the user's focus.
+  useEffect(() => {
+    const target = attention.current;
+    attention.current = null;
+    if (!target || !mounted.current || !isSessionCurrent(sessionEpoch)) return;
+    const element = ({ review: reviewHeading, error: errorMessage, completion,
+      progress: progressMessage, trigger: updateButton })[target].current;
+    element?.focus({ preventScroll: true });
+    element?.scrollIntoView({ block: "center", behavior: "instant" });
+  });
+
   async function openReview() {
     if (!gate.enabled || active.current || !currentSession()) return;
     active.current = true;
@@ -163,11 +181,15 @@ function SessionPerformancePanel({ auth, user }: { auth: AuthState; user: NonNul
       const nextReview = await prepareManualPerformanceReview(session);
       if (!currentSession()) return;
       reviewSession.current = session;
+      attention.current = "review";
       setReview(nextReview);
       setSelected(new Set(nextReview.candidates.filter(candidate => candidate.preselected && candidate.status === "new").slice(0, 3).map(candidate => candidate.workoutId)));
       setReady(false);
     } catch (reason) {
-      if (currentSession()) setError(reason instanceof Error ? reason.message : "Runs could not be loaded. Try again.");
+      if (currentSession()) {
+        attention.current = "error";
+        setError(reason instanceof Error ? reason.message : "Runs could not be loaded. Try again.");
+      }
     } finally {
       active.current = false;
       if (currentSession()) setAction("idle");
@@ -182,6 +204,7 @@ function SessionPerformancePanel({ auth, user }: { auth: AuthState; user: NonNul
       return;
     }
     active.current = true;
+    attention.current = "progress";
     setAction("processing");
     setError(null);
     setOutcome(null);
@@ -196,13 +219,19 @@ function SessionPerformancePanel({ auth, user }: { auth: AuthState; user: NonNul
         readBudget: budget,
       }, nextProgress => { if (currentSession()) setProgress(nextProgress); });
       if (!currentSession()) return;
+      attention.current = "completion";
+      setProgress(null);
       setSaved(update.current);
       setSavedLoadFailed(false);
       setOutcome(update);
       setReview(null);
       setReady(false);
     } catch (reason) {
-      if (currentSession()) setError(reason instanceof Error ? reason.message : "Performance could not be saved. Your previous result is retained. Try again.");
+      if (currentSession()) {
+        attention.current = "error";
+        setProgress(null);
+        setError(reason instanceof Error ? reason.message : "Performance could not be saved. Your previous result is retained. Try again.");
+      }
     } finally {
       active.current = false;
       if (currentSession()) setAction("idle");
@@ -212,28 +241,28 @@ function SessionPerformancePanel({ auth, user }: { auth: AuthState; user: NonNul
   const busy = action !== "idle";
   const validBudget = Number.isSafeInteger(Number(readBudget)) && Number(readBudget) >= 1 && Number(readBudget) <= MAX_READ_BUDGET;
   return (
-    <section aria-labelledby="performance-analysis-title" className="space-y-5 rounded-2xl border border-border bg-card p-5 shadow-sm">
+    <section aria-labelledby="performance-analysis-title" className="min-w-0 [overflow-wrap:anywhere] space-y-5 rounded-2xl border border-border bg-card p-5 shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 id="performance-analysis-title" className="text-lg font-bold text-textPrimary">Performance Analysis</h2>
-        <button type="button" className={ACTION_CLASS} disabled={!gate.enabled || busy || review !== null || loadingSaved} onClick={() => void openReview()} aria-describedby={!gate.enabled ? "performance-gate-reason" : undefined}>{action === "reviewing" ? "Loading runs…" : "Update Performance"}</button>
+        <button ref={updateButton} aria-expanded={review !== null} aria-controls={review ? "performance-review" : undefined} aria-busy={action === "reviewing"} type="button" className={ACTION_CLASS} disabled={!gate.enabled || busy || review !== null || loadingSaved} onClick={() => void openReview()} aria-describedby={!gate.enabled ? "performance-gate-reason" : undefined}>{action === "reviewing" ? "Loading runs…" : "Update Performance"}</button>
       </div>
       {!gate.enabled && <p id="performance-gate-reason" className="rounded-xl bg-surface p-3 text-sm text-textSecondary">{gate.reason}</p>}
       {loadingSaved ? <p role="status" className="text-sm text-textSecondary">Loading saved performance analysis…</p> : saved ? <SavedPerformanceDetails current={saved} /> : <p className="text-sm text-textSecondary">{savedLoadFailed ? "The saved performance analysis could not be retrieved." : `No saved performance analysis.${gate.enabled ? " Use Update Performance to review runs and calculate when you are ready." : ""}`}</p>}
-      {error && <p role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-700 dark:text-red-300">{error}</p>}
-      {outcome && <div role="status" className="rounded-xl bg-primary/10 p-4 text-sm text-textPrimary"><p>Performance analysis saved. {outcome.snapshotCreated ? "A new dated historical snapshot was created." : "The evidence and result were unchanged; no duplicate historical snapshot was created."}</p><p className="mt-1 break-words">Processed workouts: {outcome.processedWorkoutIds.join(", ") || "None"}. Skipped or rejected: {outcome.skippedWorkoutIds.join(", ") || "None"}. Firestore document reads: {outcome.documentReads.toLocaleString()}.</p><p className="mt-1">This describes the selected extraction and saved evidence; it does not certify that all historical telemetry is current.</p></div>}
-      {review && <section aria-labelledby="performance-review-title" className="space-y-4 border-t border-border pt-5">
-        <h3 id="performance-review-title" className="font-semibold text-textPrimary">Review runs</h3>
+      {error && <p ref={errorMessage} tabIndex={-1} role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-700 dark:text-red-300">{error}</p>}
+      {outcome && <div ref={completion} tabIndex={-1} role="status" className="rounded-xl bg-primary/10 p-4 text-sm text-textPrimary"><p>Performance analysis saved. {outcome.snapshotCreated ? "A new dated historical snapshot was created." : "The evidence and result were unchanged; no duplicate historical snapshot was created."}</p><p className="mt-1 break-words">Processed workouts: {outcome.processedWorkoutIds.join(", ") || "None"}. Skipped or rejected: {outcome.skippedWorkoutIds.join(", ") || "None"}. Firestore document reads: {outcome.documentReads.toLocaleString()}.</p><p className="mt-1">This describes the selected extraction and saved evidence; it does not certify that all historical telemetry is current.</p></div>}
+      {review && <section id="performance-review" aria-labelledby="performance-review-title" className="space-y-4 border-t border-border pt-5">
+        <h3 ref={reviewHeading} tabIndex={-1} id="performance-review-title" className="font-semibold text-textPrimary">Review runs</h3>
         <p className="text-sm text-textSecondary">Select up to {MANUAL_PERFORMANCE_SELECTION_LIMIT} runs to analyze. Selecting a previously analyzed run forces fresh GPS/HR retrieval, even when its parent record appears unchanged. Only up to three new runs are preselected; historical coverage may remain partial.</p>
         {!review.candidates.some(candidate => candidate.status === "new") && <p className="text-sm text-textSecondary">No newly recorded runs were found. Select an older run to reprocess its evidence.</p>}
         {review.limitations.length > 0 && <ul className="list-disc space-y-1 pl-5 text-sm text-textSecondary">{review.limitations.map(limitation => <li key={limitation}>{limitation}</li>)}</ul>}
         <p className="text-xs text-textSecondary">Review reads: {review.documentsRead.toLocaleString()} documents. No GPS/HR telemetry is fetched until you confirm analysis.</p>
-        <fieldset disabled={busy} className="max-h-80 space-y-2 overflow-y-auto rounded-xl border border-border p-3">
+        <fieldset disabled={busy} className="min-w-0 w-full max-h-80 space-y-2 overflow-y-auto rounded-xl border border-border p-3">
           <legend className="px-1 text-sm font-medium text-textPrimary">Recorded runs ({review.candidates.length})</legend>
           {review.candidates.length === 0 && <p className="text-sm text-textSecondary">No recorded runs are available in this bounded review.</p>}
           {review.candidates.map(candidate => {
             const checked = selected.has(candidate.workoutId);
             const status = candidate.status === "new" ? "New / unprocessed" : candidate.status === "analyzed" ? "Previously analyzed" : candidate.status === "changed" ? "Potentially changed" : "Incomplete or uncertain";
-            return <label key={candidate.workoutId} className="flex items-start gap-3 rounded-lg bg-surface p-3 text-sm text-textPrimary"><input type="checkbox" className="mt-1" checked={checked} disabled={!checked && selected.size >= MANUAL_PERFORMANCE_SELECTION_LIMIT} aria-label={`Select ${candidate.label} (${dateLabel(candidate.startedAt)})`} onChange={event => {
+            return <label key={candidate.workoutId} className="flex items-start gap-3 rounded-lg bg-surface p-3 text-sm text-textPrimary"><input type="checkbox" className="mt-1 shrink-0" checked={checked} disabled={!checked && selected.size >= MANUAL_PERFORMANCE_SELECTION_LIMIT} aria-label={`Select ${candidate.label} (${dateLabel(candidate.startedAt)})`} onChange={event => {
               const checkedNow = event.target.checked;
               setSelected(previous => { const next = new Set(previous); if (checkedNow) next.add(candidate.workoutId); else next.delete(candidate.workoutId); return next; });
               setReady(false);
@@ -243,9 +272,9 @@ function SessionPerformancePanel({ auth, user }: { auth: AuthState; user: NonNul
         <label className="block text-sm text-textPrimary">Child-document read budget<input type="number" min={1} max={MAX_READ_BUDGET} step={1} value={readBudget} disabled={busy} onChange={event => { setReadBudget(event.target.value); setReady(false); }} className="ml-3 w-28 rounded-lg border border-border bg-surface px-2 py-1" /></label>
         <p className="text-xs text-textSecondary">Default 5,000; maximum 25,000 per update. If the budget is exceeded, explicitly choose a higher limit and retry. Incomplete reads cannot be reported as complete.</p>
         <label className="flex items-start gap-2 text-sm text-textPrimary"><input type="checkbox" checked={ready} disabled={busy} onChange={event => setReady(event.target.checked)} className="mt-1" /><span>My selected runs have finished syncing. I understand this confirmation does not prove complete GPS/HR data.</span></label>
-        <div className="flex flex-wrap items-center gap-3"><button type="button" className={ACTION_CLASS} disabled={busy || !ready || !selected.size || !validBudget} onClick={() => void analyzeSelected()}>{action === "processing" ? "Analyzing…" : `Analyze ${selected.size} selected ${selected.size === 1 ? "run" : "runs"}`}</button><button type="button" className={SECONDARY_CLASS} disabled={busy} onClick={() => { setReview(null); setError(null); setProgress(null); }}>Cancel</button></div>
+        <div className="flex flex-wrap items-center gap-3"><button type="button" className={ACTION_CLASS} disabled={busy || !ready || !selected.size || !validBudget} onClick={() => void analyzeSelected()}>{action === "processing" ? "Analyzing…" : `Analyze ${selected.size} selected ${selected.size === 1 ? "run" : "runs"}`}</button><button type="button" className={SECONDARY_CLASS} disabled={busy} onClick={() => { attention.current = "trigger"; setReview(null); setError(null); setProgress(null); }}>Cancel</button></div>
       </section>}
-      {progress && <div role="status" aria-live="polite" className="rounded-xl bg-surface p-3 text-sm text-textSecondary"><p>{progress.status}</p><p>Selected: {progress.selected} · Completed: {progress.completed} · Skipped / rejected: {progress.skipped} · Firestore document reads: {progress.documentReads.toLocaleString()}</p></div>}
+      {action === "processing" && progress && <div ref={progressMessage} tabIndex={-1} role="status" aria-live="polite" className="sticky bottom-[calc(5rem+env(safe-area-inset-bottom))] rounded-xl bg-surface p-3 text-sm text-textSecondary"><p>{progress.status}</p><p>Selected: {progress.selected} · Completed: {progress.completed} · Skipped / rejected: {progress.skipped} · Firestore document reads: {progress.documentReads.toLocaleString()}</p></div>}
     </section>
   );
 }
