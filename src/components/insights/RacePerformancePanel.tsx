@@ -7,12 +7,46 @@ import type { Race } from "@/types/race";
 import type { RunningPlan } from "@/types/plan";
 import type { WorkoutOverride } from "@/types/workoutOverride";
 import type { RaceEvidenceStatus } from "@/types/racePerformance";
+import type { AppDataResolution } from "@/contexts/AppDataContext";
 import { evaluateRacePerformance, nominalRaceDistanceMeters } from "@/utils/racePerformance";
 import { buildRaceTrainingContext } from "@/utils/raceTrainingContext";
 import { formatRaceTime } from "@/utils/riegelFit";
 import { isExperimentalCurrentEstimateEnabled } from "@/lib/racePerformanceGate";
 import { estimateCurrentHalfMarathon, type CurrentHalfEstimate } from "@/utils/experimentalCurrentPerformance";
 import { performanceLocalDate } from "@/utils/performanceEvidence";
+import { daysUntil, parseLocalDate } from "@/utils/dates";
+
+type Source = "workouts" | "overrides" | "races" | "plans";
+export type RacePerformanceSources = Record<Source, { hasLoaded: boolean; resolution: AppDataResolution }>;
+const SOURCE_LABEL: Record<Source, string> = {
+  workouts: "workouts", overrides: "workout overrides", races: "race records", plans: "plans",
+};
+const PERFORMANCE_SOURCES: Source[] = ["races", "workouts", "overrides"];
+const TRAINING_SOURCES: Source[] = ["workouts", "overrides"];
+const PLAN_SOURCES: Source[] = ["plans", "races"];
+
+/** Unread sources are never evidence of absence. Cached success is usable for
+ * this read-only display; the latest request's error remains visible. */
+function SourceUnavailable({ sources, required }: { sources: RacePerformanceSources; required: Source[] }) {
+  const missing = required.filter(source => !sources[source].hasLoaded);
+  const failed = missing.filter(source => sources[source].resolution === "error");
+  return <p role={failed.length ? "alert" : "status"} className="text-sm text-textSecondary">
+    {failed.length
+      ? `${failed.map(source => SOURCE_LABEL[source]).join(", ")} could not be loaded. Reload to retry.`
+      : `Loading ${missing.map(source => SOURCE_LABEL[source]).join(", ")}…`}
+  </p>;
+}
+
+function FreshnessNotice({ sources }: { sources: RacePerformanceSources }) {
+  const resident = (Object.keys(sources) as Source[]).filter(source => sources[source].hasLoaded);
+  const failed = resident.filter(source => sources[source].resolution === "error");
+  const refreshing = resident.filter(source => sources[source].resolution === "loading");
+  if (!failed.length && !refreshing.length) return null;
+  return <div role="status" className="text-sm text-textSecondary space-y-1">
+    {failed.length > 0 && <p>Showing previously loaded {failed.map(source => SOURCE_LABEL[source]).join(", ")}. Refresh failed; this information may be out of date. Reload to retry.</p>}
+    {refreshing.length > 0 && <p>Refreshing {refreshing.map(source => SOURCE_LABEL[source]).join(", ")}. Showing previously loaded information.</p>}
+  </div>;
+}
 
 const STATUS_LABEL: Record<RaceEvidenceStatus, string> = {
   verified: "Verified",
@@ -96,7 +130,7 @@ export interface RacePerformancePanelProps {
   overrides: Record<string, WorkoutOverride>;
   plan: RunningPlan | null;
   selectedRace: Race | null;
-  sourcesReady: boolean;
+  sources: RacePerformanceSources;
   /** Explicit clock and zone make previews/tests reproducible. */
   asOf?: Date;
   timeZone?: string;
@@ -104,7 +138,10 @@ export interface RacePerformancePanelProps {
 
 /** Summary-only view. No service imports, child acquisition, persistence or timers. */
 export function RacePerformancePanel(props: RacePerformancePanelProps) {
-  const { races, workouts, overrides, plan, selectedRace, sourcesReady } = props;
+  const { races, workouts, overrides, plan, selectedRace, sources } = props;
+  const performanceReady = PERFORMANCE_SOURCES.every(source => sources[source].hasLoaded);
+  const trainingReady = TRAINING_SOURCES.every(source => sources[source].hasLoaded);
+  const planReady = PLAN_SOURCES.every(source => sources[source].hasLoaded);
   const asOf = props.asOf ?? new Date();
   const asOfIso = asOf.toISOString();
   const timeZone = props.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -112,28 +149,27 @@ export function RacePerformancePanel(props: RacePerformancePanelProps) {
   // The declared product goal supplies an empty-account outlook, never a race result.
   const targetRace = selectedRace ?? races.find(r => r.raceDate === "2027-03-20" && r.raceDistance === "halfMarathon") ?? null;
   const targetDate = targetRace?.raceDate ?? "2027-03-20";
-  const performance = useMemo(() => evaluateRacePerformance({
+  const performance = useMemo(() => performanceReady ? evaluateRacePerformance({
     races, workouts, overrides, asOf: asOfIso, timeZone, targetDistanceMeters,
-  }), [races, workouts, overrides, asOfIso, timeZone, targetDistanceMeters]);
-  const training = useMemo(() => buildRaceTrainingContext({
-    workouts, overrides, plan, asOf: new Date(asOfIso), targetRaceDate: targetDate, timeZone,
-  }), [workouts, overrides, plan, asOfIso, targetDate, timeZone]);
+  }) : null, [performanceReady, races, workouts, overrides, asOfIso, timeZone, targetDistanceMeters]);
+  const training = useMemo(() => trainingReady ? buildRaceTrainingContext({
+    workouts, overrides, plan: planReady ? plan : null, asOf: new Date(asOfIso), targetRaceDate: targetDate, timeZone,
+  }) : null, [trainingReady, planReady, workouts, overrides, plan, asOfIso, targetDate, timeZone]);
   const currentEnabled = isExperimentalCurrentEstimateEnabled();
-  const current = useMemo(() => currentEnabled && sourcesReady ? estimateCurrentHalfMarathon({
+  const current = useMemo(() => currentEnabled && performanceReady ? estimateCurrentHalfMarathon({
     races, workouts, overrides, asOf: asOfIso, timeZone,
-  }) : null, [currentEnabled, sourcesReady, races, workouts, overrides, asOfIso, timeZone]);
-  const benchmark = performance.latestBenchmark;
+  }) : null, [currentEnabled, performanceReady, races, workouts, overrides, asOfIso, timeZone]);
+  const benchmark = performance?.latestBenchmark ?? null;
   const displayedAnchor = current?.anchor ?? benchmark;
-  const maxWeeklyMiles = Math.max(1, ...training.weekly.map(week => week.miles));
+  const maxWeeklyMiles = Math.max(1, ...(training?.weekly ?? []).map(week => week.miles));
+  const daysToTargetRace = daysUntil(targetDate, parseLocalDate(performanceLocalDate(asOfIso, timeZone)));
   const targetSeconds = targetRace?.targetPaceSecondsPerMile && targetRace.targetPaceSecondsPerMile > 0
     ? targetRace.targetPaceSecondsPerMile * (targetDistanceMeters / 1609.344) : null;
 
-  if (!sourcesReady) return <Section title="Race Performance">
-    <p role="status" className="text-sm text-textSecondary">Race performance is unavailable until race records, workouts, overrides and plans have loaded successfully.</p>
-  </Section>;
-
   return <div className="min-w-0 space-y-6" data-testid="race-performance-experience">
+    <FreshnessNotice sources={sources} />
     <Section title="Current Performance" compact>
+      {performance ? <>
       <div className="min-w-0 space-y-3" data-testid={currentEnabled ? "experimental-current-estimate" : undefined}>
         {currentEnabled ? <>
           <div className="flex items-start justify-between gap-3">
@@ -209,9 +245,11 @@ export function RacePerformancePanel(props: RacePerformancePanelProps) {
         <p className="mt-2">This read-only view displays the supplied records provisionally. No race record is changed by this view.</p>
         <Link href="/races" className="inline-block mt-2 text-primary hover:underline">Review existing race records</Link>
       </details>
+      </> : <SourceUnavailable sources={sources} required={PERFORMANCE_SOURCES} />}
     </Section>
 
     <Section title="Training Progress">
+      {training ? <>
       <p className="text-sm text-textSecondary">Completed running only. Scheduled workouts contribute no performance credit. These summaries describe the loaded history; missing records do not prove no training.</p>
       <dl className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div><dt className="text-xs text-textSecondary">Recent 4 weeks</dt><dd className="text-2xl font-bold">{training.recentFourWeeks.miles.toFixed(1)} <span className="text-sm font-normal">mi</span></dd></div>
@@ -220,6 +258,7 @@ export function RacePerformancePanel(props: RacePerformancePanelProps) {
         <div><dt className="text-xs text-textSecondary">Longest recent run</dt><dd className="text-2xl font-bold">{training.longestRecentRun == null ? "—" : `${training.longestRecentRun.miles.toFixed(1)} mi`}</dd></div>
       </dl>
       <p className="text-sm text-textSecondary">{training.mileageChangePct == null ? "Mileage comparison unavailable without prior recorded mileage." : `Recorded mileage change: ${training.mileageChangePct > 0 ? "+" : ""}${training.mileageChangePct.toFixed(0)}% versus the prior 4 weeks.`}</p>
+      {!planReady && <div className="text-sm text-textSecondary"><p>Plan context is unavailable.</p><SourceUnavailable sources={sources} required={PLAN_SOURCES} /></div>}
       <details className="min-w-0"><summary className="cursor-pointer text-sm font-semibold text-primary">Weekly training details</summary>
       <div className="overflow-x-auto mt-3">
         <table className="w-full text-sm text-left">
@@ -236,8 +275,10 @@ export function RacePerformancePanel(props: RacePerformancePanelProps) {
         <p>Consistency: runs recorded in {training.consistency.weeksWithRuns} of {training.consistency.totalWeeks} completed weeks.</p>
         <p>Long runs (≥{training.longRuns.thresholdMiles} mi): {training.longRuns.recentCount} in the recent 4 weeks; {training.longRuns.priorCount} in the prior 4 weeks.</p>
         <p>{training.longRuns.progressionMiles == null ? "Long-run distance comparison unavailable without long runs in both windows." : `Longest long-run distance change: ${training.longRuns.progressionMiles > 0 ? "+" : ""}${training.longRuns.progressionMiles.toFixed(1)} mi across the two windows.`}</p>
-        <p>Recorded faster sessions: {training.fasterSessions.count}. Intent requires a supported completed plan match.</p>
-        <p>{training.planAdherence ? `Plan adherence: ${training.planAdherence.completedSessions} of ${training.planAdherence.plannedSessions} elapsed sessions matched.` : "Plan adherence unavailable without a linked training plan."}</p>
+        {planReady ? <>
+          <p>Recorded faster sessions: {training.fasterSessions.count}. Intent requires a supported completed plan match.</p>
+          <p>{training.planAdherence ? `Plan adherence: ${training.planAdherence.completedSessions} of ${training.planAdherence.plannedSessions} elapsed sessions matched.` : "Plan adherence unavailable without a linked training plan."}</p>
+        </> : null}
       </div>
       <details className="text-sm text-textSecondary"><summary className="cursor-pointer">Recent workout durations</summary>
         <ul className="mt-2 space-y-1">{training.recentDurations.slice(0, 10).map(run => <li key={run.workoutId}>{dateLabel(run.date)} · {Math.round(run.durationSeconds / 60)} min</li>)}</ul>
@@ -245,20 +286,24 @@ export function RacePerformancePanel(props: RacePerformancePanelProps) {
       </details>
       <p className="text-xs text-textSecondary">{training.limitations.filter(line => !currentEnabled || !line.startsWith("Training summaries describe completed recorded running;")).join(" ")}</p>
       </details>
+      </> : <SourceUnavailable sources={sources} required={TRAINING_SOURCES} />}
     </Section>
 
     <Section title="Race-Day Outlook">
+      {sources.races.hasLoaded ? <>
       <p className="font-semibold">{targetRace?.name ?? "Rock and Roll Half Marathon"}</p>
-      <p className="text-sm text-textSecondary">{dateLabel(targetDate)} · {training.daysToTargetRace == null ? "Date unavailable" : training.daysToTargetRace >= 0 ? `${training.daysToTargetRace} days away` : `${Math.abs(training.daysToTargetRace)} days ago`}{!targetRace ? " · Planned goal; no matching race record selected" : ""}</p>
+      <p className="text-sm text-textSecondary">{dateLabel(targetDate)} · {!Number.isFinite(daysToTargetRace) ? "Date unavailable" : daysToTargetRace >= 0 ? `${daysToTargetRace} days away` : `${Math.abs(daysToTargetRace)} days ago`}{!targetRace ? " · Planned goal; no matching race record selected" : ""}</p>
       <dl className="grid gap-4 md:grid-cols-3">
         <div><dt className="text-xs text-textSecondary">Owner’s target finish time</dt><dd className="font-semibold">{targetSeconds ? formatRaceTime(targetSeconds) : "Not set"}</dd></div>
-        <div><dt className="text-xs text-textSecondary">Historical benchmark</dt><dd className="font-semibold">{benchmark ? `${formatRaceTime(benchmark.finishSeconds)} · ${dateLabel(benchmark.raceDate)} · ${STATUS_LABEL[benchmark.status]}` : "Unavailable"}</dd></div>
+        <div><dt className="text-xs text-textSecondary">Historical benchmark</dt><dd className="font-semibold">{benchmark ? `${formatRaceTime(benchmark.finishSeconds)} · ${dateLabel(benchmark.raceDate)} · ${STATUS_LABEL[benchmark.status]}` : "Unavailable"}</dd>{!performanceReady && <SourceUnavailable sources={sources} required={PERFORMANCE_SOURCES} />}</div>
         <div><dt className="text-xs text-textSecondary">Race-day forecast</dt><dd className="font-semibold">Withheld · not validated</dd></div>
       </dl>
       <p className="text-sm text-textSecondary">Training progress and time remaining do not establish a finish-time improvement. Numerical scenarios and uncertainty ranges require independent chronological validation first.</p>
+      </> : <SourceUnavailable sources={sources} required={["races"]} />}
     </Section>
 
     <Section title="Historical Performance Timeline">
+      {performance ? <>
       <p className="text-sm text-textSecondary">Actual race dates and recorded evidence. Results remain separate observations, with no interpolated weeks or projected trend.</p>
       {performance.evidence.length === 0 ? <p className="text-sm text-textSecondary">No past race results are available.</p> : <ol className="space-y-3">{performance.evidence.map(evidence => <li key={evidence.raceId} className="rounded-xl bg-surface border border-border p-4 space-y-1">
         <p className="text-sm font-semibold">{evidence.name} · {dateLabel(evidence.raceDate)}</p>
@@ -266,6 +311,7 @@ export function RacePerformancePanel(props: RacePerformancePanelProps) {
         <p className="text-xs text-textSecondary">{evidence.timingAgreement === "discrepant" ? "Recorded duration and elapsed time disagree. " : ""}{evidence.reasons.map(reason => REASON_LABEL[reason] ?? "This record needs evidence review.").join(" ")}</p>
         {evidence.durationSeconds != null && evidence.elapsedSeconds != null && evidence.timingAgreement === "discrepant" && <p className="text-xs text-textSecondary">Recorded duration {formatRaceTime(evidence.durationSeconds)}; elapsed {formatRaceTime(evidence.elapsedSeconds)}. Resolve timing before use as a benchmark.</p>}
       </li>)}</ol>}
+      </> : <SourceUnavailable sources={sources} required={PERFORMANCE_SOURCES} />}
     </Section>
   </div>;
 }

@@ -118,6 +118,10 @@ export interface AppDataContextValue {
   /** Health-only sessions never activate the canonical training loaders. */
   trainingActivated: boolean;
   trainingActive: boolean;
+  /** Complete source reads that succeeded in this authenticated session,
+   * including empty results. Display-only residency, never a freshness gate
+   * for calculations that persist data, enrichment, or background runners. */
+  sourceHasLoaded: Record<"workouts" | "plans" | "races" | "overrides" | "settings", boolean>;
   workouts: HealthWorkout[];
   /** True only while the first successful workouts load is pending. */
   workoutsLoading: boolean;
@@ -799,6 +803,13 @@ function AppDataProviderGeneration({
     () => ({
       trainingActivated,
       trainingActive,
+      sourceHasLoaded: {
+        workouts: workoutsLoadedRef.current,
+        plans: plansLoadedRef.current,
+        races: racesLoadedRef.current,
+        overrides: overridesLoadedRef.current,
+        settings: settingsLoadedRef.current,
+      },
       workouts,
       workoutsLoading: workoutsLoading || awaitingActivation,
       workoutsResolution,

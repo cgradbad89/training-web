@@ -52,7 +52,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       <div className="flex flex-1 overflow-hidden">
         <SideNav />
         <main
-          className="flex-1 overflow-y-auto bg-surface p-6 lg:pb-6"
+          className="min-w-0 flex-1 overflow-y-auto bg-surface p-6 lg:pb-6"
           style={{
             paddingBottom: "calc(5rem + env(safe-area-inset-bottom))",
           }}

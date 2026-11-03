@@ -35,27 +35,27 @@ export function HubBanner() {
   }
 
   return (
-    <div className="bg-card border-b border-border h-10 flex items-center justify-between px-6 shrink-0">
+    <div className="bg-card border-b border-border h-10 flex items-center justify-between gap-3 px-3 sm:px-6 shrink-0">
       {/* Left: nav links (Hub links only visible to owner) */}
-      <div className="flex items-center gap-6">
+      <div className="flex min-w-0 items-center gap-3 sm:gap-6 overflow-x-auto whitespace-nowrap">
         {isAuthorizedTrainingUser(user?.email, user?.emailVerified) &&
           HUB_NAV_LINKS.map((link) => (
             <a
               key={link.label}
               href={link.href}
-              className="text-xs font-medium text-textSecondary hover:text-textPrimary transition-colors"
+              className="shrink-0 text-xs font-medium text-textSecondary hover:text-textPrimary transition-colors"
             >
               {link.label}
             </a>
           ))}
         {/* Training — active, no link */}
-        <span className="text-xs font-semibold bg-primary/10 text-primary px-2 py-0.5 rounded">
+        <span className="shrink-0 text-xs font-semibold bg-primary/10 text-primary px-2 py-0.5 rounded">
           Training
         </span>
       </div>
 
       {/* Right: user email + sign out */}
-      <div className="flex items-center gap-4">
+      <div className="flex shrink-0 items-center gap-4">
         {user?.email && (
           <span className="text-xs text-textSecondary hidden sm:block">
             {user.email}

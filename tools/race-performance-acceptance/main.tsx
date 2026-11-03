@@ -107,7 +107,12 @@ function Acceptance({ guard, config }: { guard: Guard; config: Config }) {
       <details open><summary>Isolation instrumentation</summary><pre data-testid="isolation-diagnostics">{JSON.stringify(instrumentation, null, 2)}</pre><p>Denied IndexedDB capability probes never invoke the native store. No persistent database can be opened by this page. Read counts contain no tokens or request bodies.</p></details>
     </section>
     {sources?.reportingScope && <section className="acceptance-controls"><p>Scoped source disclosure: {sources.workouts.length} valid parents retained; {sources.invalidWorkouts.length} historical parents with unknown distance excluded. Unknown distance is not zero. Scope proof covers both reporting clocks and every selectable plan.</p><details><summary>Reporting-window exclusion proof</summary><pre data-testid="reporting-scope">{JSON.stringify(sources.reportingScope, null, 2)}</pre></details></section>}
-    <div data-testid="actual-panel"><RacePerformancePanel {...props} sourcesReady={ready} asOf={asOf} timeZone={TIME_ZONE} /></div>
+    <div data-testid="actual-panel"><RacePerformancePanel {...props} sources={{
+      workouts: { hasLoaded: ready, resolution: ready ? "success" : "loading" },
+      overrides: { hasLoaded: ready, resolution: ready ? "success" : "loading" },
+      races: { hasLoaded: ready, resolution: ready ? "success" : "loading" },
+      plans: { hasLoaded: ready, resolution: ready ? "success" : "loading" },
+    }} asOf={asOf} timeZone={TIME_ZONE} /></div>
     {sources?.sourcesReady && <ResearchPanel input={normalizeWorkoutResearchExport({ races: sources.races, workouts: sources.workouts, overrides: sources.overrides, invalidWorkouts: sources.invalidWorkouts, reportingScope: sources.reportingScope,
       asOf: asOf.toISOString(), capturedAt: sources.loadedAt, timeZone: TIME_ZONE, source: "owner_parent_export",
       complete: {workouts: true, races: true, overrides: true} })} />}

@@ -6,7 +6,7 @@ import type { Race } from "@/types/race";
 import { currentFixture } from "@/utils/__tests__/fixtures/currentPerformanceFixture";
 import { researchRace, workoutResearchFixture } from "@/utils/__tests__/fixtures/workoutRaceResearchFixture";
 import { estimateCurrentHalfMarathon } from "@/utils/experimentalCurrentPerformance";
-import { RacePerformancePanel, type RacePerformancePanelProps } from "../RacePerformancePanel";
+import { RacePerformancePanel, type RacePerformancePanelProps, type RacePerformanceSources } from "../RacePerformancePanel";
 
 vi.mock("next/link", () => ({ default: ({ href, children, ...rest }: React.AnchorHTMLAttributes<HTMLAnchorElement>) => <a href={href} {...rest}>{children}</a> }));
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -28,8 +28,10 @@ const workout = (partial: Partial<HealthWorkout> = {}): HealthWorkout => ({
 });
 let root: Root;
 let container: HTMLDivElement;
+const ready = { hasLoaded: true, resolution: "success" as const };
+const sources: RacePerformanceSources = { workouts: ready, overrides: ready, races: ready, plans: ready };
 function render(partial: Partial<RacePerformancePanelProps> = {}) {
-  act(() => root.render(<RacePerformancePanel races={[race()]} workouts={[workout()]} overrides={{}} plan={null} selectedRace={null} sourcesReady asOf={asOf} timeZone="America/New_York" {...partial} />));
+  act(() => root.render(<RacePerformancePanel races={[race()]} workouts={[workout()]} overrides={{}} plan={null} selectedRace={null} sources={sources} asOf={asOf} timeZone="America/New_York" {...partial} />));
   return container.textContent ?? "";
 }
 function renderFixture(input = currentFixture()) {
@@ -209,8 +211,9 @@ describe("Race performance summary presentation", () => {
   });
 
   it("does not convert unresolved source loading into evidence absence", () => {
-    const text = render({ sourcesReady: false });
-    expect(text).toContain("loaded successfully");
+    const pending = { hasLoaded: false, resolution: "loading" as const };
+    const text = render({ sources: { workouts: pending, overrides: pending, races: pending, plans: pending } });
+    expect(text).toContain("Loading race records, workouts, workout overrides");
     expect(text).not.toContain("No past race results");
     expect(text).not.toContain("2:11:11");
   });
