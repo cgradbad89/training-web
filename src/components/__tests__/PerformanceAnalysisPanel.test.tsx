@@ -233,4 +233,82 @@ describe("manual PerformanceAnalysisPanel", () => {
     await act(async () => resolve(success()));
     expect(text()).toBe("");
   });
+  it("reveals the review only after an explicit action and returns focus on Cancel", async () => {
+    const scroll = vi.spyOn(HTMLElement.prototype, "scrollIntoView");
+    await mount(); expect(scroll).not.toHaveBeenCalled();
+    await click(button("Update Performance"));
+    expect(document.activeElement?.id).toBe("performance-review-title");
+    expect(scroll).toHaveBeenLastCalledWith({ block: "center", behavior: "instant" });
+    expect(button("Update Performance").getAttribute("aria-expanded")).toBe("true");
+    expect(button("Update Performance").getAttribute("aria-controls")).toBe("performance-review");
+    await click(button("Cancel")); expect(document.activeElement).toBe(button("Update Performance"));
+    scroll.mockRestore();
+  });
+
+  it("focuses a rejected review alert and supports explicit recovery", async () => {
+    h.review.mockRejectedValueOnce(new Error("Permission denied")); await mount();
+    await click(button("Update Performance"));
+    expect(document.activeElement).toBe(container.querySelector('[role="alert"]'));
+    expect(button("Update Performance").disabled).toBe(false);
+    await click(button("Update Performance"));
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(document.activeElement?.id).toBe("performance-review-title");
+  });
+
+  it("reveals processing once, terminates failed progress, and starts a clean retry", async () => {
+    let reject!: (reason: Error) => void;
+    h.run.mockReturnValueOnce(new Promise((_, fail) => { reject = fail; }));
+    await mount(); await click(button("Update Performance")); await click(readiness());
+    await click(button("Analyze 1 selected run"));
+    const progress = container.querySelector('[aria-live="polite"]');
+    expect(document.activeElement).toBe(progress);
+    const scroll = vi.spyOn(HTMLElement.prototype, "scrollIntoView");
+    await act(async () => h.run.mock.calls[0][3]({ selected: 1, completed: 0, skipped: 0, documentReads: 50, status: "Reading GPS" }));
+    expect(progress?.textContent).toContain("Reading GPS"); expect(scroll).not.toHaveBeenCalled();
+    await act(async () => reject(new Error("Budget reached")));
+    expect(container.querySelector('[aria-live="polite"]')).toBeNull();
+    expect(document.activeElement).toBe(container.querySelector('[role="alert"]'));
+    expect(button("Analyze 1 selected run").disabled).toBe(false);
+    expect(container.querySelector("time")?.dateTime).toBe("2026-10-21T14:00:00Z");
+    await click(button("Analyze 1 selected run"));
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(document.activeElement?.textContent).toContain("Performance analysis saved");
+    scroll.mockRestore();
+  });
+
+  it("reveals unchanged completion while retaining the saved calculation timestamp", async () => {
+    h.run.mockResolvedValue({ ...success(false), current: saved() });
+    await mount(); await click(button("Update Performance")); await click(readiness());
+    await click(button("Analyze 1 selected run"));
+    expect(document.activeElement?.getAttribute("role")).toBe("status");
+    expect(document.activeElement?.textContent).toContain("unchanged");
+    expect(container.querySelector("time")?.dateTime).toBe("2026-10-21T14:00:00Z");
+    expect(container.querySelector('[aria-live="polite"]')).toBeNull();
+  });
+
+  it("preserves complete long evidence within shrinkable wrapping containers", async () => {
+    const data = review(), long = "evidence_".repeat(100);
+    data.candidates[0].concerns = [long]; h.review.mockResolvedValue(data);
+    await mount(); await click(button("Update Performance"));
+    expect(text()).toContain(long);
+    expect(container.querySelector("fieldset")?.classList.contains("min-w-0")).toBe(true);
+    expect(container.querySelector("fieldset")?.classList.contains("w-full")).toBe(true);
+    expect(container.firstElementChild?.classList.contains("[overflow-wrap:anywhere]")).toBe(true);
+  });
+
+  it("does not reveal an old review after session replacement or unmount", async () => {
+    let resolve!: (value: ManualPerformanceReview) => void;
+    h.review.mockReturnValueOnce(new Promise(done => { resolve = done; }));
+    await mount(); await click(button("Update Performance"));
+    h.auth = { ...h.auth, sessionEpoch: 2 };
+    await act(async () => root.render(<PerformanceAnalysisPanel />));
+    const scroll = vi.spyOn(HTMLElement.prototype, "scrollIntoView");
+    await act(async () => resolve(review()));
+    expect(container.querySelector("#performance-review")).toBeNull();
+    expect(scroll).not.toHaveBeenCalled();
+    await click(button("Update Performance"));
+    expect(document.activeElement?.id).toBe("performance-review-title");
+    scroll.mockRestore();
+  });
+
 });
