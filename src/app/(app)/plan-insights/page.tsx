@@ -218,6 +218,7 @@ export default function PlanInsightsPage() {
     maxHr,
     restingHr,
     workoutsLoading,
+    sourceHasLoaded,
     workoutsResolution,
     overridesResolution,
     plansResolution,
@@ -232,7 +233,11 @@ export default function PlanInsightsPage() {
     [rawWorkouts, overrides]
   );
   const plans = useMemo(() => allPlans.filter(isRunningPlan), [allPlans]);
-  const loading = workoutsLoading || plansResolution === "loading";
+  // Read-only performance sections handle their own prerequisites. A plan
+  // refresh/error must not replace already-usable race and training evidence.
+  const loading = workoutsLoading || (!racePerformanceEnabled && plansResolution === "loading");
+  const performanceInputsAvailable = !racePerformanceEnabled ||
+    (sourceHasLoaded.workouts && sourceHasLoaded.overrides && sourceHasLoaded.races);
   // Runs with fast-finish `mileSplits` hydrated (route-derived pace + per-mile
   // HR), for the HR-gated best-effort pipeline. Null until the async hydration
   // resolves; the segments fall back to the full-run-only path meanwhile.
@@ -260,8 +265,11 @@ export default function PlanInsightsPage() {
 
   // Default selection: goal race → soonest upcoming → most recent past.
   useEffect(() => {
-    if (selectedRaceId) return;
-    if (sortedRaces.length === 0) return;
+    if (selectedRaceId && sortedRaces.some(race => race.id === selectedRaceId)) return;
+    if (sortedRaces.length === 0) {
+      if (selectedRaceId) setSelectedRaceId(null);
+      return;
+    }
     const goal = sortedRaces.find((r) => r.isActive);
     setSelectedRaceId((goal ?? sortedRaces[0]).id);
   }, [sortedRaces, selectedRaceId]);
@@ -912,7 +920,7 @@ export default function PlanInsightsPage() {
     return <PlanInsightsSkeleton />;
   }
 
-  if (plansResolution === "error") {
+  if (!racePerformanceEnabled && plansResolution === "error") {
     return (
       <div className="p-6 max-w-5xl mx-auto">
         <p className="text-sm text-danger" role="alert">
@@ -944,7 +952,11 @@ export default function PlanInsightsPage() {
       </div>
 
       {/* ── Race picker ──────────────────────────────────── */}
-      {sortedRaces.length === 0 ? (
+      {!sourceHasLoaded.races ? (
+        <p role={racesResolution === "error" ? "alert" : "status"} className="text-sm text-textSecondary">
+          {racesResolution === "error" ? "Race records could not be loaded. Reload to retry." : "Loading race records…"}
+        </p>
+      ) : sortedRaces.length === 0 ? (
         <Card>
           <EmptyState
             title="No races yet"
@@ -960,7 +972,7 @@ export default function PlanInsightsPage() {
             id="race-picker"
             value={selectedRaceId ?? ""}
             onChange={(e) => setSelectedRaceId(e.target.value)}
-            className="bg-surface border border-border rounded-lg px-3 py-2 text-sm text-textPrimary"
+            className="min-w-0 max-w-full w-full sm:w-auto bg-surface border border-border rounded-lg px-3 py-2 text-sm text-textPrimary"
           >
             {sortedRaces.map((race) => {
               const dateLabel = parseLocalDate(race.raceDate).toLocaleDateString(
@@ -996,7 +1008,12 @@ export default function PlanInsightsPage() {
           overrides={overrides}
           plan={activePlan}
           selectedRace={activeRace}
-          sourcesReady={[workoutsResolution, overridesResolution, racesResolution, plansResolution].every(status => status === "success")}
+          sources={{
+            workouts: { hasLoaded: sourceHasLoaded.workouts, resolution: workoutsResolution },
+            overrides: { hasLoaded: sourceHasLoaded.overrides, resolution: overridesResolution },
+            races: { hasLoaded: sourceHasLoaded.races, resolution: racesResolution },
+            plans: { hasLoaded: sourceHasLoaded.plans, resolution: plansResolution },
+          }}
         />
       )}
       {!racePerformanceEnabled && activeRace && (
@@ -1157,7 +1174,7 @@ export default function PlanInsightsPage() {
       )}
 
       {/* ── Plan Progress ────────────────────────────────── */}
-      {activeRace && activePlan && (
+      {performanceInputsAvailable && sourceHasLoaded.plans && activeRace && activePlan && (
         <>
           <SectionHeader icon={Calendar} title={`Plan: ${activePlan.name}`} />
 
@@ -1429,7 +1446,7 @@ export default function PlanInsightsPage() {
         </>
       )}
 
-      {activeRace && !activePlan && (
+      {sourceHasLoaded.plans && activeRace && !activePlan && (
         <Card>
           <EmptyState
             title="No training plan linked to this race"
@@ -1438,7 +1455,7 @@ export default function PlanInsightsPage() {
         </Card>
       )}
 
-      {activeRace && (
+      {performanceInputsAvailable && activeRace && (
         <>
       {/* ── Half Marathon Readiness ─────────────────────────── */}
       {!racePerformanceEnabled && <>
