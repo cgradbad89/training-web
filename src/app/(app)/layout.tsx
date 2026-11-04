@@ -12,6 +12,7 @@ import { MobileTabBar } from "@/components/layout/MobileTabBar";
 import { NAV_ITEMS } from "@/components/layout/navItems";
 import { AppDataProvider } from "@/contexts/AppDataContext";
 import { HealthDataProvider } from "@/contexts/HealthDataContext";
+import { PerformanceEvidenceProvider } from "@/contexts/PerformanceEvidenceContext";
 import { startClientNavigationPerformance } from "@/utils/clientPerformanceStore";
 
 function SideNav() {
@@ -85,7 +86,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 <PRComputerRunner />
               </>
             )}
-            {appShell}
+            <PerformanceEvidenceProvider user={user} sessionEpoch={sessionEpoch} isSessionCurrent={isSessionCurrent}>
+              {appShell}
+            </PerformanceEvidenceProvider>
           </HealthDataProvider>
         </AppDataProvider>
       )}

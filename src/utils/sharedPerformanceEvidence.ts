@@ -1,4 +1,4 @@
-/** Projection of supplied results only. Not wired into any application consumer. */
+/** Pure projection of supplied results. Acquisition belongs to the session owner. */
 import {
   SHARED_PERFORMANCE_EVIDENCE_VERSION,
   type CurrentCapabilityEvidence, type DemonstratedPerformanceEvidence,

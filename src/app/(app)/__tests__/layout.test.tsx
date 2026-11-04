@@ -36,6 +36,9 @@ vi.mock("@/components/layout/AuthGuard", () => ({
 vi.mock("@/components/layout/HubBanner", () => ({
   HubBanner: () => <div data-testid="hub-banner" />,
 }));
+vi.mock("@/contexts/PerformanceEvidenceContext", () => ({
+  PerformanceEvidenceProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
 vi.mock("@/components/layout/MobileTabBar", () => ({
   MobileTabBar: () => <div data-testid="mobile-tabs" />,
 }));

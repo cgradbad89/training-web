@@ -43,6 +43,9 @@ vi.mock("@/lib/auth", () => ({
   signOut: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock("@/lib/firebase", () => ({ db: {} }));
+vi.mock("@/services/performancePersistence", () => ({
+  capturePerformanceSession: vi.fn(), getSavedPerformance: vi.fn(),
+}));
 vi.mock("firebase/firestore", () => ({
   doc: vi.fn(), writeBatch: () => ({ update: vi.fn(), commit: h.batchCommit }),
 }));

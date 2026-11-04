@@ -13,6 +13,14 @@ const h = vi.hoisted(() => ({
   capture: vi.fn(), load: vi.fn(), review: vi.fn(), run: vi.fn(),
 }));
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => h.auth }));
+vi.mock("@/services/performancePersistence", () => ({
+  capturePerformanceSession: h.capture,
+  getSavedPerformance: async () => ({ current: await h.load(), documentsRead: 1 }),
+}));
+vi.mock("@/contexts/AppDataContext", () => ({ useAppData: () => ({
+  workouts: [], overrides: {}, sourceHasLoaded: { workouts: true, overrides: true },
+  workoutsResolution: "success", overridesResolution: "success", workoutsHistoryComplete: true,
+}) }));
 vi.mock("@/services/manualPerformance", () => ({
   createManualPerformanceSession: h.capture,
   getManualPerformanceGate: () => h.gate,
@@ -23,6 +31,14 @@ vi.mock("@/services/manualPerformance", () => ({
 }));
 
 import { PerformanceAnalysisPanel } from "@/components/PerformanceAnalysisPanel";
+import { PerformanceEvidenceProvider } from "@/contexts/PerformanceEvidenceContext";
+
+function Harness() {
+  if (!h.auth.user) return <PerformanceAnalysisPanel />;
+  return <PerformanceEvidenceProvider user={h.auth.user} sessionEpoch={h.auth.sessionEpoch} isSessionCurrent={h.auth.isSessionCurrent}>
+    <PerformanceAnalysisPanel />
+  </PerformanceEvidenceProvider>;
+}
 
 const dayWindow = { startDate: "2026-09-24", endDate: "2026-10-21" };
 function saved(calculatedAt = "2026-10-21T14:00:00Z"): StoredPerformanceCurrent {
@@ -68,7 +84,7 @@ let container: HTMLDivElement;
 let root: Root;
 async function mount() {
   container = document.createElement("div"); document.body.appendChild(container);
-  await act(async () => { root = createRoot(container); root.render(<PerformanceAnalysisPanel />); });
+  await act(async () => { root = createRoot(container); root.render(<Harness />); });
 }
 function text() { return container.textContent ?? ""; }
 function button(label: string) {
@@ -106,7 +122,7 @@ describe("manual PerformanceAnalysisPanel", () => {
     expect(text()).toContain("No device VO₂ max measurements"); expect(text()).toContain("10.0 miles");
     expect(text()).toContain("Current estimated half-marathon time: Unavailable"); expect(text()).toContain("validated numerical race prediction");
     expect(text()).toContain("Workouts: partial"); expect(text()).not.toMatch(/weekly reminder|stale|update due/i);
-    await act(async () => root.render(<PerformanceAnalysisPanel />));
+    await act(async () => root.render(<Harness />));
     expect(h.load).toHaveBeenCalledOnce(); expect(h.run).not.toHaveBeenCalled();
   });
 
@@ -214,7 +230,7 @@ describe("manual PerformanceAnalysisPanel", () => {
     await mount();
     h.auth = { ...h.auth, sessionEpoch: 2 };
     h.load.mockResolvedValue(saved("2026-10-21T16:00:00Z"));
-    await act(async () => root.render(<PerformanceAnalysisPanel />));
+    await act(async () => root.render(<Harness />));
     await act(async () => resolve(saved("2026-10-21T12:00:00Z")));
     expect(container.querySelector("time")?.getAttribute("dateTime")).toBe("2026-10-21T16:00:00Z");
   });
@@ -229,7 +245,7 @@ describe("manual PerformanceAnalysisPanel", () => {
     h.run.mockReturnValue(new Promise<ManualPerformanceUpdateResult>(done => { resolve = done; }));
     await mount(); await click(button("Update Performance")); await click(readiness()); await click(button("Analyze 1 selected run"));
     h.auth = { ...h.auth, user: null, sessionEpoch: 2 };
-    await act(async () => root.render(<PerformanceAnalysisPanel />));
+    await act(async () => root.render(<Harness />));
     await act(async () => resolve(success()));
     expect(text()).toBe("");
   });
@@ -260,13 +276,13 @@ describe("manual PerformanceAnalysisPanel", () => {
     h.run.mockReturnValueOnce(new Promise((_, fail) => { reject = fail; }));
     await mount(); await click(button("Update Performance")); await click(readiness());
     await click(button("Analyze 1 selected run"));
-    const progress = container.querySelector('[aria-live="polite"]');
+    const progress = container.querySelector('[aria-live="polite"][tabindex="-1"]');
     expect(document.activeElement).toBe(progress);
     const scroll = vi.spyOn(HTMLElement.prototype, "scrollIntoView");
     await act(async () => h.run.mock.calls[0][3]({ selected: 1, completed: 0, skipped: 0, documentReads: 50, status: "Reading GPS" }));
     expect(progress?.textContent).toContain("Reading GPS"); expect(scroll).not.toHaveBeenCalled();
     await act(async () => reject(new Error("Budget reached")));
-    expect(container.querySelector('[aria-live="polite"]')).toBeNull();
+    expect(container.querySelector('[aria-live="polite"][tabindex="-1"]')).toBeNull();
     expect(document.activeElement).toBe(container.querySelector('[role="alert"]'));
     expect(button("Analyze 1 selected run").disabled).toBe(false);
     expect(container.querySelector("time")?.dateTime).toBe("2026-10-21T14:00:00Z");
@@ -283,7 +299,7 @@ describe("manual PerformanceAnalysisPanel", () => {
     expect(document.activeElement?.getAttribute("role")).toBe("status");
     expect(document.activeElement?.textContent).toContain("unchanged");
     expect(container.querySelector("time")?.dateTime).toBe("2026-10-21T14:00:00Z");
-    expect(container.querySelector('[aria-live="polite"]')).toBeNull();
+    expect(container.querySelector('[aria-live="polite"][tabindex="-1"]')).toBeNull();
   });
 
   it("preserves complete long evidence within shrinkable wrapping containers", async () => {
@@ -301,7 +317,7 @@ describe("manual PerformanceAnalysisPanel", () => {
     h.review.mockReturnValueOnce(new Promise(done => { resolve = done; }));
     await mount(); await click(button("Update Performance"));
     h.auth = { ...h.auth, sessionEpoch: 2 };
-    await act(async () => root.render(<PerformanceAnalysisPanel />));
+    await act(async () => root.render(<Harness />));
     const scroll = vi.spyOn(HTMLElement.prototype, "scrollIntoView");
     await act(async () => resolve(review()));
     expect(container.querySelector("#performance-review")).toBeNull();

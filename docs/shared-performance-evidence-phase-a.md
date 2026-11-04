@@ -1,5 +1,13 @@
 # Shared performance evidence — Phase A
 
+Delivery update: the existing isolated Phase A changes were subsequently approved
+for protected-main delivery in [PR #47](https://github.com/cgradbad89/training-web/pull/47)
+and merged as `d95b6f50d57e6fb73bf011c337b43ced917d2e8b` after required checks passed.
+The following describes Phase A's original local scope. The approved Phase B
+integration and intentional cold Plan read are documented in
+`shared-performance-evidence-phase-b.md`; Phase A's optional handoff proposal below
+is historical, not the current read policy.
+
 Implemented locally from `main` / `origin/main` at
 `c301fb1c00e86971b5ae8bdd1bf47f97465921d3`. The remote main reference was checked
 read-only. This delivery contains definitions, pure adapters, tests and documentation;

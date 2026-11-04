@@ -1,4 +1,5 @@
 import React, { act } from "react";
+vi.mock("@/components/insights/PerformanceEvidenceStatus", () => ({ PerformanceEvidenceStatus: () => null }));
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HealthWorkout } from "@/types/healthWorkout";
