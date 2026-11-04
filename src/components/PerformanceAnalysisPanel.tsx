@@ -3,10 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useAuth, type AuthState } from "@/hooks/useAuth";
 import { isAuthorizedTrainingUser } from "@/lib/trainingAuthorization";
+import { usePerformanceEvidence } from "@/contexts/PerformanceEvidenceContext";
+import { PerformanceEvidenceStatus } from "@/components/insights/PerformanceEvidenceStatus";
 import {
   createManualPerformanceSession,
   getManualPerformanceGate,
-  loadSavedPerformance,
   prepareManualPerformanceReview,
   runManualPerformanceUpdate,
   type ManualPerformanceProgress,
@@ -110,12 +111,13 @@ function SavedPerformanceDetails({ current }: { current: StoredPerformanceCurren
   );
 }
 
-/** One mounted owner-session only. The effect reads the saved receipt, never source telemetry. */
+/** Manual UI for one owner-session; saved evidence is owned by the shared provider. */
 function SessionPerformancePanel({ auth, user }: { auth: AuthState; user: NonNullable<AuthState["user"]> }) {
   const gate = getManualPerformanceGate();
-  const [saved, setSaved] = useState<StoredPerformanceCurrent | null>(null);
-  const [loadingSaved, setLoadingSaved] = useState(true);
-  const [savedLoadFailed, setSavedLoadFailed] = useState(false);
+  const shared = usePerformanceEvidence();
+  const saved = shared.state.current;
+  const loadingSaved = shared.state.status === "not_loaded" || shared.state.status === "loading";
+  const savedLoadFailed = shared.state.status === "error";
   const [review, setReview] = useState<ManualPerformanceReview | null>(null);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [ready, setReady] = useState(false);
@@ -137,22 +139,7 @@ function SessionPerformancePanel({ auth, user }: { auth: AuthState; user: NonNul
 
   useEffect(() => {
     mounted.current = true;
-    let cancelled = false;
-    void createManualPerformanceSession({ user, sessionEpoch, isSessionCurrent })
-      .then(session => loadSavedPerformance(session))
-      .then(current => {
-        if (!cancelled && isSessionCurrent(sessionEpoch)) setSaved(current);
-      })
-      .catch(reason => {
-        if (!cancelled && isSessionCurrent(sessionEpoch)) {
-          setSavedLoadFailed(true);
-          setError(reason instanceof Error ? reason.message : "The saved performance analysis could not be loaded.");
-        }
-      })
-      .finally(() => {
-        if (!cancelled && isSessionCurrent(sessionEpoch)) setLoadingSaved(false);
-      });
-    return () => { cancelled = true; mounted.current = false; };
+    return () => { mounted.current = false; };
   }, [user, sessionEpoch, isSessionCurrent]);
 
   function currentSession() { return mounted.current && isSessionCurrent(sessionEpoch); }
@@ -170,7 +157,7 @@ function SessionPerformancePanel({ auth, user }: { auth: AuthState; user: NonNul
   });
 
   async function openReview() {
-    if (!gate.enabled || active.current || !currentSession()) return;
+    if (!gate.enabled || active.current || shared.state.publication === "processing" || !currentSession()) return;
     active.current = true;
     setAction("reviewing");
     setError(null);
@@ -198,7 +185,7 @@ function SessionPerformancePanel({ auth, user }: { auth: AuthState; user: NonNul
 
   async function analyzeSelected() {
     const budget = Number(readBudget);
-    if (!gate.enabled || active.current || !currentSession() || !review || !ready || !selected.size) return;
+    if (!gate.enabled || active.current || shared.state.publication === "processing" || !currentSession() || !review || !ready || !selected.size) return;
     if (!Number.isSafeInteger(budget) || budget < 1 || budget > MAX_READ_BUDGET) {
       setError(`Choose a whole-number read budget from 1 to ${MAX_READ_BUDGET.toLocaleString()}.`);
       return;
@@ -206,6 +193,7 @@ function SessionPerformancePanel({ auth, user }: { auth: AuthState; user: NonNul
     active.current = true;
     attention.current = "progress";
     setAction("processing");
+    shared.beginPublication();
     setError(null);
     setOutcome(null);
     setProgress({ selected: selected.size, completed: 0, skipped: 0, documentReads: review.documentsRead, status: "Verifying the authenticated session" });
@@ -218,15 +206,17 @@ function SessionPerformancePanel({ auth, user }: { auth: AuthState; user: NonNul
         userConfirmedReady: true,
         readBudget: budget,
       }, nextProgress => { if (currentSession()) setProgress(nextProgress); });
+      // The authenticated provider may outlive this page. Confirmed publication
+      // still propagates after navigation; its own owner guard rejects logout.
+      shared.receivePublication(update.current, update.snapshotCreated);
       if (!currentSession()) return;
       attention.current = "completion";
       setProgress(null);
-      setSaved(update.current);
-      setSavedLoadFailed(false);
       setOutcome(update);
       setReview(null);
       setReady(false);
     } catch (reason) {
+      shared.failPublication(reason instanceof Error ? reason.message : "Performance could not be saved.");
       if (currentSession()) {
         attention.current = "error";
         setProgress(null);
@@ -238,14 +228,15 @@ function SessionPerformancePanel({ auth, user }: { auth: AuthState; user: NonNul
     }
   }
 
-  const busy = action !== "idle";
+  const busy = action !== "idle" || shared.state.publication === "processing";
   const validBudget = Number.isSafeInteger(Number(readBudget)) && Number(readBudget) >= 1 && Number(readBudget) <= MAX_READ_BUDGET;
   return (
-    <section aria-labelledby="performance-analysis-title" className="min-w-0 [overflow-wrap:anywhere] space-y-5 rounded-2xl border border-border bg-card p-5 shadow-sm">
+    <section id="performance-analysis" aria-labelledby="performance-analysis-title" className="min-w-0 scroll-mt-4 [overflow-wrap:anywhere] space-y-5 rounded-2xl border border-border bg-card p-5 shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 id="performance-analysis-title" className="text-lg font-bold text-textPrimary">Performance Analysis</h2>
         <button ref={updateButton} aria-expanded={review !== null} aria-controls={review ? "performance-review" : undefined} aria-busy={action === "reviewing"} type="button" className={ACTION_CLASS} disabled={!gate.enabled || busy || review !== null || loadingSaved} onClick={() => void openReview()} aria-describedby={!gate.enabled ? "performance-gate-reason" : undefined}>{action === "reviewing" ? "Loading runs…" : "Update Performance"}</button>
       </div>
+      <PerformanceEvidenceStatus personal />
       {!gate.enabled && <p id="performance-gate-reason" className="rounded-xl bg-surface p-3 text-sm text-textSecondary">{gate.reason}</p>}
       {loadingSaved ? <p role="status" className="text-sm text-textSecondary">Loading saved performance analysis…</p> : saved ? <SavedPerformanceDetails current={saved} /> : <p className="text-sm text-textSecondary">{savedLoadFailed ? "The saved performance analysis could not be retrieved." : `No saved performance analysis.${gate.enabled ? " Use Update Performance to review runs and calculate when you are ready." : ""}`}</p>}
       {error && <p ref={errorMessage} tabIndex={-1} role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-700 dark:text-red-300">{error}</p>}

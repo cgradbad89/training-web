@@ -102,6 +102,7 @@ vi.mock("firebase/firestore", async importOriginal => {
 
 import PersonalInsightsPage from "../page";
 import { PerformanceAnalysisPanel } from "@/components/PerformanceAnalysisPanel";
+import { PerformanceEvidenceProvider } from "@/contexts/PerformanceEvidenceContext";
 import * as manual from "@/services/manualPerformance";
 import * as telemetry from "@/services/performanceTelemetry";
 import * as routes from "@/services/routes";
@@ -134,7 +135,11 @@ function configure(tab: string, enabled: boolean, cache: CacheState) {
   if (cache === "missing") h.aggregate = null;
 }
 async function mount() {
-  await act(async () => { root = createRoot(container); root.render(<PersonalInsightsPage />); });
+  await act(async () => { root = createRoot(container); root.render(
+    <PerformanceEvidenceProvider user={h.auth.user!} sessionEpoch={h.auth.sessionEpoch} isSessionCurrent={h.auth.isSessionCurrent}>
+      <PersonalInsightsPage />
+    </PerformanceEvidenceProvider>
+  ); });
   // The page intentionally leaves its initial skeleton on a zero-delay timer.
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
   await vi.waitFor(() => expect(container.textContent).toContain("Performance Analysis"));
@@ -179,6 +184,7 @@ beforeEach(() => {
   });
   h.appData = { workouts: h.parents.map(parent => docToHealthWorkout(parent.id, parent.data)),
     plans: [], races: [], overrides: {}, maxHr: 190, restingHr: 50, workoutsLoading: false,
+    sourceHasLoaded: { workouts: true, overrides: true, races: true, plans: true, settings: true }, workoutsHistoryComplete: true,
     workoutsResolution: "success", settingsResolution: "success", racesResolution: "success", overridesResolution: "success" } as AppDataContextValue;
   vi.spyOn(console, "log").mockImplementation(() => {});
   vi.spyOn(manual, "prepareManualPerformanceReview");

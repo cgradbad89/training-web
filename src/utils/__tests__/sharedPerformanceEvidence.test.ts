@@ -348,7 +348,7 @@ describe("pure, unwired dependency boundary", () => {
     expect(timer).not.toHaveBeenCalled();
   });
 
-  it("has no application consumer or barrel export that could introduce runtime work", () => {
+  it("limits application consumers to the explicit session boundary and type contracts", () => {
     function sources(directory: string): string[] {
       return readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
         if (entry.name === "__tests__") return [];
@@ -369,6 +369,9 @@ describe("pure, unwired dependency boundary", () => {
       }
       visit(parsed);
     }
-    expect(consumers).toEqual([]);
+    expect([...new Set(consumers)].sort()).toEqual([
+      resolve("src/contexts/PerformanceEvidenceContext.tsx"),
+      resolve("src/types/performanceFreshness.ts"),
+    ].sort());
   });
 });
