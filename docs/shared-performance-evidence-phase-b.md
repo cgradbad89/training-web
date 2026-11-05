@@ -55,7 +55,7 @@ coverage, calculation cutoff/completion and retrieval time remain separate.
 | `checking` | Saved state or an initial required source is loading; a later refresh may also be pending. |
 | `no_detected_changes` | No new changes detected in loaded workout records. Never a completeness guarantee. |
 | `update_available` | Eligible post-cutoff runs, supported newly visible records, or observed source-value changes warrant review. |
-| `incomplete_sync` | Known unfinished workout/route metadata; wait before processing. |
+| `incomplete_sync` | A run that ended within the last 7 days (or is unfinished) reports partial route metadata; it may still be syncing. Older `routeComplete: false` markers are historical limitations (see 2026-11-05 update below). |
 | `unable_to_verify` | Failed initial/read/refresh, ambiguous historical membership or unavailable comparison/date basis. |
 
 Reliable detections and boundaries:
@@ -98,7 +98,8 @@ coverage remains partial even after a successful lookup.
 ## Workflow and numerical integrity
 
 `PerformanceEvidenceStatus` supplies identical status/count terminology on both
-pages. Plan links to the Personal panel anchor; navigation never starts review.
+pages. Plan (since 2026-11-05) shows it inside the Estimate Details modal and a
+one-line tile notice; it links to the Personal panel anchor; navigation never starts review.
 There are no modal prompts. The dated result stays visible while updates are
 pending. PR #46 deliberate-action focus, scroll, containment, Cancel, processing,
 error and completion behavior is preserved.
@@ -228,3 +229,38 @@ no uncaught JavaScript error occurred. Offline transport errors were intentional
 injected. The harness fixes addressed login/navigation waits, transport targets
 versus SDK calls, and advancing a fixed clock through the existing refresh floor.
 Physical iPhone Safari acceptance remains **PENDING**.
+
+## 2026-11-05 update — Plan estimate modal and incomplete-sync prioritization
+
+**Root cause of the persistent warning.** `assessPerformanceFreshness` tested
+`routeComplete === false || end > now` before checking saved-manifest membership
+or the cutoff, with no recency bound. Any run in the 180-day scope that kept a
+stale partial-route marker (an iOS later wake that never completed, or a flip the
+seven-day AppData overlap never re-read) produced `incomplete_sync` and "Wait for
+syncing" indefinitely, even when the run was already in the saved analysis and
+nothing new was actionable. The marker is not proof of an active upload; parent
+fields cannot establish one either way.
+
+**Classification now.** Partial or unfinished runs that ended within
+`PERFORMANCE_RECENT_INCOMPLETE_DAYS` (7) stay `incompleteWorkoutIds` and still drive
+`incomplete_sync`, incorporated or not. Older ones go to
+`historicalIncompleteWorkoutIds`: a disclosed limitation that does not change the
+status when the run is incorporated or known-unusable. When it is neither, the
+status becomes `unable_to_verify`, never "wait". Priority stays update_available >
+incomplete_sync > unable_to_verify > checking > no_detected_changes. `records`
+carries parent start date, type, manifest membership and after-cutoff flag for every
+new, changed or incomplete ID so the details can link to `/runs/{id}`.
+
+**Plan presentation.** The standalone Performance Evidence aside is gone from Plan.
+The experimental estimate tile keeps the finish time, pace, Experimental label, race
+and training basis, calculation date and latest included run. It shows a one-line
+notice only for `update_available`, recent `incomplete_sync` or a failed
+saved-state read. **View Estimate Details** opens an accessible dialog (bottom
+sheet below `md`, centered above it, focus containment, Escape and backdrop close,
+focus return, scroll lock, z-80 above the mobile tab bar). Section A is the existing
+methodology content, moved and not recalculated. Section B is the shared
+`PerformanceEvidenceStatus` in detailed mode: last saved analysis date, cutoff,
+categorized dated runs, limitations, and the estimate-separation statement. The
+panel receives these as slots, so it still imports no services. The tile notice
+keeps the approved Plan cold-entry lookup (one). Opening, closing or reopening the
+modal adds zero lookups and no feature, GPS, HR, split reads or writes.

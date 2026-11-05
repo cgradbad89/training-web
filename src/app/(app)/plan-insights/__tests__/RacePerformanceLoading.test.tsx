@@ -16,7 +16,7 @@ vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({
 }) }));
 vi.mock("next/navigation", () => ({ usePathname: () => h.pathname, useRouter: () => ({ push: vi.fn() }) }));
 vi.mock("next/dynamic", () => ({ default: () => () => null }));
-vi.mock("@/components/insights/PerformanceEvidenceStatus", () => ({ PerformanceEvidenceStatus: () => null }));
+vi.mock("@/components/insights/PerformanceEvidenceStatus", () => ({ PerformanceEvidenceStatus: () => null, PerformanceEvidenceNotice: () => null }));
 vi.mock("@/services/healthWorkouts", () => ({ fetchHealthWorkouts: h.workouts, fetchHealthWorkoutsInRange: h.delta }));
 vi.mock("@/services/plans", () => ({ fetchPlans: h.plans }));
 vi.mock("@/services/races", () => ({ fetchRaces: h.races }));
