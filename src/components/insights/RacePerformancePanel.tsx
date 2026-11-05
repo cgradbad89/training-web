@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import type { HealthWorkout } from "@/types/healthWorkout";
 import type { Race } from "@/types/race";
@@ -15,6 +15,7 @@ import { isExperimentalCurrentEstimateEnabled } from "@/lib/racePerformanceGate"
 import { estimateCurrentHalfMarathon, type CurrentHalfEstimate } from "@/utils/experimentalCurrentPerformance";
 import { performanceLocalDate } from "@/utils/performanceEvidence";
 import { daysUntil, parseLocalDate } from "@/utils/dates";
+import { EstimateDetailsDialog } from "./EstimateDetailsDialog";
 
 type Source = "workouts" | "overrides" | "races" | "plans";
 export type RacePerformanceSources = Record<Source, { hasLoaded: boolean; resolution: AppDataResolution }>;
@@ -134,11 +135,19 @@ export interface RacePerformancePanelProps {
   /** Explicit clock and zone make previews/tests reproducible. */
   asOf?: Date;
   timeZone?: string;
+  /** Optional compact saved-evidence hint for the tile (supplied by the page). */
+  evidenceNotice?: React.ReactNode;
+  /** Saved Performance Evidence section for the details modal. The panel never
+   * acquires evidence itself; the page passes the shared-provider view. */
+  evidenceDetails?: React.ReactNode;
 }
 
 /** Summary-only view. No service imports, child acquisition, persistence or timers. */
 export function RacePerformancePanel(props: RacePerformancePanelProps) {
   const { races, workouts, overrides, plan, selectedRace, sources } = props;
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const detailsTrigger = useRef<HTMLButtonElement>(null);
+  const detailsId = useId();
   const performanceReady = PERFORMANCE_SOURCES.every(source => sources[source].hasLoaded);
   const trainingReady = TRAINING_SOURCES.every(source => sources[source].hasLoaded);
   const planReady = PLAN_SOURCES.every(source => sources[source].hasLoaded);
@@ -181,8 +190,12 @@ export function RacePerformancePanel(props: RacePerformancePanelProps) {
               <p className="text-4xl sm:text-5xl font-bold tracking-tight text-textPrimary">~{Math.floor(current.finishMinutes / 60)}:{String(current.finishMinutes % 60).padStart(2, "0")}</p>
               <p className="text-lg font-semibold text-textSecondary">~{Math.floor(current.paceSecondsPerMile! / 60)}:{String(current.paceSecondsPerMile! % 60).padStart(2, "0")}<span className="text-sm font-normal">/mi</span></p>
             </div>
-            <p className="text-sm text-textSecondary">Based on your {dateLabel(current.anchor!.raceDate)} race and completed training.</p>
-          </> : <p className="font-semibold">Insufficient evidence</p>}
+            <p className="text-sm text-textSecondary" data-testid="estimate-basis">Based on your {dateLabel(current.anchor!.raceDate)} race ({current.anchor!.finishSeconds != null ? `${formatRaceTime(current.anchor!.finishSeconds)}, ` : ""}{STATUS_LABEL[current.anchor!.status].toLowerCase()}) and completed training{current.adjustmentSeconds !== 0 ? ` · ${adjustmentLabel(current.adjustmentSeconds)} training adjustment` : ""}.</p>
+          </> : <>
+            <p className="font-semibold">Insufficient evidence</p>
+            {current && <p className="text-sm text-textSecondary" data-testid="estimate-unavailable-reason">{current.reason}</p>}
+            {displayedAnchor && <p className="text-sm text-textSecondary" data-testid="estimate-basis">Historical race: {displayedAnchor.finishSeconds != null ? formatRaceTime(displayedAnchor.finishSeconds) : "time unavailable"} · {dateLabel(displayedAnchor.raceDate)} · {STATUS_LABEL[displayedAnchor.status]}</p>}
+          </>}
           <dl className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-textSecondary">
             <div className="flex flex-wrap gap-x-1"><dt>Calculated as of:</dt><dd>{current ? dateLabel(performanceLocalDate(current.asOf, timeZone)) : "Unavailable"}</dd></div>
             <div className="flex flex-wrap gap-x-1"><dt>Latest included run:</dt><dd>{current?.dataThrough ? dateLabel(current.dataThrough) : "Unavailable"}</dd></div>
@@ -191,30 +204,37 @@ export function RacePerformancePanel(props: RacePerformancePanelProps) {
           <h3 className="text-sm font-semibold text-textSecondary">Current capability estimate</h3>
           <p className="text-xl font-bold">Unavailable</p>
           <p className="text-sm text-textSecondary">An experimental current estimate is not enabled in this build.</p>
+          {displayedAnchor && <p className="text-sm text-textSecondary">Historical race: {displayedAnchor.finishSeconds != null ? formatRaceTime(displayedAnchor.finishSeconds) : "time unavailable"} · {displayedAnchor.name} · {dateLabel(displayedAnchor.raceDate)} · {STATUS_LABEL[displayedAnchor.status]}</p>}
         </>}
-        <dl className="border-y border-border py-3 space-y-2 text-sm">
-          <div className="flex items-start justify-between gap-4">
-            <dt className="text-textSecondary">Historical race{displayedAnchor && <span className="block text-xs">{STATUS_LABEL[displayedAnchor.status]}{displayedAnchor.stale ? " · Older benchmark" : ""}</span>}</dt>
-            <dd className="shrink-0 font-semibold tabular-nums">{displayedAnchor?.finishSeconds != null ? formatRaceTime(displayedAnchor.finishSeconds) : "Unavailable"}</dd>
-          </div>
-          {current?.baselineSeconds != null && current.anchor?.finishSeconds !== current.baselineSeconds && <div className="flex justify-between gap-4">
-            <dt className="text-textSecondary">Half-marathon equivalent</dt><dd className="shrink-0 font-semibold tabular-nums">{formatRaceTime(current.baselineSeconds)}</dd>
-          </div>}
-          {currentEnabled && <div className="flex items-start justify-between gap-4">
-            <dt className="text-textSecondary">Training adjustment</dt>
-            <dd className="text-right" data-testid="training-adjustment"><span className="font-semibold tabular-nums">{current?.finishMinutes != null ? adjustmentLabel(current.adjustmentSeconds) : "Unavailable"}</span>
-              {current?.finishMinutes != null && current.adjustmentSeconds !== 0 && <span className="block text-xs text-textSecondary">{Math.round(current.adjustmentSeconds / 60) === 0 ? "Rounded · " : ""}Estimated {current.adjustmentSeconds < 0 ? "faster" : "slower"}</span>}
-            </dd>
-          </div>}
-        </dl>
-        {current && <p className="text-sm text-textSecondary" data-testid="adjustment-reason">{adjustmentReason(current)}</p>}
         {!displayedAnchor && <p className="text-sm text-textSecondary">No usable race benchmark is available. Review the evidence timeline below for missing or inconsistent records.</p>}
-        {!currentEnabled && displayedAnchor && <p className="text-sm text-textSecondary">{displayedAnchor.name} · {dateLabel(displayedAnchor.raceDate)}</p>}
       </div>
-      {current &&
-        <details className="text-sm text-textSecondary">
-          <summary className="cursor-pointer py-2 font-semibold text-primary rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">Why this estimate?</summary>
-          <div className="mt-3 space-y-3">
+      {props.evidenceNotice}
+      <button ref={detailsTrigger} type="button" aria-haspopup="dialog" aria-expanded={detailsOpen} onClick={() => setDetailsOpen(true)}
+        data-testid="view-estimate-details"
+        className="inline-flex min-h-11 items-center rounded-lg border border-border px-3 py-2 text-sm font-semibold text-primary hover:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+        View Estimate Details
+      </button>
+      {detailsOpen && <EstimateDetailsDialog title="Estimate Details" onClose={() => setDetailsOpen(false)} returnFocusRef={detailsTrigger}>
+        <section aria-labelledby={`${detailsId}-methodology`} className="min-w-0 space-y-4 text-sm text-textSecondary" data-testid="estimate-methodology">
+          <h3 id={`${detailsId}-methodology`} className="text-base font-bold text-textPrimary">Estimate methodology</h3>
+          <dl className="border-y border-border py-3 space-y-2 text-sm" data-testid="estimate-breakdown">
+            <div className="flex items-start justify-between gap-4">
+              <dt className="text-textSecondary">Historical race{displayedAnchor && <span className="block text-xs">{STATUS_LABEL[displayedAnchor.status]}{displayedAnchor.stale ? " · Older benchmark" : ""}</span>}</dt>
+              <dd className="shrink-0 font-semibold tabular-nums text-textPrimary">{displayedAnchor?.finishSeconds != null ? formatRaceTime(displayedAnchor.finishSeconds) : "Unavailable"}</dd>
+            </div>
+            {current?.baselineSeconds != null && current.anchor?.finishSeconds !== current.baselineSeconds && <div className="flex justify-between gap-4">
+              <dt className="text-textSecondary">Half-marathon equivalent</dt><dd className="shrink-0 font-semibold tabular-nums text-textPrimary">{formatRaceTime(current.baselineSeconds)}</dd>
+            </div>}
+            {currentEnabled && <div className="flex items-start justify-between gap-4">
+              <dt className="text-textSecondary">Training adjustment</dt>
+              <dd className="text-right" data-testid="training-adjustment"><span className="font-semibold tabular-nums text-textPrimary">{current?.finishMinutes != null ? adjustmentLabel(current.adjustmentSeconds) : "Unavailable"}</span>
+                {current?.finishMinutes != null && current.adjustmentSeconds !== 0 && <span className="block text-xs text-textSecondary">{Math.round(current.adjustmentSeconds / 60) === 0 ? "Rounded · " : ""}Estimated {current.adjustmentSeconds < 0 ? "faster" : "slower"}</span>}
+              </dd>
+            </div>}
+          </dl>
+          {current && <p data-testid="adjustment-reason">{adjustmentReason(current)}</p>}
+          {!currentEnabled && displayedAnchor && <p>{displayedAnchor.name} · {dateLabel(displayedAnchor.raceDate)}</p>}
+          {current ? <div className="space-y-3" data-testid="estimate-why">
             <div className="grid grid-cols-1 min-w-0 gap-3 md:grid-cols-2">
               <div className="min-w-0 space-y-1"><h4 className="font-semibold text-textPrimary">Race anchor</h4>
                 {current.anchor ? <><p>{current.anchor.name} · {dateLabel(current.anchor.raceDate)} · {STATUS_LABEL[current.anchor.status]}{current.anchor.stale ? " · Older benchmark" : ""}.</p>
@@ -234,17 +254,20 @@ export function RacePerformancePanel(props: RacePerformancePanelProps) {
             <div className="space-y-1"><h4 className="font-semibold text-textPrimary">Experimental methodology</h4>
               <p>Unvalidated training adjustment. Finish time rounds to the nearest minute; pace derives from that time and rounds to five seconds per mile. Adjustment minutes round separately from the model’s unrounded adjustment. No confidence interval is supported. This estimate has not been validated for your individual accuracy.</p>
             </div>
-            <details><summary className="cursor-pointer py-2">Model assumptions</summary><ul className="mt-2 space-y-1">{current.assumptions.map(a => <li key={a}>{a}</li>)}</ul></details>
+            <details><summary className="cursor-pointer py-2 font-semibold text-primary rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">Model assumptions</summary><ul className="mt-2 space-y-1">{current.assumptions.map(a => <li key={a}>{a}</li>)}</ul></details>
             <p className="text-xs">Model {current.version} · Evidence quality: {current.evidenceQuality.replaceAll("_", " ")} · Calculation cutoff {current.asOf} · {timeZone}</p>
+          </div> : <p>{currentEnabled ? "The experimental estimate could not be calculated from the loaded evidence." : "An experimental current estimate is not enabled in this build."}</p>}
+          <div className="space-y-2"><h4 className="font-semibold text-textPrimary">How to strengthen the race evidence</h4>
+            <p>Confirm the event, date, official distance, finish time, maximal effort and conditions. Reconcile any difference between recorded duration and elapsed time. Existing race links alone do not verify an official result.</p>
+            <p>This read-only view displays the supplied records provisionally. No race record is changed by this view.</p>
+            <Link href="/races" className="inline-block text-primary underline">Review existing race records</Link>
           </div>
-        </details>
-      }
-      <details className="text-sm text-textSecondary">
-        <summary className="cursor-pointer font-semibold text-primary">How to strengthen the race evidence</summary>
-        <p className="mt-2">Confirm the event, date, official distance, finish time, maximal effort and conditions. Reconcile any difference between recorded duration and elapsed time. Existing race links alone do not verify an official result.</p>
-        <p className="mt-2">This read-only view displays the supplied records provisionally. No race record is changed by this view.</p>
-        <Link href="/races" className="inline-block mt-2 text-primary hover:underline">Review existing race records</Link>
-      </details>
+        </section>
+        <section aria-labelledby={`${detailsId}-evidence`} className="min-w-0 space-y-3 border-t border-border pt-5" data-testid="estimate-saved-evidence">
+          <h3 id={`${detailsId}-evidence`} className="text-base font-bold text-textPrimary">Saved Performance Evidence</h3>
+          {props.evidenceDetails ?? <p className="text-sm text-textSecondary">Saved performance evidence is not available in this view. Detailed manual measurements do not alter the experimental estimate.</p>}
+        </section>
+      </EstimateDetailsDialog>}
       </> : <SourceUnavailable sources={sources} required={PERFORMANCE_SOURCES} />}
     </Section>
 

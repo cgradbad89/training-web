@@ -1,5 +1,5 @@
 import React, { act } from "react";
-vi.mock("@/components/insights/PerformanceEvidenceStatus", () => ({ PerformanceEvidenceStatus: () => null }));
+vi.mock("@/components/insights/PerformanceEvidenceStatus", () => ({ PerformanceEvidenceStatus: () => null, PerformanceEvidenceNotice: () => null }));
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HealthWorkout } from "@/types/healthWorkout";
@@ -156,12 +156,16 @@ describe("Plan Insights demand-gated fast-finish hydration", () => {
     await mount();
     expect(container.querySelector('[data-testid="experimental-current-estimate"]')?.textContent).toContain("~2:09");
     expect(container.querySelector('[data-testid="experimental-current-estimate"]')?.textContent).toContain("~9:50/mi");
-    expect(container.querySelector('[data-testid="experimental-current-estimate"]')?.textContent).toContain("Historical raceRecorded, unverified2:11:11");
-    // The adjustment rounds independently; subtracting the rounded finish times would incorrectly give −2.
-    expect(container.querySelector('[data-testid="training-adjustment"]')?.textContent).toContain("−3 minEstimated faster");
-    expect(container.querySelector('[data-testid="adjustment-reason"]')?.textContent).toContain("Sustained volume and frequency");
+    expect(container.querySelector('[data-testid="experimental-current-estimate"]')?.textContent).toContain("(2:11:11, recorded, unverified)");
     expect(container.querySelector('[data-testid="experimental-current-estimate"]')?.textContent).toContain("Calculated as of:Oct 26, 2026");
-    expect(container.textContent).toContain("2:11:11"); expect(container.textContent).toContain("Why this estimate?");
+    expect(container.textContent).toContain("2:11:11"); expect(container.textContent).not.toContain("Performance Evidence");
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="view-estimate-details"]')!.click());
+    const dialog = document.querySelector('[data-testid="estimate-details-dialog"]')!;
+    expect(dialog.querySelector('[data-testid="estimate-breakdown"]')?.textContent).toContain("Historical raceRecorded, unverified2:11:11");
+    // The adjustment rounds independently; subtracting the rounded finish times would incorrectly give −2.
+    expect(dialog.querySelector('[data-testid="training-adjustment"]')?.textContent).toContain("−3 minEstimated faster");
+    expect(dialog.querySelector('[data-testid="adjustment-reason"]')?.textContent).toContain("Sustained volume and frequency");
+    expect(dialog.textContent).toContain("Estimate methodology"); expect(dialog.textContent).toContain("Saved Performance Evidence");
     expect(container.textContent).toContain("Race-day forecastWithheld");
     expect(h.hydrate).not.toHaveBeenCalled(); expect(h.rawRoute).not.toHaveBeenCalled(); expect(h.mileSplits).not.toHaveBeenCalled();
     expect(buildBestEffortSegments).not.toHaveBeenCalled();

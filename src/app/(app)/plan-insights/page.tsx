@@ -11,7 +11,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useAppData } from "@/contexts/AppDataContext";
 import { isRacePerformanceDisplayEnabled } from "@/lib/racePerformanceGate";
 import { RacePerformancePanel } from "@/components/insights/RacePerformancePanel";
-import { PerformanceEvidenceStatus } from "@/components/insights/PerformanceEvidenceStatus";
+import { PerformanceEvidenceNotice, PerformanceEvidenceStatus } from "@/components/insights/PerformanceEvidenceStatus";
 import { selectEffectiveWorkouts } from "@/utils/selectActiveWorkouts";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { type RunningPlan, type PlanRunType, isRunningPlan } from "@/types/plan";
@@ -1002,9 +1002,10 @@ export default function PlanInsightsPage() {
       )}
 
       {/* ── Race Predictions ─────────────────────────────── */}
-      <PerformanceEvidenceStatus />
       {racePerformanceEnabled && (
         <RacePerformancePanel
+          evidenceNotice={<PerformanceEvidenceNotice />}
+          evidenceDetails={<PerformanceEvidenceStatus detailed />}
           races={races}
           workouts={rawWorkouts}
           overrides={overrides}

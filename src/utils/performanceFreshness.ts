@@ -7,6 +7,12 @@ import { isPerformanceInstant, performanceLocalDate, performanceObservationWindo
 // Match the existing manual workflow: parents before run filtering; 180 calendar days.
 export const PERFORMANCE_FRESHNESS_PARENT_LIMIT = 300;
 const OBSERVATION_DAYS = 180;
+/** A partial-route marker on a run that ended within this window may reflect an
+ * upload still in progress: it matches AppData's seven-day same-day refresh
+ * overlap, so a later completion flip is re-read. Older markers are not re-read
+ * by that refresh and cannot establish an active upload. */
+export const PERFORMANCE_RECENT_INCOMPLETE_DAYS = 7;
+const DAY_MS = 86_400_000;
 
 function parents(workouts: readonly HealthWorkout[]) {
   return [...workouts].sort((a, b) => b.startDate.getTime() - a.startDate.getTime()).slice(0, PERFORMANCE_FRESHNESS_PARENT_LIMIT);
@@ -47,7 +53,7 @@ export function assessPerformanceFreshness(input: PerformanceFreshnessInput): Pe
   const { evidence, sources } = input;
   const result: PerformanceFreshness = {
     status: "checking", newWorkoutIds: [], newlyVisibleWorkoutIds: [], changedWorkoutIds: [],
-    incompleteWorkoutIds: [], uncertainWorkoutIds: [], evidenceCutoff: evidence.evidence?.metadata.evidenceCutoff ?? null,
+    incompleteWorkoutIds: [], historicalIncompleteWorkoutIds: [], uncertainWorkoutIds: [], records: {}, evidenceCutoff: evidence.evidence?.metadata.evidenceCutoff ?? null,
     limitations: [
       "Only loaded records within the newest 300 workout parents and manual 180-day observation scope are checked.",
       "Parent flags cannot verify GPS/HR completeness or detect child-only corrections. Detailed processing requires your confirmation.",
@@ -83,6 +89,15 @@ export function assessPerformanceFreshness(input: PerformanceFreshnessInput): Pe
   if (evidence.evidence.metadata.coverage.workouts !== "complete" || !input.workoutsHistoryComplete) {
     result.limitations.push("Source/evidence coverage is bounded or partial; absence is not proof of complete history.");
   }
+  const nowMs = Date.parse(input.now), cutoffMs = Date.parse(cutoff);
+  const record = (workout: HealthWorkout) => {
+    result.records[workout.workoutId] = { workoutId: workout.workoutId, startedAt: workout.startDate.toISOString(),
+      displayType: workout.displayType, incorporated: incorporated.has(workout.workoutId),
+      afterCutoff: workout.endDate.getTime() > cutoffMs };
+  };
+  // Historical partial markers that are neither incorporated nor known-unusable
+  // leave saved membership unverifiable; they never imply an active upload.
+  let unverifiableHistoricalIncomplete = false;
   for (const workout of parents(input.workouts)) {
     const start = workout.startDate.getTime(), end = workout.endDate.getTime();
     if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
@@ -92,11 +107,22 @@ export function assessPerformanceFreshness(input: PerformanceFreshnessInput): Pe
     const override = input.overrides[workout.workoutId];
     if (!workout.isRunLike && !previous?.isRun) continue;
     const changed = previous && previous.basis !== sourceBasis(workout, override);
-    if (changed) result.changedWorkoutIds.push(workout.workoutId);
+    if (changed) { result.changedWorkoutIds.push(workout.workoutId); record(workout); }
     if (!workout.isRunLike || override?.isExcluded) continue;
     const effective = applyOverride(workout, override ?? null);
-    if (workout.routeComplete === false || end > Date.parse(input.now)) {
-      result.incompleteWorkoutIds.push(workout.workoutId); continue;
+    const unfinished = end > nowMs;
+    if (workout.routeComplete === false || unfinished) {
+      // Recency, not the marker alone, separates a possible in-flight upload from
+      // a stale historical flag. Saved membership is reported, not inferred.
+      if (unfinished || end >= nowMs - PERFORMANCE_RECENT_INCOMPLETE_DAYS * DAY_MS) {
+        result.incompleteWorkoutIds.push(workout.workoutId);
+      } else {
+        result.historicalIncompleteWorkoutIds.push(workout.workoutId);
+        if (!changed && !incorporated.has(workout.workoutId) && !knownUnusable.has(workout.workoutId)) {
+          unverifiableHistoricalIncomplete = true;
+        }
+      }
+      record(workout); continue;
     }
     const meters = effective.distanceMeters ?? effective.distanceMiles * 1609.344;
     if (start >= end || effective.durationSeconds <= 0 || !Number.isFinite(effective.durationSeconds)
@@ -104,18 +130,19 @@ export function assessPerformanceFreshness(input: PerformanceFreshnessInput): Pe
       result.uncertainWorkoutIds.push(workout.workoutId); continue;
     }
     if (changed || incorporated.has(workout.workoutId)) continue;
-    if (manifest && end > Date.parse(cutoff)) { result.newWorkoutIds.push(workout.workoutId); continue; }
+    if (manifest && end > cutoffMs) { result.newWorkoutIds.push(workout.workoutId); record(workout); continue; }
     // Newly visible is a session observation, not a claimed source creation time.
     if (manifest && observation && !previous && observation.absenceEstablishedFrom !== null
       && start > observation.absenceEstablishedFrom) {
-      result.newlyVisibleWorkoutIds.push(workout.workoutId); continue;
+      result.newlyVisibleWorkoutIds.push(workout.workoutId); record(workout); continue;
     }
     if (!knownUnusable.has(workout.workoutId)) result.uncertainWorkoutIds.push(workout.workoutId);
   }
   result.status = result.newWorkoutIds.length + result.newlyVisibleWorkoutIds.length + result.changedWorkoutIds.length > 0
     ? "update_available" : result.incompleteWorkoutIds.length ? "incomplete_sync"
-    : result.uncertainWorkoutIds.length || !manifest || result.refreshFailed ? "unable_to_verify"
+    : result.uncertainWorkoutIds.length || unverifiableHistoricalIncomplete || !manifest || result.refreshFailed ? "unable_to_verify"
     : Object.values(sources).some(source => source.resolution === "loading") ? "checking" : "no_detected_changes";
+  if (result.historicalIncompleteWorkoutIds.length) result.limitations.push(`A partial-route marker on a run older than ${PERFORMANCE_RECENT_INCOMPLETE_DAYS} days is historical metadata. Parent records cannot establish whether an upload is still running or will complete.`);
   if (result.refreshFailed) result.limitations.push("A source request failed. The previous dated analysis and resident workout records are retained; latest changes could not be verified.");
   return result;
 }

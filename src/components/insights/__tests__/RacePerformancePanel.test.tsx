@@ -40,8 +40,17 @@ function renderFixture(input = currentFixture()) {
   return estimateCurrentHalfMarathon(input);
 }
 const summary = () => container.querySelector('[data-testid="experimental-current-estimate"]')!;
-const adjustment = () => container.querySelector('[data-testid="training-adjustment"]')!;
-const explanation = () => container.querySelector('[data-testid="adjustment-reason"]')!.textContent;
+const dialog = () => document.querySelector<HTMLElement>('[data-testid="estimate-details-dialog"]');
+const trigger = () => container.querySelector<HTMLButtonElement>('[data-testid="view-estimate-details"]')!;
+/** Details live in the modal; open it on demand so assertions read real UI. */
+function openDetails(): HTMLElement {
+  if (!dialog()) act(() => trigger().click());
+  return dialog()!;
+}
+const adjustment = () => openDetails().querySelector('[data-testid="training-adjustment"]')!;
+const explanation = () => openDetails().querySelector('[data-testid="adjustment-reason"]')!.textContent;
+const breakdown = () => openDetails().querySelector('[data-testid="estimate-breakdown"]')!.textContent;
+const allText = () => `${container.textContent}${openDetails().textContent}`;
 beforeEach(() => {
   container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
 });
@@ -55,14 +64,16 @@ describe("Race performance summary presentation", () => {
     const text = render({ races: [...input.races], workouts: [...input.workouts], asOf: new Date(input.asOf) });
     const card = container.querySelector('[data-testid="experimental-current-estimate"]')!;
     expect(card.textContent).toContain("~2:09"); expect(card.textContent).toContain("~9:50/mi");
-    expect(card.textContent).toContain("Historical raceRecorded, unverified2:11:11");
-    expect(text).toContain("Recorded, unverified"); expect(text).toContain("Unvalidated training adjustment");
-    expect(text).toContain("Why this estimate?"); expect(text).toContain("Volume and frequency");
-    expect(text).toContain("Endurance preparation"); expect(text).toContain("No confidence interval is supported");
-    expect(text).toContain("Race-day forecastWithheld");
-    const why = [...container.querySelectorAll("details")].find(d => d.querySelector("summary")?.textContent === "Why this estimate?")!;
-    expect(why.open).toBe(false); act(() => { why.open = true; }); expect(why.open).toBe(true);
-    expect(container.querySelector("form")).toBeNull();
+    expect(card.textContent).toContain("2:11:11, recorded, unverified");
+    expect(text).toContain("View Estimate Details"); expect(text).toContain("Race-day forecastWithheld");
+    // Methodology is collapsed into the modal; the estimate itself is not.
+    expect(dialog()).toBeNull(); expect(text).not.toContain("Unvalidated training adjustment");
+    const details = openDetails().textContent;
+    expect(breakdown()).toContain("Historical raceRecorded, unverified2:11:11");
+    expect(details).toContain("Estimate methodology"); expect(details).toContain("Unvalidated training adjustment");
+    expect(details).toContain("Volume and frequency"); expect(details).toContain("Endurance preparation");
+    expect(details).toContain("No confidence interval is supported");
+    expect(container.querySelector("form")).toBeNull(); expect(dialog()!.querySelector("form")).toBeNull();
   });
   it("shows the explicit minimum-evidence reason in Production", () => {
     vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "production");
@@ -75,8 +86,9 @@ describe("Race performance summary presentation", () => {
     expect(container.querySelector('[data-testid="experimental-current-estimate"]')?.className).toContain("min-w-0");
     expect(container.querySelector('[data-testid="estimate-values"]')?.className).toContain("flex-wrap");
     expect(summary().querySelectorAll("h3")).toHaveLength(1);
-    expect(container.querySelector("details .grid")?.className).toContain("grid-cols-1");
-    expect([...container.querySelectorAll("details .grid > div")].every(node => node.classList.contains("min-w-0"))).toBe(true);
+    const why = openDetails().querySelector('[data-testid="estimate-why"]')!;
+    expect(why.querySelector(".grid")?.className).toContain("grid-cols-1");
+    expect([...why.querySelectorAll(".grid > div")].every(node => node.classList.contains("min-w-0"))).toBe(true);
     expect(container.querySelector("table")?.parentElement?.className).toContain("overflow-x-auto");
   });
 
@@ -109,7 +121,7 @@ describe("Race performance summary presentation", () => {
     expect(adjustment().textContent).toBe(`${sign}${Math.abs(Math.round(model.adjustmentSeconds / 60))} minEstimated ${direction}`);
     expect(explanation()).toContain("Sustained volume and frequency and endurance preparation evidence");
     expect(explanation()).not.toContain("Not enough");
-    expect(container.textContent).toContain(model.reason);
+    expect(allText()).toContain(model.reason);
     expect(model.validated).toBe(false);
   });
 
@@ -119,14 +131,14 @@ describe("Race performance summary presentation", () => {
     expect(adjustment().textContent).toBe(`0 minRounded · Estimated ${direction}`);
     expect(explanation()).toContain("A sub-minute adjustment rounds to 0 min");
     expect(explanation()).not.toMatch(/unchanged|no adjustment|Not enough/);
-    expect(container.textContent).toContain("Training adjustment before rounding:");
+    expect(allText()).toContain("Training adjustment before rounding:");
   });
 
   it("names supported comparable-effort evidence instead of claiming summary evidence", () => {
     const model = renderFixture(workoutResearchFixture());
     expect(model.adjustmentMethod).toBe("matched_effort");
     expect(explanation()).toContain("Comparable-effort pace evidence");
-    expect(container.textContent).toContain("independent context-matched pairs");
+    expect(allText()).toContain("independent context-matched pairs");
   });
 
   it("uses the model calculation cutoff and latest eligible run even when the browser clock differs", () => {
@@ -136,7 +148,7 @@ describe("Race performance summary presentation", () => {
     expect(summary().textContent).toContain("Calculated as of:Oct 26, 2026");
     expect(summary().textContent).toContain("Latest included run:Oct 21, 2026");
     expect(model.dataThrough).toBe("2026-10-21");
-    expect(container.textContent).toContain("Calculation cutoff 2026-10-27T01:00:00.000Z · America/New_York");
+    expect(allText()).toContain("Calculation cutoff 2026-10-27T01:00:00.000Z · America/New_York");
     expect(summary().textContent).not.toContain("2030"); vi.useRealTimers();
   });
 
@@ -155,12 +167,13 @@ describe("Race performance summary presentation", () => {
     input.races = [...input.races, older.race]; input.workouts = [...input.workouts, older.workout];
     const model = renderFixture(input);
     expect(model.anchor?.raceId).toBe("older-confirmed");
-    expect(summary().textContent).toContain("Historical raceOwner-confirmed2:13:20");
-    const why = [...container.querySelectorAll("details")].find(d => d.querySelector("summary")?.textContent === "Why this estimate?")!;
+    expect(summary().textContent).toContain("Aug 10, 2026 race (2:13:20, owner-confirmed)");
+    expect(trigger().className).toContain("focus-visible:outline");
+    expect(breakdown()).toContain("Historical raceOwner-confirmed2:13:20");
+    const why = openDetails().querySelector('[data-testid="estimate-why"]')!;
     expect(why.textContent).toContain("older-confirmed"); expect(why.textContent).toContain("Aug 10, 2026");
-    expect(why.open).toBe(false); expect(why.querySelector("summary")?.className).toContain("focus-visible:outline");
     expect(container.querySelectorAll("ol > li")).toHaveLength(2);
-    expect(container.querySelector('a[href="/races"]')).toBeTruthy();
+    expect(dialog()!.querySelector('a[href="/races"]')).toBeTruthy();
   });
 
   it("distinguishes a historical result at another distance from its HM equivalent", () => {
@@ -169,8 +182,8 @@ describe("Race performance summary presentation", () => {
     anchor.workout.distanceMiles = 10000 / 1609.344; anchor.workout.distanceMeters = 10000;
     input.races = [anchor.race]; input.workouts = [...input.workouts.slice(1), anchor.workout];
     const model = renderFixture(input);
-    expect(summary().textContent).toContain("Historical raceOwner-confirmed1:00:00");
-    expect(summary().textContent).toContain("Half-marathon equivalent");
+    expect(breakdown()).toContain("Historical raceOwner-confirmed1:00:00");
+    expect(breakdown()).toContain("Half-marathon equivalent");
     expect(model.baselineSeconds).not.toBe(3600);
   });
 

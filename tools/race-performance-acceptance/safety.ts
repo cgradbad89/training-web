@@ -6,6 +6,7 @@ import ts from "typescript";
 const HARNESS = "tools/race-performance-acceptance/";
 const PURE_SOURCE_FILES = new Set([
   "src/components/insights/RacePerformancePanel.tsx",
+  "src/components/insights/EstimateDetailsDialog.tsx",
   "src/lib/trainingAuthorization.ts",
   "src/lib/racePerformanceGate.ts",
   "src/types/plan.ts",
@@ -25,7 +26,8 @@ const PURE_SOURCE_FILES = new Set([
   "src/utils/riegelFit.ts",
   "src/utils/selectActiveWorkouts.ts",
 ]);
-const SAFE_EXTERNALS = new Set(["react", "react-dom/client", "react/jsx-runtime", "react/jsx-dev-runtime"]);
+// "react-dom" is admitted for the estimate dialog's createPortal only.
+const SAFE_EXTERNALS = new Set(["react", "react-dom", "react-dom/client", "react/jsx-runtime", "react/jsx-dev-runtime"]);
 const SDK_IMPORTS: Record<string, ReadonlySet<string>> = {
   "firebase/app": new Set(["initializeApp", "deleteApp", "getApps"]),
   "firebase/auth": new Set([
