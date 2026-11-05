@@ -15,7 +15,7 @@ import { isExperimentalCurrentEstimateEnabled } from "@/lib/racePerformanceGate"
 import { estimateCurrentHalfMarathon, type CurrentHalfEstimate } from "@/utils/experimentalCurrentPerformance";
 import { performanceLocalDate } from "@/utils/performanceEvidence";
 import { daysUntil, parseLocalDate } from "@/utils/dates";
-import { EstimateDetailsDialog } from "./EstimateDetailsDialog";
+import { EstimateDetailsButton, InsightsDialog } from "./EstimateDetailsDialog";
 
 type Source = "workouts" | "overrides" | "races" | "plans";
 export type RacePerformanceSources = Record<Source, { hasLoaded: boolean; resolution: AppDataResolution }>;
@@ -125,6 +125,17 @@ function Section({ title, children, compact = false }: { title: string; children
   </section>;
 }
 
+function StandaloneEstimateDetails({ children }: { children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement>(null);
+  return <>
+    <EstimateDetailsButton buttonRef={trigger} open={open} onClick={() => setOpen(true)} />
+    {open && <InsightsDialog title="Estimate Details" testId="estimate-details" returnFocusRef={trigger} onClose={() => setOpen(false)}>
+      {children}
+    </InsightsDialog>}
+  </>;
+}
+
 export interface RacePerformancePanelProps {
   races: Race[];
   workouts: HealthWorkout[];
@@ -140,13 +151,13 @@ export interface RacePerformancePanelProps {
   /** Saved Performance Evidence section for the details modal. The panel never
    * acquires evidence itself; the page passes the shared-provider view. */
   evidenceDetails?: React.ReactNode;
+  /** Optional tile actions supplied by the authenticated Plan Insights page. */
+  renderActions?: (estimateDetails: React.ReactNode) => React.ReactNode;
 }
 
 /** Summary-only view. No service imports, child acquisition, persistence or timers. */
 export function RacePerformancePanel(props: RacePerformancePanelProps) {
   const { races, workouts, overrides, plan, selectedRace, sources } = props;
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  const detailsTrigger = useRef<HTMLButtonElement>(null);
   const detailsId = useId();
   const performanceReady = PERFORMANCE_SOURCES.every(source => sources[source].hasLoaded);
   const trainingReady = TRAINING_SOURCES.every(source => sources[source].hasLoaded);
@@ -175,11 +186,14 @@ export function RacePerformancePanel(props: RacePerformancePanelProps) {
   const targetSeconds = targetRace?.targetPaceSecondsPerMile && targetRace.targetPaceSecondsPerMile > 0
     ? targetRace.targetPaceSecondsPerMile * (targetDistanceMeters / 1609.344) : null;
 
+  const renderActions = props.renderActions ?? (details => details && (
+    <StandaloneEstimateDetails>{details}</StandaloneEstimateDetails>
+  ));
+
   return <div className="min-w-0 space-y-6" data-testid="race-performance-experience">
     <FreshnessNotice sources={sources} />
     <Section title="Current Performance" compact>
-      {performance ? <>
-      <div className="min-w-0 space-y-3" data-testid={currentEnabled ? "experimental-current-estimate" : undefined}>
+      {performance ? <div className="min-w-0 space-y-3" data-testid={currentEnabled ? "experimental-current-estimate" : undefined}>
         {currentEnabled ? <>
           <div className="flex items-start justify-between gap-3">
             <h3 className="text-sm font-semibold text-textSecondary">Current half-marathon estimate</h3>
@@ -207,14 +221,9 @@ export function RacePerformancePanel(props: RacePerformancePanelProps) {
           {displayedAnchor && <p className="text-sm text-textSecondary">Historical race: {displayedAnchor.finishSeconds != null ? formatRaceTime(displayedAnchor.finishSeconds) : "time unavailable"} · {displayedAnchor.name} · {dateLabel(displayedAnchor.raceDate)} · {STATUS_LABEL[displayedAnchor.status]}</p>}
         </>}
         {!displayedAnchor && <p className="text-sm text-textSecondary">No usable race benchmark is available. Review the evidence timeline below for missing or inconsistent records.</p>}
-      </div>
+      </div> : <SourceUnavailable sources={sources} required={PERFORMANCE_SOURCES} />}
       {props.evidenceNotice}
-      <button ref={detailsTrigger} type="button" aria-haspopup="dialog" aria-expanded={detailsOpen} onClick={() => setDetailsOpen(true)}
-        data-testid="view-estimate-details"
-        className="inline-flex min-h-11 items-center rounded-lg border border-border px-3 py-2 text-sm font-semibold text-primary hover:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
-        View Estimate Details
-      </button>
-      {detailsOpen && <EstimateDetailsDialog title="Estimate Details" onClose={() => setDetailsOpen(false)} returnFocusRef={detailsTrigger}>
+      {renderActions(performance ? <>
         <section aria-labelledby={`${detailsId}-methodology`} className="min-w-0 space-y-4 text-sm text-textSecondary" data-testid="estimate-methodology">
           <h3 id={`${detailsId}-methodology`} className="text-base font-bold text-textPrimary">Estimate methodology</h3>
           <dl className="border-y border-border py-3 space-y-2 text-sm" data-testid="estimate-breakdown">
@@ -267,8 +276,7 @@ export function RacePerformancePanel(props: RacePerformancePanelProps) {
           <h3 id={`${detailsId}-evidence`} className="text-base font-bold text-textPrimary">Saved Performance Evidence</h3>
           {props.evidenceDetails ?? <p className="text-sm text-textSecondary">Saved performance evidence is not available in this view. Detailed manual measurements do not alter the experimental estimate.</p>}
         </section>
-      </EstimateDetailsDialog>}
-      </> : <SourceUnavailable sources={sources} required={PERFORMANCE_SOURCES} />}
+      </> : null)}
     </Section>
 
     <Section title="Training Progress">

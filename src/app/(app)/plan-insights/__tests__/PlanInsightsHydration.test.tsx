@@ -15,7 +15,7 @@ const h = vi.hoisted(() => ({
   rawRoute: vi.fn(), mileSplits: vi.fn(),
 }));
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { uid: "u1" }, sessionEpoch: h.sessionEpoch, isSessionCurrent: h.isSessionCurrent }) }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }), usePathname: () => h.pathname }));
+vi.mock("next/navigation", () => ({ useSearchParams: () => null, useRouter: () => ({ push: vi.fn() }), usePathname: () => h.pathname }));
 vi.mock("next/dynamic", () => ({ default: () => () => null }));
 vi.mock("@/services/healthWorkouts", () => ({ fetchHealthWorkouts: h.workouts, fetchHealthWorkoutsInRange: vi.fn() }));
 vi.mock("@/services/plans", () => ({ fetchPlans: h.plans }));

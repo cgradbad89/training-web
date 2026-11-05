@@ -6,6 +6,7 @@ import type { AppDataContextValue } from "@/contexts/AppDataContext";
 import type { HealthWorkout } from "@/types/healthWorkout";
 import type { SavedPerformanceCurrent } from "@/types/performancePersistence";
 import type { CurrentHalfEstimate } from "@/utils/experimentalCurrentPerformance";
+import type { ManualPerformanceProgress, ManualPerformanceReview, ManualPerformanceUpdateResult } from "@/services/manualPerformance";
 import { ASSESSMENT_NOW, metadataRun, savedPerformanceFixture } from "@/utils/__tests__/fixtures/savedPerformanceFixture";
 import { currentFixture } from "@/utils/__tests__/fixtures/currentPerformanceFixture";
 
@@ -34,7 +35,10 @@ vi.mock("@/utils/experimentalCurrentPerformance", async original => {
     const result = actual.estimateCurrentHalfMarathon(...args); h.estimates.push(result); return result;
   } };
 });
-vi.mock("next/navigation", () => ({ usePathname: () => "/plan-insights", useRouter: () => ({ push: vi.fn() }) }));
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/plan-insights", useRouter: () => ({ push: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(window.location.search),
+}));
 vi.mock("next/dynamic", () => ({ default: () => () => null }));
 
 import { PerformanceEvidenceProvider } from "@/contexts/PerformanceEvidenceContext";
@@ -52,7 +56,25 @@ async function render() { await act(async () => root.render(<Harness />)); }
 const q = <T extends Element = HTMLElement>(id: string) => document.querySelector<T>(`[data-testid="${id}"]`);
 const dialog = () => q("estimate-details-dialog");
 const trigger = () => q<HTMLButtonElement>("view-estimate-details")!;
+const analysisDialog = () => q("performance-analysis-dialog");
+const analysisTrigger = () => q<HTMLButtonElement>("view-performance-analysis")!;
+const analysisPanel = () => document.getElementById("performance-analysis");
 async function open() { await act(async () => trigger().click()); return dialog()!; }
+async function openAnalysis() {
+  await act(async () => analysisTrigger().click());
+  await vi.waitFor(() => expect(analysisPanel()).toBeTruthy());
+  return analysisDialog()!;
+}
+async function click(element: HTMLElement) { await act(async () => element.click()); }
+function analysisButton(label: string) {
+  const button = [...analysisDialog()!.querySelectorAll("button")].find(candidate => candidate.textContent?.trim() === label);
+  expect(button, label).toBeTruthy();
+  return button!;
+}
+function readiness() {
+  return [...analysisPanel()!.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]
+    .find(input => input.closest("label")?.textContent?.includes("finished syncing"))!;
+}
 async function key(name: string, shiftKey = false) {
   await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: name, shiftKey, bubbles: true })); });
 }
@@ -63,8 +85,14 @@ function incorporate(...ids: string[]) {
 }
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve };
+  let reject!: (reason: Error) => void;
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
 }
+const review: ManualPerformanceReview = { candidates: [
+  { workoutId: "new", label: "New Run", startedAt: ASSESSMENT_NOW, status: "new", concerns: [], preselected: true },
+  { workoutId: "older", label: "Older Run", startedAt: "2026-10-16T14:00:00.000Z", status: "analyzed", concerns: [], preselected: false },
+], expectedCurrentRevision: 1, documentsRead: 6, limitations: ["Review is bounded to the newest 300 workout parents."] };
 
 beforeEach(async () => {
   vi.resetAllMocks(); h.estimates = [];
@@ -86,6 +114,8 @@ beforeEach(async () => {
     racesResolution: "success", settingsResolution: "success", workoutsHistoryComplete: true };
   h.capture.mockResolvedValue({ uid: "owner", sessionEpoch: 1 });
   h.load.mockImplementation(async () => ({ current: saved, documentsRead: 1 }));
+  h.review.mockResolvedValue(review);
+  window.history.replaceState(null, "", "/plan-insights");
   container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
 });
 afterEach(() => {
@@ -168,7 +198,7 @@ describe("Plan Insights estimate tile and details modal", () => {
     expect(q("saved-evidence-dates")!.textContent).toBe("Last saved analysis:Oct 21, 2026Saved evidence cutoff:Oct 21, 2026");
     expect(evidence.querySelector(`time[dateTime="${saved.payload.result.asOf}"]`)).toBeTruthy();
     expect(q("evidence-estimate-separation")!.textContent).toContain("do not currently alter the experimental half-marathon estimate");
-    expect(evidence.querySelector('a[href="/personal-insights#performance-analysis"]')).toBeTruthy();
+    expect(evidence.querySelector('a[href="/plan-insights?performance-analysis=1"]')).toBeTruthy();
     expect(evidence.textContent).toContain("No new actionable changes detected");
   });
 
@@ -205,8 +235,8 @@ describe("Plan Insights estimate tile and details modal", () => {
     await open();
     expect(q("evidence-new-runs")!.textContent).toContain("completed after the saved cutoff");
     expect(q("evidence-new-runs")!.querySelector('a[href="/runs/new"]')).toBeTruthy();
-    expect(q("estimate-saved-evidence")!.querySelector('a[href="/personal-insights#performance-analysis"]')?.textContent)
-      .toBe("Review Performance Updates in Personal Insights");
+    expect(q("estimate-saved-evidence")!.querySelector('a[href="/plan-insights?performance-analysis=1"]')?.textContent)
+      .toBe("Review Performance Updates");
     expect(h.review).not.toHaveBeenCalled(); expect(h.run).not.toHaveBeenCalled();
   });
 
@@ -257,5 +287,188 @@ describe("Plan Insights estimate tile and details modal", () => {
     await act(async () => pending.resolve({ current: null, documentsRead: 1 }));
     expect(q("estimate-saved-evidence")!.textContent).toContain("No saved detailed performance analysis");
     expect(q("saved-evidence-dates")!.textContent).not.toContain("Oct 21, 2026");
+  });
+});
+
+describe("Plan Insights Performance Analysis dialog", () => {
+  it("opens the full existing panel with its own accessible title and saved calculation dates", async () => {
+    await render();
+    const tile = analysisTrigger().closest("section")!;
+    expect(tile.querySelector("h2")?.textContent).toBe("Current Performance");
+    expect(analysisTrigger().textContent?.trim()).toBe("Performance Analysis");
+    expect(analysisTrigger().getAttribute("aria-haspopup")).toBe("dialog");
+    expect(tile.contains(trigger())).toBe(true);
+    expect(analysisPanel()).toBeNull();
+    const view = await openAnalysis();
+    expect(analysisTrigger().getAttribute("aria-expanded")).toBe("true");
+    expect(view.getAttribute("aria-modal")).toBe("true");
+    const title = document.getElementById(view.getAttribute("aria-labelledby")!)!;
+    expect(title.textContent).toBe("Performance Analysis");
+    expect(document.activeElement).toBe(title);
+    expect(container.inert).toBe(true);
+    for (const label of ["Saved Performance Analysis", "Demonstrated half-marathon performance",
+      "Measured aerobic running", "Device VO₂ max trend", "Endurance preparation", "Evidence completeness",
+      "Validated half-marathon capability is unavailable"]) expect(view.textContent).toContain(label);
+    expect([...view.querySelectorAll("time")].map(time => time.dateTime)).toEqual([
+      saved.payload.result.asOf, saved.payload.calculationCompletedAt, saved.payload.result.asOf,
+    ]);
+    expect(analysisButton("Update Performance").disabled).toBe(false);
+    const close = view.querySelector<HTMLButtonElement>('[aria-label="Close performance analysis"]')!;
+    await key("Tab", true);
+    expect(view.contains(document.activeElement)).toBe(true);
+    await key("Tab");
+    expect(document.activeElement).toBe(close);
+    await click(close);
+    expect(analysisDialog()).toBeNull();
+    expect(analysisPanel()).toBeNull();
+    expect(container.inert).toBe(false);
+    expect(document.activeElement).toBe(analysisTrigger());
+  });
+
+  it("keeps the action when the estimate has insufficient data or its display gate is off", async () => {
+    h.app = { ...h.app, races: [] };
+    await render();
+    expect(q("experimental-current-estimate")?.textContent).toContain("Insufficient evidence");
+    await openAnalysis(); await key("Escape");
+    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "preview");
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", "false");
+    await render();
+    expect(analysisTrigger().closest("section")?.textContent).toContain("The experimental half-marathon estimate is unavailable.");
+    expect(await openAnalysis()).toBeTruthy();
+  });
+
+  it("follows notice links to the dialog and switches away from Estimate Details without beginning review", async () => {
+    withWorkouts(metadataRun("new", "2026-11-03T12:00:00Z"));
+    await render();
+    const href = q("performance-evidence-notice")!.querySelector("a")!.getAttribute("href")!;
+    expect(href).toBe("/plan-insights?performance-analysis=1");
+    await open();
+    expect(dialog()!.querySelector(`a[href="${href}"]`)?.textContent).toBe("Review Performance Updates");
+    window.history.pushState(null, "", href);
+    await render();
+    await vi.waitFor(() => expect(analysisPanel()).toBeTruthy());
+    expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1);
+    expect(dialog()).toBeNull();
+    expect(document.getElementById("performance-review")).toBeNull();
+    expect(h.review).not.toHaveBeenCalled();
+    expect(h.run).not.toHaveBeenCalled();
+    expect(h.load).toHaveBeenCalledOnce();
+    await key("Escape"); await render();
+    expect(analysisDialog()).toBeNull();
+    expect(window.location.search).toBe("");
+    expect(document.activeElement).toBe(analysisTrigger());
+  });
+
+  it("opens a cold direct link and reopens without additional saved-state, feature or child operations", async () => {
+    window.history.replaceState(null, "", "/plan-insights?performance-analysis=1");
+    await render();
+    await vi.waitFor(() => expect(analysisPanel()).toBeTruthy());
+    await key("Escape"); await render();
+    expect(analysisDialog()).toBeNull();
+    await openAnalysis(); await click(q("performance-analysis-backdrop")!);
+    expect(analysisDialog()).toBeNull();
+    await openAnalysis();
+    expect(h.load).toHaveBeenCalledOnce();
+    expect(h.capture).toHaveBeenCalledOnce();
+    expect(h.review).not.toHaveBeenCalled(); expect(h.run).not.toHaveBeenCalled();
+    expect(h.hydrate).not.toHaveBeenCalled();
+    for (const [name, fn] of Object.entries(h.firestore)) expect(fn, name).not.toHaveBeenCalled();
+  });
+
+  it("reviews runs, resets readiness when changing selection or budget, and cancels without changing saved evidence", async () => {
+    await render(); await openAnalysis();
+    const before = analysisPanel()!.querySelector('p:has(time[datetime])')!.textContent;
+    await click(analysisButton("Update Performance"));
+    const heading = document.getElementById("performance-review-title")!;
+    expect(document.activeElement).toBe(heading);
+    expect(heading.textContent).toBe("Review runs");
+    expect(h.review).toHaveBeenCalledOnce();
+    expect(analysisPanel()!.textContent).toContain("Review reads: 6 documents");
+    expect(analysisButton("Analyze 1 selected run").disabled).toBe(true);
+    await click(readiness());
+    expect(analysisButton("Analyze 1 selected run").disabled).toBe(false);
+    await click(analysisPanel()!.querySelector<HTMLInputElement>('input[aria-label^="Select Older Run"]')!);
+    expect(readiness().checked).toBe(false);
+    expect(analysisButton("Analyze 2 selected runs").disabled).toBe(true);
+    await click(readiness());
+    const budget = analysisPanel()!.querySelector<HTMLInputElement>('input[type="number"]')!;
+    expect(budget.value).toBe("5000"); expect(budget.max).toBe("25000");
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(budget, "5500");
+      budget.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(readiness().checked).toBe(false);
+    await click(analysisButton("Cancel"));
+    expect(document.getElementById("performance-review")).toBeNull();
+    expect(document.activeElement).toBe(analysisButton("Update Performance"));
+    expect(analysisPanel()!.querySelector('p:has(time[datetime])')!.textContent).toBe(before);
+    expect(h.run).not.toHaveBeenCalled();
+    expect(h.load).toHaveBeenCalledOnce();
+  });
+
+  it("blocks dismissal during processing, announces failure and completion, and shares publication without changing the estimate", async () => {
+    withWorkouts(metadataRun("new", "2026-11-03T12:00:00Z"));
+    const pending = deferred<ManualPerformanceUpdateResult>();
+    h.run.mockImplementationOnce((_session, _review, _options, onProgress: (progress: ManualPerformanceProgress) => void) => {
+      onProgress({ selected: 1, completed: 0, skipped: 0, documentReads: 8, status: "Reading synthetic telemetry" });
+      return pending.promise;
+    });
+    await render();
+    const estimate = q("experimental-current-estimate")!.textContent;
+    const estimateCalls = h.estimates.length;
+    const view = await openAnalysis();
+    await click(analysisButton("Update Performance")); await click(readiness());
+    await click(analysisButton("Analyze 1 selected run"));
+    const progress = view.querySelector('[role="status"][tabindex="-1"]')!;
+    expect(progress.textContent).toContain("Reading synthetic telemetry");
+    expect(progress.getAttribute("aria-live")).toBe("polite");
+    expect(document.activeElement).toBe(progress);
+    const close = view.querySelector<HTMLButtonElement>('[aria-label="Close performance analysis"]')!;
+    expect(close.getAttribute("aria-disabled")).toBe("true");
+    expect(document.getElementById(close.getAttribute("aria-describedby")!)?.textContent).toContain("Analysis is running");
+    await click(close); await key("Escape"); await click(q("performance-analysis-backdrop")!);
+    expect(analysisDialog()).toBe(view);
+    expect(h.run).toHaveBeenCalledOnce();
+    await act(async () => pending.reject(new Error("Synthetic budget exhausted")));
+    expect(view.contains(progress)).toBe(false);
+    expect(document.activeElement).toBe(view.querySelector('[role="alert"]'));
+    expect(view.textContent).toContain("Synthetic budget exhausted");
+    expect(view.textContent).toContain("The previous saved analysis is retained");
+    expect(close.hasAttribute("aria-disabled")).toBe(false);
+
+    const next = structuredClone(saved);
+    next.revision = 2; next.snapshotId = "d".repeat(64); next.publicationDigest = "e".repeat(64);
+    next.payload.calculationCompletedAt = ASSESSMENT_NOW;
+    next.payload.evidenceAsOf = ASSESSMENT_NOW;
+    next.payload.result.asOf = ASSESSMENT_NOW;
+    next.featureRevisions.push({ workoutId: "new", revision: 1, featureDigest: "f".repeat(64) });
+    h.run.mockResolvedValueOnce({ current: next, snapshotCreated: true, documentReads: 12, processedWorkoutIds: ["new"], skippedWorkoutIds: [] });
+    await click(analysisButton("Analyze 1 selected run"));
+    expect(document.activeElement?.getAttribute("role")).toBe("status");
+    expect(document.activeElement?.textContent).toContain("Performance analysis saved.");
+    expect(q("performance-evidence-notice")).toBeNull();
+    expect(q("experimental-current-estimate")!.textContent).toBe(estimate);
+    expect(h.estimates).toHaveLength(estimateCalls);
+    await key("Escape"); await openAnalysis();
+    expect(analysisPanel()!.querySelector(`time[datetime="${ASSESSMENT_NOW}"]`)).toBeTruthy();
+    expect(h.load).toHaveBeenCalledOnce();
+  });
+
+  it("discards a pending publication after authenticated session replacement", async () => {
+    const pending = deferred<ManualPerformanceUpdateResult>();
+    h.run.mockReturnValueOnce(pending.promise);
+    await render(); await openAnalysis();
+    await click(analysisButton("Update Performance")); await click(readiness()); await click(analysisButton("Analyze 1 selected run"));
+    h.user = { ...h.user, uid: "replacement" }; h.epoch++;
+    h.load.mockResolvedValue({ current: null, documentsRead: 1 });
+    await render();
+    expect(analysisDialog()).toBeNull();
+    await openAnalysis();
+    const old = { ...saved, revision: 2 };
+    await act(async () => pending.resolve({ current: old, snapshotCreated: true, documentReads: 12, processedWorkoutIds: ["new"], skippedWorkoutIds: [] }));
+    expect(analysisPanel()!.textContent).toContain("No saved performance analysis.");
+    expect(analysisPanel()!.querySelector("time")).toBeNull();
+    expect(analysisPanel()!.textContent).not.toContain("Performance analysis saved.");
+    expect(h.load).toHaveBeenCalledTimes(2);
   });
 });

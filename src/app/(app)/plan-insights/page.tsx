@@ -5,6 +5,7 @@ import { Target, TrendingUp, Calendar, AlertTriangle, Shield, Layers, BotMessage
 import { usePathname, useRouter } from "next/navigation";
 
 import { PlanInsightsSkeleton } from "./PlanInsightsSkeleton";
+import { PlanPerformanceActions } from "./PlanPerformanceActions";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { MetricBadge } from "@/components/ui/MetricBadge";
 import { useAuth } from "@/hooks/useAuth";
@@ -197,6 +198,15 @@ function PredictionCard({ label, distanceMiles, fit, targetPace }: PredictionCar
 }
 
 // ─── Page ────────────────────────────────────────────────────────────────────
+
+function CurrentPerformanceWithoutEstimate() {
+  return <section className="min-w-0 space-y-3 rounded-2xl border border-border bg-card p-4 sm:p-5">
+    <h2 className="text-lg font-bold text-textPrimary">Current Performance</h2>
+    <p className="text-sm text-textSecondary">The experimental half-marathon estimate is unavailable.</p>
+    <PerformanceEvidenceNotice />
+    <PlanPerformanceActions />
+  </section>;
+}
 
 export default function PlanInsightsPage() {
   const racePerformanceEnabled = isRacePerformanceDisplayEnabled();
@@ -923,10 +933,11 @@ export default function PlanInsightsPage() {
 
   if (!racePerformanceEnabled && plansResolution === "error") {
     return (
-      <div className="p-6 max-w-5xl mx-auto">
+      <div className="p-6 max-w-5xl mx-auto space-y-6">
         <p className="text-sm text-danger" role="alert">
           Plan insights are unavailable because plans could not be loaded.
         </p>
+        <CurrentPerformanceWithoutEstimate />
       </div>
     );
   }
@@ -1002,10 +1013,11 @@ export default function PlanInsightsPage() {
       )}
 
       {/* ── Race Predictions ─────────────────────────────── */}
-      {racePerformanceEnabled && (
+      {racePerformanceEnabled ? (
         <RacePerformancePanel
           evidenceNotice={<PerformanceEvidenceNotice />}
           evidenceDetails={<PerformanceEvidenceStatus detailed />}
+          renderActions={estimateDetails => <PlanPerformanceActions estimateDetails={estimateDetails} />}
           races={races}
           workouts={rawWorkouts}
           overrides={overrides}
@@ -1018,7 +1030,7 @@ export default function PlanInsightsPage() {
             plans: { hasLoaded: sourceHasLoaded.plans, resolution: plansResolution },
           }}
         />
-      )}
+      ) : <CurrentPerformanceWithoutEstimate />}
       {!racePerformanceEnabled && activeRace && (
         <>
           <SectionHeader icon={Target} title="Race Predictions" />
