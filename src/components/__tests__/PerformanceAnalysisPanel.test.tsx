@@ -120,7 +120,7 @@ describe("manual PerformanceAnalysisPanel", () => {
     expect(text()).toContain("Last calculated:"); expect(text()).toContain("2:11:11"); expect(text()).toContain("Sep 20, 2026");
     expect(text()).toContain("Official timing unverified"); expect(text()).toContain("Measured aerobic running");
     expect(text()).toContain("No device VO₂ max measurements"); expect(text()).toContain("10.0 miles");
-    expect(text()).toContain("Current estimated half-marathon time: Unavailable"); expect(text()).toContain("validated numerical race prediction");
+    expect(text()).toContain("Validated half-marathon capability is unavailable"); expect(text()).toContain("calculates the experimental half-marathon estimate separately");
     expect(text()).toContain("Workouts: partial"); expect(text()).not.toMatch(/weekly reminder|stale|update due/i);
     await act(async () => root.render(<Harness />));
     expect(h.load).toHaveBeenCalledOnce(); expect(h.run).not.toHaveBeenCalled();

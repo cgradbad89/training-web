@@ -25,7 +25,7 @@ vi.mock("@/utils/experimentalCurrentPerformance", async original => {
     h.estimator(...args); return actual.estimateCurrentHalfMarathon(...args);
   } };
 });
-vi.mock("next/navigation", () => ({ usePathname: () => "/plan-insights", useRouter: () => ({ push: vi.fn() }) }));
+vi.mock("next/navigation", () => ({ useSearchParams: () => null, usePathname: () => "/plan-insights", useRouter: () => ({ push: vi.fn() }) }));
 vi.mock("next/dynamic", () => ({ default: () => () => null }));
 vi.mock("@/services/fastFinishSplits", () => ({ hydrateFastFinishSplits: vi.fn(() => { throw new Error("No telemetry"); }) }));
 

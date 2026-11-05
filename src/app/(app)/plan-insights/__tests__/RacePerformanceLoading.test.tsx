@@ -14,7 +14,7 @@ vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({
   user: { uid: h.uid }, sessionEpoch: h.epoch,
   isSessionCurrent: (epoch: number) => h.valid && epoch === h.epoch,
 }) }));
-vi.mock("next/navigation", () => ({ usePathname: () => h.pathname, useRouter: () => ({ push: vi.fn() }) }));
+vi.mock("next/navigation", () => ({ useSearchParams: () => null, usePathname: () => h.pathname, useRouter: () => ({ push: vi.fn() }) }));
 vi.mock("next/dynamic", () => ({ default: () => () => null }));
 vi.mock("@/components/insights/PerformanceEvidenceStatus", () => ({ PerformanceEvidenceStatus: () => null, PerformanceEvidenceNotice: () => null }));
 vi.mock("@/services/healthWorkouts", () => ({ fetchHealthWorkouts: h.workouts, fetchHealthWorkoutsInRange: h.delta }));

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePerformanceEvidence } from "@/contexts/PerformanceEvidenceContext";
+import { PERFORMANCE_ANALYSIS_HREF } from "@/lib/performanceAnalysisNavigation";
 import { PERFORMANCE_RECENT_INCOMPLETE_DAYS } from "@/utils/performanceFreshness";
 import type { PerformanceFlaggedRecord, PerformanceFreshness } from "@/types/performanceFreshness";
 
@@ -19,7 +20,7 @@ function statusMessage(freshness: PerformanceFreshness): string {
   const { status, newWorkoutIds, newlyVisibleWorkoutIds, changedWorkoutIds, incompleteWorkoutIds } = freshness;
   const count = new Set([...newWorkoutIds, ...newlyVisibleWorkoutIds, ...changedWorkoutIds]).size;
   return status === "checking" ? "Checking saved performance evidence and loaded workout records…"
-    : status === "no_saved_analysis" ? "No saved detailed performance analysis. Personal Insights lets you review runs before processing."
+    : status === "no_saved_analysis" ? "No saved detailed performance analysis. Run review and processing require separate actions."
     : status === "update_available" ? `${count} loaded ${count === 1 ? "run warrants" : "runs warrant"} review. The dated detailed analysis may need updating.`
     : status === "incomplete_sync" ? `${plural(incompleteWorkoutIds.length, "recent run reports", "recent runs report")} a partial route or unfinished upload. ${incompleteWorkoutIds.length === 1 ? "It" : "They"} may still be syncing; review after the upload completes.`
     : status === "unable_to_verify" ? "Unable to verify all performance updates from the available records. The saved analysis remains dated."
@@ -58,12 +59,21 @@ export function PerformanceEvidenceNotice() {
   const text = state.status === "error" ? "Saved performance evidence could not be loaded."
     : status === "update_available" || status === "incomplete_sync" ? statusMessage(freshness) : null;
   if (!text) return null;
-  return <p role="status" data-testid="performance-evidence-notice" data-status={status}
-    className="min-w-0 rounded-lg bg-surface px-3 py-2 text-xs text-textSecondary [overflow-wrap:anywhere]">{text} See Estimate Details.</p>;
+  return <div data-testid="performance-evidence-notice" data-status={status}
+    className="min-w-0 rounded-lg bg-surface px-3 py-2 text-xs text-textSecondary [overflow-wrap:anywhere]">
+    <span role="status">{text}</span>{" "}
+    <PerformanceAnalysisLink isUpdate={status === "update_available"} />
+  </div>;
+}
+
+function PerformanceAnalysisLink({ isUpdate }: { isUpdate: boolean }) {
+  return <Link className="font-semibold text-primary underline" href={PERFORMANCE_ANALYSIS_HREF} prefetch={false} scroll={false}>
+    {isUpdate ? "Review Performance Updates" : "Open Performance Analysis"}
+  </Link>;
 }
 
 /** Shared inline language. Mounting reads one saved document, never opens review. */
-export function PerformanceEvidenceStatus({ personal = false, detailed = false }: { personal?: boolean; detailed?: boolean }) {
+export function PerformanceEvidenceStatus({ inAnalysis = false, detailed = false }: { inAnalysis?: boolean; detailed?: boolean }) {
   const { freshness, state, evidence, retry } = usePerformanceEvidence();
   const { status, newWorkoutIds, newlyVisibleWorkoutIds, changedWorkoutIds, incompleteWorkoutIds,
     historicalIncompleteWorkoutIds, uncertainWorkoutIds } = freshness;
@@ -106,8 +116,8 @@ export function PerformanceEvidenceStatus({ personal = false, detailed = false }
         freshness={freshness} timeZone={timeZone} note={membership} />
     </div>}
     {detailed && <p className="text-xs" data-testid="evidence-estimate-separation">Detailed manual measurements do not currently alter the experimental half-marathon estimate. Saving or updating them leaves the estimate unchanged.</p>}
-    {!personal && status !== "checking" && (detailed || status !== "no_detected_changes") && <Link className="inline-block max-w-full font-semibold text-primary underline" href="/personal-insights#performance-analysis">{status === "update_available" ? "Review Performance Updates in Personal Insights" : "Review detailed evidence in Personal Insights"}</Link>}
-    {personal && status === "update_available" && <p className="text-xs">Use Update Performance to open the bounded review. GPS/HR processing starts only after you select runs and confirm Analyze.</p>}
+    {!inAnalysis && status !== "checking" && (detailed || status !== "no_detected_changes") && <PerformanceAnalysisLink isUpdate={status === "update_available"} />}
+    {inAnalysis && status === "update_available" && <p className="text-xs">Use Update Performance to open the bounded review. GPS/HR processing starts only after you select runs and confirm Analyze.</p>}
     <details className="text-xs"><summary className="cursor-pointer">Freshness limits</summary><ul className="mt-2 list-disc space-y-1 pl-4">{freshness.limitations.map(limit => <li key={limit}>{limit}</li>)}</ul></details>
   </aside>;
 }

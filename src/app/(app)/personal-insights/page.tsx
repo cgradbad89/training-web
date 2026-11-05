@@ -22,6 +22,7 @@ import { type RunAnalysisWorkout } from "@/lib/runAnalysisTrend";
 import { MetricBadge } from "@/components/ui/MetricBadge";
 import { useAuth } from "@/hooks/useAuth";
 import { useAppData } from "@/contexts/AppDataContext";
+import { PERFORMANCE_ANALYSIS_HREF } from "@/lib/performanceAnalysisNavigation";
 import {
   buildRunTitleMap,
   findActiveRunningPlan,
@@ -173,10 +174,6 @@ const PaceTrendChart = dynamic(
 const WeatherImpactSection = dynamic(
   () => import("./WeatherImpactSection").then((m) => m.WeatherImpactSection),
   { ssr: false, loading: () => <ChartSkeleton height={340} /> },
-);
-const PerformanceAnalysisPanel = dynamic(
-  () => import("@/components/PerformanceAnalysisPanel").then((m) => m.PerformanceAnalysisPanel),
-  { ssr: false },
 );
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -1271,6 +1268,17 @@ export default function PersonalInsightsPage() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  useEffect(() => {
+    function forwardLegacyPerformanceLink() {
+      if (window.location.hash === "#performance-analysis") {
+        window.removeEventListener("hashchange", forwardLegacyPerformanceLink);
+        router.replace(PERFORMANCE_ANALYSIS_HREF);
+      }
+    }
+    window.addEventListener("hashchange", forwardLegacyPerformanceLink);
+    forwardLegacyPerformanceLink();
+    return () => window.removeEventListener("hashchange", forwardLegacyPerformanceLink);
+  }, [router]);
   useClientPagePerformance("/personal-insights");
   useClientPerformanceMark(
     "training:personal-insights:shell-visible",
@@ -1416,8 +1424,6 @@ export default function PersonalInsightsPage() {
           Ask AI Coach
         </button>
       </div>
-
-      <PerformanceAnalysisPanel />
 
       <InsightsTabsBar value={activeTab} onChange={selectTab} />
 

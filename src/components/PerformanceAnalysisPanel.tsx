@@ -18,8 +18,8 @@ import {
 } from "@/services/manualPerformance";
 import type { PerformanceAnalysisResult } from "@/types/performanceAnalysis";
 
-const ACTION_CLASS = "rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50";
-const SECONDARY_CLASS = "rounded-xl border border-border px-4 py-2 text-sm font-semibold text-textPrimary disabled:opacity-50";
+const ACTION_CLASS = "min-h-11 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50";
+const SECONDARY_CLASS = "min-h-11 rounded-xl border border-border px-4 py-2 text-sm font-semibold text-textPrimary disabled:opacity-50";
 const DEFAULT_READ_BUDGET = 5000;
 const MAX_READ_BUDGET = 25000;
 
@@ -56,11 +56,11 @@ function SavedPerformanceDetails({ current }: { current: StoredPerformanceCurren
     <div className="space-y-4">
       <p className="text-sm text-textSecondary">
         Last calculated: <time dateTime={current.payload.calculationCompletedAt}>{dateLabel(current.payload.calculationCompletedAt, result.timeZone, true)}</time>
-        {" · "}Evidence through {dateLabel(result.asOf, result.timeZone, true)}
+        {" · "}Evidence through <time dateTime={result.asOf}>{dateLabel(result.asOf, result.timeZone, true)}</time>
       </p>
       <div className="grid gap-4 sm:grid-cols-2">
         <section className="rounded-xl bg-surface p-4">
-          <h3 className="font-semibold text-textPrimary">Demonstrated half-marathon performance</h3>
+          <h4 className="font-semibold text-textPrimary">Demonstrated half-marathon performance</h4>
           {races.length ? races.map(race => (
             <p key={race.raceId} className="mt-2 text-sm text-textSecondary">
               <strong className="text-textPrimary">{durationLabel(race.durationSeconds)}</strong> on {dateLabel(race.raceDate)}
@@ -69,7 +69,7 @@ function SavedPerformanceDetails({ current }: { current: StoredPerformanceCurren
           )) : <p className="mt-2 text-sm text-textSecondary">No qualifying linked half-marathon result in the saved evidence.</p>}
         </section>
         <section className="rounded-xl bg-surface p-4">
-          <h3 className="font-semibold text-textPrimary">Measured aerobic running</h3>
+          <h4 className="font-semibold text-textPrimary">Measured aerobic running</h4>
           <p className="mt-2 text-sm text-textSecondary">{result.aerobic.independentWorkoutCount} independent workouts. {result.aerobic.status === "insufficient" ? "Insufficient comparable evidence for a trend." : "Descriptive pace at observed heart rates."}</p>
           <p className="mt-2 text-xs text-textSecondary">Current: {dateLabel(result.aerobic.currentWindow.startDate)}–{dateLabel(result.aerobic.currentWindow.endDate)}. Reference: {dateLabel(result.aerobic.referenceWindow.startDate)}–{dateLabel(result.aerobic.referenceWindow.endDate)}.</p>
           {result.aerobic.bands.map(band => (
@@ -80,7 +80,7 @@ function SavedPerformanceDetails({ current }: { current: StoredPerformanceCurren
           ))}
         </section>
         <section className="rounded-xl bg-surface p-4">
-          <h3 className="font-semibold text-textPrimary">Device VO₂ max trend</h3>
+          <h4 className="font-semibold text-textPrimary">Device VO₂ max trend</h4>
           <p className="mt-2 text-sm text-textSecondary">{result.deviceVo2.latest
             ? `${result.deviceVo2.latest.value.toFixed(1)} ${result.deviceVo2.latest.unit === "unknown" ? "(unit unverified)" : result.deviceVo2.latest.unit} on ${dateLabel(result.deviceVo2.latest.date)} · ${result.deviceVo2.latest.sourceName ?? "Device source unverified"}`
             : "No device VO₂ max measurements in the saved evidence."}</p>
@@ -91,17 +91,17 @@ function SavedPerformanceDetails({ current }: { current: StoredPerformanceCurren
           <p className="mt-2 text-xs text-textSecondary">Device estimates may share pace/HR inputs; they are not measured VDOT or independent race validation.</p>
         </section>
         <section className="rounded-xl bg-surface p-4">
-          <h3 className="font-semibold text-textPrimary">Endurance preparation</h3>
+          <h4 className="font-semibold text-textPrimary">Endurance preparation</h4>
           <p className="mt-2 text-sm text-textSecondary">{dateLabel(result.preparation.recentWindow.startDate)}–{dateLabel(result.preparation.recentWindow.endDate)}: {result.preparation.recent.runCount ?? "Unknown"} runs, {result.preparation.recent.meters === null ? "distance unavailable" : `${(result.preparation.recent.meters / 1609.344).toFixed(1)} miles`}.</p>
           <p className="mt-2 text-sm text-textSecondary">Longest recent run: {result.preparation.longestRecentRun ? `${(result.preparation.longestRecentRun.meters / 1609.344).toFixed(1)} miles on ${dateLabel(result.preparation.longestRecentRun.date)}` : "Unavailable"}. Long runs: {result.preparation.longRunCount ?? "Unknown"}.</p>
         </section>
       </div>
       <section className="rounded-xl border border-border p-4">
-        <h3 className="font-semibold text-textPrimary">Current estimated half-marathon time: Unavailable</h3>
-        <p className="mt-1 text-sm text-textSecondary">The manual-performance-v1 model reports measured running performance. A validated numerical race prediction is not yet available.</p>
+        <h4 className="font-semibold text-textPrimary">Validated half-marathon capability is unavailable</h4>
+        <p className="mt-1 text-sm text-textSecondary">The manual-performance-v1 model reports measured running performance. Plan Insights calculates the experimental half-marathon estimate separately.</p>
       </section>
       <section className="text-sm text-textSecondary">
-        <h3 className="font-semibold text-textPrimary">Evidence completeness</h3>
+        <h4 className="font-semibold text-textPrimary">Evidence completeness</h4>
         <p className="mt-1">Workouts: {result.completeness.coverage.workouts} · Telemetry: {result.completeness.coverage.telemetry} · Device VO₂: {result.completeness.coverage.deviceVo2}</p>
         <p>{result.completeness.acceptedFeatureCount} accepted workout features / {result.completeness.effectiveWorkoutCount} effective runs. {result.completeness.unresolvedWorkoutIds.length} unresolved; {result.completeness.rejectedWorkoutIds.length} rejected.</p>
         {limitations.length > 0 && <details className="mt-2"><summary className="cursor-pointer font-medium">Evidence limitations ({limitations.length})</summary><ul className="mt-2 list-disc space-y-1 pl-5">{limitations.map(limitation => <li key={limitation}>{limitation}</li>)}</ul></details>}
@@ -231,18 +231,18 @@ function SessionPerformancePanel({ auth, user }: { auth: AuthState; user: NonNul
   const busy = action !== "idle" || shared.state.publication === "processing";
   const validBudget = Number.isSafeInteger(Number(readBudget)) && Number(readBudget) >= 1 && Number(readBudget) <= MAX_READ_BUDGET;
   return (
-    <section id="performance-analysis" aria-labelledby="performance-analysis-title" className="min-w-0 scroll-mt-4 [overflow-wrap:anywhere] space-y-5 rounded-2xl border border-border bg-card p-5 shadow-sm">
+    <section id="performance-analysis" aria-labelledby="performance-analysis-title" className="min-w-0 space-y-5 [overflow-wrap:anywhere]">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 id="performance-analysis-title" className="text-lg font-bold text-textPrimary">Performance Analysis</h2>
+        <h3 id="performance-analysis-title" className="text-base font-bold text-textPrimary">Saved Performance Analysis</h3>
         <button ref={updateButton} aria-expanded={review !== null} aria-controls={review ? "performance-review" : undefined} aria-busy={action === "reviewing"} type="button" className={ACTION_CLASS} disabled={!gate.enabled || busy || review !== null || loadingSaved} onClick={() => void openReview()} aria-describedby={!gate.enabled ? "performance-gate-reason" : undefined}>{action === "reviewing" ? "Loading runs…" : "Update Performance"}</button>
       </div>
-      <PerformanceEvidenceStatus personal />
+      <PerformanceEvidenceStatus inAnalysis />
       {!gate.enabled && <p id="performance-gate-reason" className="rounded-xl bg-surface p-3 text-sm text-textSecondary">{gate.reason}</p>}
       {loadingSaved ? <p role="status" className="text-sm text-textSecondary">Loading saved performance analysis…</p> : saved ? <SavedPerformanceDetails current={saved} /> : <p className="text-sm text-textSecondary">{savedLoadFailed ? "The saved performance analysis could not be retrieved." : `No saved performance analysis.${gate.enabled ? " Use Update Performance to review runs and calculate when you are ready." : ""}`}</p>}
       {error && <p ref={errorMessage} tabIndex={-1} role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-700 dark:text-red-300">{error}</p>}
       {outcome && <div ref={completion} tabIndex={-1} role="status" className="rounded-xl bg-primary/10 p-4 text-sm text-textPrimary"><p>Performance analysis saved. {outcome.snapshotCreated ? "A new dated historical snapshot was created." : "The evidence and result were unchanged; no duplicate historical snapshot was created."}</p><p className="mt-1 break-words">Processed workouts: {outcome.processedWorkoutIds.join(", ") || "None"}. Skipped or rejected: {outcome.skippedWorkoutIds.join(", ") || "None"}. Firestore document reads: {outcome.documentReads.toLocaleString()}.</p><p className="mt-1">This describes the selected extraction and saved evidence; it does not certify that all historical telemetry is current.</p></div>}
       {review && <section id="performance-review" aria-labelledby="performance-review-title" className="space-y-4 border-t border-border pt-5">
-        <h3 ref={reviewHeading} tabIndex={-1} id="performance-review-title" className="font-semibold text-textPrimary">Review runs</h3>
+        <h4 ref={reviewHeading} tabIndex={-1} id="performance-review-title" className="font-semibold text-textPrimary">Review runs</h4>
         <p className="text-sm text-textSecondary">Select up to {MANUAL_PERFORMANCE_SELECTION_LIMIT} runs to analyze. Selecting a previously analyzed run forces fresh GPS/HR retrieval, even when its parent record appears unchanged. Only up to three new runs are preselected; historical coverage may remain partial.</p>
         {!review.candidates.some(candidate => candidate.status === "new") && <p className="text-sm text-textSecondary">No newly recorded runs were found. Select an older run to reprocess its evidence.</p>}
         {review.limitations.length > 0 && <ul className="list-disc space-y-1 pl-5 text-sm text-textSecondary">{review.limitations.map(limitation => <li key={limitation}>{limitation}</li>)}</ul>}
@@ -265,7 +265,7 @@ function SessionPerformancePanel({ auth, user }: { auth: AuthState; user: NonNul
         <label className="flex items-start gap-2 text-sm text-textPrimary"><input type="checkbox" checked={ready} disabled={busy} onChange={event => setReady(event.target.checked)} className="mt-1" /><span>My selected runs have finished syncing. I understand this confirmation does not prove complete GPS/HR data.</span></label>
         <div className="flex flex-wrap items-center gap-3"><button type="button" className={ACTION_CLASS} disabled={busy || !ready || !selected.size || !validBudget} onClick={() => void analyzeSelected()}>{action === "processing" ? "Analyzing…" : `Analyze ${selected.size} selected ${selected.size === 1 ? "run" : "runs"}`}</button><button type="button" className={SECONDARY_CLASS} disabled={busy} onClick={() => { attention.current = "trigger"; setReview(null); setError(null); setProgress(null); }}>Cancel</button></div>
       </section>}
-      {action === "processing" && progress && <div ref={progressMessage} tabIndex={-1} role="status" aria-live="polite" className="sticky bottom-[calc(5rem+env(safe-area-inset-bottom))] rounded-xl bg-surface p-3 text-sm text-textSecondary"><p>{progress.status}</p><p>Selected: {progress.selected} · Completed: {progress.completed} · Skipped / rejected: {progress.skipped} · Firestore document reads: {progress.documentReads.toLocaleString()}</p></div>}
+      {action === "processing" && progress && <div ref={progressMessage} tabIndex={-1} role="status" aria-live="polite" className="sticky bottom-0 z-10 rounded-xl border border-border bg-surface p-3 text-sm text-textSecondary shadow-sm"><p>{progress.status}</p><p>Selected: {progress.selected} · Completed: {progress.completed} · Skipped / rejected: {progress.skipped} · Firestore document reads: {progress.documentReads.toLocaleString()}</p></div>}
     </section>
   );
 }

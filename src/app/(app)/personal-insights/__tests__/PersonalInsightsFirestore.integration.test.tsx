@@ -25,10 +25,11 @@ const h = vi.hoisted(() => ({
   operations: [] as Operation[],
   parents: [] as Array<{ id: string; data: Record<string, unknown> }>,
   getToken: vi.fn(),
+  router: { push: vi.fn(), replace: vi.fn() },
 }));
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: vi.fn() }),
+  useRouter: () => h.router,
   usePathname: () => "/personal-insights",
   useSearchParams: () => h.params,
 }));
@@ -142,7 +143,7 @@ async function mount() {
   ); });
   // The page intentionally leaves its initial skeleton on a zero-delay timer.
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
-  await vi.waitFor(() => expect(container.textContent).toContain("Performance Analysis"));
+  await vi.waitFor(() => expect(container.querySelector("h1")?.textContent).toBe("Personal Insights"));
 }
 async function click(label: string) {
   const button = [...container.querySelectorAll("button")].find(candidate => candidate.textContent === label);
@@ -170,6 +171,8 @@ beforeEach(() => {
   vi.useRealTimers();
   vi.setSystemTime(new Date("2026-10-21T16:00:00Z"));
   h.operations = [];
+  h.router.replace.mockClear();
+  window.history.replaceState(null, "", "/personal-insights");
   h.auth = { user: { uid: "synthetic-owner", email: "folstromjohn@gmail.com", emailVerified: true } as AuthState["user"],
     loading: false, authorizationStatus: "authorized", authorizationError: null, sessionEpoch: 1,
     isSessionCurrent: epoch => epoch === h.auth.sessionEpoch && h.auth.user !== null };
@@ -207,16 +210,16 @@ describe("Personal Insights real page / aggregate / manual service Firestore bou
           configure(tab, enabled, cache); await mount();
           expectNoTelemetry();
           expect(manual.prepareManualPerformanceReview).not.toHaveBeenCalled();
-          const updateButton = [...container.querySelectorAll("button")].find(button => button.textContent === "Update Performance")!;
-          expect(updateButton.disabled).toBe(!enabled);
-          expect(operations("/performanceState/current")).toHaveLength(1);
+          expect(container.querySelector("#performance-analysis")).toBeNull();
+          expect(container.textContent).not.toContain("Update Performance");
+          expect(operations("/performanceState/current")).toHaveLength(0);
           if (tab === "workouts") {
-            expect(counts()).toEqual({ serverDocuments: 1, queryTargets: 0, returnedQueryDocuments: 0, writes: 0 });
+            expect(counts()).toEqual({ serverDocuments: 0, queryTargets: 0, returnedQueryDocuments: 0, writes: 0 });
             return;
           }
           const mainStale = cache === "main-stale" || cache === "missing";
           const vo2Stale = cache === "vo2-stale" || cache === "missing";
-          expect(counts()).toEqual({ serverDocuments: 2,
+          expect(counts()).toEqual({ serverDocuments: 1,
             queryTargets: 1 + (mainStale ? 2 : 0) + (vo2Stale ? 1 : 0),
             returnedQueryDocuments: 2 + (mainStale ? 4 : 0) + (vo2Stale ? 3 : 0),
             writes: cache === "fresh" ? 0 : 1 });
@@ -229,15 +232,14 @@ describe("Personal Insights real page / aggregate / manual service Firestore bou
     }
   }
 
-  it("opens the actual bounded review only on Update Performance, without acquiring telemetry", async () => {
-    configure("fitness", true, "fresh"); await mount(); h.operations = [];
-    await click("Update Performance");
-    await vi.waitFor(() => expect(container.textContent).toContain("Recorded runs (3)"));
-    expect(manual.prepareManualPerformanceReview).toHaveBeenCalledOnce(); expectNoTelemetry();
-    expect(operations("/healthWorkouts")[0].constraints).toContainEqual({ kind: "limit", args: [300] });
-    expect(counts()).toEqual({ serverDocuments: 4, queryTargets: 2, returnedQueryDocuments: 3, writes: 0 });
-    const analyze = [...container.querySelectorAll("button")].find(button => button.textContent === "Analyze 3 selected runs")!;
-    expect(analyze.disabled).toBe(true);
+  it("forwards a legacy Performance Analysis bookmark without mounting the former panel", async () => {
+    window.history.replaceState(null, "", "/personal-insights#performance-analysis");
+    configure("fitness", true, "fresh"); await mount();
+    expect(h.router.replace).toHaveBeenCalledExactlyOnceWith("/plan-insights?performance-analysis=1");
+    expect(container.querySelector("#performance-analysis")).toBeNull();
+    expect(operations("/performanceState/current")).toHaveLength(0);
+    expect(manual.prepareManualPerformanceReview).not.toHaveBeenCalled();
+    expectNoTelemetry();
   });
 
   it("caps main-stale mile-split acquisition at forty recent runs and never falls back to routes", async () => {
@@ -247,7 +249,7 @@ describe("Personal Insights real page / aggregate / manual service Firestore bou
     configure("fitness", false, "missing"); await mount();
     expectNoTelemetry();
     expect(operations("/mileSplits")).toHaveLength(40);
-    expect(counts()).toEqual({ serverDocuments: 2, queryTargets: 42, returnedQueryDocuments: 85, writes: 1 });
+    expect(counts()).toEqual({ serverDocuments: 1, queryTargets: 42, returnedQueryDocuments: 85, writes: 1 });
   });
 
   it("reuses a newly valid aggregate across tab changes and a fresh page mount", async () => {

@@ -8,9 +8,9 @@ its normal Git-triggered production deployment was verified READY.
 
 `PerformanceEvidenceProvider` lives inside the authenticated layout and AppData
 owner, keyed by authorized UID and session epoch. Its in-memory store is dormant
-until an Insights consumer mounts. The approved cold-entry policy intentionally
-allows **one saved-state document lookup**, including Plan-first sessions.
-Personal no longer owns a separate display lookup.
+until an evidence consumer mounts. Cold Plan Insights entry intentionally allows
+**one saved-state document lookup**. Personal Insights has no manual-evidence
+consumer since the panel moved to Plan Insights.
 
 The provider uses the existing `capturePerformanceSession` and
 `getSavedPerformance`: verified owner/token/session checks, server-only lookup of
@@ -97,12 +97,11 @@ coverage remains partial even after a successful lookup.
 
 ## Workflow and numerical integrity
 
-`PerformanceEvidenceStatus` supplies identical status/count terminology on both
-pages. Plan (since 2026-11-05) shows it inside the Estimate Details modal and a
-one-line tile notice; it links to the Personal panel anchor; navigation never starts review.
-There are no modal prompts. The dated result stays visible while updates are
-pending. PR #46 deliberate-action focus, scroll, containment, Cancel, processing,
-error and completion behavior is preserved.
+`PerformanceEvidenceStatus` supplies the status and counts for the Plan Insights
+tile and dialogs. Evidence links open the Performance Analysis dialog at
+`/plan-insights?performance-analysis=1`. Navigation opens the saved view. The
+dated result stays visible during updates. PR #46 deliberate-action focus,
+scroll, Cancel, progress, error and completion behavior is preserved.
 
 Review, run selection (maximum 20), sync confirmation, read-budget confirmation
 (default 5,000, UI maximum 25,000) and Analyze remain explicit. Existing review,
@@ -137,8 +136,10 @@ Measured **application-level calls**, not billed-read measurements:
 | Action | Saved-state lookup calls | New feature/GPS/HR/split reads | New writes |
 | --- | ---: | ---: | ---: |
 | Non-Insights entry before a consumer | 0 | 0 | 0 |
-| Cold entry via either page, saved or absent | 1 | 0 | 0 |
+| Cold Plan Insights entry, saved or absent | 1 | 0 | 0 |
+| Cold Personal Insights entry after the relocation | 0 | 0 | 0 |
 | Concurrent consumers/warm navigation | 0 additional | 0 | 0 |
+| Open, close or reopen either Plan dialog | 0 additional | 0 | 0 |
 | Metadata reassessment after AppData change | 0 | 0 | 0 |
 | Explicit failed-load retry | 1 attempted call | 0 | 0 |
 | Manual result handoff | 0 additional | 0 additional | 0 additional |
@@ -264,3 +265,11 @@ categorized dated runs, limitations, and the estimate-separation statement. The
 panel receives these as slots, so it still imports no services. The tile notice
 keeps the approved Plan cold-entry lookup (one). Opening, closing or reopening the
 modal adds zero lookups and no feature, GPS, HR, split reads or writes.
+
+**Performance Analysis relocation.** The Current Performance tile also opens the
+full `PerformanceAnalysisPanel` in a separate dialog, including when estimate
+inputs are unavailable. The former Personal Insights anchor forwards to the
+dialog. The dialog keeps its close control, Escape and backdrop dismissal
+disabled while the authenticated provider reports active processing. Route
+navigation retains the existing provider handoff and auth-epoch checks. Estimate
+Details keeps the experimental methodology and dated freshness context.
