@@ -69,7 +69,7 @@ No recurring job, paid service, bucket or credential is added.
 
 ## 8. Activation (requires owner approval; not done)
 
-Prerequisites: this PR deployed; March preflight shows `enrollment.pinned: "present"`. Then:
+Prerequisites: this PR deployed (done); March preflight shows `enrollment.pinned: "present"` (**confirmed 2026-11-06**, main `2eac31e8`, with `autoEnabled: false`). Then:
 
 1. Optionally set `HM_CAPTURE_TIME_ZONE` (otherwise `America/New_York`).
 2. Set `HM_CAPTURE_AUTO_ENROLL=true` in Vercel Production and redeploy.
