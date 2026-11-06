@@ -1,6 +1,6 @@
 import type { RacePerformanceEvidence } from "@/types/racePerformance";
 import type { WorkoutRaceResearchInput } from "@/types/workoutRaceResearch";
-import { CURRENT_HALF_POLICY, estimateCurrentHalfMarathon } from "@/utils/experimentalCurrentPerformance";
+import { CURRENT_HALF_POLICY, LEGACY_CURRENT_HALF_VERSION, estimateCurrentHalfMarathon, type CurrentHalfVersion } from "@/utils/experimentalCurrentPerformance";
 import { buildRaceEvidence, DEFAULT_RACE_PERFORMANCE_POLICY, HALF_MARATHON_METERS, researchRiegelSeconds, researchVdotSeconds } from "@/utils/racePerformance";
 import { performanceLocalDate } from "@/utils/performanceEvidence";
 import { selectResearchRuns } from "@/utils/workoutRaceResearch";
@@ -31,8 +31,17 @@ function prediction(seconds: number | null, reason: string, source: RacePerforma
   } };
 }
 
-export function runModels(input: WorkoutRaceResearchInput, coverageReasons: string[]) {
-  const selection = selectResearchRuns(input);
+export function modelVersionsFor(experimental: CurrentHalfVersion) {
+  return { ...MODEL_VERSIONS, experimental };
+}
+
+export function readCurrentHalfVersion(value: unknown): CurrentHalfVersion {
+  if (value === LEGACY_CURRENT_HALF_VERSION || value === CURRENT_HALF_POLICY.version) return value;
+  throw new TypeError("Checkpoint model-version mismatch");
+}
+
+export function runModels(input: WorkoutRaceResearchInput, coverageReasons: string[], version: CurrentHalfVersion) {
+  const selection = selectResearchRuns(input, version !== LEGACY_CURRENT_HALF_VERSION);
   const eligibleWorkoutIds = selection.runs.map(run => run.workout.workoutId).sort(compareKeys);
   const predictions = {} as Record<Method, Prediction>;
   if (coverageReasons.length) {
@@ -40,7 +49,7 @@ export function runModels(input: WorkoutRaceResearchInput, coverageReasons: stri
     return { predictions, eligibleWorkoutIds, workoutExclusions: selection.exclusions, attribution: null };
   }
 
-  const estimate = estimateCurrentHalfMarathon(input);
+  const estimate = estimateCurrentHalfMarathon(input, version);
   const available = estimate.finishMinutes !== null;
   predictions.experimental = prediction(available ? estimate.finishMinutes! * 60 : null, estimate.reason, estimate.anchor);
   predictions.same_anchor = prediction(available ? Math.round(estimate.baselineSeconds! / 60) * 60 : null,

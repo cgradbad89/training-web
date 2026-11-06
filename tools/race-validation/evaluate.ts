@@ -3,7 +3,7 @@ import {
   PROTOCOL, HORIZONS, checkpointKey, choice, compareKeys, date, instant, key, list, record,
   requireVersion, sha256, string, targetKey,
 } from "./evidence";
-import { METHODS, MODEL_VERSIONS, type Method } from "./models";
+import { METHODS, MODEL_VERSIONS, modelVersionsFor, readCurrentHalfVersion, type Method } from "./models";
 import { readOutcome, type Outcome } from "./outcome";
 
 const LARGE_ERROR_SECONDS = 300;
@@ -134,6 +134,7 @@ export function evaluateStudy(value: unknown, custodyCatalog?: unknown) {
   const captureKind = dataKind === "synthetic" ? "synthetic"
     : choice(request.captureKind, ["prospective_capture", "historical_capture"], "study.captureKind");
   const testFromDate = date(request.testFromDate, "study.testFromDate");
+  const requestedModel = request.modelVersion === undefined ? null : readCurrentHalfVersion(request.modelVersion);
   const custody = readCustody(custodyCatalog);
   const exclusions: { kind: "checkpoint" | "outcome"; ref: string; reason: string }[] = [];
   const trusted = (kind: ReceiptKind, digest: string, observedAt: string, cutoff?: string) => {
@@ -161,8 +162,14 @@ export function evaluateStudy(value: unknown, custodyCatalog?: unknown) {
     const historical = captureKind === "historical_capture";
     trusted(historical ? "historical_input" : "checkpoint",
       historical ? checkpoint.inputDigest : checkpoint.integrityDigest, checkpoint.capturedAt, checkpoint.cutoff);
+    if (requestedModel && checkpoint.modelVersions.experimental !== requestedModel) {
+      throw new TypeError("Checkpoint model version does not match the study");
+    }
     return checkpoint;
   });
+  const versions = new Set(admittedCheckpoints.map(row => row.modelVersions.experimental));
+  if (versions.size > 1) throw new TypeError("Multiple model versions supplied; select one study.modelVersion per comparison");
+  const modelVersions = modelVersionsFor(requestedModel ?? admittedCheckpoints[0]?.modelVersions.experimental ?? MODEL_VERSIONS.experimental);
   const admittedOutcomes = readRows("outcome", request.outcomes, row => {
     const outcome = readOutcome(row);
     if (outcome.target.subject !== subject || outcome.dataKind !== dataKind) {
@@ -193,7 +200,7 @@ export function evaluateStudy(value: unknown, custodyCatalog?: unknown) {
     return receipt ? [{ digest, ...receipt }] : [];
   }).sort((a, b) => compareKeys(a.digest, b.digest));
   return {
-    protocol: PROTOCOL, subject, dataKind, captureKind, testFromDate, modelVersions: MODEL_VERSIONS,
+    protocol: PROTOCOL, subject, dataKind, captureKind, testFromDate, modelVersions,
     predictionType: "current_capability_checkpoint",
     eligibleOutcomeCount: outcomes.length, largeErrorThresholdSeconds: LARGE_ERROR_SECONDS,
     summaries: SPLITS.flatMap(split => HORIZONS.map(horizon => ({

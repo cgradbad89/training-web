@@ -40,7 +40,7 @@ function signature(w: HealthWorkout) {
     hr: w.avgHeartRate, route: w.routeClusterId, climb: w.elevationGainM, weather: w.weather })));
 }
 
-export function selectResearchRuns(input: WorkoutRaceResearchInput) {
+export function selectResearchRuns(input: WorkoutRaceResearchInput, requireKnownSync = false) {
   const cutoff=Math.min(Date.parse(input.asOf),Date.parse(input.capturedAt));
   const exclusions: WorkoutRaceResearchResult["history"]["exclusions"]=[];
   const groups=new Map<string, HealthWorkout[]>();
@@ -61,7 +61,7 @@ export function selectResearchRuns(input: WorkoutRaceResearchInput) {
     const start=instant(w.startDate),end=instant(w.endDate),known=instant(w.syncedAt);
     if(start===null || end===null || end<=start) { reject("invalid_or_missing_completion_dates"); continue; }
     if(end>cutoff) { reject("not_completed_at_cutoff"); continue; }
-    if(known===null || known>cutoff) { reject("summary_availability_unknown_or_after_cutoff"); continue; }
+    if(known===null || (requireKnownSync && known<=0) || known>cutoff) { reject("summary_availability_unknown_or_after_cutoff"); continue; }
     if(!positive(w.durationSeconds)||!positive(w.distanceMiles)) { reject("missing_or_invalid_distance_or_duration"); continue; }
     const duplicateKey=canonicalizePerformanceValue([start,end,w.distanceMiles,w.durationSeconds]);
     if(seen.has(duplicateKey)) { reject(`repeated_activity_of_${seen.get(duplicateKey)}`); continue; }

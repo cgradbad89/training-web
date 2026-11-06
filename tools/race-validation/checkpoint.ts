@@ -1,4 +1,4 @@
-import { CURRENT_HALF_POLICY } from "@/utils/experimentalCurrentPerformance";
+import { CURRENT_HALF_POLICY, LEGACY_CURRENT_HALF_VERSION, type CurrentHalfVersion } from "@/utils/experimentalCurrentPerformance";
 import { PERFORMANCE_VERSIONS } from "@/utils/performanceAnalysis";
 import { canonicalizePerformanceValue, performanceLocalDate, shiftPerformanceDate } from "@/utils/performanceEvidence";
 import { raceEvaluationCutoff } from "@/utils/racePerformanceEvaluation";
@@ -10,7 +10,7 @@ import {
   instant, key, list, readTarget, record, requireVersion, sha256, string,
   type Horizon, type RecordValue, type Target,
 } from "./evidence";
-import { MODEL_VERSIONS, runModels } from "./models";
+import { modelVersionsFor, readCurrentHalfVersion, runModels } from "./models";
 
 const COVERAGE = ["complete", "partial", "unknown"] as const;
 const WORKOUT_FIELDS = [
@@ -105,10 +105,17 @@ function readRace(raw: RecordValue, id: string) {
   return doc;
 }
 
-function readOverride(raw: RecordValue, id: string) {
-  const doc = fieldProjection(raw, OVERRIDE_FIELDS);
+function readOverride(raw: RecordValue, id: string, version: CurrentHalfVersion) {
+  // Current confirmations bind exact override observations. Preserve the old
+  // projection when reproducing a sealed v1 artifact.
+  const doc = fieldProjection(raw, version === LEGACY_CURRENT_HALF_VERSION ? OVERRIDE_FIELDS
+    : [...OVERRIDE_FIELDS, "userId", "excludedAt", "excludedReason"]);
   if (doc.workoutId !== id || typeof doc.isExcluded !== "boolean") throw new TypeError(`Invalid override identity or exclusion: ${id}`);
-  doc.updatedAt = instant(doc.updatedAt, `${id}.updatedAt`);
+  const updatedAt = instant(doc.updatedAt, `${id}.updatedAt`);
+  if (version === LEGACY_CURRENT_HALF_VERSION) doc.updatedAt = updatedAt;
+  for (const field of ["userId", "excludedAt", "excludedReason"]) {
+    if (doc[field] != null && typeof doc[field] !== "string") throw new TypeError(`Invalid override ${field}: ${id}`);
+  }
   for (const field of ["distanceMilesOverride", "durationSecondsOverride"]) {
     const value = doc[field];
     if (value != null && (typeof value !== "number" || !Number.isFinite(value) || value <= 0)) {
@@ -157,7 +164,7 @@ function readFeatures(value: unknown) {
   return features.sort((a, b) => compareKeys(a.workoutId, b.workoutId));
 }
 
-export function sealCheckpoint(value: unknown) {
+export function sealCheckpoint(value: unknown, version: CurrentHalfVersion = CURRENT_HALF_POLICY.version) {
   const request = record(value, "checkpoint input");
   requireVersion(request.protocol, PROTOCOL, "Checkpoint protocol");
   const target = readTarget(request.target);
@@ -186,7 +193,7 @@ export function sealCheckpoint(value: unknown) {
   const raw = record(request.inputs, "inputs");
   const workouts = readRevisions(raw.workouts, "workouts", capturedAt, readWorkout);
   const races = readRevisions(raw.races, "races", capturedAt, readRace);
-  const overrides = readRevisions(raw.overrides, "overrides", capturedAt, readOverride);
+  const overrides = readRevisions(raw.overrides, "overrides", capturedAt, (doc, id) => readOverride(doc, id, version));
   const features = readFeatures(raw.features ?? []);
 
   const exclusions: { source: string; id: string; reason: string }[] = [];
@@ -219,7 +226,7 @@ export function sealCheckpoint(value: unknown) {
   if (!coverage.workoutsFrom || coverage.workoutsFrom > earliest) coverageReasons.push(`Workout scope must start by ${earliest}`);
   // A later correction cannot stand for the unknown effective override at capture.
   for (const row of overrides) {
-    if ((row.doc.updatedAt as string) > capturedAt) coverageReasons.push(`Override ${row.id} has a post-capture revision`);
+    if (Date.parse(row.doc.updatedAt as string) > Date.parse(capturedAt)) coverageReasons.push(`Override ${row.id} has a post-capture revision`);
   }
   const inputs = normalizeWorkoutResearchExport({
     capturedAt, asOf: capturedAt, timeZone: target.timeZone,
@@ -227,7 +234,7 @@ export function sealCheckpoint(value: unknown) {
     halfMarathonRaces: raceRows.map(({ id, doc }) => ({ id, doc })),
     workoutOverrides: overrides.map(({ id, doc }) => ({ id, doc })),
   });
-  const results = runModels(inputs, coverageReasons);
+  const results = runModels(inputs, coverageReasons, version);
   const eligible = new Set(results.eligibleWorkoutIds);
   const parentRevisions = new Map(workouts.map(row => [row.id, row.revision]));
   const featureChecks = features.map(feature => {
@@ -250,7 +257,7 @@ export function sealCheckpoint(value: unknown) {
   };
   const payload = {
     ...capture, inputDigest: digest(capture),
-    predictionType: "current_capability_checkpoint", modelVersions: MODEL_VERSIONS,
+    predictionType: "current_capability_checkpoint", modelVersions: modelVersionsFor(version),
     results: { ...results, inputExclusions: exclusions, coverageReasons, featureChecks },
   };
   return { ...payload, integrityDigest: digest(payload) };
@@ -262,11 +269,13 @@ export function replayCheckpoint(value: unknown): Checkpoint {
   const saved = record(value, "checkpoint");
   const { integrityDigest, ...payload } = saved;
   requireVersion(payload.protocol, PROTOCOL, "Checkpoint protocol");
-  if (canonicalizePerformanceValue(payload.modelVersions) !== canonicalizePerformanceValue(MODEL_VERSIONS)) {
+  const versions = record(payload.modelVersions, "Checkpoint model versions");
+  const version = readCurrentHalfVersion(versions.experimental);
+  if (canonicalizePerformanceValue(versions) !== canonicalizePerformanceValue(modelVersionsFor(version))) {
     throw new TypeError("Checkpoint model-version mismatch");
   }
   if (sha256(integrityDigest, "integrityDigest") !== digest(payload)) throw new TypeError("Checkpoint integrity digest mismatch");
-  const replayed = sealCheckpoint(payload);
+  const replayed = sealCheckpoint(payload, version);
   if (replayed.integrityDigest !== integrityDigest) throw new TypeError("Checkpoint did not replay identically");
   return replayed;
 }
