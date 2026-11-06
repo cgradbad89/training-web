@@ -15,6 +15,10 @@ import { captureObjectName, pilotTarget, runScheduledCapture, safeCaptureLog, ty
 vi.mock("./capture-source", () => ({
   createFirestoreProbe: vi.fn(() => async () => undefined),
   createFirestoreCaptureReader: vi.fn(() => async () => { throw new Error("replaced per test"); }),
+  createRaceMetadataReader: vi.fn(() => ({
+    byId: async () => ({ id: "pilot", raceDate: "2027-03-20", raceDistance: "halfMarathon", isActive: true }),
+    active: async () => ({ races: [], overflow: false }),
+  })),
 }));
 import * as sourceModule from "./capture-source";
 
@@ -151,7 +155,7 @@ describe("collector request handling", () => {
 
   it("runs a preflight that creates no object and reports bounded checks", async () => {
     const ok = world("2027-01-05T17:00:00.000Z");
-    expect(await (await ok.call(undefined, "?mode=preflight")).json()).toEqual({ status: "preflight_ok", checks: { policy: true, identities: true, firestore: true } });
+    expect(await (await ok.call(undefined, "?mode=preflight")).json()).toEqual({ status: "preflight_ok", checks: { policy: true, identities: true, firestore: true, enrollment: { pinned: "present", autoEnabled: false } } });
     expect(ok.gcs.objects.size).toBe(0);
     const bad = world("2027-01-05T17:00:00.000Z", { locked: false });
     // Reversible policy is acceptable only in pilot mode.

@@ -3,7 +3,8 @@ import { Firestore as GoogleFirestore } from "@google-cloud/firestore";
 import { ExternalAccountClient, GoogleAuth } from "google-auth-library";
 import type { Firestore } from "firebase-admin/firestore";
 import { CAPTURE_SCOPES, createImpersonatedCredential } from "./capture-credentials";
-import { createFirestoreCaptureReader, createFirestoreProbe } from "./capture-source";
+import { createFirestoreCaptureReader, createFirestoreProbe, createRaceMetadataReader } from "./capture-source";
+import { DEFAULT_ENROLLMENT_TIME_ZONE, enrollmentReference, isHalfMarathon, resolveEnrollments, type EnrollmentPlan, type RaceMeta } from "./enrollment";
 import { createPrivateCaptureStore, type RetentionMode } from "./capture-storage";
 import { key, string } from "./evidence";
 import { pilotTarget, runScheduledCapture, safeCaptureLog, type CaptureConfig, type CaptureResult, type CaptureSource, type CaptureStore } from "./scheduled-capture";
@@ -14,6 +15,9 @@ export const CAPTURE_ENV = [
   "HM_CAPTURE_AUTHORIZATION", "HM_CAPTURE_BUCKET", "HM_CAPTURE_RETENTION_MODE", "HM_CAPTURE_MIN_RETENTION_DAYS",
   "HM_CAPTURE_WIF_AUDIENCE", "HM_CAPTURE_WRITER_SA", "HM_CAPTURE_VERIFIER_SA", "HM_CAPTURE_READER_SA",
 ] as const;
+
+/** Optional server-only settings. Unset keeps the pinned single-race behavior with zero discovery reads. */
+export const CAPTURE_OPTIONAL_ENV = ["HM_CAPTURE_AUTO_ENROLL", "HM_CAPTURE_TIME_ZONE"] as const;
 
 export type CaptureEnv = Partial<Record<string, string | undefined>>;
 
@@ -28,6 +32,10 @@ export interface CaptureSettings {
   writerEmail: string;
   verifierEmail: string;
   readerEmail: string;
+  /** Phase 3H gate: exactly "true" adds bounded discovery of the saved active half marathon. Default off. */
+  autoEnroll: boolean;
+  /** Time zone for automatically enrolled races (races carry no zone of their own). */
+  timeZone: string;
 }
 
 /**
@@ -47,7 +55,10 @@ export function readCaptureSettings(env: CaptureEnv): CaptureSettings | null {
   if (new Set([writerEmail, verifierEmail, readerEmail]).size !== 3) throw new TypeError("Writer, verifier and reader identities must be distinct");
   const ownerUid = key(need("HM_CAPTURE_OWNER_UID"), "HM_CAPTURE_OWNER_UID");
   if (ownerUid.includes("/")) throw new TypeError("HM_CAPTURE_OWNER_UID is invalid");
+  const timeZone = env.HM_CAPTURE_TIME_ZONE ?? DEFAULT_ENROLLMENT_TIME_ZONE;
+  try { new Intl.DateTimeFormat("en-US", { timeZone }); } catch { throw new TypeError("HM_CAPTURE_TIME_ZONE is invalid"); }
   return {
+    autoEnroll: env.HM_CAPTURE_AUTO_ENROLL === "true", timeZone,
     config: {
       enabled: true, secret, target: pilotTarget(need("HM_CAPTURE_SUBJECT"), need("HM_CAPTURE_RACE_ID")),
       authorization: need("HM_CAPTURE_AUTHORIZATION"), codeRevision: env.VERCEL_GIT_COMMIT_SHA ?? "unknown",
@@ -145,6 +156,33 @@ async function defaultFirestore(settings: CaptureSettings, _request: Request, oi
   return { db: db as unknown as Firestore, dispose: () => db.terminate(), diagnose };
 }
 
+type PinnedState = "present" | "absent" | "date_mismatch" | "not_half_marathon" | "unavailable";
+
+/**
+ * Preflight-only. Compares the server-armed enrollment with the stored race and summarizes discovery, without
+ * returning any race id, owner id, date or name. A definite mismatch fails preflight; a failed lookup is
+ * reported as "unavailable" and does not change the existing verdict.
+ */
+async function describeEnrollment(db: Firestore, settings: CaptureSettings) {
+  const out: { pinned: PinnedState; autoEnabled: boolean; discovery?: { candidates: number; eligible: number; notes: string[] } } =
+    { pinned: "unavailable", autoEnabled: settings.autoEnroll };
+  try {
+    const reader = createRaceMetadataReader(db, settings.ownerUid, { projectId: settings.projectId });
+    const stored = await reader.byId(settings.config.target.raceId);
+    out.pinned = !stored ? "absent" : stored.raceDate !== settings.config.target.raceDate ? "date_mismatch"
+      : !isHalfMarathon(stored) ? "not_half_marathon" : "present";
+    if (settings.autoEnroll) {
+      const found = await reader.active();
+      const plan = resolveEnrollments({ pinned: settings.config.target, subject: settings.config.target.subject, timeZone: settings.timeZone,
+        now: new Date().toISOString(), autoEnabled: true, discovered: found.races, overflow: found.overflow });
+      out.discovery = { candidates: plan.counts.candidates, eligible: plan.counts.eligible, notes: plan.notes };
+    }
+  } catch { /* reported as unavailable */ }
+  return out;
+}
+
+const SEVERITY: CaptureResult["status"][] = ["failed", "missed", "captured", "abstained", "duplicate", "rejected", "idle", "unauthorized", "disabled"];
+
 function bearerMatches(header: string | null, secret: string) {
   const hash = (value: string) => createHash("sha256").update(value).digest();
   return !!header && timingSafeEqual(hash(header), hash(`Bearer ${secret}`));
@@ -191,7 +229,7 @@ export async function handleCaptureRequest(request: Request, deps: CaptureDeps):
   const open = deps.createFirestore ?? defaultFirestore;
 
   if (url.searchParams.get("mode") === "preflight") {
-    const checks: { policy: boolean; identities: boolean; firestore: boolean; firestoreStage?: "open" | "bind" | "read"; firestoreCode?: number; firestoreReason?: string; credential?: Record<string, unknown> } =
+    const checks: { policy: boolean; identities: boolean; firestore: boolean; firestoreStage?: "open" | "bind" | "read"; firestoreCode?: number; firestoreReason?: string; credential?: Record<string, unknown>; enrollment?: Awaited<ReturnType<typeof describeEnrollment>> } =
       { policy: false, identities: false, firestore: false };
     let handle: Awaited<ReturnType<typeof open>> | undefined;
     try {
@@ -207,6 +245,7 @@ export async function handleCaptureRequest(request: Request, deps: CaptureDeps):
       await probe();
       checks.firestore = true;
       delete checks.firestoreStage;
+      checks.enrollment = await describeEnrollment(handle.db, settings);
     } catch (error) {
       // A numeric gRPC status and the failing stage identify the problem without any payload or message text.
       const code = (error as { code?: unknown })?.code;
@@ -222,7 +261,8 @@ export async function handleCaptureRequest(request: Request, deps: CaptureDeps):
     } finally {
       await handle?.dispose().catch(() => undefined);
     }
-    const ok = checks.policy && checks.firestore;
+    const mismatch = checks.enrollment?.pinned === "absent" || checks.enrollment?.pinned === "date_mismatch" || checks.enrollment?.pinned === "not_half_marathon";
+    const ok = checks.policy && checks.firestore && !mismatch;
     return respond({ status: ok ? "preflight_ok" : "preflight_failed", checks }, ok ? 200 : 500);
   }
 
@@ -237,6 +277,9 @@ export async function handleCaptureRequest(request: Request, deps: CaptureDeps):
       await handle.dispose().catch(() => undefined);
     }
   };
+  if (settings.autoEnroll) {
+    return runEnrolledCaptures({ request, settings, open, oidc, now, store, readSource, sleep: deps.sleep, requestedRace: url.searchParams.get("race") });
+  }
   let result: CaptureResult;
   try {
     result = await runScheduledCapture(request.headers.get("authorization"), settings.config,
@@ -247,4 +290,62 @@ export async function handleCaptureRequest(request: Request, deps: CaptureDeps):
   console.info(safeCaptureLog(result));
   const { status, checkpointDate, horizon, counts, generation, createdAt, reason, attempts, retentionLocked } = result;
   return respond({ status, checkpointDate, horizon, counts, generation, createdAt, reason, attempts, retentionLocked }, STATUS[status]);
+}
+
+/**
+ * Phase 3H path, reached only when HM_CAPTURE_AUTO_ENROLL is exactly "true" (after authentication). One bounded
+ * race-metadata read discovers the saved active half marathon; the pinned enrollment is always kept. A failed or
+ * conflicting discovery enrolls nothing new and never cancels the pinned race. Each tracked race runs through the
+ * unchanged scheduler, so checkpoints, keys, retries, cutoffs and storage behavior are identical to the pinned path.
+ */
+async function runEnrolledCaptures(ctx: {
+  request: Request; settings: CaptureSettings; open: NonNullable<CaptureDeps["createFirestore"]>; oidc: () => Promise<string>;
+  now: () => string; store: CaptureStore; sleep?: (ms: number) => Promise<void>;
+  readSource: (slot: Parameters<ReturnType<typeof createFirestoreCaptureReader>>[0]) => Promise<CaptureSource>;
+  requestedRace: string | null;
+}): Promise<Response> {
+  const { settings } = ctx;
+  let discovered: RaceMeta[] | null = null;
+  let overflow = false;
+  let handle: Awaited<ReturnType<typeof ctx.open>> | undefined;
+  try {
+    handle = await ctx.open(settings, ctx.request, ctx.oidc);
+    const found = await createRaceMetadataReader(handle.db, settings.ownerUid, { projectId: settings.projectId }).active();
+    discovered = found.races;
+    overflow = found.overflow;
+  } catch {
+    discovered = null; // fail safe: keep the pinned enrollment, enroll nothing new
+  } finally {
+    await handle?.dispose().catch(() => undefined);
+  }
+  const plan: EnrollmentPlan = resolveEnrollments({
+    pinned: settings.config.target, subject: settings.config.target.subject, timeZone: settings.timeZone,
+    now: ctx.now(), autoEnabled: true, discovered, overflow,
+  });
+  // A caller can only narrow to a race the server already tracks; it can never introduce one.
+  if (ctx.requestedRace !== null && !plan.targets.some(target => target.raceId === ctx.requestedRace)) {
+    return respond({ status: "rejected", reason: "enrollment_mismatch" }, STATUS.rejected);
+  }
+  const results: { ref: string; result: CaptureResult }[] = [];
+  for (const target of plan.targets) {
+    if (ctx.requestedRace !== null && target.raceId !== ctx.requestedRace) continue;
+    let result: CaptureResult;
+    try {
+      result = await runScheduledCapture(ctx.request.headers.get("authorization"), { ...settings.config, target },
+        { now: ctx.now, readSource: ctx.readSource, store: ctx.store, sleep: ctx.sleep }, { raceId: target.raceId });
+    } catch {
+      result = { status: "failed", reason: "invalid_capture" };
+    }
+    results.push({ ref: enrollmentReference(target), result });
+    console.info(JSON.stringify({ ...JSON.parse(safeCaptureLog(result)), enrollment: enrollmentReference(target) }));
+  }
+  console.info(JSON.stringify({ event: "half_marathon_enrollment", tracked: plan.targets.length, notes: plan.notes, counts: plan.counts }));
+  const primary = [...results].sort((a, b) => SEVERITY.indexOf(a.result.status) - SEVERITY.indexOf(b.result.status))[0]?.result ?? { status: "idle" as const };
+  const { status, checkpointDate, horizon, counts, generation, createdAt, reason, attempts, retentionLocked } = primary;
+  return respond({
+    status, checkpointDate, horizon, counts, generation, createdAt, reason, attempts, retentionLocked,
+    tracked: plan.targets.length, notes: plan.notes,
+    enrollments: results.filter(entry => entry.result.status !== "idle").map(({ ref, result }) => ({
+      ref, status: result.status, checkpointDate: result.checkpointDate, horizon: result.horizon, reason: result.reason, generation: result.generation })),
+  }, STATUS[primary.status]);
 }
