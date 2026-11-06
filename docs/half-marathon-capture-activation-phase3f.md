@@ -1,8 +1,27 @@
 # Autonomous half-marathon capture: activation readiness · Phase 3F
 
-**Verdict: READY WITH CONDITIONS.** The dormant collector, storage adapter, credential chain, audit tool and synthetic test suite are complete. Nothing is provisioned, scheduled, routed or credentialed. Activation needs owner-approved production resources (a bucket, three service accounts, a workload-identity provider, environment variables and one small PR that adds a route and cron entries). A short dry run must then prove the four properties that only real infrastructure can show (see [What synthetic tests cannot prove](#what-synthetic-tests-cannot-prove)).
+**Verdict: READY WITH CONDITIONS.** On November 6, 2026 the owner approved the Google Cloud resources in [Provisioned state](#provisioned-state-november-6-2026). Capture is still not armed. The dormant collector, storage adapter, credential chain, audit tool and synthetic test suite are complete. No route, cron, environment variable or credential exists. Remaining activation steps: Vercel environment variables (owner-entered), one small PR that adds the route and cron, and the preflight. A short dry run must then prove the four properties that only real infrastructure can show (see [What synthetic tests cannot prove](#what-synthetic-tests-cannot-prove)).
 
 Context: [Phase 3D protocol](half-marathon-validation-phase3d.md) · [Phase 3E reliability and capture](half-marathon-reliability-phase3e.md). The live estimator, the 180-day anchor policy and Phase 3D/3E artifacts are unchanged. Checkpoints (Feb 20, Mar 6, Mar 13 and Mar 19, 2027) never feed the live estimate.
+
+## Provisioned state (November 6, 2026)
+
+Created after the owner approved the plan. All are reversible; retention is **not** locked.
+
+| Resource | State |
+| --- | --- |
+| API `sts.googleapis.com` | Enabled (required for federation, no charge) |
+| Bucket `gs://malignant-metro-hm-capture-evidence` | `us-central1`, Standard, uniform access, public-access prevention enforced, retention 31,536,000 s (365 days), `isLocked` false |
+| Custom roles `hmCaptureWriter` (`storage.objects.create`), `hmCaptureVerifier` (`storage.objects.get`, `storage.buckets.get`) | Bound on the bucket only to the writer and verifier accounts |
+| Service accounts `hm-capture-reader`, `-writer`, `-verifier` | No keys exist; reader holds `roles/datastore.viewer` at project level |
+| Workload identity pool `vercel-training-web`, OIDC provider `vercel` | Issuer `https://oidc.vercel.com/folstromjohn-1883s-projects` (discovery document confirmed), audience `https://vercel.com/folstromjohn-1883s-projects`, condition on immutable claims `project_id`, `owner_id` and `environment == "production"` |
+| Impersonation | `roles/iam.workloadIdentityUser` on each of the three accounts for the pool's `attribute.project_id` of this Vercel project only |
+
+Not done: no object written, no Firestore data read, no Vercel variable, route or cron, no billing budget, retention not locked. The attribute condition keys on immutable IDs instead of the `sub` string used in the original plan, so the audience value is `//iam.googleapis.com/projects/969397424975/locations/global/workloadIdentityPools/vercel-training-web/providers/vercel`.
+
+**Finding: the existing app Admin key is a privilege-escalation path to the evidence bucket.** `firebase-adminsdk-fbsvc` (its key is the Vercel variable `FIREBASE_SERVICE_ACCOUNT_JSON`) holds project-level `roles/iam.serviceAccountTokenCreator`, and the default compute, App Engine and cloudservices accounts hold `roles/editor`. Anyone who obtains that key can impersonate an Editor account and administer the bucket, including removing an *unlocked* retention policy. A locked policy would stop this. Capture itself does not use or widen that key. Reducing the key's grants is a separate owner decision that I have not made.
+
+The owner account could not mint tokens for the three accounts, so the real least-privilege check (`testIamPermissions`) has not yet run against the live bucket. The preflight performs it.
 
 ## 1. Inventory
 
@@ -93,7 +112,7 @@ Owner-account access is the break-glass path: if Vercel OIDC federation fails, d
 
 All of it needs explicit owner approval. Reversible steps come first and nothing locks retention.
 
-**Step 1: Google Cloud resources**
+**Step 1: Google Cloud resources (done November 6, 2026; commands kept for rollback reference)**
 
 ```sh
 PROJECT=malignant-metro
@@ -113,7 +132,7 @@ gcloud storage buckets add-iam-policy-binding gs://$BUCKET --member=serviceAccou
 gcloud projects add-iam-policy-binding $PROJECT --member=serviceAccount:hm-capture-reader@$PROJECT.iam.gserviceaccount.com --role=roles/datastore.viewer --condition=None
 ```
 
-**Step 2: keyless Vercel federation.** Confirm the project's Vercel OIDC federation is enabled (Vercel → project → Settings → Security). Create a workload-identity pool and an OIDC provider with issuer `https://oidc.vercel.com/folstromjohn-1883s-projects`, allowed audience `https://vercel.com/folstromjohn-1883s-projects`, attribute mapping `google.subject=assertion.sub` and an attribute condition `assertion.sub == "owner:folstromjohn-1883s-projects:project:training-web:environment:production"`. Grant `roles/iam.workloadIdentityUser` on **each of the three** service accounts to that single `principal://…/subject/<sub>` and nothing broader. The issuer, audience and subject strings follow Vercel's documented claim layout; confirm them against the real token during the dry run.
+**Step 2: keyless Vercel federation.** Confirm the project's Vercel OIDC federation is enabled (Vercel → project → Settings → Security). **Done** (see Provisioned state). The condition uses the immutable `project_id`, `owner_id` and `environment` claims and the three bindings use that project's `attribute.project_id`. Confirm the claims against a real token during the dry run.
 
 **Step 3: Vercel production variables (server-only, mark sensitive, never `NEXT_PUBLIC_`).**
 
@@ -129,7 +148,7 @@ gcloud projects add-iam-policy-binding $PROJECT --member=serviceAccount:hm-captu
 | `HM_CAPTURE_BUCKET` | `malignant-metro-hm-capture-evidence` |
 | `HM_CAPTURE_RETENTION_MODE` | `unlocked_pilot` (or `locked` after a deliberate lock) |
 | `HM_CAPTURE_MIN_RETENTION_DAYS` | `365` |
-| `HM_CAPTURE_WIF_AUDIENCE` | `//iam.googleapis.com/projects/969397424975/locations/global/workloadIdentityPools/<pool>/providers/<provider>` |
+| `HM_CAPTURE_WIF_AUDIENCE` | `//iam.googleapis.com/projects/969397424975/locations/global/workloadIdentityPools/vercel-training-web/providers/vercel` |
 | `HM_CAPTURE_WRITER_SA`, `HM_CAPTURE_VERIFIER_SA`, `HM_CAPTURE_READER_SA` | the three service-account emails |
 
 **Step 4: one small PR (the only code that arms capture).** Add the route and cron. Both default to inert because `HM_CAPTURE_ENABLED` is unset until step 6.
