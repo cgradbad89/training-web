@@ -1,6 +1,6 @@
 # Autonomous half-marathon capture: activation readiness · Phase 3F
 
-**Verdict: READY WITH CONDITIONS.** On November 6, 2026 the owner approved the Google Cloud resources in [Provisioned state](#provisioned-state-november-6-2026). Capture is still not armed. The dormant collector, storage adapter, credential chain, audit tool and synthetic test suite are complete. No route, cron, environment variable or credential exists. Remaining activation steps: Vercel environment variables (owner-entered), one small PR that adds the route and cron, and the preflight. A short dry run must then prove the four properties that only real infrastructure can show (see [What synthetic tests cannot prove](#what-synthetic-tests-cannot-prove)).
+**Verdict: READY WITH CONDITIONS.** On November 6, 2026 the owner approved the Google Cloud resources in [Provisioned state](#provisioned-state-november-6-2026). Capture is still not armed. The dormant collector, storage adapter, credential chain, audit tool and synthetic test suite are complete. The route and three crons are in the repository but inert. Remaining activation steps: Vercel environment variables (owner-entered) and the preflight. A short dry run must then prove the four properties that only real infrastructure can show (see [What synthetic tests cannot prove](#what-synthetic-tests-cannot-prove)).
 
 Context: [Phase 3D protocol](half-marathon-validation-phase3d.md) · [Phase 3E reliability and capture](half-marathon-reliability-phase3e.md). The live estimator, the 180-day anchor policy and Phase 3D/3E artifacts are unchanged. Checkpoints (Feb 20, Mar 6, Mar 13 and Mar 19, 2027) never feed the live estimate.
 
@@ -151,7 +151,7 @@ gcloud projects add-iam-policy-binding $PROJECT --member=serviceAccount:hm-captu
 | `HM_CAPTURE_WIF_AUDIENCE` | `//iam.googleapis.com/projects/969397424975/locations/global/workloadIdentityPools/vercel-training-web/providers/vercel` |
 | `HM_CAPTURE_WRITER_SA`, `HM_CAPTURE_VERIFIER_SA`, `HM_CAPTURE_READER_SA` | the three service-account emails |
 
-**Step 4: one small PR (the only code that arms capture).** Add the route and cron. Both default to inert because `HM_CAPTURE_ENABLED` is unset until step 6.
+**Step 4: route and cron (done in the route PR; inert).** `src/app/api/half-marathon-capture/route.ts` and `vercel.json` add the route and the three crons below. Both do nothing while `HM_CAPTURE_ENABLED` is unset: the route returns 404 without any network call, and a test enforces this. The snippets are kept for reference.
 
 ```ts
 // src/app/api/half-marathon-capture/route.ts
