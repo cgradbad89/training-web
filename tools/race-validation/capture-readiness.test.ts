@@ -3,7 +3,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { performanceLocalDate } from "@/utils/performanceEvidence";
 import { auditCaptures } from "./capture-audit";
 import { createImpersonatedCredential } from "./capture-credentials";
-import { handleCaptureRequest, readCaptureSettings, type CaptureEnv } from "./capture-service";
+import { credentials } from "@grpc/grpc-js";
+import { OAuth2Client } from "google-auth-library";
+import { handleCaptureRequest, readCaptureSettings, withPlainRequestHeaders, type CaptureEnv } from "./capture-service";
 import { createPrivateCaptureStore } from "./capture-storage";
 import { checkpointSchedule, dueCheckpoints, replayCheckpoint } from "./checkpoint";
 import { HORIZONS, checkpointKey, readTarget } from "./evidence";
@@ -93,6 +95,17 @@ describe("keyless credentials", () => {
     expect(() => createImpersonatedCredential({ ...base, audience: "https://attacker.invalid/token" })).toThrow();
     const failing = createImpersonatedCredential({ ...base, request: (async () => new Response("SECRET-BODY", { status: 403 })) as typeof fetch });
     await expect(failing.accessToken()).rejects.toThrow(/^Capture credential exchange failed$/);
+  });
+});
+
+describe("gRPC credential compatibility", () => {
+  it("delivers the bearer token as gRPC metadata (a Headers object would be dropped)", async () => {
+    const client = new OAuth2Client();
+    client.setCredentials({ access_token: "synthetic-test-token" });
+    const metadata = async (source: Parameters<typeof credentials.createFromGoogleCredential>[0]) =>
+      (await credentials.createFromGoogleCredential(source).generateMetadata({ service_url: "https://firestore.googleapis.com/google.firestore.v1.Firestore" })).get("authorization");
+    expect(await metadata(client)).toEqual([]);
+    expect(await metadata(withPlainRequestHeaders(client))).toEqual(["Bearer synthetic-test-token"]);
   });
 });
 
