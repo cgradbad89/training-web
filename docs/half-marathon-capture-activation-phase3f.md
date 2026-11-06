@@ -1,6 +1,6 @@
 # Autonomous half-marathon capture: activation readiness · Phase 3F
 
-**Verdict: READY WITH CONDITIONS.** On November 6, 2026 the owner approved the Google Cloud resources in [Provisioned state](#provisioned-state-november-6-2026). Capture is still not armed. The dormant collector, storage adapter, credential chain, audit tool and synthetic test suite are complete. The route and three crons are in the repository but inert. Remaining activation steps: Vercel environment variables (owner-entered) and the preflight. A short dry run must then prove the four properties that only real infrastructure can show (see [What synthetic tests cannot prove](#what-synthetic-tests-cannot-prove)).
+**Verdict: READY WITH CONDITIONS. The production preflight passed on November 6, 2026 and capture is armed for February 20, 2027.** On November 6, 2026 the owner approved the Google Cloud resources in [Provisioned state](#provisioned-state-november-6-2026). Capture is still not armed. The dormant collector, storage adapter, credential chain, audit tool and synthetic test suite are complete. The route and three crons are in the repository but inert. Remaining activation steps: Vercel environment variables (owner-entered) and the preflight. A short dry run must then prove the four properties that only real infrastructure can show (see [What synthetic tests cannot prove](#what-synthetic-tests-cannot-prove)).
 
 Context: [Phase 3D protocol](half-marathon-validation-phase3d.md) · [Phase 3E reliability and capture](half-marathon-reliability-phase3e.md). The live estimator, the 180-day anchor policy and Phase 3D/3E artifacts are unchanged. Checkpoints (Feb 20, Mar 6, Mar 13 and Mar 19, 2027) never feed the live estimate.
 
@@ -174,13 +174,15 @@ Three slots because Vercel does not retry a failed cron run and Hobby cannot run
 
 **First preflight result (November 6, 2026).** Bucket policy and the writer/verifier identities passed against the real project, which proved the keyless token exchange and the least-privilege matrix. The Firestore probe failed because firebase-admin\'s Firestore wrapper accepts only a key or default credentials, never a custom token provider. The collector now builds the underlying `@google-cloud/firestore` client with a workload-identity auth client that impersonates the reader account. Failed preflights report a stage and a numeric status code only. The next failure (gRPC "7 Missing or insufficient permissions" although the token held the datastore read permissions and a REST call succeeded) was traced to google-auth-library 10 returning request headers as a Fetch `Headers` object, which the gRPC layer silently dropped. A wrapper now supplies a plain object and a test checks the gRPC metadata.
 
+**Production preflight passed (November 6, 2026).** `{"status":"preflight_ok","checks":{"policy":true,"identities":true,"firestore":true}}` confirmed the keyless token exchange for all three identities, the private retained bucket, the least-privilege matrix (writer create-only, verifier read-only) and a one-document Firestore read as the reader identity. Variables are set and `HM_CAPTURE_ENABLED=true`. Remaining conditions: confirm the race record's date is 2027-03-20, re-run the preflight in the first week of February 2027, and decide on retention locking, a billing budget alert and the Admin-key grants. Items 1, 2 and 4 below remain unproven until the first real capture or cron run.
+
 ## 7. What synthetic tests cannot prove
 
 The in-memory Cloud Storage and token services model create-only preconditions, server times, hashes, permission matrices and retention metadata. They cannot show that:
 
 1. Google reports the status the adapter expects on a create-only conflict for a writer without delete permission. (It may be 412 or 403. The handler recovers from both by confirming the original generation.)
 2. Vercel's token claims, issuer and subject match the pool condition, and the token is delivered in the `x-vercel-oidc-token` header the default handler reads. (`oidcToken` is injectable if it is not.)
-3. The keyless Firestore client authenticates with the reader identity and `roles/datastore.viewer`, or a narrower role, suffices for a read-only transaction under the reader identity, and the real retention and `testIamPermissions` behavior matches the model.
+3. ~~The keyless Firestore client authenticates with the reader identity and `roles/datastore.viewer`, or a narrower role, suffices~~ (proven by the passing preflight) for a read-only transaction under the reader identity, and the real retention and `testIamPermissions` behavior matches the model.
 4. A Hobby deployment accepts three same-path cron entries and starts them in the expected hours.
 
 The preflight and one dry run settle these. Real IAM enforcement, locked-retention behavior and billing remain unproven until then.
