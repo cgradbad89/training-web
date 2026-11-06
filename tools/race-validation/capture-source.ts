@@ -43,10 +43,26 @@ function rows(
   });
 }
 
-/** Caller supplies a dedicated read-only Admin client and server-owned enrollment. */
-export function createFirestoreCaptureReader(db: Firestore, enrolledUid: string) {
+function assertBound(db: Firestore, expected: { projectId?: string }) {
+  if (expected.projectId === undefined) return;
+  let actual: string | undefined;
+  try { actual = (db as unknown as { projectId?: string }).projectId; } catch { actual = undefined; }
+  if (actual !== expected.projectId) throw new Error("Firestore client is not bound to the enrolled project");
+}
+
+/** One-document, zero-payload read proving identity, project and owner path. Used only by preflight. */
+export function createFirestoreProbe(db: Firestore, enrolledUid: string, expected: { projectId?: string } = {}) {
   const uid = key(enrolledUid, "enrolledUid");
   if (uid.includes("/")) throw new TypeError("Invalid enrolled UID");
+  assertBound(db, expected);
+  return async () => { await db.collection("users").doc(uid).collection("healthWorkouts").select().limit(1).get(); };
+}
+
+/** Caller supplies a dedicated read-only Admin client and server-owned enrollment. */
+export function createFirestoreCaptureReader(db: Firestore, enrolledUid: string, expected: { projectId?: string } = {}) {
+  const uid = key(enrolledUid, "enrolledUid");
+  if (uid.includes("/")) throw new TypeError("Invalid enrolled UID");
+  assertBound(db, expected); // before any query is issued; fails closed
   const owner = db.collection("users").doc(uid);
   return async (slot: CaptureSlot) => {
     const from = shiftPerformanceDate(slot.checkpointDate, -CURRENT_HALF_POLICY.maximumAnchorDays - WORKOUT_RESEARCH_POLICY.baselineDays);
@@ -64,11 +80,15 @@ export function createFirestoreCaptureReader(db: Firestore, enrolledUid: string)
     }
     const capturedAt = instant(workouts.readTime.toDate().toISOString(), "consistent read timestamp");
     const counts = { workouts: workouts.size, races: races.size, overrides: overrides.size };
+    const enrolled = races.docs.slice(0, CAPTURE_LIMITS.races).find(row => row.id === slot.target.raceId);
+    const race = !enrolled ? "absent" as const
+      : normalizeRaceDocument(enrolled.id, enrolled.data()).raceDate === slot.target.raceDate ? "present" as const : "date_mismatch" as const;
     const complete = (name: keyof typeof counts) => counts[name] > CAPTURE_LIMITS[name] ? "partial" : "complete";
     const limitations = (Object.keys(counts) as (keyof typeof counts)[])
       .filter(name => complete(name) === "partial").map(name => `${name} reached its bounded-query overflow probe`);
+    if (race === "absent") limitations.push("enrolled race record absent at capture");
     return {
-      capturedAt, counts, reference: `firestore-read:${revisionKey(workouts.readTime)}`,
+      capturedAt, counts, race, reference: `firestore-read:${revisionKey(workouts.readTime)}`,
       coverage: { workouts: complete("workouts"), races: complete("races"), overrides: complete("overrides"),
         workoutsFrom: from, limitations },
       inputs: {

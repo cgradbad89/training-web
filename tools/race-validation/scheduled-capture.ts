@@ -10,6 +10,8 @@ export interface CaptureSource {
   counts: { workouts: number; races: number; overrides: number };
   coverage: unknown;
   inputs: unknown;
+  /** Result of checking the enrolled race record inside the same consistent read. */
+  race?: "present" | "absent" | "date_mismatch";
 }
 
 export interface StoredCapture {
@@ -18,8 +20,13 @@ export interface StoredCapture {
   artifact: unknown;
 }
 
+export interface PolicyReceipt {
+  /** True only when the bucket retention policy is irreversibly locked. */
+  retentionLocked: boolean;
+}
+
 export interface CaptureStore {
-  verifyPolicy(): Promise<void>;
+  verifyPolicy(): Promise<PolicyReceipt | void>;
   read(name: string): Promise<StoredCapture | null>;
   /** Must use a create-only precondition; even an identical object is a conflict. */
   create(name: string, checkpoint: Checkpoint): Promise<"created" | "exists">;
@@ -31,16 +38,23 @@ export interface CaptureConfig {
   target: Target;
   authorization: string;
   codeRevision: string;
+  /** Bounded in-invocation retry for transient source and storage failures. Default: none. */
+  retry?: { retries: number; delaysMs: readonly number[]; budgetMs: number };
 }
 
-type CaptureOutcome = "disabled" | "unauthorized" | "idle" | "captured" | "abstained" | "duplicate" | "missed" | "failed";
+type CaptureOutcome = "disabled" | "unauthorized" | "rejected" | "idle" | "captured" | "abstained" | "duplicate" | "missed" | "failed";
 
 export interface CaptureResult {
   status: CaptureOutcome;
   checkpointDate?: string;
   horizon?: CaptureSlot["horizon"];
   counts?: CaptureSource["counts"];
-  reason?: "source_failed" | "capture_too_late" | "invalid_capture" | "storage_policy" | "storage_failed" | "unverified_generation";
+  /** Original object generation and server creation time of the verified receipt. Opaque, non-private. */
+  generation?: string;
+  createdAt?: string;
+  retentionLocked?: boolean;
+  attempts?: number;
+  reason?: "enrollment_mismatch" | "source_failed" | "capture_too_late" | "invalid_capture" | "storage_policy" | "storage_failed" | "unverified_generation";
 }
 
 export function pilotTarget(subject: string, raceId: string): Target {
@@ -81,6 +95,14 @@ export function verifyCaptureGeneration(object: StoredCapture, slot: CaptureSlot
   } };
 }
 
+const TRANSIENT = new Set<NonNullable<CaptureResult["reason"]>>(["source_failed", "storage_failed"]);
+
+/** Whitelisted, payload-free log line: status, horizon, date, counts, opaque generation. */
+export function safeCaptureLog(result: CaptureResult): string {
+  const { status, checkpointDate, horizon, counts, generation, reason, attempts, retentionLocked } = result;
+  return JSON.stringify({ event: "half_marathon_capture", status, checkpointDate, horizon, counts, generation, reason, attempts, retentionLocked });
+}
+
 /** Dormant server handler. Mount only after a separate production review. */
 export async function runScheduledCapture(
   authorizationHeader: string | null,
@@ -89,10 +111,38 @@ export async function runScheduledCapture(
     now: () => string;
     readSource: (slot: CaptureSlot) => Promise<CaptureSource>;
     store: CaptureStore;
+    sleep?: (ms: number) => Promise<void>;
   },
+  request: { raceId?: string } = {},
 ): Promise<CaptureResult> {
   if (config.enabled !== true) return { status: "disabled" };
   if (!authorized(authorizationHeader, config.secret)) return { status: "unauthorized" };
+  // Enrollment is server-owned: a caller can never select a different race or subject.
+  if (request.raceId !== undefined && request.raceId !== config.target.raceId) {
+    return { status: "rejected", reason: "enrollment_mismatch" };
+  }
+  const first = instant(ports.now(), "invocation time");
+  if (!dueCheckpoints([config.target], first)[0]) return { status: "idle" };
+
+  const retry = config.retry ?? { retries: 0, delaysMs: [], budgetMs: 0 };
+  const sleep = ports.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
+  let result = await captureAttempt(config, ports);
+  for (let attempt = 1; attempt <= retry.retries && result.reason && TRANSIENT.has(result.reason); attempt++) {
+    const delay = retry.delaysMs[Math.min(attempt - 1, retry.delaysMs.length - 1)] ?? 0;
+    const at = Date.parse(instant(ports.now(), "retry time"));
+    const slot = dueCheckpoints([config.target], first)[0];
+    // Never retry across the checkpoint cutoff or beyond the invocation budget.
+    if (at - Date.parse(first) + delay > retry.budgetMs || at + delay >= Date.parse(slot.cutoff)) break;
+    await sleep(delay);
+    result = { ...(await captureAttempt(config, ports)), attempts: attempt + 1 };
+  }
+  return result;
+}
+
+async function captureAttempt(
+  config: CaptureConfig,
+  ports: { now: () => string; readSource: (slot: CaptureSlot) => Promise<CaptureSource>; store: CaptureStore },
+): Promise<CaptureResult> {
   const start = instant(ports.now(), "invocation time");
   const slot = dueCheckpoints([config.target], start)[0];
   if (!slot) return { status: "idle" };
@@ -103,11 +153,14 @@ export async function runScheduledCapture(
   const failure = (reason: NonNullable<CaptureResult["reason"]>, counts?: CaptureSource["counts"]): CaptureResult => ({
     ...context, status: reason === "capture_too_late" ? "missed" : "failed", reason, ...(counts ? { counts } : {}),
   });
+  let policy: PolicyReceipt | void;
   try {
-    await ports.store.verifyPolicy();
+    policy = await ports.store.verifyPolicy();
   } catch {
     return failure("storage_policy");
   }
+  const custody = policy ? { retentionLocked: policy.retentionLocked } : {};
+  const receipt = (object: StoredCapture) => ({ generation: object.generation, createdAt: object.createdAt, ...custody });
   let existing: StoredCapture | null;
   try {
     existing = await ports.store.read(name);
@@ -117,7 +170,7 @@ export async function runScheduledCapture(
   if (existing) {
     try {
       verifyCaptureGeneration(existing, slot, now(), name);
-      return { ...context, status: "duplicate" };
+      return { ...context, status: "duplicate", ...receipt(existing) };
     } catch {
       return failure("unverified_generation");
     }
@@ -130,6 +183,8 @@ export async function runScheduledCapture(
   } catch {
     return failure("source_failed");
   }
+  if (!source || typeof source !== "object") return failure("source_failed");
+  if (source.race === "date_mismatch") return failure("enrollment_mismatch", source.counts);
   let checkpoint: Checkpoint;
   try {
     const readAt = instant(source.capturedAt, "source capture time");
@@ -153,6 +208,17 @@ export async function runScheduledCapture(
   let stored: StoredCapture | null;
   try {
     disposition = await ports.store.create(name, checkpoint);
+  } catch {
+    // A lost response or a concurrent winner can surface as an error. Only a verified original
+    // generation already in storage converts it to a duplicate; otherwise the failure stands.
+    try {
+      if (!(await ports.store.read(name))) return failure("storage_failed", source.counts);
+      disposition = "exists";
+    } catch {
+      return failure("storage_failed", source.counts);
+    }
+  }
+  try {
     stored = await ports.store.read(name);
   } catch {
     return failure("storage_failed", source.counts);
@@ -163,7 +229,7 @@ export async function runScheduledCapture(
     if (disposition === "created" && verified.integrityDigest !== checkpoint.integrityDigest) {
       throw new Error("Stored artifact differs from sealed capture");
     }
-    return { ...context, counts: source.counts,
+    return { ...context, counts: source.counts, ...receipt(stored),
       status: disposition === "exists" ? "duplicate"
         : verified.results.predictions.experimental.seconds === null ? "abstained" : "captured" };
   } catch {
