@@ -98,7 +98,21 @@ async function defaultFirestore(settings: CaptureSettings, _request: Request, oi
       const body = (await response.json()) as { permissions?: unknown };
       granted = response.ok && Array.isArray(body.permissions) ? body.permissions.filter((name): name is string => asked.includes(name as string)) : null;
     } catch { granted = null; }
-    return { tokenPrincipal: info.email, cloudPlatformScope: (info.scope ?? "").includes("auth/cloud-platform"), grantedPermissions: granted };
+    // The same one-document, name-only read over REST returns structured error details that gRPC hides.
+    let rest: Record<string, unknown> | null = null;
+    try {
+      const response = await fetch(`https://firestore.googleapis.com/v1/projects/${encodeURIComponent(settings.projectId)}/databases/(default)/documents/users/${encodeURIComponent(settings.ownerUid)}:runQuery`, {
+        method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, signal: AbortSignal.timeout(10_000),
+        body: JSON.stringify({ structuredQuery: { from: [{ collectionId: "healthWorkouts" }], select: { fields: [{ fieldPath: "__name__" }] }, limit: 1 } }) });
+      const body = (await response.json().catch(() => null)) as unknown;
+      const first = Array.isArray(body) ? body[0] : body;
+      const error = (first as { error?: { status?: unknown; message?: unknown; details?: unknown } } | null)?.error;
+      const info = Array.isArray(error?.details) ? (error.details as { reason?: unknown; metadata?: Record<string, unknown> }[]).find(detail => detail?.reason) : undefined;
+      const clean = (value: unknown) => typeof value === "string" ? value.split(settings.ownerUid).join("<uid>").slice(0, 160) : undefined;
+      rest = { http: response.status, status: clean(error?.status), reason: clean(info?.reason), permission: clean(info?.metadata?.permission),
+        resource: clean(info?.metadata?.resource), message: clean(error?.message) };
+    } catch { rest = null; }
+    return { tokenPrincipal: info.email, cloudPlatformScope: (info.scope ?? "").includes("auth/cloud-platform"), grantedPermissions: granted, rest };
   };
   return { db: db as unknown as Firestore, dispose: () => db.terminate(), diagnose };
 }
