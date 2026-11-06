@@ -49,6 +49,7 @@ import {
   type Unsubscribe,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { workoutModelSummary } from "@/utils/workoutModelSummary";
 import { toDate } from "@/utils/dates";
 import {
   type HealthWorkout,
@@ -126,47 +127,6 @@ function parseBestEfforts(value: unknown): BestEffortsMap | undefined {
   return parsed;
 }
 
-function parseWeather(value: unknown): WeatherSnapshot | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const r = value as Record<string, unknown>;
-  const num = (v: unknown): number | null =>
-    typeof v === "number" && Number.isFinite(v) ? v : null;
-
-  const tempF = num(r.tempF);
-  const feelsLikeF = num(r.feelsLikeF);
-  const humidity = num(r.humidity);
-  const windMph = num(r.windMph);
-  const dewPointF = num(r.dewPointF);
-  const conditionCode = num(r.conditionCode);
-  const conditionText =
-    typeof r.conditionText === "string" ? r.conditionText : null;
-  const fetchedAt = typeof r.fetchedAt === "string" ? r.fetchedAt : null;
-
-  if (
-    tempF === null ||
-    feelsLikeF === null ||
-    humidity === null ||
-    windMph === null ||
-    dewPointF === null ||
-    conditionCode === null ||
-    conditionText === null ||
-    fetchedAt === null
-  ) {
-    return undefined;
-  }
-
-  return {
-    tempF,
-    feelsLikeF,
-    humidity,
-    windMph,
-    dewPointF,
-    conditionCode,
-    conditionText,
-    fetchedAt,
-  };
-}
-
 function bestEffortsEqual(
   a: BestEffortsMap | undefined,
   b: BestEffortsMap
@@ -184,13 +144,10 @@ export function docToHealthWorkout(
   id: string,
   data: Record<string, unknown>
 ): HealthWorkout {
-  const displayType = (data.displayType as string) ?? "Workout";
-  const distanceMiles = (data.distanceMiles as number) ?? 0;
-
   const isManual = data.entrySource === "manual";
 
   return {
-    workoutId: (data.workoutId as string) ?? id,
+    ...workoutModelSummary(id, data),
     entrySource: isManual ? "manual" : undefined,
     customTitle:
       isManual && typeof data.customTitle === "string" && data.customTitle.length > 0
@@ -202,37 +159,19 @@ export function docToHealthWorkout(
         : undefined,
     createdAt: isManual && data.createdAt ? toDate(data.createdAt) : undefined,
     updatedAt: isManual && data.updatedAt ? toDate(data.updatedAt) : undefined,
-    name: displayType,
-    activityType: (data.activityType as string) ?? "",
-    displayType,
-    startDate: toDate(data.startDate),
-    endDate: toDate(data.endDate),
-    durationSeconds: (data.durationSeconds as number) ?? 0,
-    sourceName: (data.sourceName as string) ?? "Apple Watch",
-    isRunLike: (data.isRunLike as boolean) ?? false,
-    hasRoute: (data.hasRoute as boolean) ?? false,
     // Display-hint marker only (see HealthWorkout.routeComplete). Preserve the
     // tri-state: true / false / undefined (legacy absent → treated as complete).
     routeComplete:
       typeof data.routeComplete === "boolean"
         ? (data.routeComplete as boolean)
         : undefined,
-    hasHRStream: (data.hasHRStream as boolean) ?? false,
-    // Manual docs never store syncedAt (iOS anchors incremental sync on the newest
-    // one). updatedAt stands in so same-id edits still change derived revisions.
-    syncedAt: toDate(isManual ? data.updatedAt : data.syncedAt),
     sourceBundle: data.sourceBundle as string | undefined,
     calories: (data.calories as number) ?? 0,
-    avgHeartRate: (data.avgHeartRate as number | null) ?? null,
-    distanceMiles,
-    distanceMeters: (data.distanceMeters as number | null) ?? null,
-    avgPaceSecPerMile: (data.avgPaceSecPerMile as number | null) ?? null,
     avgSpeedMPS: (data.avgSpeedMPS as number | null) ?? null,
     hrDriftPct: (data.hrDriftPct as number | null) ?? null,
     cadenceSPM: (data.cadenceSPM as number | null) ?? null,
     efficiencyRaw: (data.efficiencyRaw as number | null) ?? null,
     efficiencyScore: (data.efficiencyScore as number | null) ?? null,
-    elevationGainM: (data.elevationGainM as number | null) ?? null,
     prBadges: Array.isArray(data.prBadges)
       ? (data.prBadges as unknown[]).filter(
           (v): v is string => typeof v === "string"
@@ -255,11 +194,6 @@ export function docToHealthWorkout(
     trainingLoadBasisComplete:
       typeof data.trainingLoadBasisComplete === "boolean"
         ? (data.trainingLoadBasisComplete as boolean)
-        : undefined,
-    weather: parseWeather(data.weather),
-    routeClusterId:
-      typeof data.routeClusterId === "string" && data.routeClusterId.length > 0
-        ? data.routeClusterId
         : undefined,
     overlayChartCache: parseOverlayChartCache(data.overlayChartCache),
     gapSecPerMile:

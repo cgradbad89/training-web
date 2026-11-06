@@ -12,19 +12,9 @@ import { db } from "@/lib/firebase";
 import { COLLECTIONS } from "@/lib/firestore";
 import { type Race } from "@/types";
 import { type HealthWorkout } from "@/types/healthWorkout";
-import { toDate, toLocalIsoDate } from "@/utils/dates";
-import { normalizeRaceConfirmationHistory } from "@/utils/raceConfirmation";
-
-/** Preserve invalid history presence so an evaluator cannot fall back to legacy trust. */
-export function normalizeRaceDocument(id: string, data: Record<string, unknown>): Race {
-  return {
-    ...data, id,
-    raceDate: toDate(data.raceDate).toISOString().split("T")[0],
-    createdAt: toDate(data.createdAt).toISOString(),
-    ...(Object.prototype.hasOwnProperty.call(data, "confirmationHistory")
-      ? { confirmationHistory: normalizeRaceConfirmationHistory(data.confirmationHistory) } : {}),
-  } as Race;
-}
+import { toLocalIsoDate } from "@/utils/dates";
+import { normalizeRaceDocument } from "@/utils/raceDocument";
+export { normalizeRaceDocument } from "@/utils/raceDocument";
 
 function assertOrdinaryRaceFields(data: object): void {
   if (Object.keys(data).some(key => key === "performanceEvidence" || key === "confirmationHistory"
