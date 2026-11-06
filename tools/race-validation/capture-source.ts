@@ -5,7 +5,9 @@ import { workoutModelSummary } from "@/utils/workoutModelSummary";
 import { normalizeRaceDocument } from "@/utils/raceDocument";
 import { CURRENT_HALF_POLICY } from "@/utils/experimentalCurrentPerformance";
 import { WORKOUT_RESEARCH_POLICY } from "@/utils/workoutRaceResearch";
+import { toDate } from "@/utils/dates";
 import { instant, key } from "./evidence";
+import { ACTIVE_RACE_QUERY_LIMIT, type RaceMeta } from "./enrollment";
 import type { CaptureSlot } from "./scheduled-capture";
 
 const WORKOUT_FIELDS = [
@@ -104,5 +106,41 @@ export function createFirestoreCaptureReader(db: Firestore, enrolledUid: string,
         overrides: rows(overrides, CAPTURE_LIMITS.overrides, row => row.data()),
       },
     };
+  };
+}
+
+/** The only race fields enrollment discovery may read. No name, result, evidence, plan, location or workout data. */
+const RACE_META_FIELDS = ["raceDate", "raceDistance", "customDistanceMiles", "isActive"] as const;
+
+function raceMeta(id: string, data: Record<string, unknown>): RaceMeta {
+  let raceDate: string | null = null;
+  try {
+    // Same conversion as normalizeRaceDocument, so discovery and the capture-time race check agree.
+    if (data.raceDate) raceDate = toDate(data.raceDate).toISOString().split("T")[0];
+  } catch { raceDate = null; }
+  return { id, raceDate, raceDistance: data.raceDistance, customDistanceMiles: data.customDistanceMiles, isActive: data.isActive };
+}
+
+/**
+ * Bounded, owner-scoped race-metadata reads for enrollment (Phase 3H). Four fields only; never touches
+ * workouts, their children or any other user. Uses the automatic single-field `isActive` index, so no index
+ * is added. `active()` costs at most ACTIVE_RACE_QUERY_LIMIT + 1 document reads (typically one).
+ */
+export function createRaceMetadataReader(db: Firestore, enrolledUid: string, expected: { projectId?: string } = {}) {
+  const uid = key(enrolledUid, "enrolledUid");
+  if (uid.includes("/")) throw new TypeError("Invalid enrolled UID");
+  assertBound(db, expected);
+  const races = db.collection("users").doc(uid).collection("halfMarathonRaces");
+  return {
+    async active(): Promise<{ races: RaceMeta[]; overflow: boolean }> {
+      const snapshot = await races.where("isActive", "==", true).select(...RACE_META_FIELDS).limit(ACTIVE_RACE_QUERY_LIMIT + 1).get();
+      const rows = snapshot.docs.map(row => raceMeta(row.id, row.data()));
+      return { races: rows.slice(0, ACTIVE_RACE_QUERY_LIMIT), overflow: rows.length > ACTIVE_RACE_QUERY_LIMIT };
+    },
+    /** One field-masked document read, used by preflight to compare the pinned enrollment with the stored race. */
+    async byId(raceId: string): Promise<RaceMeta | null> {
+      const [row] = await db.getAll(races.doc(key(raceId, "raceId")), { fieldMask: [...RACE_META_FIELDS] });
+      return row?.exists ? raceMeta(row.id, row.data() ?? {}) : null;
+    },
   };
 }

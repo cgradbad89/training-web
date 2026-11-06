@@ -116,3 +116,41 @@ it.skipIf(process.env.PHASE3E_CAPTURE_EMULATOR !== "1")("binds project, owner an
     await deleteApp(app);
   }
 });
+
+it.skipIf(process.env.PHASE3E_CAPTURE_EMULATOR !== "1")("discovers only the owner's active races, with four masked fields and a bounded read (Phase 3H)", async () => {
+  if (process.env.FIRESTORE_EMULATOR_HOST !== "127.0.0.1:8080") throw new Error("Expected the local emulator on 127.0.0.1:8080");
+  const { createRaceMetadataReader } = await import("./capture-source");
+  const app = initializeApp({ projectId: "demo-training-capture-phase3h" }, "phase3h-metadata-test");
+  const db = getFirestore(app);
+  const owner = db.collection("users").doc("synthetic-owner");
+  const stranger = db.collection("users").doc("synthetic-stranger");
+  const refs = [
+    owner.collection("halfMarathonRaces").doc("active-half"), owner.collection("halfMarathonRaces").doc("inactive-half"),
+    owner.collection("halfMarathonRaces").doc("active-10k"), owner.collection("halfMarathonRaces").doc("malformed"),
+    stranger.collection("halfMarathonRaces").doc("strangers-active-half"),
+  ];
+  try {
+    await db.batch()
+      .set(refs[0], { name: "PRIVATE-NAME", raceDate: "2027-09-04", raceDistance: "halfMarathon", isActive: true, result: "PRIVATE-RESULT", notes: "PRIVATE" })
+      .set(refs[1], { name: "x", raceDate: "2027-10-09", raceDistance: "halfMarathon", isActive: false })
+      .set(refs[2], { name: "x", raceDate: "2027-05-01", raceDistance: "10K", isActive: true })
+      .set(refs[3], { name: "x", isActive: true, raceDistance: "halfMarathon" })
+      .set(refs[4], { name: "x", raceDate: "2027-09-11", raceDistance: "halfMarathon", isActive: true }).commit();
+    const reader = createRaceMetadataReader(db, "synthetic-owner");
+    const { races, overflow } = await reader.active();
+    expect(overflow).toBe(false);
+    expect(races.map(r => r.id).sort()).toEqual(["active-10k", "active-half", "malformed"]);
+    expect(races.find(r => r.id === "active-half")).toEqual({ id: "active-half", raceDate: "2027-09-04", raceDistance: "halfMarathon", customDistanceMiles: undefined, isActive: true });
+    expect(races.find(r => r.id === "malformed")?.raceDate).toBeNull();
+    expect(JSON.stringify(races)).not.toContain("PRIVATE");
+    expect(await reader.byId("inactive-half")).toMatchObject({ id: "inactive-half", isActive: false });
+    expect(await reader.byId("strangers-active-half")).toBeNull();
+    expect(await reader.byId("missing")).toBeNull();
+    expect(JSON.stringify(await reader.byId("active-half"))).not.toContain("PRIVATE");
+  } finally {
+    const batch = db.batch();
+    refs.forEach(ref => batch.delete(ref));
+    await batch.commit();
+    await deleteApp(app);
+  }
+});
