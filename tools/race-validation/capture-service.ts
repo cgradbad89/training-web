@@ -88,7 +88,17 @@ async function defaultFirestore(settings: CaptureSettings, _request: Request, oi
     const { token } = await authClient.getAccessToken();
     const info = (await (await fetch(`https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(token ?? "")}`,
       { signal: AbortSignal.timeout(10_000) })).json()) as { email?: string; scope?: string };
-    return { tokenPrincipal: info.email, cloudPlatformScope: (info.scope ?? "").includes("auth/cloud-platform") };
+    // Ask Google which of these project permissions the issued token actually holds. Names only, no data.
+    const asked = ["datastore.entities.get", "datastore.entities.list", "datastore.databases.getMetadata", "datastore.entities.create", "datastore.entities.delete"];
+    let granted: string[] | null = null;
+    try {
+      const response = await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${encodeURIComponent(settings.projectId)}:testIamPermissions`, {
+        method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ permissions: asked }), signal: AbortSignal.timeout(10_000) });
+      const body = (await response.json()) as { permissions?: unknown };
+      granted = response.ok && Array.isArray(body.permissions) ? body.permissions.filter((name): name is string => asked.includes(name as string)) : null;
+    } catch { granted = null; }
+    return { tokenPrincipal: info.email, cloudPlatformScope: (info.scope ?? "").includes("auth/cloud-platform"), grantedPermissions: granted };
   };
   return { db: db as unknown as Firestore, dispose: () => db.terminate(), diagnose };
 }
