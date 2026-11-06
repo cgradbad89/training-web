@@ -98,7 +98,7 @@ Owner-account access is the break-glass path: if Vercel OIDC federation fails, d
 | Existing Firestore reads | **Measured** (Cloud Monitoring, 30 days to Nov 6, 2026) | Daily mean about 64,700 reads, maximum about 439,700, 13 of 30 days above the 50,000 free quota. |
 | Capture reads | **Calculated** | A due day reads at most 1,000 + 100 + 1,000 documents plus one overflow probe per source (2,103). Four checkpoints: **8,412 reads**, zero writes. That is under 0.5 % of the peak day and about 3 % of the mean. A typical read is likely a few hundred documents (about 236 days of workouts plus a handful of races/overrides) but this is an estimate: real counts were not read. |
 | Incremental Firestore cost | **Assumption** (published `nam5` rate of about $0.06 per 100,000 reads) | At most 8,412 reads ≈ **$0.005** if every read is billable. A preflight costs one read. |
-| Retries | **Calculated** | A source read repeats only when no object exists. Worst case with storage down all day: three cron slots × three in-invocation attempts × 2,103 reads × four days ≈ 75,700 reads ≈ **$0.05**. Hard caps: two in-invocation retries, 120 s budget, no retry past the cutoff, no retry on policy or permission failures. |
+| Retries | **Calculated** | A source read repeats only when no object exists. Worst case with storage down all day: three cron slots × three in-invocation attempts × 2,103 reads × four days ≈ 75,700 reads ≈ **$0.05**. Hard caps: two in-invocation retries, 120 s budget, no retry past the cutoff, no retry on policy or permission failures. Each attempt opens and terminates its own Firestore client (Phase 3G; previously only the last client was terminated). |
 | Storage | **Assumption** (published us-central1 Standard ≈ $0.02/GB-month, Always Free allowance) | At most 4 MiB retained: effectively **$0**, under $0.001/month even outside the free tier. |
 | Operations | **Assumption** (Class A ≈ $0.005/1,000, Class B ≈ $0.0004/1,000) | Four creates and a few dozen small reads per month: well under $0.01. |
 | Vercel plan | Reported Hobby in Phase 3E; the team API in this session did not return a plan field, so this is **unverified today** | Hobby supports 100 cron jobs per project, once-per-day frequency, ±59-minute precision, and a 300 s function limit. The collector completes in seconds. No plan upgrade is required. |
@@ -248,5 +248,7 @@ Three or four dependent comparisons against one race outcome establish custody a
 | Wrong or over-broad permissions, retention, deletion, tamper | `storage_policy` failures; missing/short/unlocked retention; altered bytes of either length; deleted and re-created objects |
 | No sensitive data in logs or responses | Sentinel payload, secret, OIDC and access tokens absent from responses and logs |
 | v1/v2 compatibility; unchanged numerics | Existing Phase 3D/3E suites pass unchanged; no estimator, projection, model or formula file was modified |
+
+| Firestore client lifecycle across retries (Phase 3G) | Every attempt's client is disposed immediately after its read, including failed and retried attempts and a throwing `dispose()`; see the [Phase 3G report](half-marathon-capture-verification-phase3g.md) |
 
 Limits are the section 7 list. No production resource, identity, schedule or data access was created or used.
