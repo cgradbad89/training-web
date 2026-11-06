@@ -1,6 +1,6 @@
 # Autonomous half-marathon capture: cleanup and production verification · Phase 3G
 
-Date: November 6, 2026. Base: `5882a3a8` (Phase 3F, production preflight passing). Scope: one code correction plus read-only production verification. Nothing in Firebase rules/indexes, IAM, the bucket, Vercel variables or the schedule was changed.
+Date: November 6, 2026. Base: `5882a3a8` (Phase 3F, production preflight passing). Scope: one code correction plus read-only production verification. Nothing in Firebase rules/indexes, the bucket, Vercel variables or the schedule was changed by the code change. One owner-approved IAM removal followed (section 4.1).
 
 ## 1. Recovery
 
@@ -24,7 +24,7 @@ No estimator, schedule, retry bound, storage, identity or enrollment logic chang
 | Owner | Owner email is verified in Firebase Auth; the race belongs to that UID |
 | Configured `HM_CAPTURE_RACE_ID` / `OWNER_UID` | **Not verifiable by an agent.** All `HM_CAPTURE_*` variables and `CRON_SECRET` are Vercel write-only; the CLI returns empty values and the MCP returns 403. Owner action: confirm in the Vercel dashboard that the race ID starts `a5fcefd6` and the UID is the owner's. A mismatch is safe (`enrollment_mismatch` or `absent`, nothing sealed) but would make the first capture useless |
 | Crons registered | Three entries on `/api/half-marathon-capture` at `0 13`, `0 17`, `0 21` UTC on the production deployment, which serves main `5882a3a8` |
-| Cron executions | **Not verifiable.** Hobby retains one hour of runtime logs; none were present in that window. Hobby crons may fire anywhere inside the scheduled hour, so the 21:00 slot may not have fired yet. Owner action: check the Cron Jobs tab for last-run times after 22:00 UTC |
+| Cron executions | **Verified once (follow-up, 2026-11-06).** Hobby keeps one hour of runtime logs, so history is not retrievable. The 21:00 UTC slot was observed at **21:34:59 UTC**: `GET /api/half-marathon-capture`, HTTP 200, log `{"event":"half_marathon_capture","status":"idle"}`. That branch is reached only after the bearer secret matches (authenticated) and before any storage, token or Firestore call (idle, no collection). State ladder: configured yes, registered yes, executed yes (one observed run), authenticated yes, successful n/a (no due checkpoint). The 13:00 and 17:00 slots were outside log retention and are unverified |
 | Idle invocations do no Firestore or storage work | Proven in tests: idle days make zero storage, token-exchange and Firestore calls (40 days × 3 slots scan; single-request idle test). Not observed in production logs (see above) |
 | Evidence bucket | US-CENTRAL1, public access prevention **enforced**, uniform bucket-level access, 365-day retention **unlocked** (as designed), 7-day soft delete, no objects (first capture 2027-02-20) |
 | Bucket IAM | Writer: custom role with only `storage.objects.create`; verifier: only `storage.buckets.get` + `storage.objects.get`. Remaining entries are the GCS default legacy roles for project Owners/Editors/Viewers |
@@ -56,6 +56,36 @@ gcloud projects add-iam-policy-binding malignant-metro \
 ```
 
 Dependency tests after the change: sign in to production and use AI Coach (`verifyIdToken`); run `npm run snapshot:export` (Admin Firestore reads); run `GET /api/half-marathon-capture?mode=preflight` (uses workload identity, expected unaffected). If custom tokens are ever needed, grant Token Creator on that one account only, never project-wide.
+
+### 4.1 Remediation (owner-approved, verified)
+
+The owner approved the removal and ran it on **2026-11-06 at 21:35:55 UTC** (Cloud Audit Log `SetIamPolicy`: `REMOVE roles/iam.serviceAccountTokenCreator` for `firebase-adminsdk-fbsvc`, principal the project owner; no later re-addition). The finding above is retained as the historical record.
+
+Verified afterwards (read-only):
+
+- Effective policy: the project has no parent organization or folder, so nothing is inherited. `firebase-adminsdk-fbsvc` holds only `roles/firebase.sdkAdminServiceAgent` and `roles/firebaseauth.admin`; neither contains any `iam.*`, `signBlob`, `getAccessToken` or `actAs` permission. No Token Creator binding exists for any principal at project scope.
+- Direct grants: none of the Editor accounts or the Admin account has a service-account-level policy. The three capture accounts are impersonable only through `roles/iam.workloadIdentityUser` for the Vercel pool principal bound to this project; the provider condition still pins project, team and `environment == "production"`.
+- The capture collector remains keyless: nothing under `tools/race-validation` imports `firebaseAdmin` or `FIREBASE_SERVICE_ACCOUNT_JSON`.
+- Smoke test covered: login page 200; capture route 401 without bearer; a bearer-authenticated cron run returned `idle` (that run preceded the removal by about one minute, so it shows the route, not the post-removal state). **Not covered: an authenticated AI Coach request (`verifyIdToken`).** `verifyIdToken` uses Google's public keys and needs no IAM permission, so no break is expected, but the owner should send one coach message to confirm.
+
+Rollback (restores the exact previous state):
+
+```bash
+gcloud projects add-iam-policy-binding malignant-metro \
+  --member="serviceAccount:firebase-adminsdk-fbsvc@malignant-metro.iam.gserviceaccount.com" \
+  --role="roles/iam.serviceAccountTokenCreator"
+```
+
+### 4.2 Firebase Admin key audit (no key changed)
+
+| Key (prefix) | Created | Evidence |
+| --- | --- | --- |
+| `7dd5a7…` | 2026-02-27 | Predates the Vercel variable, which was created 2026-08-20. Superseded when the variable was replaced on 2026-11-02 |
+| `d718b0…` | 2026-11-02 19:44 UTC | Matches the last update of `FIREBASE_SERVICE_ACCOUNT_JSON` (production and preview, write-only), the only consumer found |
+
+Both are user-managed and never expire. Dependencies: Vercel production uses `FIREBASE_SERVICE_ACCOUNT_JSON` for `verifyIdToken` only. Local scripts (`scripts/*.ts`) use Application Default Credentials; the machine's ADC is the owner's own user credential, `GOOGLE_APPLICATION_CREDENTIALS` points at a nonexistent file, and no key file exists on the machine, so no local workflow depends on either key. Which key the variable holds cannot be read (write-only), so the mapping above is inferred from dates. Key last-authentication telemetry would settle it but requires enabling the Policy Analyzer API, which was not done.
+
+Recommendation (needs owner approval, not applied): disable `7dd5a7…` (reversible), watch AI Coach and production sign-in for a week, then delete it. Rollback of the disable: `gcloud iam service-accounts keys enable <KEY_ID> --iam-account=firebase-adminsdk-fbsvc@malignant-metro.iam.gserviceaccount.com`. Deletion is not reversible. Afterwards rotate `d718b0…` on a schedule. Do not disable `d718b0…` before confirming it is not the variable's key.
 
 Follow-up hardening, separate decisions: delete whichever Admin key is not in use and rotate the other; do not lock bucket retention yet (it is irreversible and the pilot is deliberately unlocked).
 
