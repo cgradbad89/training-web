@@ -226,10 +226,16 @@ export async function handleCaptureRequest(request: Request, deps: CaptureDeps):
     return respond({ status: ok ? "preflight_ok" : "preflight_failed", checks }, ok ? 200 : 500);
   }
 
-  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  // The scheduler may call readSource once per attempt. Every attempt opens its own Firestore client and
+  // disposes it as soon as the read has produced plain data, so a retry can never leak its predecessor's
+  // gRPC channel and auth client (only the last handle used to be terminated).
   const readSource = async (slot: Parameters<ReturnType<typeof createFirestoreCaptureReader>>[0]): Promise<CaptureSource> => {
-    handle = await open(settings, request, oidc);
-    return createFirestoreCaptureReader(handle.db, settings.ownerUid, { projectId: settings.projectId })(slot);
+    const handle = await open(settings, request, oidc);
+    try {
+      return await createFirestoreCaptureReader(handle.db, settings.ownerUid, { projectId: settings.projectId })(slot);
+    } finally {
+      await handle.dispose().catch(() => undefined);
+    }
   };
   let result: CaptureResult;
   try {
@@ -237,8 +243,6 @@ export async function handleCaptureRequest(request: Request, deps: CaptureDeps):
       { now, readSource, store, sleep: deps.sleep }, { raceId: url.searchParams.get("race") ?? undefined });
   } catch {
     result = { status: "failed", reason: "invalid_capture" };
-  } finally {
-    await handle?.dispose().catch(() => undefined);
   }
   console.info(safeCaptureLog(result));
   const { status, checkpointDate, horizon, counts, generation, createdAt, reason, attempts, retentionLocked } = result;

@@ -248,6 +248,40 @@ describe("schedule, retry and concurrency", () => {
     expect(policy.reads.opened).toBe(0);
   });
 
+  it("disposes the Firestore client of every attempt, including failed and retried ones (Phase 3G)", async () => {
+    // Source fails once, then succeeds: two clients opened, both terminated (previously only the last was).
+    const recovered = world("2027-02-20T17:00:00.000Z");
+    let calls = 0;
+    vi.mocked(sourceModule.createFirestoreCaptureReader).mockImplementation(() => async () => {
+      recovered.advance(1000);
+      if (++calls === 1) throw new Error("synthetic transient outage");
+      return source(recovered.clock());
+    });
+    expect(await (await recovered.call()).json()).toMatchObject({ status: "abstained", attempts: 2 });
+    expect(recovered.reads).toEqual({ opened: 2, disposed: 2 });
+
+    // Every attempt fails: all clients are still terminated and nothing is stored.
+    const failing = world("2027-02-20T17:00:00.000Z");
+    vi.mocked(sourceModule.createFirestoreCaptureReader).mockImplementation(() => async () => { failing.advance(1000); throw new Error("synthetic outage"); });
+    expect(await (await failing.call()).json()).toMatchObject({ status: "failed", reason: "source_failed" });
+    expect(failing.reads.opened).toBe(3);
+    expect(failing.reads.disposed).toBe(failing.reads.opened);
+    expect(failing.gcs.objects.size).toBe(0);
+
+    // A client that cannot be opened never leaves a dangling handle, and a failing dispose never masks the result.
+    const unopened = world("2027-02-20T17:00:00.000Z");
+    expect(await (await unopened.call(undefined, "", { createFirestore: async () => { throw new Error("no credential"); } })).json())
+      .toMatchObject({ status: "failed", reason: "source_failed" });
+    const brokenDispose = world("2027-02-20T17:00:00.000Z");
+    vi.mocked(sourceModule.createFirestoreCaptureReader).mockImplementation(() => async () => { brokenDispose.advance(1000); return source(brokenDispose.clock()); });
+    let disposeAttempts = 0;
+    const result = await (await brokenDispose.call(undefined, "", {
+      createFirestore: async () => ({ db: {} as never, dispose: async () => { disposeAttempts++; throw new Error("terminate failed"); } }),
+    })).json();
+    expect(result).toMatchObject({ status: "abstained" });
+    expect(disposeAttempts).toBe(1);
+  });
+
   it("converts an unexpected create error into a verified duplicate only when the original generation exists", async () => {
     const w = world("2027-02-20T17:00:00.000Z");
     w.gcs.state.conflictStatus = 403;
