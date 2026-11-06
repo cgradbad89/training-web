@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
-import { initializeApp, deleteApp } from "firebase-admin/app";
-import { getFirestore, type Firestore } from "firebase-admin/firestore";
+import { Firestore as GoogleFirestore } from "@google-cloud/firestore";
+import { ExternalAccountClient, GoogleAuth } from "google-auth-library";
+import type { Firestore } from "firebase-admin/firestore";
 import { CAPTURE_SCOPES, createImpersonatedCredential } from "./capture-credentials";
 import { createFirestoreCaptureReader, createFirestoreProbe } from "./capture-source";
 import { createPrivateCaptureStore, type RetentionMode } from "./capture-storage";
@@ -64,16 +65,25 @@ export interface CaptureDeps {
   sleep?: (ms: number) => Promise<void>;
   /** Supplies the platform OIDC token; defaults to the Vercel request header. */
   oidcToken?: (request: Request) => Promise<string>;
-  /** Test seam; production uses a Firestore client authorized only by the reader identity. */
-  createFirestore?: (settings: CaptureSettings, accessToken: () => Promise<string>) => Promise<{ db: Firestore; dispose: () => Promise<void> }>;
+  /** Test seam. Production builds a keyless Firestore client authorized only by the reader identity. */
+  createFirestore?: (settings: CaptureSettings, request: Request, oidcToken: () => Promise<string>) => Promise<{ db: Firestore; dispose: () => Promise<void> }>;
 }
 
-async function defaultFirestore(settings: CaptureSettings, accessToken: () => Promise<string>) {
-  const app = initializeApp({
-    projectId: settings.projectId,
-    credential: { getAccessToken: async () => ({ access_token: await accessToken(), expires_in: 600 }) },
-  }, `half-marathon-capture-${Date.now()}`);
-  return { db: getFirestore(app), dispose: () => deleteApp(app) };
+/**
+ * firebase-admin's Firestore wrapper accepts only key or default credentials, so the keyless path uses the
+ * underlying client with a workload-identity auth client that impersonates the reader service account.
+ */
+async function defaultFirestore(settings: CaptureSettings, _request: Request, oidcToken: () => Promise<string>) {
+  const authClient = ExternalAccountClient.fromJSON({
+    type: "external_account", audience: settings.audience, subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
+    token_url: "https://sts.googleapis.com/v1/token",
+    service_account_impersonation_url: `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${encodeURIComponent(settings.readerEmail)}:generateAccessToken`,
+    subject_token_supplier: { getSubjectToken: oidcToken },
+  });
+  if (!authClient) throw new Error("Keyless Firestore credential unavailable");
+  const auth = new GoogleAuth({ authClient, projectId: settings.projectId });
+  const db = new GoogleFirestore({ projectId: settings.projectId, auth } as ConstructorParameters<typeof GoogleFirestore>[0]);
+  return { db: db as unknown as Firestore, dispose: () => db.terminate() };
 }
 
 function bearerMatches(header: string | null, secret: string) {
@@ -110,7 +120,6 @@ export async function handleCaptureRequest(request: Request, deps: CaptureDeps):
   const oidc = () => (deps.oidcToken ? deps.oidcToken(request) : Promise.resolve(request.headers.get("x-vercel-oidc-token") ?? ""));
   const credential = (email: string, scopes: readonly string[]) => createImpersonatedCredential({
     audience: settings.audience, serviceAccountEmail: email, projectId: settings.projectId, scopes, oidcToken: oidc, request: fetcher });
-  const reader = credential(settings.readerEmail, CAPTURE_SCOPES.firestoreReader);
   let store: CaptureStore;
   try {
     store = createPrivateCaptureStore({
@@ -123,15 +132,27 @@ export async function handleCaptureRequest(request: Request, deps: CaptureDeps):
   const open = deps.createFirestore ?? defaultFirestore;
 
   if (url.searchParams.get("mode") === "preflight") {
-    const checks = { policy: false, identities: false, firestore: false };
+    const checks: { policy: boolean; identities: boolean; firestore: boolean; firestoreStage?: "open" | "bind" | "read"; firestoreCode?: number } =
+      { policy: false, identities: false, firestore: false };
     let handle: Awaited<ReturnType<typeof open>> | undefined;
     try {
       await store.verifyPolicy();
       checks.policy = checks.identities = true;
-      handle = await open(settings, () => reader.accessToken());
-      await createFirestoreProbe(handle.db, settings.ownerUid, { projectId: settings.projectId })();
+    } catch { /* checks already carry the safe outcome */ }
+    try {
+      checks.firestoreStage = "open";
+      handle = await open(settings, request, oidc);
+      checks.firestoreStage = "bind";
+      const probe = createFirestoreProbe(handle.db, settings.ownerUid, { projectId: settings.projectId });
+      checks.firestoreStage = "read";
+      await probe();
       checks.firestore = true;
-    } catch { /* checks already carry the safe outcome */ } finally {
+      delete checks.firestoreStage;
+    } catch (error) {
+      // A numeric gRPC status and the failing stage identify the problem without any payload or message text.
+      const code = (error as { code?: unknown })?.code;
+      if (typeof code === "number") checks.firestoreCode = code;
+    } finally {
       await handle?.dispose().catch(() => undefined);
     }
     const ok = checks.policy && checks.firestore;
@@ -140,7 +161,7 @@ export async function handleCaptureRequest(request: Request, deps: CaptureDeps):
 
   let handle: Awaited<ReturnType<typeof open>> | undefined;
   const readSource = async (slot: Parameters<ReturnType<typeof createFirestoreCaptureReader>>[0]): Promise<CaptureSource> => {
-    handle = await open(settings, () => reader.accessToken());
+    handle = await open(settings, request, oidc);
     return createFirestoreCaptureReader(handle.db, settings.ownerUid, { projectId: settings.projectId })(slot);
   };
   let result: CaptureResult;

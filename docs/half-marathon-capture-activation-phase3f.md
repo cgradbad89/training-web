@@ -172,13 +172,15 @@ Three slots because Vercel does not retry a failed cron run and Hobby cannot run
 
 **Step 6: arm.** Preflight passing with `HM_CAPTURE_ENABLED=true` is also the armed state; the first real capture is Feb 20, 2027. Run the preflight again during the first week of February 2027 to catch drift.
 
+**First preflight result (November 6, 2026).** Bucket policy and the writer/verifier identities passed against the real project, which proved the keyless token exchange and the least-privilege matrix. The Firestore probe failed because firebase-admin\'s Firestore wrapper accepts only a key or default credentials, never a custom token provider. The collector now builds the underlying `@google-cloud/firestore` client with a workload-identity auth client that impersonates the reader account. Failed preflights report a stage and a numeric status code only.
+
 ## 7. What synthetic tests cannot prove
 
 The in-memory Cloud Storage and token services model create-only preconditions, server times, hashes, permission matrices and retention metadata. They cannot show that:
 
 1. Google reports the status the adapter expects on a create-only conflict for a writer without delete permission. (It may be 412 or 403. The handler recovers from both by confirming the original generation.)
 2. Vercel's token claims, issuer and subject match the pool condition, and the token is delivered in the `x-vercel-oidc-token` header the default handler reads. (`oidcToken` is injectable if it is not.)
-3. `roles/datastore.viewer`, or a narrower role, suffices for a read-only transaction under the reader identity, and the real retention and `testIamPermissions` behavior matches the model.
+3. The keyless Firestore client authenticates with the reader identity and `roles/datastore.viewer`, or a narrower role, suffices for a read-only transaction under the reader identity, and the real retention and `testIamPermissions` behavior matches the model.
 4. A Hobby deployment accepts three same-path cron entries and starts them in the expected hours.
 
 The preflight and one dry run settle these. Real IAM enforcement, locked-retention behavior and billing remain unproven until then.
