@@ -66,7 +66,7 @@ export interface CaptureDeps {
   /** Supplies the platform OIDC token; defaults to the Vercel request header. */
   oidcToken?: (request: Request) => Promise<string>;
   /** Test seam. Production builds a keyless Firestore client authorized only by the reader identity. */
-  createFirestore?: (settings: CaptureSettings, request: Request, oidcToken: () => Promise<string>) => Promise<{ db: Firestore; dispose: () => Promise<void> }>;
+  createFirestore?: (settings: CaptureSettings, request: Request, oidcToken: () => Promise<string>) => Promise<{ db: Firestore; dispose: () => Promise<void>; diagnose?: () => Promise<Record<string, unknown>> }>;
 }
 
 /**
@@ -83,7 +83,14 @@ async function defaultFirestore(settings: CaptureSettings, _request: Request, oi
   if (!authClient) throw new Error("Keyless Firestore credential unavailable");
   const auth = new GoogleAuth({ authClient, projectId: settings.projectId });
   const db = new GoogleFirestore({ projectId: settings.projectId, auth } as ConstructorParameters<typeof GoogleFirestore>[0]);
-  return { db: db as unknown as Firestore, dispose: () => db.terminate() };
+  // Preflight-only: which identity and scopes the issued token carries. Reports no token or payload.
+  const diagnose = async () => {
+    const { token } = await authClient.getAccessToken();
+    const info = (await (await fetch(`https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(token ?? "")}`,
+      { signal: AbortSignal.timeout(10_000) })).json()) as { email?: string; scope?: string };
+    return { tokenPrincipal: info.email, cloudPlatformScope: (info.scope ?? "").includes("auth/cloud-platform") };
+  };
+  return { db: db as unknown as Firestore, dispose: () => db.terminate(), diagnose };
 }
 
 function bearerMatches(header: string | null, secret: string) {
@@ -132,7 +139,7 @@ export async function handleCaptureRequest(request: Request, deps: CaptureDeps):
   const open = deps.createFirestore ?? defaultFirestore;
 
   if (url.searchParams.get("mode") === "preflight") {
-    const checks: { policy: boolean; identities: boolean; firestore: boolean; firestoreStage?: "open" | "bind" | "read"; firestoreCode?: number } =
+    const checks: { policy: boolean; identities: boolean; firestore: boolean; firestoreStage?: "open" | "bind" | "read"; firestoreCode?: number; firestoreReason?: string; credential?: Record<string, unknown> } =
       { policy: false, identities: false, firestore: false };
     let handle: Awaited<ReturnType<typeof open>> | undefined;
     try {
@@ -152,6 +159,14 @@ export async function handleCaptureRequest(request: Request, deps: CaptureDeps):
       // A numeric gRPC status and the failing stage identify the problem without any payload or message text.
       const code = (error as { code?: unknown })?.code;
       if (typeof code === "number") checks.firestoreCode = code;
+      // Coarse category from Google's own error text; the text itself is never returned.
+      const text = String((error as { message?: unknown })?.message ?? "");
+      checks.firestoreReason = /insufficient authentication scopes/i.test(text) ? "scope"
+        : /has not been used|is disabled|SERVICE_DISABLED/i.test(text) ? "api_disabled"
+        : /user project|quota project|serviceusage/i.test(text) ? "consumer_project"
+        : /missing or insufficient permissions|permission .* denied|IAM_PERMISSION_DENIED/i.test(text) ? "iam"
+        : /could not load the default credentials/i.test(text) ? "no_credential" : "other";
+      if (handle?.diagnose) checks.credential = await handle.diagnose().catch(() => ({ unavailable: true }));
     } finally {
       await handle?.dispose().catch(() => undefined);
     }

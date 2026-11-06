@@ -150,9 +150,9 @@ describe("collector request handling", () => {
 
   it("reports a Firestore failure with only a stage and numeric status code", async () => {
     const w = world("2027-01-05T17:00:00.000Z");
-    vi.mocked(sourceModule.createFirestoreProbe).mockImplementationOnce(() => async () => { throw Object.assign(new Error("PRIVATE-DETAIL secret-like text"), { code: 7 }); });
+    vi.mocked(sourceModule.createFirestoreProbe).mockImplementationOnce(() => async () => { throw Object.assign(new Error("PRIVATE-DETAIL Request had insufficient authentication scopes"), { code: 7 }); });
     const text = await (await w.call(undefined, "?mode=preflight")).text();
-    expect(JSON.parse(text)).toEqual({ status: "preflight_failed", checks: { policy: true, identities: true, firestore: false, firestoreStage: "read", firestoreCode: 7 } });
+    expect(JSON.parse(text)).toEqual({ status: "preflight_failed", checks: { policy: true, identities: true, firestore: false, firestoreStage: "read", firestoreCode: 7, firestoreReason: "scope" } });
     expect(text).not.toContain("PRIVATE-DETAIL");
     const openFails = await w.call(undefined, "?mode=preflight", { createFirestore: async () => { throw new Error("no credential"); } });
     expect(await openFails.json()).toMatchObject({ checks: { firestore: false, firestoreStage: "open" } });
