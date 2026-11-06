@@ -69,6 +69,34 @@ export interface CaptureDeps {
   createFirestore?: (settings: CaptureSettings, request: Request, oidcToken: () => Promise<string>) => Promise<{ db: Firestore; dispose: () => Promise<void>; diagnose?: () => Promise<Record<string, unknown>> }>;
 }
 
+type HeaderSource = { getRequestHeaders(url?: string): Promise<unknown> };
+
+/**
+ * google-auth-library 10 returns request headers as a Fetch `Headers` object, but the gRPC stack beneath
+ * Firestore enumerates plain-object keys, so the bearer token was silently dropped and Firestore answered as
+ * if unauthenticated. Return a plain object instead; every other member is passed through unchanged.
+ */
+export function withPlainRequestHeaders<T extends HeaderSource>(client: T): T {
+  return new Proxy(client, {
+    get(target, property) {
+      if (property === "getRequestHeaders") {
+        return async (url?: string) => {
+          const headers = await target.getRequestHeaders(url);
+          return headers && typeof (headers as Headers).entries === "function" ? Object.fromEntries((headers as Headers).entries()) : headers;
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+class PlainHeaderAuth extends GoogleAuth {
+  override async getClient(): Promise<never> {
+    return withPlainRequestHeaders(await super.getClient() as unknown as HeaderSource) as never;
+  }
+}
+
 /**
  * firebase-admin's Firestore wrapper accepts only key or default credentials, so the keyless path uses the
  * underlying client with a workload-identity auth client that impersonates the reader service account.
@@ -81,7 +109,7 @@ async function defaultFirestore(settings: CaptureSettings, _request: Request, oi
     subject_token_supplier: { getSubjectToken: oidcToken },
   });
   if (!authClient) throw new Error("Keyless Firestore credential unavailable");
-  const auth = new GoogleAuth({ authClient, projectId: settings.projectId });
+  const auth = new PlainHeaderAuth({ authClient, projectId: settings.projectId });
   const db = new GoogleFirestore({ projectId: settings.projectId, auth } as ConstructorParameters<typeof GoogleFirestore>[0]);
   // Preflight-only: which identity and scopes the issued token carries. Reports no token or payload.
   const diagnose = async () => {
