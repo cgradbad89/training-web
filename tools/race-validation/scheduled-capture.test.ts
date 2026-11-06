@@ -1,10 +1,10 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from "vitest";
-import { canonicalizePerformanceValue } from "@/utils/performanceEvidence";
 import { checkpointSchedule, dueCheckpoints, replayCheckpoint, sealCheckpoint, type Checkpoint } from "./checkpoint";
 import { PROTOCOL } from "./evidence";
 import { captureObjectName, missedCaptureSlots, pilotTarget, runScheduledCapture, verifyCaptureGeneration, type CaptureSource, type StoredCapture } from "./scheduled-capture";
 import { createPrivateCaptureStore } from "./capture-storage";
+import { createFakeGcs } from "./fake-gcs";
 
 const target = pilotTarget("synthetic", "pilot");
 const secret = "synthetic-authentication-secret-never-deployed";
@@ -167,38 +167,68 @@ describe("private Google Cloud Storage adapter with fake transport", () => {
     source: { kind: "synthetic", authorization: "local", reference: "fixture", codeRevision: "fixture" },
     coverage: source.coverage, inputs: source.inputs,
   });
-  const body = canonicalizePerformanceValue(artifact);
-  const policy = { name: bucket, iamConfiguration: { publicAccessPrevention: "enforced", uniformBucketLevelAccess: { enabled: true } },
-    retentionPolicy: { retentionPeriod: String(retention), isLocked: true } };
-  const metadata = { bucket, name, generation: "7", timeCreated: committedAt, size: String(Buffer.byteLength(body)),
-    retentionExpirationTime: new Date(Date.parse(committedAt) + retention * 1000).toISOString() };
-  const transport = (request: typeof fetch) => createPrivateCaptureStore({ bucket, minimumRetentionSeconds: retention, request,
-    writer: { principal: "writer", accessToken: async () => "writer-test-token" },
-    verifier: { principal: "reader", accessToken: async () => "reader-test-token" },
-  });
+  const make = (options: Partial<Parameters<typeof createFakeGcs>[0]> = {}, mode?: "locked" | "unlocked_pilot") => {
+    const gcs = createFakeGcs({ bucket, clock: () => committedAt, retentionSeconds: retention, locked: true, ...options });
+    const store = createPrivateCaptureStore({ bucket, minimumRetentionSeconds: retention, request: gcs.fetch, retentionMode: mode,
+      writer: { principal: "writer", accessToken: async () => "token:writer" },
+      verifier: { principal: "reader", accessToken: async () => "token:reader" } });
+    return { gcs, store };
+  };
 
   it("uses independent credentials, a create-only precondition and a pinned generation read", async () => {
-    const request = vi.fn<typeof fetch>()
-      .mockResolvedValueOnce(Response.json(policy)).mockResolvedValueOnce(new Response(null, { status: 412 }))
-      .mockResolvedValueOnce(Response.json(metadata)).mockResolvedValueOnce(new Response(body));
-    const store = transport(request);
-    await store.verifyPolicy();
+    const { gcs, store } = make();
+    expect(await store.verifyPolicy()).toEqual({ retentionLocked: true });
+    expect(await store.create(name, artifact)).toBe("created");
     expect(await store.create(name, artifact)).toBe("exists");
-    expect(await store.read(name)).toEqual({ generation: "7", createdAt: committedAt, artifact });
-    expect(request.mock.calls[1][0].toString()).toContain("ifGenerationMatch=0");
-    expect(request.mock.calls[1][1]).toMatchObject({ method: "POST", headers: { Authorization: "Bearer writer-test-token" } });
-    expect(request.mock.calls[3][0].toString()).toContain("generation=7");
-    expect(request.mock.calls[3][1]).toMatchObject({ method: "GET", headers: { Authorization: "Bearer reader-test-token" } });
+    expect(await store.read(name)).toMatchObject({ generation: "101", createdAt: committedAt, artifact });
+    expect(gcs.objects.size).toBe(1);
+    const writes = gcs.calls.filter(call => call.method === "POST");
+    expect(writes.every(call => call.url.includes("ifGenerationMatch=0") && call.principal === "writer")).toBe(true);
+    expect(gcs.calls.filter(call => call.url.includes("alt=media")).every(call => call.url.includes("generation=101") && call.principal === "reader")).toBe(true);
   });
 
-  it("rejects missing lock, failed uploads and mismatched generations", async () => {
-    const request = vi.fn<typeof fetch>()
-      .mockResolvedValueOnce(Response.json({ ...policy, retentionPolicy: { ...policy.retentionPolicy, isLocked: false } }))
-      .mockResolvedValueOnce(new Response(null, { status: 500 }))
-      .mockResolvedValueOnce(Response.json({ ...metadata, name: "other" }));
-    const store = transport(request);
-    await expect(store.verifyPolicy()).rejects.toThrow("locked bucket");
+  it("rejects a missing lock, missing retention, failed uploads and mismatched generations", async () => {
+    await expect(make({ locked: false }).store.verifyPolicy()).rejects.toThrow("retained bucket");
+    await expect(make({ retentionSeconds: 0 }, "unlocked_pilot").store.verifyPolicy()).rejects.toThrow();
+    await expect(make({ retentionSeconds: retention - 1 }, "unlocked_pilot").store.verifyPolicy()).rejects.toThrow("retained bucket");
+    await expect(make({ publicAccessPrevention: "inherited" }).store.verifyPolicy()).rejects.toThrow("retained bucket");
+    const { gcs, store } = make();
+    gcs.state.failNextUpload = 1;
     await expect(store.create(name, artifact)).rejects.toThrow("upload failed");
-    await expect(store.read(name)).rejects.toThrow("retained generation");
+    await store.create(name, artifact);
+    gcs.state.retentionSeconds = 0;
+    await expect(store.read(name)).rejects.toThrow();
+  });
+
+  it("accepts a reversible pilot policy only when asked and reports the weaker guarantee", async () => {
+    const { store } = make({ locked: false }, "unlocked_pilot");
+    expect(await store.verifyPolicy()).toEqual({ retentionLocked: false });
+  });
+
+  it("fails closed for over-privileged or under-privileged identities", async () => {
+    const writerCanDelete = make({ permissions: { writer: ["storage.objects.create", "storage.objects.delete"] } });
+    await expect(writerCanDelete.store.verifyPolicy()).rejects.toThrow("least-privilege");
+    const verifierCanWrite = make({ permissions: { reader: ["storage.objects.get", "storage.buckets.get", "storage.objects.create"] } });
+    await expect(verifierCanWrite.store.verifyPolicy()).rejects.toThrow("least-privilege");
+    const writerCannotCreate = make({ permissions: { writer: [] } });
+    await expect(writerCannotCreate.store.verifyPolicy()).rejects.toThrow("least-privilege");
+  });
+
+  it("detects altered bytes of either length against the storage-reported size and hash", async () => {
+    const { gcs, store } = make();
+    await store.create(name, artifact);
+    const length = gcs.objects.get(name)!.size;
+    gcs.tamper(name, "x".repeat(length));
+    await expect(store.read(name)).rejects.toThrow("hash mismatch");
+    gcs.tamper(name, "x");
+    await expect(store.read(name)).rejects.toThrow("size mismatch");
+  });
+
+  it("supports a verifier-only store that cannot write", async () => {
+    const gcs = createFakeGcs({ bucket, clock: () => committedAt, retentionSeconds: retention });
+    const store = createPrivateCaptureStore({ bucket, minimumRetentionSeconds: retention, request: gcs.fetch,
+      verifier: { principal: "reader", accessToken: async () => "token:reader" } });
+    expect(await store.read(name)).toBeNull();
+    await expect(store.create(name, artifact)).rejects.toThrow("no writer");
   });
 });
