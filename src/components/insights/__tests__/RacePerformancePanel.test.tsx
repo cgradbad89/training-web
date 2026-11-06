@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HealthWorkout } from "@/types/healthWorkout";
 import type { Race } from "@/types/race";
 import { currentFixture } from "@/utils/__tests__/fixtures/currentPerformanceFixture";
-import { researchRace, workoutResearchFixture } from "@/utils/__tests__/fixtures/workoutRaceResearchFixture";
+import { researchRace, researchRun, workoutResearchFixture } from "@/utils/__tests__/fixtures/workoutRaceResearchFixture";
 import { estimateCurrentHalfMarathon } from "@/utils/experimentalCurrentPerformance";
 import { RacePerformancePanel, type RacePerformancePanelProps, type RacePerformanceSources } from "../RacePerformancePanel";
 
@@ -97,7 +97,7 @@ describe("Race performance summary presentation", () => {
     expect(model.finishMinutes).toBe(131); expect(model.paceSecondsPerMile).toBe(600);
     expect(summary().textContent).toContain("~2:11"); expect(summary().textContent).toContain("~10:00/mi");
     expect(adjustment().textContent).toBe("0 min");
-    expect(explanation()).toBe(model.reason); expect(explanation()).toContain("deadbands");
+    expect(model.diagnostics.summary).toBe("inside_deadbands"); expect(explanation()).toContain("deadbands");
     expect(explanation()).not.toContain("Not enough sustained evidence");
   });
 
@@ -121,16 +121,15 @@ describe("Race performance summary presentation", () => {
     expect(adjustment().textContent).toBe(`${sign}${Math.abs(Math.round(model.adjustmentSeconds / 60))} minEstimated ${direction}`);
     expect(explanation()).toContain("Sustained volume and frequency and endurance preparation evidence");
     expect(explanation()).not.toContain("Not enough");
-    expect(allText()).toContain(model.reason);
+    expect(allText()).toContain("Sustained preparation supports a summary adjustment");
     expect(model.validated).toBe(false);
   });
 
   it.each([{ scale: 1.3, direction: "faster" }, { scale: .7, direction: "slower" }])("distinguishes rounded zero from exact zero ($direction)", ({ scale, direction }) => {
     const model = renderFixture(currentFixture(scale));
     expect(model.adjustmentSeconds).not.toBe(0); expect(Math.abs(model.adjustmentSeconds)).toBeLessThan(30);
-    expect(adjustment().textContent).toBe(`0 minRounded · Estimated ${direction}`);
-    expect(explanation()).toContain("A sub-minute adjustment rounds to 0 min");
-    expect(explanation()).not.toMatch(/unchanged|no adjustment|Not enough/);
+    expect(adjustment().textContent).toBe(`${model.adjustmentSeconds < 0 ? "−" : "+"}${Math.abs(model.adjustmentSeconds).toFixed(1)} sEstimated ${direction}`);
+    expect(explanation()).toContain("leaves the displayed finish minute unchanged");
     expect(allText()).toContain("Training adjustment before rounding:");
   });
 
@@ -150,6 +149,70 @@ describe("Race performance summary presentation", () => {
     expect(model.dataThrough).toBe("2026-10-21");
     expect(allText()).toContain("Calculation cutoff 2026-10-27T01:00:00.000Z · America/New_York");
     expect(summary().textContent).not.toContain("2030"); vi.useRealTimers();
+  });
+
+  it("shows a sub-minute adjustment that crosses the displayed-minute boundary", () => {
+    const input = currentFixture(0.7);
+    const anchor = input.workouts[0];
+    anchor.durationSeconds = 7888;
+    anchor.endDate = new Date(anchor.startDate.getTime() + 7888 * 1000);
+    anchor.syncedAt = new Date(anchor.endDate.getTime() + 1000);
+    const model = renderFixture(input);
+    expect(model.adjustmentSeconds).toBeGreaterThan(2);
+    expect(model.adjustmentSeconds).toBeLessThan(30);
+    expect(model.finishMinutes).toBe(132);
+    expect(explanation()).not.toContain("displayed finish minute unchanged");
+  });
+
+  it("reacts to one eligible matched run and an override, while leaving delayed or irrelevant inputs out", () => {
+    const input = workoutResearchFixture();
+    const added = input.workouts.at(-1)!;
+    const previous = input.workouts.slice(0, -1);
+    const without = renderFixture({ ...input, workouts: previous });
+    const delayed = renderFixture({ ...input, workouts: [...previous, { ...added, syncedAt: new Date("2026-10-28T12:00:00Z") }] });
+    expect(delayed.finishMinutes).toBe(without.finishMinutes);
+    const complete = renderFixture(input);
+    expect(complete.finishMinutes).not.toBe(without.finishMinutes);
+    const changed = summary().querySelector('[data-testid="estimate-values"]')?.textContent;
+    renderFixture({ ...input, workouts: [...input.workouts, researchRun("future", "2026-10-30")] });
+    expect(summary().querySelector('[data-testid="estimate-values"]')?.textContent).toBe(changed);
+    const reverted = renderFixture({ ...input, overrides: {
+      [added.workoutId]: { workoutId: added.workoutId, userId: "synthetic", isExcluded: true, updatedAt: input.asOf,
+        excludedAt: input.asOf, excludedReason: null, distanceMilesOverride: null, durationSecondsOverride: null, runTypeOverride: null },
+    } });
+    expect(reverted.finishMinutes).toBe(without.finishMinutes);
+    expect(summary().querySelector('[data-testid="estimate-values"]')?.textContent).not.toBe(changed);
+  });
+
+  it("keeps the live cutoff stable across unrelated renders and Estimate Details", () => {
+    vi.useFakeTimers();
+    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "production");
+    const input = currentFixture();
+    vi.setSystemTime(new Date(input.asOf));
+    const props = { asOf: undefined, races: [...input.races], workouts: [...input.workouts], overrides: {} };
+    render(props);
+    expect(openDetails().textContent).toContain("Calculation cutoff 2026-10-26T16:00:00.000Z");
+    vi.setSystemTime(new Date("2026-10-26T16:30:00Z"));
+    render({ ...props, selectedRace: race({ id: "other-outlook" }) });
+    expect(openDetails().textContent).toContain("Calculation cutoff 2026-10-26T16:00:00.000Z");
+  });
+
+  it("advances an open tab across local midnight and retains the dated benchmark", () => {
+    vi.useFakeTimers();
+    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "production");
+    vi.setSystemTime(new Date("2027-03-20T03:59:59.900Z"));
+    const training = ["2027-03-04", "2027-03-10", "2027-03-17"].map((day, i) => workout({
+      workoutId: `training-${i}`, startDate: new Date(day + "T12:00:00Z"), endDate: new Date(day + "T13:00:00Z"),
+      syncedAt: new Date(day + "T14:00:00Z"), durationSeconds: 3600, distanceMiles: 6, distanceMeters: 9656,
+    }));
+    render({ asOf: undefined, races: [race()], workouts: [workout(), ...training] });
+    expect(summary().textContent).toContain("~2:11");
+    expect(summary().textContent).toContain("last eligible day");
+    act(() => vi.advanceTimersByTime(200));
+    expect(summary().textContent).toContain("Insufficient evidence");
+    expect(summary().textContent).toContain("2:11:11");
+    expect(summary().textContent).toContain("outside the 180-day");
+    expect(summary().textContent).not.toContain("~2:11");
   });
 
   it("does not present an unavailable adjustment as zero or invent a latest run", () => {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import type { HealthWorkout } from "@/types/healthWorkout";
 import type { Race } from "@/types/race";
@@ -12,8 +12,9 @@ import { evaluateRacePerformance, nominalRaceDistanceMeters } from "@/utils/race
 import { buildRaceTrainingContext } from "@/utils/raceTrainingContext";
 import { formatRaceTime } from "@/utils/riegelFit";
 import { isExperimentalCurrentEstimateEnabled } from "@/lib/racePerformanceGate";
-import { estimateCurrentHalfMarathon, type CurrentHalfEstimate } from "@/utils/experimentalCurrentPerformance";
-import { performanceLocalDate } from "@/utils/performanceEvidence";
+import { CURRENT_HALF_POLICY, estimateCurrentHalfMarathon, type CurrentHalfEstimate } from "@/utils/experimentalCurrentPerformance";
+import { performanceLocalDate, shiftPerformanceDate } from "@/utils/performanceEvidence";
+import { researchRaceCutoff } from "@/utils/workoutRaceResearch";
 import { daysUntil, parseLocalDate } from "@/utils/dates";
 import { EstimateDetailsButton, InsightsDialog } from "./EstimateDetailsDialog";
 
@@ -97,25 +98,95 @@ function dateLabel(date: string): string {
   });
 }
 
-/** Format the supplied adjustment only; never subtract rounded finish times. */
+/** Round the magnitude symmetrically. Keep a small nonzero adjustment visible. */
 function adjustmentLabel(seconds: number, decimals = 0): string {
-  const minutes = decimals ? Number((seconds / 60).toFixed(decimals)) : Math.round(seconds / 60);
-  return `${minutes < 0 ? "−" : minutes > 0 ? "+" : ""}${Math.abs(minutes).toFixed(decimals)} min`;
+  const sign = seconds < 0 ? "−" : seconds > 0 ? "+" : "";
+  const magnitude = Math.abs(seconds);
+  const minutes = (magnitude / 60).toFixed(decimals);
+  if (seconds !== 0 && Number(minutes) === 0) {
+    return magnitude < 0.01 ? `${sign}<0.01 s` : `${sign}${magnitude.toFixed(magnitude < 1 ? 2 : 1)} s`;
+  }
+  return `${sign}${minutes} min`;
+}
+
+const SUMMARY_REASON = {
+  not_evaluated: "Summary adjustment was not evaluated.",
+  insufficient_coverage: "Insufficient eligible comparison history. Each period needs six runs and four observed weeks at every smoothing offset.",
+  inside_deadbands: "Sustained training remains inside the summary deadbands. No meaningful change was detected.",
+  offsetting_signals: "The supported training signals offset each other.",
+  attenuated_to_zero: "Freshness or support reduced the summary adjustment to zero.",
+  supported: "Sustained preparation supports a summary adjustment.",
+} satisfies Record<CurrentHalfEstimate["diagnostics"]["summary"], string>;
+
+const MATCHED_REASON = {
+  not_evaluated: "Comparable-effort matching was not evaluated.",
+  insufficient_pairs_or_weeks: "Too few qualifying comparable-effort pairs across separate weeks.",
+  inconsistent_ratios: "Matched paces disagree beyond the permitted magnitude or spread.",
+  insufficient_effective_pairs: "Too few effective pairs after the age weights to change the estimate.",
+  supported: "Qualifying pairs contribute to the training adjustment.",
+} satisfies Record<CurrentHalfEstimate["diagnostics"]["matched"], string>;
+
+function anchorLifecycle(current: CurrentHalfEstimate): string | null {
+  const age = current.historicalAnchor?.ageDays;
+  if (age == null) return null;
+  const daysLeft = CURRENT_HALF_POLICY.maximumAnchorDays - age;
+  if (daysLeft < 0) return "This dated benchmark is outside the 180-day current-estimate window.";
+  if (daysLeft === 0) return "This is the anchor’s last eligible day. Its training adjustment has faded to zero.";
+  if (daysLeft <= 7) return `This anchor reaches its final eligible day in ${daysLeft} ${daysLeft === 1 ? "day" : "days"}.`;
+  return null;
 }
 
 function adjustmentReason(current: CurrentHalfEstimate): string {
   if (current.finishMinutes === null) return current.reason;
-  if (current.adjustmentMethod === "withheld" && current.adjustmentSeconds === 0 && current.anchor) {
-    const month = new Date(`${current.anchor.raceDate}T12:00:00Z`).toLocaleDateString("en-US", { month: "long", timeZone: "UTC" });
-    return `Not enough sustained evidence to adjust your ${month} race baseline.`;
+  const { summary, freshness } = current.diagnostics;
+  if (current.adjustmentSeconds === 0) {
+    if (freshness === 0) return "Freshness support is zero. The estimate uses the unadjusted race baseline.";
+    if (current.adjustmentMethod === "matched_effort") return "The blended signals produce no net adjustment to the race baseline.";
+    if (summary === "insufficient_coverage") {
+      const month = new Date(`${current.anchor!.raceDate}T12:00:00Z`).toLocaleDateString("en-US", { month: "long", timeZone: "UTC" });
+      return `Not enough sustained evidence to adjust your ${month} race baseline.`;
+    }
+    return SUMMARY_REASON[summary];
   }
   const features = current.contributions.filter(c => c.seconds !== 0).map(c => c.feature.toLowerCase());
-  const reason = features.length
-    ? `${current.adjustmentMethod === "summary" ? "Sustained " : ""}${features.join(" and ")} evidence contributes to this experimental adjustment.`
-    : current.reason;
-  const roundedZero = current.adjustmentSeconds !== 0 && Math.round(current.adjustmentSeconds / 60) === 0;
+  const reason = `${current.adjustmentMethod === "summary" ? "Sustained " : ""}${features.join(" and ")} evidence contributes to this experimental adjustment.`;
   const text = reason.charAt(0).toUpperCase() + reason.slice(1);
-  return roundedZero ? `A sub-minute adjustment rounds to 0 min. ${text}` : text;
+  return current.finishMinutes === Math.round(current.baselineSeconds! / 60)
+    ? `The adjustment leaves the displayed finish minute unchanged. ${text}` : text;
+}
+
+/** Advance local-day policies even in an open tab. This clock does no data IO. */
+function useEstimateDay(fixed: boolean, timeZone: string): string | null {
+  const [day, setDay] = useState(() => fixed ? null : performanceLocalDate(new Date().toISOString(), timeZone));
+  useEffect(() => {
+    if (fixed) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const schedule = () => {
+      clearTimeout(timer);
+      const now = new Date();
+      const localDay = performanceLocalDate(now.toISOString(), timeZone);
+      const nextMidnight = Date.parse(researchRaceCutoff(shiftPerformanceDate(localDay, 1), timeZone)) + 1;
+      timer = setTimeout(() => {
+        setDay(performanceLocalDate(new Date().toISOString(), timeZone));
+        schedule();
+      }, Math.max(1, nextMidnight - now.getTime()));
+    };
+    const resume = () => {
+      if (document.visibilityState === "hidden") return;
+      setDay(performanceLocalDate(new Date().toISOString(), timeZone));
+      schedule();
+    };
+    // A fixed snapshot needs no clock. A resumed tab catches a throttled timer.
+    schedule();
+    document.addEventListener("visibilitychange", resume);
+    window.addEventListener("pageshow", resume);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", resume);
+      window.removeEventListener("pageshow", resume);
+    };
+  }, [fixed, timeZone]);
+  return day;
 }
 
 function Section({ title, children, compact = false }: { title: string; children: React.ReactNode; compact?: boolean }) {
@@ -155,16 +226,19 @@ export interface RacePerformancePanelProps {
   renderActions?: (estimateDetails: React.ReactNode) => React.ReactNode;
 }
 
-/** Summary-only view. No service imports, child acquisition, persistence or timers. */
+/** Summary-only view. The local-day timer never acquires evidence. */
 export function RacePerformancePanel(props: RacePerformancePanelProps) {
   const { races, workouts, overrides, plan, selectedRace, sources } = props;
   const detailsId = useId();
   const performanceReady = PERFORMANCE_SOURCES.every(source => sources[source].hasLoaded);
   const trainingReady = TRAINING_SOURCES.every(source => sources[source].hasLoaded);
   const planReady = PLAN_SOURCES.every(source => sources[source].hasLoaded);
-  const asOf = props.asOf ?? new Date();
-  const asOfIso = asOf.toISOString();
   const timeZone = props.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const day = useEstimateDay(props.asOf !== undefined, timeZone);
+  // Relevant source publications use a fresh cutoff. Render-only state reuses it.
+  const asOfIso = useMemo(() => props.asOf?.toISOString() ?? new Date().toISOString(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- These changes intentionally refresh the captured clock.
+    [props.asOf, races, workouts, overrides, performanceReady, day, timeZone]);
   const targetDistanceMeters = selectedRace ? nominalRaceDistanceMeters(selectedRace) ?? 21097.5 : 21097.5;
   // The declared product goal supplies an empty-account outlook, never a race result.
   const targetRace = selectedRace ?? races.find(r => r.raceDate === "2027-03-20" && r.raceDistance === "halfMarathon") ?? null;
@@ -180,7 +254,8 @@ export function RacePerformancePanel(props: RacePerformancePanelProps) {
     races, workouts, overrides, asOf: asOfIso, timeZone,
   }) : null, [currentEnabled, performanceReady, races, workouts, overrides, asOfIso, timeZone]);
   const benchmark = performance?.latestBenchmark ?? null;
-  const displayedAnchor = current?.anchor ?? benchmark;
+  const displayedAnchor = current?.historicalAnchor ?? benchmark;
+  const lifecycle = current ? anchorLifecycle(current) : null;
   const maxWeeklyMiles = Math.max(1, ...(training?.weekly ?? []).map(week => week.miles));
   const daysToTargetRace = daysUntil(targetDate, parseLocalDate(performanceLocalDate(asOfIso, timeZone)));
   const targetSeconds = targetRace?.targetPaceSecondsPerMile && targetRace.targetPaceSecondsPerMile > 0
@@ -210,6 +285,7 @@ export function RacePerformancePanel(props: RacePerformancePanelProps) {
             {current && <p className="text-sm text-textSecondary" data-testid="estimate-unavailable-reason">{current.reason}</p>}
             {displayedAnchor && <p className="text-sm text-textSecondary" data-testid="estimate-basis">Historical race: {displayedAnchor.finishSeconds != null ? formatRaceTime(displayedAnchor.finishSeconds) : "time unavailable"} · {dateLabel(displayedAnchor.raceDate)} · {STATUS_LABEL[displayedAnchor.status]}</p>}
           </>}
+          {lifecycle && <p className="text-sm text-textSecondary" data-testid="anchor-lifecycle">{lifecycle}</p>}
           <dl className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-textSecondary">
             <div className="flex flex-wrap gap-x-1"><dt>Calculated as of:</dt><dd>{current ? dateLabel(performanceLocalDate(current.asOf, timeZone)) : "Unavailable"}</dd></div>
             <div className="flex flex-wrap gap-x-1"><dt>Latest included run:</dt><dd>{current?.dataThrough ? dateLabel(current.dataThrough) : "Unavailable"}</dd></div>
@@ -237,31 +313,49 @@ export function RacePerformancePanel(props: RacePerformancePanelProps) {
             {currentEnabled && <div className="flex items-start justify-between gap-4">
               <dt className="text-textSecondary">Training adjustment</dt>
               <dd className="text-right" data-testid="training-adjustment"><span className="font-semibold tabular-nums text-textPrimary">{current?.finishMinutes != null ? adjustmentLabel(current.adjustmentSeconds) : "Unavailable"}</span>
-                {current?.finishMinutes != null && current.adjustmentSeconds !== 0 && <span className="block text-xs text-textSecondary">{Math.round(current.adjustmentSeconds / 60) === 0 ? "Rounded · " : ""}Estimated {current.adjustmentSeconds < 0 ? "faster" : "slower"}</span>}
+                {current?.finishMinutes != null && current.adjustmentSeconds !== 0 && <span className="block text-xs text-textSecondary">Estimated {current.adjustmentSeconds < 0 ? "faster" : "slower"}</span>}
               </dd>
             </div>}
           </dl>
-          {current && <p data-testid="adjustment-reason">{adjustmentReason(current)}</p>}
+          {current && <div>
+            {current.finishMinutes !== null && current.finishMinutes === Math.round(current.baselineSeconds! / 60) &&
+              <h4 className="font-semibold text-textPrimary">Why hasn’t my estimate changed?</h4>}
+            <p data-testid="adjustment-reason">{adjustmentReason(current)}</p>
+          </div>}
           {!currentEnabled && displayedAnchor && <p>{displayedAnchor.name} · {dateLabel(displayedAnchor.raceDate)}</p>}
           {current ? <div className="space-y-3" data-testid="estimate-why">
             <div className="grid grid-cols-1 min-w-0 gap-3 md:grid-cols-2">
               <div className="min-w-0 space-y-1"><h4 className="font-semibold text-textPrimary">Race anchor</h4>
                 {current.anchor ? <><p>{current.anchor.name} · {dateLabel(current.anchor.raceDate)} · {STATUS_LABEL[current.anchor.status]}{current.anchor.stale ? " · Older benchmark" : ""}.</p>
-                  <p>{current.anchor.timingBasis === "confirmed_result" ? "Confirmed result time" : "Recorded time; official result and maximal effort need confirmation"}. {current.anchor.ageDays} days old.</p></> : <p>No usable race anchor.</p>}
+                  <p>{current.anchor.timingBasis === "confirmed_result" ? "Confirmed result time" : "Recorded time; official result and maximal effort need confirmation"}. {current.anchor.ageDays} days old.</p></> : current.historicalAnchor
+                  ? <p>{current.historicalAnchor.name} · {dateLabel(current.historicalAnchor.raceDate)} · {STATUS_LABEL[current.historicalAnchor.status]}. {lifecycle}</p>
+                  : <p>No usable race anchor.</p>}
                 <p>Race-equivalent baseline: {current.baselineSeconds === null ? "Unavailable" : formatRaceTime(current.baselineSeconds)}.</p>
               </div>
               <div className="min-w-0 space-y-1"><h4 className="font-semibold text-textPrimary">Training evidence</h4>
-                <p>Since that race: {current.sinceAnchor.sessions} completed training runs, {current.sinceAnchor.miles.toFixed(1)} mi. Recent 4 / 8 weeks: {current.training.recentFourWeeks.miles.toFixed(1)} / {(current.training.recentFourWeeks.miles + current.training.priorFourWeeks.miles).toFixed(1)} mi.</p>
-                <p>Training adjustment before rounding: {current.finishMinutes === null ? "Unavailable" : `${adjustmentLabel(current.adjustmentSeconds, 1)} (${current.adjustmentSeconds} seconds)`}.</p>
-                <p>{current.reason}</p>
+                <p>{current.anchor && <>Since that race: {current.sinceAnchor.sessions} completed training runs, {current.sinceAnchor.miles.toFixed(1)} mi. </>}Recent 4 / 8 weeks: {current.training.recentFourWeeks.miles.toFixed(1)} / {(current.training.recentFourWeeks.miles + current.training.priorFourWeeks.miles).toFixed(1)} mi.</p>
+                <p>{current.diagnostics.recentTrainingRuns} eligible training runs across {current.diagnostics.recentTrainingWeeks} weeks in the last 56 days.</p>
+                <p>Training adjustment before rounding: {current.finishMinutes === null ? "Unavailable" : `${Number(current.adjustmentSeconds.toFixed(2))} seconds`}.</p>
+                {current.baselineTraining && current.currentTraining && <p>Comparison coverage: {current.baselineTraining.sessions} runs / {current.baselineTraining.observedWeeks} weeks before the anchor, {current.currentTraining.sessions} runs / {current.currentTraining.observedWeeks} weeks after it. Week counts use the least-covered smoothing offset.</p>}
               </div>
             </div>
             <div className="space-y-2"><h4 className="font-semibold text-textPrimary">Adjustment evidence</h4>
+              {current.finishMinutes !== null && <ul className="list-disc pl-5 space-y-1" data-testid="adjustment-diagnostics">
+                <li>{SUMMARY_REASON[current.diagnostics.summary]}</li>
+                <li>{MATCHED_REASON[current.diagnostics.matched]} Matched: {current.diagnostics.matchedPairs} pairs across {current.diagnostics.matchedWeeks} weeks ({current.diagnostics.effectivePairs.toFixed(1)} effective).</li>
+                {current.diagnostics.freshness !== null && current.diagnostics.freshness < 1 &&
+                  <li>Anchor and recent-run freshness retain {(current.diagnostics.freshness * 100).toFixed(0)}% of supported adjustment.</li>}
+              </ul>}
               <ul className="space-y-2">{current.contributions.map(c => <li key={c.feature}><span className="font-semibold">{c.feature}: {adjustmentLabel(c.seconds, 1)}.</span> {c.explanation}</li>)}</ul>
             </div>
             <div className="space-y-2"><h4 className="font-semibold text-textPrimary">Evidence limitations</h4><ul className="list-disc pl-5 space-y-1">{current.gaps.map(gap => <li key={gap}>{gap}</li>)}</ul></div>
+            {Object.keys(current.diagnostics.excludedByReason).length > 0 && <details>
+              <summary className="cursor-pointer py-2 font-semibold text-primary">Workout selection details</summary>
+              <ul className="list-disc pl-5 space-y-1">{Object.entries(current.diagnostics.excludedByReason).map(([reason, count]) =>
+                <li key={reason} className="capitalize">{reason.replaceAll("_", " ")} · {count}</li>)}</ul>
+            </details>}
             <div className="space-y-1"><h4 className="font-semibold text-textPrimary">Experimental methodology</h4>
-              <p>Unvalidated training adjustment. Finish time rounds to the nearest minute; pace derives from that time and rounds to five seconds per mile. Adjustment minutes round separately from the model’s unrounded adjustment. No confidence interval is supported. This estimate has not been validated for your individual accuracy.</p>
+              <p>Unvalidated training adjustment. Finish time rounds to the nearest minute; pace derives from that time and rounds to five seconds per mile. The adjustment is applied before rounding the finish time. No confidence interval is supported. This estimate has not been validated for your individual accuracy.</p>
             </div>
             <details><summary className="cursor-pointer py-2 font-semibold text-primary rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">Model assumptions</summary><ul className="mt-2 space-y-1">{current.assumptions.map(a => <li key={a}>{a}</li>)}</ul></details>
             <p className="text-xs">Model {current.version} · Evidence quality: {current.evidenceQuality.replaceAll("_", " ")} · Calculation cutoff {current.asOf} · {timeZone}</p>

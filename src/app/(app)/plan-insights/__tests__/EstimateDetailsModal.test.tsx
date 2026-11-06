@@ -181,7 +181,7 @@ describe("Plan Insights estimate tile and details modal", () => {
     const methodology = q("estimate-methodology")!.textContent!;
     const minutes = Math.round(estimate.adjustmentSeconds / 60);
     expect(q("training-adjustment")!.textContent).toContain(`${minutes < 0 ? "−" : "+"}${Math.abs(minutes)} min`);
-    expect(methodology).toContain(`(${estimate.adjustmentSeconds} seconds)`);
+    expect(methodology).toContain(`${Number(estimate.adjustmentSeconds.toFixed(2))} seconds`);
     expect(methodology).toContain(`Race-equivalent baseline: `); expect(methodology).toContain(estimate.anchor!.name);
     expect(methodology).toContain("Recorded time; official result and maximal effort need confirmation");
     expect(methodology).toContain("Unvalidated training adjustment"); expect(methodology).toContain("No confidence interval is supported");

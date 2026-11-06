@@ -3,9 +3,12 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import type { WorkoutOverride } from "@/types/workoutOverride";
+import { buildRaceConfirmationSnapshot } from "@/utils/raceConfirmation";
+import { confirmedRaceFixture } from "@/utils/__tests__/fixtures/raceConfirmationFixture";
 import type { Race } from "@/types/race";
 import type { HealthWorkout } from "@/types/healthWorkout";
-import { estimateCurrentHalfMarathon } from "@/utils/experimentalCurrentPerformance";
+import { CURRENT_HALF_POLICY, LEGACY_CURRENT_HALF_VERSION, estimateCurrentHalfMarathon } from "@/utils/experimentalCurrentPerformance";
 import { canonicalizePerformanceValue, shiftPerformanceDate } from "@/utils/performanceEvidence";
 import { researchRiegelSeconds, researchVdotSeconds } from "@/utils/racePerformance";
 import { currentFixture } from "@/utils/__tests__/fixtures/currentPerformanceFixture";
@@ -363,4 +366,35 @@ describe("study scoring and independent evidence", () => {
       rmSync(folder, { recursive: true, force: true });
     }
   });
+});
+
+it("retains byte-identical Phase 3D replay and requires one model version for a study", () => {
+  const input = capture();
+  const v1 = sealCheckpoint(input, LEGACY_CURRENT_HALF_VERSION);
+  const v2 = sealCheckpoint(input);
+  expect(replayCheckpoint(v1)).toEqual(v1);
+  expect(replayCheckpoint(v2)).toEqual(v2);
+  expect(v2.results).toEqual(v1.results);
+  expect(evaluateStudy(study([v1], [])).modelVersions.experimental).toBe(LEGACY_CURRENT_HALF_VERSION);
+  expect(() => evaluateStudy(study([v1, v2], []))).toThrow("Multiple model versions");
+  const selected = evaluateStudy({ ...study([v1, v2], []), modelVersion: CURRENT_HALF_POLICY.version });
+  expect(selected.exclusions.some(row => row.reason.includes("model version does not match"))).toBe(true);
+});
+
+it("preserves linked override observations for v2 confirmation qualification", () => {
+  const { race, workout, revision: confirmation } = confirmedRaceFixture();
+  const override: WorkoutOverride = {
+    workoutId: workout.workoutId, userId: "synthetic", isExcluded: false,
+    excludedAt: null, excludedReason: null, distanceMilesOverride: null, durationSecondsOverride: null,
+    runTypeOverride: null, updatedAt: "2026-10-21T12:00:00.000Z",
+  };
+  const observations = buildRaceConfirmationSnapshot(race, workout, override, target.timeZone);
+  confirmation.observations = observations.observations;
+  confirmation.snapshotToken = observations.snapshotToken;
+  const input = capture();
+  input.inputs.races.push(revision(race.id, race, confirmation.availableAt!));
+  input.inputs.workouts.push(revision(workout.workoutId, workout, workout.syncedAt.toISOString()));
+  input.inputs.overrides.push(revision(workout.workoutId, { ...override }, override.updatedAt));
+  expect(sealCheckpoint(input).results.predictions.experimental.anchor?.status).toBe("verified");
+  expect(sealCheckpoint(input, LEGACY_CURRENT_HALF_VERSION).results.predictions.experimental.anchor?.status).toBe("recorded_unverified");
 });

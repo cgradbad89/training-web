@@ -7,8 +7,10 @@ import { isPerformanceInstant, performanceLocalDate, shiftPerformanceDate } from
 import { pairResearchRuns, selectResearchRuns, WORKOUT_RESEARCH_POLICY } from "./workoutRaceResearch";
 import { buildRaceTrainingContext } from "./raceTrainingContext";
 
+export const LEGACY_CURRENT_HALF_VERSION = "experimental-current-hm-v1";
+
 export const CURRENT_HALF_POLICY = Object.freeze({
-  version: "experimental-current-hm-v1", maximumAnchorDays: 180,
+  version: "experimental-current-hm-v2", maximumAnchorDays: 180,
   volumeCoefficient: 0.02, enduranceCoefficient: 0.005,
   maximumSummaryFraction: 0.025, maximumPaceFraction: 0.03,
   relativeDeadband: 0.15, relativeFullSignal: 0.50,
@@ -30,8 +32,10 @@ export interface SustainedTraining {
   startDate: string;
   endDate: string;
 }
+export type CurrentHalfVersion = typeof CURRENT_HALF_POLICY.version | typeof LEGACY_CURRENT_HALF_VERSION;
+
 export interface CurrentHalfEstimate {
-  version: typeof CURRENT_HALF_POLICY.version;
+  version: CurrentHalfVersion;
   status: "experimental" | "insufficient_evidence";
   validated: false;
   asOf: string;
@@ -52,6 +56,19 @@ export interface CurrentHalfEstimate {
   gaps: string[];
   assumptions: string[];
   reason: string;
+  historicalAnchor: RacePerformanceEvidence | null;
+  diagnostics: {
+    recentTrainingRuns: number;
+    recentTrainingWeeks: number;
+    summary: "not_evaluated" | "insufficient_coverage" | "inside_deadbands" | "offsetting_signals" | "attenuated_to_zero" | "supported";
+    matched: "not_evaluated" | "insufficient_pairs_or_weeks" | "inconsistent_ratios" | "insufficient_effective_pairs" | "supported";
+    matchedPairs: number;
+    matchedWeeks: number;
+    effectivePairs: number;
+    freshness: number | null;
+    daysSinceTrainingRun: number | null;
+    excludedByReason: Record<string, number>;
+  };
 }
 
 /** Robust six-week medians, averaged across seven daily offsets so a record
@@ -79,9 +96,9 @@ function sustained(runs: ResearchRun[], endDate: string, afterDate?: string): Su
     sessions: selected.length, startDate: afterDate && afterDate >= startDate ? shiftPerformanceDate(afterDate, 1) : startDate, endDate };
 }
 
-function chooseAnchor(evidence: RacePerformanceEvidence[]): RacePerformanceEvidence | null {
+function chooseAnchor(evidence: RacePerformanceEvidence[], includeExpired = false): RacePerformanceEvidence | null {
   const same = (e: RacePerformanceEvidence) => e.distanceMeters !== null && Math.abs(e.distanceMeters - HALF_MARATHON_METERS) <= 5;
-  const eligible = evidence.filter(e => e.ageDays !== null && e.ageDays <= CURRENT_HALF_POLICY.maximumAnchorDays
+  const eligible = evidence.filter(e => e.ageDays !== null && (includeExpired || e.ageDays <= CURRENT_HALF_POLICY.maximumAnchorDays)
     && (e.eligibleForEquivalence || (same(e) && e.status === "recorded_unverified" && e.availableAsOf
       && e.timingAgreement === "consistent" && e.timingBasis === "recorded_workout_duration"
       && !e.reasons.some(r => /invalid|mismatch|conflict|excluded|unavailable|nonmaximal/.test(r)))));
@@ -90,14 +107,19 @@ function chooseAnchor(evidence: RacePerformanceEvidence[]): RacePerformanceEvide
 }
 
 /** Only already loaded completed parents. No settings, goals or planned inputs. */
-export function estimateCurrentHalfMarathon(input: Pick<RacePerformanceInput, "races" | "workouts" | "overrides" | "asOf" | "timeZone">): CurrentHalfEstimate {
+export function estimateCurrentHalfMarathon(
+  input: Pick<RacePerformanceInput, "races" | "workouts" | "overrides" | "asOf" | "timeZone">,
+  version: CurrentHalfVersion = CURRENT_HALF_POLICY.version,
+): CurrentHalfEstimate {
   if (!isPerformanceInstant(input.asOf)) throw new TypeError("A valid current-estimate cutoff is required");
   const date = performanceLocalDate(input.asOf, input.timeZone);
   const { runs, exclusions } = selectResearchRuns({ ...input, overrides: input.overrides ?? {}, capturedAt: input.asOf,
-    source: "owner_parent_export", complete: { workouts: true, races: true, overrides: true }, allowSummaryPaceTransfer: false });
+    source: "owner_parent_export", complete: { workouts: true, races: true, overrides: true }, allowSummaryPaceTransfer: false },
+    version !== LEGACY_CURRENT_HALF_VERSION);
   const eligibleIds = new Set(runs.map(r => r.workout.workoutId));
   const evidence = buildRaceEvidence({ ...input, workouts: input.workouts.filter(w => eligibleIds.has(w.workoutId)) });
   const anchor = chooseAnchor(evidence);
+  const historicalAnchor = anchor ?? chooseAnchor(evidence, true);
   const raceIds = new Set(input.races.flatMap(r => r.actualRunId ? [r.actualRunId] : []));
   const trainingRuns = runs.filter(r => !raceIds.has(r.workout.workoutId)
     && r.paceSecondsPerMile >= 180 && r.paceSecondsPerMile <= 1800 && r.workout.distanceMiles <= 26.3);
@@ -127,7 +149,18 @@ export function estimateCurrentHalfMarathon(input: Pick<RacePerformanceInput, "r
   ];
   const contributions: CurrentHalfEstimate["contributions"] = [];
   let fraction = 0, adjustmentMethod: CurrentHalfEstimate["adjustmentMethod"] = "withheld";
-  const enough = recent.length >= CURRENT_HALF_POLICY.minimumRuns && new Set(recent.map(r => monday(r.date))).size >= 2;
+  const diagnostics: CurrentHalfEstimate["diagnostics"] = {
+    recentTrainingRuns: recent.length, recentTrainingWeeks: new Set(recent.map(r => monday(r.date))).size,
+    summary: "not_evaluated", matched: "not_evaluated", matchedPairs: 0, matchedWeeks: 0,
+    effectivePairs: 0, freshness: null, daysSinceTrainingRun: daysSinceRun,
+    excludedByReason: {},
+  };
+  for (const { reason } of exclusions) {
+    const category = reason.startsWith("repeated_activity_of_") ? "duplicate_activity"
+      : reason.startsWith("collapsed_") ? "duplicate_workout_id" : reason;
+    diagnostics.excludedByReason[category] = (diagnostics.excludedByReason[category] ?? 0) + 1;
+  }
+  const enough = recent.length >= CURRENT_HALF_POLICY.minimumRuns && diagnostics.recentTrainingWeeks >= 2;
   let reason = !anchor ? "No usable race anchor within 180 days; timing conflicts, exclusions and unconfirmed effort limits remain authoritative."
     : baselineSeconds === null ? "Race-equivalent time is outside this experiment’s 45-minute to six-hour numerical domain."
     : !enough ? "At least three completed training runs across two recent weeks are required for a current estimate."
@@ -135,10 +168,13 @@ export function estimateCurrentHalfMarathon(input: Pick<RacePerformanceInput, "r
   if (anchor && enough && baselineSeconds !== null) {
     const paired = pairResearchRuns(runs, anchor.raceDate, date, input.asOf, raceIds, 35).pairs;
     const ratios = paired.map(p => p.paceRatio), ratio = median(ratios);
-    const paceSupported = ratios.length >= WORKOUT_RESEARCH_POLICY.minimumPairs
-      && new Set(paired.map(p => monday(p.recentDate))).size >= WORKOUT_RESEARCH_POLICY.minimumRecentWeeks
-      && ratio >= 0.85 && ratio <= 1.15 && Math.max(...ratios) - Math.min(...ratios) <= 0.10;
+    diagnostics.matchedPairs = paired.length;
+    diagnostics.matchedWeeks = new Set(paired.map(p => monday(p.recentDate))).size;
+    const enoughPairs = ratios.length >= WORKOUT_RESEARCH_POLICY.minimumPairs
+      && diagnostics.matchedWeeks >= WORKOUT_RESEARCH_POLICY.minimumRecentWeeks;
+    const paceSupported = enoughPairs && ratio >= 0.85 && ratio <= 1.15 && Math.max(...ratios) - Math.min(...ratios) <= 0.10;
     const freshness = clamp((180 - anchor.ageDays!) / 90, 0, 1) * (daysSinceRun === null ? 0 : clamp((42 - daysSinceRun) / 28, 0, 1));
+    diagnostics.freshness = freshness;
     const b = baselineTraining!, c = currentTraining!;
     const reliable = [b, c].every(s => s.sessions >= CURRENT_HALF_POLICY.minimumSummaryRuns && s.observedWeeks >= CURRENT_HALF_POLICY.minimumSummaryWeeks
       && s.weeklyMiles > 0 && s.runningDaysPerWeek > 0);
@@ -154,6 +190,9 @@ export function estimateCurrentHalfMarathon(input: Pick<RacePerformanceInput, "r
       const preparationFraction = -CURRENT_HALF_POLICY.volumeCoefficient * preparation * support;
       const enduranceFraction = -CURRENT_HALF_POLICY.enduranceCoefficient * endurance * support;
       fraction = clamp(preparationFraction + enduranceFraction, -CURRENT_HALF_POLICY.maximumSummaryFraction, CURRENT_HALF_POLICY.maximumSummaryFraction);
+      diagnostics.summary = fraction !== 0 ? "supported"
+        : volume === 0 && frequency === 0 && endurance === 0 ? "inside_deadbands"
+        : support === 0 ? "attenuated_to_zero" : "offsetting_signals";
       adjustmentMethod = "summary";
       reason = fraction === 0 ? "Sustained training remains inside the summary deadbands; no numerical change is justified."
         : `Sustained ${fraction < 0 ? "stronger" : "reduced"} preparation relative to the pre-race baseline supports a small heuristic ${fraction < 0 ? "improvement" : "slowdown"}.`;
@@ -161,9 +200,15 @@ export function estimateCurrentHalfMarathon(input: Pick<RacePerformanceInput, "r
         explanation: `Robust weekly mileage ${b.weeklyMiles.toFixed(1)} → ${c.weeklyMiles.toFixed(1)} mi; run days ${b.runningDaysPerWeek.toFixed(1)} → ${c.runningDaysPerWeek.toFixed(1)}. 75/25 blend, 15% deadband, 2% maximum before support scaling.` },
       { feature: "Endurance preparation", seconds: baselineSeconds * enduranceFraction,
         explanation: `Typical weekly longest run ${b.typicalLongestMiles.toFixed(1)} → ${c.typicalLongestMiles.toFixed(1)} mi. One-mile deadband; at most 0.5% before support scaling; isolated longest-run outliers earn no credit.` });
-    } else gaps.push("Summary adjustment withheld: each period needs at least six runs and four observed weeks; empty weeks cannot establish inactivity. Final taper week is excluded from the baseline.");
+    } else {
+      diagnostics.summary = "insufficient_coverage";
+      gaps.push("Summary adjustment withheld: each period needs at least six runs and four observed weeks; empty weeks cannot establish inactivity. Final taper week is excluded from the baseline.");
+    }
     const effectivePairs = paired.reduce((sum, p) => sum + clamp((35 - days(p.recentDate, date)) / 7, 0, 1), 0);
     const paceWeight = paceSupported ? clamp((effectivePairs - 3) / 3, 0, 1) : 0;
+    diagnostics.effectivePairs = effectivePairs;
+    diagnostics.matched = !enoughPairs ? "insufficient_pairs_or_weeks" : !paceSupported ? "inconsistent_ratios"
+      : paceWeight === 0 ? "insufficient_effective_pairs" : "supported";
     if (paceWeight > 0) {
       const paceFraction = clamp((ratio - 1) * 0.5, -CURRENT_HALF_POLICY.maximumPaceFraction, CURRENT_HALF_POLICY.maximumPaceFraction) * freshness;
       fraction = fraction * (1 - paceWeight) + paceFraction * paceWeight;
@@ -182,11 +227,11 @@ export function estimateCurrentHalfMarathon(input: Pick<RacePerformanceInput, "r
     explanation: "Insufficient sustained or comparable-effort evidence; use zero adjustment rather than inventing speed or inactivity." });
   const available = anchor !== null && enough && baselineSeconds !== null;
   const finishMinutes = available ? Math.round(baselineSeconds * (1 + fraction) / 60) : null;
-  return { version: CURRENT_HALF_POLICY.version, status: available ? "experimental" : "insufficient_evidence", validated: false,
+  return { version, status: available ? "experimental" : "insufficient_evidence", validated: false,
     asOf: input.asOf, dataThrough: runs.at(-1)?.date ?? null, anchor, baselineSeconds, finishMinutes,
     paceSecondsPerMile: finishMinutes === null ? null : Math.round(finishMinutes * 60 / (HALF_MARATHON_METERS / 1609.344) / 5) * 5,
     adjustmentSeconds: available ? baselineSeconds * fraction || 0 : 0, adjustmentMethod, evidenceQuality: !anchor ? "insufficient" : anchor.status === "recorded_unverified" ? "limited_provisional" : "limited_confirmed",
     baselineTraining, currentTraining, training, eligibleRuns: runs.length,
     sinceAnchor: { sessions: since.length, miles: since.reduce((s, r) => s + r.workout.distanceMiles, 0) },
-    contributions, gaps, assumptions, reason };
+    contributions, gaps, assumptions, reason, historicalAnchor, diagnostics };
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { HealthWorkout } from "@/types/healthWorkout";
-import { CURRENT_HALF_POLICY, estimateCurrentHalfMarathon } from "../experimentalCurrentPerformance";
+import { CURRENT_HALF_POLICY, LEGACY_CURRENT_HALF_VERSION, estimateCurrentHalfMarathon } from "../experimentalCurrentPerformance";
 import { shiftPerformanceDate } from "../performanceEvidence";
 import { researchRace, researchRun, workoutResearchFixture } from "./fixtures/workoutRaceResearchFixture";
 
@@ -227,5 +227,46 @@ describe("experimental current HM / completed parent evidence", () => {
   it("records explicit engineering coefficients", () => {
     expect(CURRENT_HALF_POLICY.volumeCoefficient).toBe(.02); expect(CURRENT_HALF_POLICY.enduranceCoefficient).toBe(.005);
     expect(CURRENT_HALF_POLICY.maximumSummaryFraction).toBe(.025); expect(CURRENT_HALF_POLICY.maximumPaceFraction).toBe(.03);
+  });
+});
+
+describe("Phase 3E current eligibility and lifecycle", () => {
+  it("treats the converter’s epoch sentinel as unknown while retaining exact v1 behavior", () => {
+    const fixture = currentFixture();
+    const workout = { ...fixture.workouts[0], syncedAt: new Date(0) };
+    const input = { ...fixture, workouts: [workout, ...fixture.workouts.slice(1)] };
+    expect(estimateCurrentHalfMarathon(input, LEGACY_CURRENT_HALF_VERSION).finishMinutes).toBe(131);
+    const corrected = estimate(input);
+    expect(corrected.finishMinutes).toBeNull();
+    expect(corrected.diagnostics.excludedByReason.summary_availability_unknown_or_after_cutoff).toBe(1);
+    expect(estimate(fixture).finishMinutes).toBe(131);
+  });
+
+  const old = researchRace("synthetic-september", "2026-09-20", 7871);
+  const workouts = ["2027-03-02", "2027-03-06", "2027-03-09", "2027-03-12", "2027-03-17", "2027-03-20"]
+    .map((date, index) => researchRun(`march-${index}`, date));
+  function march(date: string, replacement = false) {
+    const newer = researchRace("synthetic-replacement", "2027-02-28", 7560, true);
+    return estimate({ asOf: date + "T16:00:00Z", timeZone: "America/New_York", overrides: {},
+      races: replacement ? [old.race, newer.race] : [old.race],
+      workouts: [old.workout, ...workouts, ...(replacement ? [newer.workout] : [])],
+    });
+  }
+
+  it.each([
+    ["2027-03-13", 174, 131], ["2027-03-18", 179, 131], ["2027-03-19", 180, 131],
+    ["2027-03-20", 181, null], ["2027-03-21", 182, null],
+  ] as const)("applies the local cutoff and preserves the historical benchmark on %s", (date, age, finish) => {
+    const model = march(date);
+    expect(model.finishMinutes).toBe(finish);
+    expect(model.historicalAnchor?.ageDays).toBe(age);
+    expect(model.adjustmentSeconds).toBe(0);
+    if (age === 180) expect(model.diagnostics.freshness).toBe(0);
+    if (age > 180) expect(model.anchor).toBeNull();
+  });
+
+  it("selects a newer qualified anchor while post-expiry training alone cannot replace it", () => {
+    expect(march("2027-03-21").finishMinutes).toBeNull();
+    expect(march("2027-03-21", true)).toMatchObject({ anchor: { raceId: "synthetic-replacement" }, finishMinutes: 126 });
   });
 });
