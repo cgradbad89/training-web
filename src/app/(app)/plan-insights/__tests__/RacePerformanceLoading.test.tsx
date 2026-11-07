@@ -103,7 +103,7 @@ describe("Production Race Performance data lifecycle", () => {
     expect(appData.workoutsResolution).toBe("success");
     expect(appData.sourceHasLoaded).toMatchObject({ workouts: true, overrides: true, races: true, plans: true });
     expect(estimate()?.textContent).toContain("~2:09");
-    expect(text()).toContain("Experimental"); expect(text()).toContain("Withheld · not validated");
+    expect(text()).toContain("Experimental"); expect(text()).toMatch(/provisional · experimental/); expect(text()).not.toContain("Withheld · not validated"); // Phase 3T: experimental forecast, separate from capability
   });
 
   it.each(sources)("shows a source-specific initial %s error without treating failure as empty history", async source => {
@@ -151,7 +151,7 @@ describe("Production Race Performance data lifecycle", () => {
     h.workouts.mockResolvedValue(input.workouts.map(w => ({ ...w, distanceMiles: w.distanceMiles * 1.1 })));
     await act(async () => appData.refreshWorkouts());
     expect(section("Training Progress")?.textContent).not.toBe(before);
-    expect(estimate()).toBeTruthy(); expect(text()).toContain("Withheld · not validated");
+    expect(estimate()).toBeTruthy(); expect(text()).toMatch(/provisional · experimental/);
   });
 
   it("selects an available race when a successful refresh removes the selected race", async () => {

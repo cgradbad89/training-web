@@ -52,3 +52,30 @@ describe("experimental HR-enhanced estimate gate (rollback path)", () => {
     expect(isExperimentalHrEnhancedEstimateEnabled()).toBe(false);
   });
 });
+
+describe("experimental hybrid estimate and race-day forecast gates (independent rollback paths)", () => {
+  it("both follow the official current-estimate gate and are on by default in Production", async () => {
+    const g = await import("../racePerformanceGate");
+    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "production");
+    expect(g.isExperimentalHybridEstimateEnabled()).toBe(true); expect(g.isExperimentalRaceDayForecastEnabled()).toBe(true);
+  });
+  it("each kill switch removes only its own display; only the exact value \"true\" disables", async () => {
+    const g = await import("../racePerformanceGate");
+    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "production");
+    vi.stubEnv("NEXT_PUBLIC_DISABLE_RACE_DAY_FORECAST", "true");
+    expect(g.isExperimentalRaceDayForecastEnabled()).toBe(false); expect(g.isExperimentalHybridEstimateEnabled()).toBe(true);
+    vi.stubEnv("NEXT_PUBLIC_DISABLE_RACE_DAY_FORECAST", undefined);
+    vi.stubEnv("NEXT_PUBLIC_DISABLE_HYBRID_ESTIMATE", "true");
+    expect(g.isExperimentalHybridEstimateEnabled()).toBe(false); expect(g.isExperimentalRaceDayForecastEnabled()).toBe(false);
+    expect(g.isExperimentalCurrentEstimateEnabled()).toBe(true); expect(g.isExperimentalHrEnhancedEstimateEnabled()).toBe(true);
+    for (const v of [undefined, "false", "1", "TRUE", ""]) { vi.stubEnv("NEXT_PUBLIC_DISABLE_HYBRID_ESTIMATE", v); expect(g.isExperimentalHybridEstimateEnabled()).toBe(true); }
+  });
+  it("neither can appear where the official experiment is off, and neither authorizes writes", async () => {
+    const g = await import("../racePerformanceGate");
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", undefined);
+    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "preview");
+    expect(g.isExperimentalHybridEstimateEnabled()).toBe(false); expect(g.isExperimentalRaceDayForecastEnabled()).toBe(false);
+    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "production");
+    expect(g.isRaceConfirmationEnabled()).toBe(false); expect(g.isRacePerformanceResearchEnabled()).toBe(false);
+  });
+});
