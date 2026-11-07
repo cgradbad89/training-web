@@ -31,6 +31,7 @@ import {
 import {
   backfillRouteClusterIds,
   computeAndStoreBestEfforts,
+  hasAttemptedBestEfforts,
   fetchHealthWorkout,
   fetchHealthWorkoutsInRange,
   fetchLatestWorkoutId,
@@ -40,9 +41,9 @@ import {
   saveWeatherForWorkoutIfAbsent,
   type RunDetailCacheWrites,
 } from "@/services/healthWorkouts";
-import { shouldRecomputeBestEfforts } from "@/utils/bestEfforts";
+import { BEST_EFFORTS_VERIFICATION, shouldRecomputeBestEfforts } from "@/utils/bestEfforts";
 import { type RoutePoint } from "@/services/routes";
-import { getRoutePoints } from "@/utils/routeCache";
+import { evictRoute, getRoutePoints, isRouteCached } from "@/utils/routeCache";
 import { hydrateFastFinishSplits } from "@/services/fastFinishSplits";
 import { fetchUserSettings } from "@/services/userSettings";
 import { fetchRaces } from "@/services/races";
@@ -511,10 +512,12 @@ export default function RunDetailPage() {
       const splitsHaveGap =
         splits != null && cachedGapPerMile(splits, authoritativeMiles) != null;
       const routeIsComplete = w.routeComplete !== false;
-      const bestEffortsNeedRecompute = shouldRecomputeBestEfforts(
-        w.bestEfforts,
-        routeIsComplete
-      );
+      // Cache-integrity decision (missing / stale version / partial-now-complete / invalid / truncated-looking records, with bounded
+      // retries), and never twice in one session against the same unchanged record.
+      const routeFacts = { distanceMiles: w.distanceMiles, durationSeconds: w.durationSeconds };
+      const bestEffortsNeedRecompute =
+        shouldRecomputeBestEfforts(w.bestEfforts, routeIsComplete, routeFacts) &&
+        !hasAttemptedBestEfforts(uid, workoutId, w.bestEfforts);
 
       // ── Route-fetch gate. Skip the big `route` read only when every
       //    route-derived cache the page renders is present & fresh AND there is
@@ -543,8 +546,19 @@ export default function RunDetailPage() {
       // ── Cache miss: read the route once, render live, and back-fill.
       let points: RoutePoint[] | null = null;
       try {
+        const wasCached = isRouteCached(uid, workoutId);
         points = await getRoutePoints(uid, workoutId);
         if (!isCurrent()) return;
+        // A route cached in memory while it was still uploading would otherwise be reused for the rest of the session: when a
+        // best-effort recovery is needed and the cached route is far shorter than the workout, fetch the current route once.
+        if (
+          bestEffortsNeedRecompute && wasCached && w.durationSeconds >= BEST_EFFORTS_VERIFICATION.minDurationForDensitySeconds &&
+          points.length < BEST_EFFORTS_VERIFICATION.minPointsPerSecond * w.durationSeconds
+        ) {
+          evictRoute(uid, workoutId);
+          points = await getRoutePoints(uid, workoutId);
+          if (!isCurrent()) return;
+        }
         setRoutePoints(points);
       } catch (err) {
         if (isCurrent()) {
@@ -590,8 +604,8 @@ export default function RunDetailPage() {
 
       if (isRoutePresent(points.length)) {
         // Natural new-run hook: best efforts computed here (route already read).
-        if (shouldRecomputeBestEfforts(w.bestEfforts, routeIsComplete)) {
-          computeAndStoreBestEfforts(uid, workoutId, points, routeIsComplete, { isCurrent })
+        if (bestEffortsNeedRecompute) {
+          computeAndStoreBestEfforts(uid, workoutId, points, routeIsComplete, { isCurrent, facts: routeFacts, existing: w.bestEfforts })
             .then((bestEfforts) => {
               if (isCurrent()) {
                 setWorkout((current) =>
