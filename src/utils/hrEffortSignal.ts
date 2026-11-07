@@ -62,6 +62,9 @@ export const HR_SIGNAL_POLICY = Object.freeze({
   weatherMinimumCoverage: 0.5, weatherMinimumRuns: 3, weatherToleranceF: 5, weatherZeroF: 15, weatherPartialFactor: 0.5,
 });
 
+/** Numeric view of the policy (the frozen object has literal types). */
+export type HrSignalPolicy = { [K in keyof typeof HR_SIGNAL_POLICY]: K extends "version" ? string : number };
+
 const finite = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n);
 const hardLabel = (label: string) => /tempo|interval|race|fartlek|hill repeat/i.test(label);
 const indoorLabel = (label: string) => /treadmill|indoor/i.test(label);
@@ -118,6 +121,8 @@ export interface HrSignalInput {
   asOfDate: string;
   /** Weather fetched after this instant is treated as absent. */
   asOf: string;
+  /** RESEARCH ONLY: threshold perturbations for sensitivity analysis. Live callers never pass this. */
+  policy?: Partial<HrSignalPolicy>;
 }
 
 function emptySignal(window: HrEffortSignal["window"], reasons: HrSignalReason[], flags: HrSignalFlag[],
@@ -135,7 +140,7 @@ function emptySignal(window: HrEffortSignal["window"], reasons: HrSignalReason[]
 }
 
 export function computeHrEffortSignal(input: HrSignalInput): HrEffortSignal {
-  const P = HR_SIGNAL_POLICY;
+  const P: HrSignalPolicy = { ...HR_SIGNAL_POLICY, ...(input.policy ?? {}) };
   const window = {
     baseline: { start: shiftPerformanceDate(input.anchorDate, -P.baselineStartOffsetDays), end: shiftPerformanceDate(input.anchorDate, -P.baselineEndOffsetDays) },
     recent: { start: shiftPerformanceDate(input.asOfDate, -P.recentDays), end: shiftPerformanceDate(input.asOfDate, -1) },

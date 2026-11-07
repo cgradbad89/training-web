@@ -25,7 +25,7 @@
 import type { RacePerformanceInput } from "@/types/racePerformance";
 import type { HrEnhancedEstimate, HrEnhancedUnavailableCause, HrSignalReason } from "@/types/hrEnhancedPerformance";
 import { estimateCurrentHalfMarathon, CURRENT_HALF_POLICY, type CurrentHalfEstimate } from "./experimentalCurrentPerformance";
-import { computeHrEffortSignal, HR_SIGNAL_POLICY, HR_SIGNAL_VERSION } from "./hrEffortSignal";
+import { computeHrEffortSignal, HR_SIGNAL_POLICY, HR_SIGNAL_VERSION, type HrSignalPolicy } from "./hrEffortSignal";
 import { isPerformanceInstant, performanceLocalDate } from "./performanceEvidence";
 import { HALF_MARATHON_METERS } from "./racePerformance";
 import { selectResearchRuns } from "./workoutRaceResearch";
@@ -100,7 +100,8 @@ function unavailable(official: CurrentHalfEstimate, cause: HrEnhancedUnavailable
  * `options.official` lets a caller that already computed the official estimate for these exact inputs
  * (Plan Insights) avoid recomputing it; it must carry the same `asOf`.
  */
-export function estimateHrEnhancedHalfMarathon(input: Input, options: { official?: CurrentHalfEstimate } = {}): HrEnhancedEstimate {
+export function estimateHrEnhancedHalfMarathon(input: Input,
+  options: { official?: CurrentHalfEstimate; signalPolicy?: Partial<HrSignalPolicy> } = {}): HrEnhancedEstimate {
   if (!isPerformanceInstant(input.asOf)) throw new TypeError("A valid HR-enhanced estimate cutoff is required");
   const official = options.official ?? estimateCurrentHalfMarathon(input);
   if (official.asOf !== input.asOf) throw new TypeError("The supplied official estimate was computed for a different cutoff");
@@ -111,7 +112,8 @@ export function estimateHrEnhancedHalfMarathon(input: Input, options: { official
   const { runs } = selectResearchRuns({ ...input, overrides: input.overrides ?? {}, capturedAt: input.asOf,
     source: "owner_parent_export", complete: { workouts: true, races: true, overrides: true }, allowSummaryPaceTransfer: false }, true);
   const raceWorkoutIds = new Set(input.races.flatMap(r => r.actualRunId ? [r.actualRunId] : []));
-  const signal = computeHrEffortSignal({ runs, raceWorkoutIds, anchorDate: official.anchor.raceDate, asOfDate, asOf: input.asOf });
+  const signal = computeHrEffortSignal({ runs, raceWorkoutIds, anchorDate: official.anchor.raceDate, asOfDate, asOf: input.asOf,
+    policy: options.signalPolicy });
   const summary = {
     signal, window: signal.window,
     supportingRuns: { ...signal.counts.supported, total: signal.counts.supported.baseline + signal.counts.supported.recent },
