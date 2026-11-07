@@ -22,6 +22,11 @@ const PURE_SOURCE_FILES = new Set([
   "src/utils/workoutResearchInput.ts",
   "src/utils/workoutRaceResearch.ts",
   "src/utils/experimentalCurrentPerformance.ts",
+  // Experimental HR-enhanced estimate (Phase 3P): pure, no Firestore/SDK/network, reuses the modules above.
+  "src/utils/hrEnhancedPerformance.ts",
+  "src/utils/hrEffortSignal.ts",
+  "src/utils/currentHalfRunImpact.ts",
+  "src/components/insights/HrEnhancedEstimateRow.tsx",
   "src/utils/workoutRaceResearchEvaluation.ts",
   "src/utils/riegelFit.ts",
   "src/utils/selectActiveWorkouts.ts",

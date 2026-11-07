@@ -142,8 +142,9 @@ import {
   releaseWeatherWork,
 } from "@/utils/weatherBackfill";
 import { selectEffectiveWorkouts } from "@/utils/selectActiveWorkouts";
-import { isRacePerformanceDisplayEnabled } from "@/lib/racePerformanceGate";
+import { isRacePerformanceDisplayEnabled, isExperimentalHrEnhancedEstimateEnabled } from "@/lib/racePerformanceGate";
 import { useCurrentHalfRunImpact } from "@/hooks/useCurrentHalfRunImpact";
+import { useHrEnhancedRunImpact } from "@/hooks/useHrEnhancedRunImpact";
 
 const RunMap = dynamic(() => import("@/components/RunMap"), { ssr: false });
 
@@ -942,6 +943,11 @@ export default function RunDetailPage() {
   const currentEstimateImpact = useCurrentHalfRunImpact(
     workoutId,
     isRacePerformanceDisplayEnabled() && viewedIsRunLike
+  );
+  // Experimental HR-enhanced estimate, beside (never replacing) the official impact above.
+  const hrEnhancedImpact = useHrEnhancedRunImpact(
+    workoutId,
+    isExperimentalHrEnhancedEstimateEnabled() && viewedIsRunLike
   );
 
   // CTL impact — read from the cached aggregatedStats training-load series when
@@ -1751,6 +1757,7 @@ export default function RunDetailPage() {
       {displayWorkout.isRunLike && (predictionImpact || ctlImpact || currentEstimateImpact) && (
         <RunImpactSection
           currentEstimate={currentEstimateImpact}
+          hrEnhancedEstimate={hrEnhancedImpact}
           prediction={
             predictionImpact && activeRace
               ? {
