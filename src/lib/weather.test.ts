@@ -6,7 +6,7 @@ import {
   it,
   vi,
 } from "vitest";
-import { fetchWeatherForRun, wmoCodeToText } from "./weather";
+import { fetchWeatherForRun, fetchWeatherForRunDetailed, wmoCodeToText } from "./weather";
 
 /**
  * A well-formed Open-Meteo archive hourly body. Times are naive UTC strings —
@@ -123,5 +123,57 @@ describe("wmoCodeToText", () => {
     [95, "Thunderstorm"],
   ])("maps WMO code %i to '%s'", (code, text) => {
     expect(wmoCodeToText(code)).toBe(text);
+  });
+});
+
+describe("fetchWeatherForRunDetailed", () => {
+  const runAt642 = new Date("2026-06-07T06:42:00Z");
+
+  it("reports ok with the snapshot", async () => {
+    mockFetch.mockResolvedValue(okResponse(archiveBody()));
+    const result = await fetchWeatherForRunDetailed(40.7, -74, runAt642);
+    expect(result.status).toBe("ok");
+  });
+
+  it("distinguishes rate limiting (429) from other HTTP errors", async () => {
+    mockFetch.mockResolvedValue({ ok: false, status: 429, json: async () => ({}) });
+    expect((await fetchWeatherForRunDetailed(40.7, -74, runAt642)).status).toBe("rate-limited");
+    mockFetch.mockResolvedValue({ ok: false, status: 500, json: async () => ({}) });
+    expect((await fetchWeatherForRunDetailed(40.7, -74, runAt642)).status).toBe("error");
+  });
+
+  it("reports unavailable (never a partial snapshot) when the slot has gaps", async () => {
+    mockFetch.mockResolvedValue(okResponse(archiveBody({ weather_code: [0, null, 61] })));
+    expect((await fetchWeatherForRunDetailed(40.7, -74, runAt642)).status).toBe("unavailable");
+    mockFetch.mockResolvedValue(okResponse({ hourly: { time: [] } }));
+    expect((await fetchWeatherForRunDetailed(40.7, -74, runAt642)).status).toBe("unavailable");
+  });
+
+  it("rejects non-finite coordinates and invalid dates without calling the network", async () => {
+    expect((await fetchWeatherForRunDetailed(NaN, -74, runAt642)).status).toBe("unavailable");
+    expect((await fetchWeatherForRunDetailed(40, -74, new Date(NaN))).status).toBe("unavailable");
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("maps an aborted request to 'aborted' and forwards the signal", async () => {
+    const controller = new AbortController();
+    mockFetch.mockImplementation(async (_url: string, init?: { signal?: AbortSignal }) => {
+      controller.abort();
+      if (init?.signal?.aborted) throw Object.assign(new Error("aborted"), { name: "AbortError" });
+      return okResponse(archiveBody());
+    });
+    const result = await fetchWeatherForRunDetailed(40.7, -74, runAt642, { signal: controller.signal });
+    expect(result.status).toBe("aborted");
+  });
+
+  it("selects the UTC hour containing the start across a DST boundary (US fall-back)", async () => {
+    // 2026-11-01 05:30Z = 1:30 AM EDT (first pass) — the slot is chosen purely in UTC.
+    mockFetch.mockResolvedValue(okResponse(archiveBody({
+      time: ["2026-11-01T04:00", "2026-11-01T05:00", "2026-11-01T06:00"],
+      temperature_2m: [41, 42, 43],
+    })));
+    const result = await fetchWeatherForRunDetailed(40.7, -74, new Date("2026-11-01T05:30:00Z"));
+    expect(result.status === "ok" && result.weather.tempF).toBe(42);
+    expect(String(mockFetch.mock.calls[0][0])).toContain("start_date=2026-11-01");
   });
 });

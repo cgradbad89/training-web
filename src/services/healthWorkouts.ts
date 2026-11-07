@@ -37,6 +37,7 @@ import {
   getDoc,
   setDoc,
   onSnapshot,
+  runTransaction,
   query,
   where,
   orderBy,
@@ -490,6 +491,33 @@ export async function saveWeatherForWorkout(
 ): Promise<void> {
   const ref = doc(db, "users", uid, "healthWorkouts", workoutId);
   await setDoc(ref, stripUndefined({ weather }), { merge: true });
+}
+
+export type SaveWeatherOutcome = "saved" | "preserved" | "missing";
+
+/**
+ * Persist weather ONLY when the workout document exists and holds none. The
+ * read-check-write runs in one transaction, so a concurrent tab, the Run Detail
+ * backfill and the background runner can never replace an existing snapshot (and
+ * with it its original `fetchedAt`). Uses the same owner merge-write permission
+ * as saveWeatherForWorkout; no rule change.
+ *   "saved"     — written
+ *   "preserved" — a snapshot already existed; nothing written
+ *   "missing"   — the workout document no longer exists; nothing created
+ */
+export async function saveWeatherForWorkoutIfAbsent(
+  uid: string,
+  workoutId: string,
+  weather: WeatherSnapshot
+): Promise<SaveWeatherOutcome> {
+  const ref = doc(db, "users", uid, "healthWorkouts", workoutId);
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) return "missing";
+    if ((snap.data() as Record<string, unknown>).weather != null) return "preserved";
+    tx.set(ref, stripUndefined({ weather }), { merge: true });
+    return "saved";
+  });
 }
 
 /**

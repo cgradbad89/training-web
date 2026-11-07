@@ -34,7 +34,7 @@ vi.mock("@/services/healthWorkouts", () => ({
   fetchHealthWorkoutsInRange: async () => [], fetchLatestWorkoutId: async () => null,
   fetchWorkoutsByRouteCluster: async () => [],
   saveRunDetailCaches: h.cacheWrite, computeAndStoreBestEfforts: h.bestEfforts,
-  saveWeatherForWorkout: h.weather, saveRouteClusterId: h.cluster, backfillRouteClusterIds: h.backfill,
+  saveWeatherForWorkoutIfAbsent: h.weather, saveRouteClusterId: h.cluster, backfillRouteClusterIds: h.backfill,
 }));
 vi.mock("@/services/shoes", () => ({ fetchShoes: async () => [], fetchManualShoeAssignmentsMap: async () => ({}), saveManualAssignments: vi.fn() }));
 vi.mock("@/services/workoutOverrides", () => ({ fetchOverride: async () => null, fetchAllOverrides: async () => ({}), saveOverride: vi.fn(), deleteOverride: vi.fn(), excludeWorkout: vi.fn(), restoreWorkout: vi.fn() }));
