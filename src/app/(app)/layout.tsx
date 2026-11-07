@@ -8,6 +8,7 @@ import { AuthGuard } from "@/components/layout/AuthGuard";
 import { HubBanner } from "@/components/layout/HubBanner";
 import AutoMatchRunner from "@/components/AutoMatchRunner";
 import PRComputerRunner from "@/components/PRComputerRunner";
+import WeatherBackfillRunner from "@/components/WeatherBackfillRunner";
 import { MobileTabBar } from "@/components/layout/MobileTabBar";
 import { NAV_ITEMS } from "@/components/layout/navItems";
 import { AppDataProvider } from "@/contexts/AppDataContext";
@@ -84,6 +85,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               <>
                 <AutoMatchRunner />
                 <PRComputerRunner />
+                <WeatherBackfillRunner />
               </>
             )}
             <PerformanceEvidenceProvider user={user} sessionEpoch={sessionEpoch} isSessionCurrent={isSessionCurrent}>

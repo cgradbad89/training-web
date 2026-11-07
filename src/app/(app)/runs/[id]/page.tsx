@@ -37,7 +37,7 @@ import {
   fetchWorkoutsByRouteCluster,
   saveRouteClusterId,
   saveRunDetailCaches,
-  saveWeatherForWorkout,
+  saveWeatherForWorkoutIfAbsent,
   type RunDetailCacheWrites,
 } from "@/services/healthWorkouts";
 import { shouldRecomputeBestEfforts } from "@/utils/bestEfforts";
@@ -136,6 +136,11 @@ import {
   type MileSplitDoc,
 } from "@/utils/mileSplitsCache";
 import { fetchWeatherForRun } from "@/lib/weather";
+import {
+  claimWeatherWork,
+  isUsableStartCoordinate,
+  releaseWeatherWork,
+} from "@/utils/weatherBackfill";
 import { selectEffectiveWorkouts } from "@/utils/selectActiveWorkouts";
 import { isRacePerformanceDisplayEnabled } from "@/lib/racePerformanceGate";
 import { useCurrentHalfRunImpact } from "@/hooks/useCurrentHalfRunImpact";
@@ -560,16 +565,26 @@ export default function RunDetailPage() {
 
       // Weather backfill: a GPS run with no stored weather gets its start
       // conditions fetched and persisted. Failures are swallowed.
-      if (w.weather == null && points.length > 0) {
+      // Shares in-tab de-duplication with the background runner and saves only
+      // when no snapshot exists, so an existing observation is never replaced.
+      if (
+        w.weather == null &&
+        points.length > 0 &&
+        isUsableStartCoordinate(points[0].lat, points[0].lng) &&
+        claimWeatherWork(workoutId)
+      ) {
         fetchWeatherForRun(points[0].lat, points[0].lng, w.startDate)
-          .then((weather) => {
+          .then(async (weather) => {
             if (!isCurrent() || !weather) return;
-            setWorkout((current) =>
-              current ? { ...current, weather } : current
-            );
-            saveWeatherForWorkout(uid, workoutId, weather).catch(console.error);
+            const outcome = await saveWeatherForWorkoutIfAbsent(uid, workoutId, weather);
+            if (outcome === "saved" && isCurrent()) {
+              setWorkout((current) =>
+                current ? { ...current, weather } : current
+              );
+            }
           })
-          .catch(console.error);
+          .catch(console.error)
+          .finally(() => releaseWeatherWork(workoutId));
       }
 
       if (isRoutePresent(points.length)) {
