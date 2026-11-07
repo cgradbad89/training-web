@@ -11,9 +11,14 @@ import type { AppDataResolution } from "@/contexts/AppDataContext";
 import { evaluateRacePerformance, nominalRaceDistanceMeters } from "@/utils/racePerformance";
 import { buildRaceTrainingContext } from "@/utils/raceTrainingContext";
 import { formatRaceTime } from "@/utils/riegelFit";
-import { isExperimentalCurrentEstimateEnabled, isExperimentalHrEnhancedEstimateEnabled } from "@/lib/racePerformanceGate";
+import { isExperimentalCurrentEstimateEnabled, isExperimentalHrEnhancedEstimateEnabled, isExperimentalHybridEstimateEnabled, isExperimentalRaceDayForecastEnabled } from "@/lib/racePerformanceGate";
 import { estimateHrEnhancedHalfMarathon } from "@/utils/hrEnhancedPerformance";
 import { HrEnhancedEstimateRow } from "./HrEnhancedEstimateRow";
+import { HybridEstimateRow } from "./HybridEstimateRow";
+import { RaceDayForecastRow } from "./RaceDayForecastRow";
+import { estimateHybridHalfMarathon } from "@/utils/performance/hybridPerformance";
+import { estimateRaceDayForecast } from "@/utils/performance/raceDayForecast";
+import type { Vo2Entry } from "@/utils/vo2History";
 import { CURRENT_HALF_POLICY, estimateCurrentHalfMarathon, type CurrentHalfEstimate } from "@/utils/experimentalCurrentPerformance";
 import { performanceLocalDate, shiftPerformanceDate } from "@/utils/performanceEvidence";
 import { researchRaceCutoff, WORKOUT_RESEARCH_POLICY } from "@/utils/workoutRaceResearch";
@@ -224,6 +229,8 @@ export interface RacePerformancePanelProps {
   /** Saved Performance Evidence section for the details modal. The panel never
    * acquires evidence itself; the page passes the shared-provider view. */
   evidenceDetails?: React.ReactNode;
+  /** Optional, already-loaded VO₂ max readings for corroboration only. The panel never fetches them. */
+  vo2Entries?: readonly Vo2Entry[];
   /** Optional tile actions supplied by the authenticated Plan Insights page. */
   renderActions?: (estimateDetails: React.ReactNode) => React.ReactNode;
 }
@@ -260,6 +267,15 @@ export function RacePerformancePanel(props: RacePerformancePanelProps) {
   const hrEnhanced = useMemo(() => hrEnabled && current && current.finishMinutes !== null
     ? estimateHrEnhancedHalfMarathon({ races, workouts, overrides, asOf: asOfIso, timeZone }, { official: current }) : null,
   [hrEnabled, current, races, workouts, overrides, asOfIso, timeZone]);
+  // Independent of v2 availability: the hybrid can answer when the race anchor has expired. Never edits v2/HR results.
+  const hybridEnabled = currentEnabled && isExperimentalHybridEstimateEnabled();
+  const hybrid = useMemo(() => hybridEnabled && performanceReady ? estimateHybridHalfMarathon({ races, workouts, overrides, asOf: asOfIso, timeZone },
+    { official: current, hrEnhanced, vo2Entries: props.vo2Entries, targetDistanceMeters: 21097.5 }) : null,
+  [hybridEnabled, performanceReady, races, workouts, overrides, asOfIso, timeZone, current, hrEnhanced, props.vo2Entries]);
+  const forecastEnabled = hybridEnabled && isExperimentalRaceDayForecastEnabled() && Math.abs(targetDistanceMeters - 21097.5) < 25;
+  const forecast = useMemo(() => forecastEnabled && hybrid && planReady ? estimateRaceDayForecast({ races, workouts, overrides, asOf: asOfIso, timeZone },
+    { raceDate: targetDate, plan, hybrid, official: current, hrEnhanced, vo2Entries: props.vo2Entries }) : null,
+  [forecastEnabled, hybrid, planReady, races, workouts, overrides, asOfIso, timeZone, targetDate, plan, current, hrEnhanced, props.vo2Entries]);
   const benchmark = performance?.latestBenchmark ?? null;
   const displayedAnchor = current?.historicalAnchor ?? benchmark;
   const lifecycle = current ? anchorLifecycle(current) : null;
@@ -293,6 +309,7 @@ export function RacePerformancePanel(props: RacePerformancePanelProps) {
             {displayedAnchor && <p className="text-sm text-textSecondary" data-testid="estimate-basis">Historical race: {displayedAnchor.finishSeconds != null ? formatRaceTime(displayedAnchor.finishSeconds) : "time unavailable"} · {dateLabel(displayedAnchor.raceDate)} · {STATUS_LABEL[displayedAnchor.status]}</p>}
           </>}
           {hrEnhanced && <HrEnhancedEstimateRow estimate={hrEnhanced} />}
+          {hybrid && <HybridEstimateRow estimate={hybrid} />}
           {lifecycle && <p className="text-sm text-textSecondary" data-testid="anchor-lifecycle">{lifecycle}</p>}
           <dl className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-textSecondary">
             <div className="flex flex-wrap gap-x-1"><dt>Calculated as of:</dt><dd>{current ? dateLabel(performanceLocalDate(current.asOf, timeZone)) : "Unavailable"}</dd></div>
@@ -368,6 +385,8 @@ export function RacePerformancePanel(props: RacePerformancePanelProps) {
             <details><summary className="cursor-pointer py-2 font-semibold text-primary rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">Model assumptions</summary><ul className="mt-2 space-y-1">{current.assumptions.map(a => <li key={a}>{a}</li>)}</ul></details>
             {hrEnhanced && <div className="space-y-2" data-testid="hr-enhanced-methodology"><h4 className="font-semibold text-textPrimary">HR-enhanced estimate (experimental)</h4>
               <HrEnhancedEstimateRow estimate={hrEnhanced} detailed /></div>}
+            {hybrid && <div className="space-y-2" data-testid="hybrid-methodology"><h4 className="font-semibold text-textPrimary">Hybrid Performance Model (experimental)</h4>
+              <HybridEstimateRow estimate={hybrid} detailed /></div>}
             <p className="text-xs">Model {current.version} · Evidence quality: {current.evidenceQuality.replaceAll("_", " ")} · Calculation cutoff {current.asOf} · {timeZone}</p>
           </div> : <p>{currentEnabled ? "The experimental estimate could not be calculated from the loaded evidence." : "An experimental current estimate is not enabled in this build."}</p>}
           <div className="space-y-2"><h4 className="font-semibold text-textPrimary">How to strengthen the race evidence</h4>
@@ -431,8 +450,10 @@ export function RacePerformancePanel(props: RacePerformancePanelProps) {
       <dl className="grid gap-4 md:grid-cols-3">
         <div><dt className="text-xs text-textSecondary">Owner’s target finish time</dt><dd className="font-semibold">{targetSeconds ? formatRaceTime(targetSeconds) : "Not set"}</dd></div>
         <div><dt className="text-xs text-textSecondary">Historical benchmark</dt><dd className="font-semibold">{benchmark ? `${formatRaceTime(benchmark.finishSeconds)} · ${dateLabel(benchmark.raceDate)} · ${STATUS_LABEL[benchmark.status]}` : "Unavailable"}</dd>{!performanceReady && <SourceUnavailable sources={sources} required={PERFORMANCE_SOURCES} />}</div>
-        <div><dt className="text-xs text-textSecondary">Race-day forecast</dt><dd className="font-semibold">Withheld · not validated</dd></div>
+        <div><dt className="text-xs text-textSecondary">Race-day forecast</dt><dd className="font-semibold" data-testid="race-day-forecast-summary">{forecast?.status === "provisional" && forecast.minutes !== null
+          ? `~${Math.floor(forecast.minutes / 60)}:${String(forecast.minutes % 60).padStart(2, "0")} · provisional · experimental` : "Withheld · not validated"}</dd></div>
       </dl>
+      {forecast && <RaceDayForecastRow forecast={forecast} />}
       <p className="text-sm text-textSecondary">Training progress and time remaining do not establish a finish-time improvement. Numerical scenarios and uncertainty ranges require independent chronological validation first.</p>
       </> : <SourceUnavailable sources={sources} required={["races"]} />}
     </Section>

@@ -21,6 +21,23 @@ export function isExperimentalHrEnhancedEstimateEnabled(): boolean {
   return isExperimentalCurrentEstimateEnabled() && process.env.NEXT_PUBLIC_DISABLE_HR_ENHANCED_ESTIMATE !== "true";
 }
 
+/**
+ * Experimental hybrid current-capability estimate (experimental-hybrid-hm-v1), shown beside the official and
+ * HR-enhanced estimates. Independent kill switch: set NEXT_PUBLIC_DISABLE_HYBRID_ESTIMATE=true and redeploy to
+ * remove the display without touching the official estimate, the HR-enhanced estimate, saved races or checkpoints.
+ */
+export function isExperimentalHybridEstimateEnabled(): boolean {
+  return isExperimentalCurrentEstimateEnabled() && process.env.NEXT_PUBLIC_DISABLE_HYBRID_ESTIMATE !== "true";
+}
+
+/**
+ * Experimental race-day forecast (experimental-raceday-forecast-v1). Builds on the hybrid estimate, so it can never
+ * appear where that does, and has its own kill switch (NEXT_PUBLIC_DISABLE_RACE_DAY_FORECAST=true).
+ */
+export function isExperimentalRaceDayForecastEnabled(): boolean {
+  return isExperimentalHybridEstimateEnabled() && process.env.NEXT_PUBLIC_DISABLE_RACE_DAY_FORECAST !== "true";
+}
+
 /** Editing/persistence must never inherit read-only display authorization. */
 export function isRaceConfirmationEnabled(): boolean {
   return isPreviewRaceCapabilityEnabled();

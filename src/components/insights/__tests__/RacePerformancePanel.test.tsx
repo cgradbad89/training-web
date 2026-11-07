@@ -65,7 +65,10 @@ describe("Race performance summary presentation", () => {
     const card = container.querySelector('[data-testid="experimental-current-estimate"]')!;
     expect(card.textContent).toContain("~2:09"); expect(card.textContent).toContain("~9:50/mi");
     expect(card.textContent).toContain("2:11:11, recorded, unverified");
-    expect(text).toContain("View Estimate Details"); expect(text).toContain("Race-day forecastWithheld");
+    expect(text).toContain("View Estimate Details");
+    // Phase 3T: with supported capability and a known endurance basis the forecast is an experimental, provisional value kept apart from current capability.
+    expect(text).toMatch(/Race-day forecast~\d:\d{2} · provisional · experimental/);
+    expect(container.querySelector('[data-testid="race-day-forecast"]')?.textContent).toContain("assumes no fitness gain from planned training");
     // Methodology is collapsed into the modal; the estimate itself is not.
     expect(dialog()).toBeNull(); expect(text).not.toContain("Unvalidated training adjustment");
     const details = openDetails().textContent;
