@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { HrSample } from "@/types/hybridPerformance";
 import type { StreamCandidate } from "@/utils/performance/hrStreamSelection";
-import { HrStreamEvidenceStore, PHYSIOLOGY_LIMITS, Vo2EvidenceStore } from "../physiologyEvidenceStores";
+import { HrStreamEvidenceStore, PHYSIOLOGY_LIMITS, Vo2EvidenceStore, type StreamFetcher } from "../physiologyEvidenceStores";
 
 const L = PHYSIOLOGY_LIMITS;
 const entries = [{ date: "2026-11-01", value: 47 }];
@@ -62,7 +62,7 @@ describe("VO₂ evidence store", () => {
 
 const samples = (avg = 150, seconds = 1800): HrSample[] => Array.from({ length: seconds }, (_, t) => ({ t, bpm: Math.round(t < 240 ? 100 + (avg - 100) * t / 240 : avg + ((t * 7919) % 5) - 2) }));
 const cand = (n: number): StreamCandidate[] => Array.from({ length: n }, (_, i) => ({ workoutId: `w${i}`, date: `2026-10-${String(1 + (i % 28)).padStart(2, "0")}`, durationSeconds: 1800, cacheKey: `w${i}:1:0:1800` }));
-const ok = (chunks = 5) => vi.fn(async (_u: string, _id: string, _max: number) => ({ samples: samples(), chunks }));
+const ok = (chunks = 5) => vi.fn<StreamFetcher>(async () => ({ samples: samples(), chunks }));
 
 describe("HR-stream evidence store", () => {
   it("summarizes streams (summaries only) and passes the per-stream chunk bound to every read", async () => {
