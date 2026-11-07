@@ -76,7 +76,7 @@ vi.mock("@/services/healthWorkouts", () => ({
   computeAndStoreBestEfforts: vi.fn().mockResolvedValue(undefined),
   saveRouteClusterId: vi.fn().mockResolvedValue(undefined),
   saveRunDetailCaches: vi.fn().mockResolvedValue(undefined),
-  saveWeatherForWorkout: vi.fn().mockResolvedValue(undefined),
+  saveWeatherForWorkoutIfAbsent: vi.fn().mockResolvedValue("saved"),
 }));
 // The CTL-impact effect reads the aggregatedStats doc directly (getDoc). Keep it
 // off the network: a non-existent snapshot forces the live-fallback path, which

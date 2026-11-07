@@ -90,22 +90,42 @@ function numAt(arr: unknown, i: number): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
+/** Outcome of a weather lookup, so callers can back off appropriately. */
+export type WeatherFetchResult =
+  | { status: "ok"; weather: WeatherSnapshot }
+  /** HTTP 429 — stop all provider calls for a while. */
+  | { status: "rate-limited" }
+  /** Provider answered but had no complete hourly slot (never fabricated). */
+  | { status: "unavailable" }
+  /** Network failure, non-2xx (other than 429), or malformed body. */
+  | { status: "error" }
+  | { status: "aborted" };
+
 /**
  * Fetch historical weather at a run's start location + time from the Open-Meteo
- * archive API. Returns null on ANY failure (network error, non-2xx, malformed
- * body, or a missing/empty hourly slot) — never throws.
+ * archive API, reporting WHY nothing was returned. Never throws.
  *
  * Hour-matching: the archive API returns one entry per clock hour in UTC (we
  * pass no `timezone` param, so the default is GMT). We select the slot that
  * CONTAINS the run's start instant — i.e. floor to the hour — so a 6:42 run
- * resolves to the 6:00 slot, the weather during the hour the run began.
+ * resolves to the 6:00 slot, the weather during the hour the run began. All
+ * six fields must be present for the slot; otherwise the result is
+ * "unavailable" rather than a partial/invented snapshot.
  */
-export async function fetchWeatherForRun(
+export async function fetchWeatherForRunDetailed(
   lat: number,
   lng: number,
-  startTimestamp: Date
-): Promise<WeatherSnapshot | null> {
+  startTimestamp: Date,
+  options: { signal?: AbortSignal } = {}
+): Promise<WeatherFetchResult> {
   try {
+    if (
+      !Number.isFinite(lat) ||
+      !Number.isFinite(lng) ||
+      Number.isNaN(startTimestamp.getTime())
+    ) {
+      return { status: "unavailable" };
+    }
     const date = toUTCDate(startTimestamp);
     const params = new URLSearchParams({
       latitude: String(lat),
@@ -117,8 +137,12 @@ export async function fetchWeatherForRun(
       wind_speed_unit: "mph",
     });
 
-    const res = await fetch(`${ARCHIVE_API}?${params.toString()}`);
-    if (!res.ok) return null;
+    const url = `${ARCHIVE_API}?${params.toString()}`;
+    const res = options.signal
+      ? await fetch(url, { signal: options.signal })
+      : await fetch(url);
+    if (res.status === 429) return { status: "rate-limited" };
+    if (!res.ok) return { status: "error" };
 
     const data = (await res.json()) as {
       hourly?: {
@@ -134,7 +158,9 @@ export async function fetchWeatherForRun(
 
     const hourly = data?.hourly;
     const times = hourly?.time;
-    if (!hourly || !Array.isArray(times) || times.length === 0) return null;
+    if (!hourly || !Array.isArray(times) || times.length === 0) {
+      return { status: "unavailable" };
+    }
 
     // Floor to the hourly slot containing the run's start (UTC frame). Open-Meteo
     // returns naive UTC strings ("2026-06-07T06:00"); parse as UTC by suffixing Z.
@@ -157,7 +183,7 @@ export async function fetchWeatherForRun(
     }
     // Run precedes every available slot → fall back to the earliest hour.
     if (idx === -1) idx = earliestIdx;
-    if (idx === -1) return null;
+    if (idx === -1) return { status: "unavailable" };
 
     const tempF = numAt(hourly.temperature_2m, idx);
     const feelsLikeF = numAt(hourly.apparent_temperature, idx);
@@ -174,20 +200,39 @@ export async function fetchWeatherForRun(
       dewPointF === null ||
       conditionCode === null
     ) {
-      return null;
+      return { status: "unavailable" };
     }
 
     return {
-      tempF,
-      feelsLikeF,
-      humidity,
-      windMph,
-      dewPointF,
-      conditionCode,
-      conditionText: wmoCodeToText(conditionCode),
-      fetchedAt: new Date().toISOString(),
+      status: "ok",
+      weather: {
+        tempF,
+        feelsLikeF,
+        humidity,
+        windMph,
+        dewPointF,
+        conditionCode,
+        conditionText: wmoCodeToText(conditionCode),
+        fetchedAt: new Date().toISOString(),
+      },
     };
-  } catch {
-    return null;
+  } catch (err) {
+    if (options.signal?.aborted || (err as { name?: string })?.name === "AbortError") {
+      return { status: "aborted" };
+    }
+    return { status: "error" };
   }
+}
+
+/**
+ * Fetch historical weather at a run's start location + time. Returns null on
+ * ANY failure (see fetchWeatherForRunDetailed for the reason) — never throws.
+ */
+export async function fetchWeatherForRun(
+  lat: number,
+  lng: number,
+  startTimestamp: Date
+): Promise<WeatherSnapshot | null> {
+  const result = await fetchWeatherForRunDetailed(lat, lng, startTimestamp);
+  return result.status === "ok" ? result.weather : null;
 }

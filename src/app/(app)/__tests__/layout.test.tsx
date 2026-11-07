@@ -53,6 +53,9 @@ vi.mock("@/components/AutoMatchRunner", () => ({
 vi.mock("@/components/PRComputerRunner", () => ({
   default: () => <div data-testid="pr-computer-runner" />,
 }));
+vi.mock("@/components/WeatherBackfillRunner", () => ({
+  default: () => <div data-testid="weather-backfill-runner" />,
+}));
 
 describe("authenticated app layout training-data scope", () => {
   let container: HTMLDivElement;
@@ -87,6 +90,7 @@ describe("authenticated app layout training-data scope", () => {
     expect(container.querySelector('[data-testid="app-data-provider"]')?.getAttribute("data-active")).toBe("false");
     expect(container.querySelector('[data-testid="auto-match-runner"]')).toBeNull();
     expect(container.querySelector('[data-testid="pr-computer-runner"]')).toBeNull();
+    expect(container.querySelector('[data-testid="weather-backfill-runner"]')).toBeNull();
   });
 
   it("also excludes descendant Health routes", () => {
@@ -106,6 +110,7 @@ describe("authenticated app layout training-data scope", () => {
     ).toBe("resolved-uid");
     expect(container.querySelector('[data-testid="auto-match-runner"]')).toBeTruthy();
     expect(container.querySelector('[data-testid="pr-computer-runner"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="weather-backfill-runner"]')).toBeTruthy();
   });
 
   it("keeps the provider and both runners on Workouts", () => {
