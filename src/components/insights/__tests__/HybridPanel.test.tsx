@@ -20,7 +20,9 @@ const PLAN: RunningPlan = { id: "p", name: "Spring HM", startDate: "2026-11-09",
     { id: `t${w}`, weekIndex: w, weekday: 2, dayOfWeek: 1, distanceMiles: 4 }, { id: `s${w}`, weekIndex: w, weekday: 6, dayOfWeek: 5, distanceMiles: Math.min(12, 8 + w * 0.3) }] })) };
 
 let root: Root, container: HTMLDivElement;
-beforeEach(() => { container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container); vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "production"); });
+// These tests cover hybrid v1 (and forecast v1). Hybrid v1.1 is now the displayed hybrid by default, so v1 is exercised through its
+// independent rollback switch — which is also the proof that rollback restores the unchanged v1 display. v1.1 has its own suite.
+beforeEach(() => { container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container); vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "production"); vi.stubEnv("NEXT_PUBLIC_DISABLE_HYBRID_V11", "true"); });
 afterEach(() => { act(() => root.unmount()); container.remove(); vi.unstubAllEnvs(); });
 
 function mount(o: AthleteOptions = {}, extra: Partial<RacePerformancePanelProps> = {}) {

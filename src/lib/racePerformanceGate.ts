@@ -31,7 +31,25 @@ export function isExperimentalHybridEstimateEnabled(): boolean {
 }
 
 /**
- * Experimental race-day forecast (experimental-raceday-forecast-v1). Builds on the hybrid estimate, so it can never
+ * Hybrid Performance Model v1.1 (experimental-hybrid-hm-v1.1): the evidence-weighted successor shown in the hybrid position.
+ * Independent rollback: set NEXT_PUBLIC_DISABLE_HYBRID_V11=true and redeploy and the page shows hybrid v1 (unchanged) and the
+ * v1-based forecast again — no stored value, saved race, checkpoint, or other estimate is touched.
+ */
+export function isExperimentalHybridV11Enabled(): boolean {
+  return isExperimentalHybridEstimateEnabled() && process.env.NEXT_PUBLIC_DISABLE_HYBRID_V11 !== "true";
+}
+
+/**
+ * Bounded, demand-driven Apple Health VO₂ max and warm-up-trimmed HR-stream hydration for the v1.1 physiological family.
+ * Separate kill switch (NEXT_PUBLIC_DISABLE_PHYSIOLOGY_HYDRATION=true) removes the extra Firestore reads and falls back to
+ * whole-workout average HR without VO₂ corroboration; the estimate is otherwise unaffected.
+ */
+export function isPhysiologyHydrationEnabled(): boolean {
+  return isExperimentalHybridV11Enabled() && process.env.NEXT_PUBLIC_DISABLE_PHYSIOLOGY_HYDRATION !== "true";
+}
+
+/**
+ * Experimental race-day forecast (experimental-raceday-forecast-v1 / v2). Builds on the hybrid estimate, so it can never
  * appear where that does, and has its own kill switch (NEXT_PUBLIC_DISABLE_RACE_DAY_FORECAST=true).
  */
 export function isExperimentalRaceDayForecastEnabled(): boolean {

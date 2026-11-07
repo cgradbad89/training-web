@@ -30,10 +30,14 @@ import { HALF_MARATHON_METERS } from "@/utils/racePerformance";
 import { buildRaceTrainingContext } from "@/utils/raceTrainingContext";
 import { selectResearchRuns } from "@/utils/workoutRaceResearch";
 import { computeEnduranceReadiness, type ReadinessRun } from "./enduranceReadiness";
-import { estimateHybridHalfMarathon, type HybridOptions } from "./hybridPerformance";
+import { estimateHybridHalfMarathon } from "./hybridPerformance";
+import { estimateHybridHalfMarathonV11, type HybridV11Options } from "./hybridPerformanceV11";
+import type { HybridV11Estimate } from "@/types/hybridPerformanceV11";
 import type { RacePerformanceInput } from "@/types/racePerformance";
 
 export const FORECAST_VERSION = "experimental-raceday-forecast-v1" as const;
+/** v2 starts from the hybrid v1.1 current-capability estimate; v1 (starting from hybrid v1) is unchanged and reproducible. */
+export const FORECAST_V2_VERSION = "experimental-raceday-forecast-v2" as const;
 export const FORECAST_POLICY = Object.freeze({
   version: FORECAST_VERSION,
   maximumHorizonDays: 270,
@@ -43,11 +47,19 @@ export const FORECAST_POLICY = Object.freeze({
 });
 
 type Input = Pick<RacePerformanceInput, "races" | "workouts" | "overrides" | "asOf" | "timeZone">;
-export interface ForecastOptions extends HybridOptions {
+type AnyHybrid = HybridPerformanceEstimate | HybridV11Estimate;
+export interface ForecastOptions extends HybridV11Options {
   raceDate: string;
   plan: RunningPlan | null;
-  /** The hybrid estimate for these exact inputs, when the caller already has it. */
-  hybrid?: HybridPerformanceEstimate;
+  /** The hybrid estimate for these exact inputs, when the caller already has it. Its version selects the forecast version. */
+  hybrid?: AnyHybrid;
+  /** Which current-capability model the forecast starts from when `hybrid` is not supplied (default v1, unchanged). */
+  model?: "v1" | "v1.1";
+}
+/** Ages (days) of the evidence items that carry the current-capability base. */
+function evidenceAges(h: AnyHybrid): number[] {
+  return h.version === "experimental-hybrid-hm-v1.1" ? h.combination.items.map(i => i.ageDays)
+    : (h.capacity.methods.find(m => m.id === "C_recent_demonstrated")?.contributions ?? []).map(i => i.ageDays);
 }
 const dayNumber = (d: string) => Date.parse(`${d}T00:00:00Z`) / 86_400_000;
 const mmss = (s: number) => `${Math.floor(s / 3600)}:${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}`;
@@ -74,14 +86,18 @@ export function plannedRunsBetween(plan: RunningPlan | null, afterDate: string, 
 export function estimateRaceDayForecast(input: Input, options: ForecastOptions): RaceDayForecast {
   if (!isPerformanceInstant(input.asOf)) throw new TypeError("A valid forecast cutoff is required");
   const P = FORECAST_POLICY, target = options.targetDistanceMeters ?? HALF_MARATHON_METERS;
-  const hybrid = options.hybrid ?? estimateHybridHalfMarathon(input, options);
+  const v11 = options.hybrid ? options.hybrid.version === "experimental-hybrid-hm-v1.1" : options.model === "v1.1";
+  // The forecast re-evaluates the SAME estimator at each readiness scenario, so no separate race anchor can enter.
+  const estimate = (extra: { readinessOverride?: number } = {}): AnyHybrid =>
+    v11 ? estimateHybridHalfMarathonV11(input, { ...options, ...extra }) : estimateHybridHalfMarathon(input, { ...options, ...extra });
+  const hybrid: AnyHybrid = options.hybrid ?? estimate();
   const asOfDate = hybrid.asOfDate;
   const valid = isPerformanceDate(options.raceDate);
   const daysToRace = valid ? Math.round(dayNumber(options.raceDate) - dayNumber(asOfDate)) : NaN;
   const base = {
-    version: FORECAST_VERSION, researchStatus: "experimental_provisional" as const, validated: false as const, asOf: input.asOf, asOfDate,
+    version: (v11 ? FORECAST_V2_VERSION : FORECAST_VERSION) as RaceDayForecast["version"], researchStatus: "experimental_provisional" as const, validated: false as const, asOf: input.asOf, asOfDate,
     raceDate: options.raceDate, daysToRace: Number.isFinite(daysToRace) ? daysToRace : 0, targetDistanceMeters: target,
-    currentCapabilitySeconds: hybrid.seconds, currentCapabilityStatus: hybrid.status, caveats: CAVEATS,
+    currentCapabilitySeconds: hybrid.seconds, currentCapabilityStatus: hybrid.status, currentCapabilityModel: hybrid.version, caveats: CAVEATS,
     assumptions: { plannedTrainingTreatedAs: "planned_actions_not_adaptations" as const, fitnessGainAssumed: 0 as const,
       taper: "context_only_no_numeric_credit" as const,
       weather: (daysToRace <= 10 ? "forecast_unavailable" : "climatology_unavailable") as RaceDayForecast["assumptions"]["weather"], course: "unknown" as const },
@@ -124,8 +140,7 @@ export function estimateRaceDayForecast(input: Input, options: ForecastOptions):
   const rFull = planned.length ? project(1) : rNow, rCentral = planned.length ? project(used) : rNow, rLapse = planned.length ? project(used * P.lapseFactor) : rNow;
   const at = (score: number | null) => {
     if (score === null) return null;
-    const h = estimateHybridHalfMarathon(input, { ...options, readinessOverride: score });
-    return h.seconds;
+    return estimate({ readinessOverride: score }).seconds;
   };
   const maintained = hybrid.seconds;
   const central = at(rCentral) ?? maintained, full = at(rFull) ?? maintained, lapse = at(rLapse);
@@ -148,8 +163,8 @@ export function estimateRaceDayForecast(input: Input, options: ForecastOptions):
   const candidates = [...numeric.map(x => x * (1 - drift)), ...numeric.map(x => x * (1 + drift)),
     ...(hybrid.sensitivityRange ? [hybrid.sensitivityRange.fastSeconds * (central / maintained), hybrid.sensitivityRange.slowSeconds * (central / maintained)] : [])];
   const minutes = Math.round(central / 60);
-  const items = hybrid.capacity.methods.find(m => m.id === "C_recent_demonstrated")?.contributions ?? [];
-  const newest = items.length ? Math.min(...items.map(i => i.ageDays)) : null;
+  const ages = evidenceAges(hybrid);
+  const newest = ages.length ? Math.min(...ages) : null;
   const evidenceAge = newest === null ? null : newest + daysToRace;
   const uncertainty = [
     `Capacity drift allowance ±${(drift * 100).toFixed(1)}% over ${daysToRace} days (1%·√(days/30)); fitness can rise or fall over that time and nothing here predicts which.`,

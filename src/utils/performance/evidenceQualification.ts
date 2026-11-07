@@ -74,7 +74,7 @@ export function quantile(values: readonly number[], q: number): number | null {
 const hmEquivalent = (workout: HealthWorkout) =>
   researchRiegelSeconds(workout.durationSeconds, workout.distanceMiles * MILE, HALF_MARATHON_METERS);
 
-function timingConsistent(w: HealthWorkout): boolean {
+export function timingConsistent(w: HealthWorkout): boolean {
   const elapsed = (w.endDate.getTime() - w.startDate.getTime()) / 1000;
   return Math.abs(elapsed - w.durationSeconds) <= Math.max(EVIDENCE_POLICY.timingToleranceSeconds, w.durationSeconds * EVIDENCE_POLICY.timingToleranceFraction);
 }

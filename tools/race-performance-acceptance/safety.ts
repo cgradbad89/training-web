@@ -40,6 +40,13 @@ const PURE_SOURCE_FILES = new Set([
   "src/utils/fastestMileSegment.ts",
   "src/utils/vo2Trend.ts",
   "src/utils/vo2History.ts",
+  // Hybrid Performance Model v1.1 (Phases 3U–3Y): pure, no Firestore/SDK/network/hook; the physiological hook is imported by the
+  // panel as a TYPE ONLY (erased) and acquired by the page, so no data-access module enters this graph.
+  "src/components/insights/HybridV11EstimateRow.tsx",
+  "src/types/hybridPerformanceV11.ts",
+  "src/utils/performance/evidenceSegments.ts",
+  "src/utils/performance/evidenceCombination.ts",
+  "src/utils/performance/hybridPerformanceV11.ts",
   "src/utils/workoutRaceResearchEvaluation.ts",
   "src/utils/riegelFit.ts",
   "src/utils/selectActiveWorkouts.ts",

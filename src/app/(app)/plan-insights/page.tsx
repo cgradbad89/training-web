@@ -10,8 +10,9 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { MetricBadge } from "@/components/ui/MetricBadge";
 import { useAuth } from "@/hooks/useAuth";
 import { useAppData } from "@/contexts/AppDataContext";
-import { isRacePerformanceDisplayEnabled } from "@/lib/racePerformanceGate";
-import { RacePerformancePanel } from "@/components/insights/RacePerformancePanel";
+import { isPhysiologyHydrationEnabled, isRacePerformanceDisplayEnabled } from "@/lib/racePerformanceGate";
+import { RacePerformancePanel, useEstimateDay } from "@/components/insights/RacePerformancePanel";
+import { usePhysiologyEvidence } from "@/hooks/usePhysiologyEvidence";
 import { PerformanceEvidenceNotice, PerformanceEvidenceStatus } from "@/components/insights/PerformanceEvidenceStatus";
 import { selectEffectiveWorkouts } from "@/utils/selectActiveWorkouts";
 import { type HealthWorkout } from "@/types/healthWorkout";
@@ -249,6 +250,15 @@ export default function PlanInsightsPage() {
   const loading = workoutsLoading || (!racePerformanceEnabled && plansResolution === "loading");
   const performanceInputsAvailable = !racePerformanceEnabled ||
     (sourceHasLoaded.workouts && sourceHasLoaded.overrides && sourceHasLoaded.races);
+  // Bounded, demand-driven VO₂ max and warm-up-trimmed HR-stream evidence for the experimental hybrid v1.1 estimate. Reads nothing
+  // unless the experiment is enabled, this page is active and the performance inputs have loaded; session-scoped and in-memory.
+  const physiologyTimeZone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone, []);
+  const physiologyDay = useEstimateDay(false, physiologyTimeZone);
+  const physiology = usePhysiologyEvidence({
+    enabled: racePerformanceEnabled && pageActive && isPhysiologyHydrationEnabled(), uid, sessionEpoch, isSessionCurrent,
+    races, workouts: rawWorkouts, overrides, timeZone: physiologyTimeZone, day: physiologyDay,
+    ready: racePerformanceEnabled && sourceHasLoaded.workouts && sourceHasLoaded.overrides && sourceHasLoaded.races,
+  });
   // Runs with fast-finish `mileSplits` hydrated (route-derived pace + per-mile
   // HR), for the HR-gated best-effort pipeline. Null until the async hydration
   // resolves; the segments fall back to the full-run-only path meanwhile.
@@ -1018,6 +1028,7 @@ export default function PlanInsightsPage() {
           evidenceNotice={<PerformanceEvidenceNotice />}
           evidenceDetails={<PerformanceEvidenceStatus detailed />}
           renderActions={estimateDetails => <PlanPerformanceActions estimateDetails={estimateDetails} />}
+          physiology={physiology}
           races={races}
           workouts={rawWorkouts}
           overrides={overrides}

@@ -41,6 +41,8 @@ export const AEROBIC_TREND_POLICY = Object.freeze({
   stableRangeFloor: 0.01,
   streamUseShare: 0.6,
   vo2WindowDays: 28, vo2MinimumReadings: 3, vo2DirectionMl: 1,
+  /** Calibrated policy: streamed runs needed before a (trimmed − parent) offset is applied to unstreamed runs. */
+  calibrationMinimumStreams: 5,
 });
 
 const finite = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n);
@@ -90,7 +92,7 @@ function huberFit(X: number[][], y: number[]): Fit | null {
   return { beta: last.beta, se: scale * Math.sqrt(Math.max(0, last.inv[g][g])) * P.seCorrection, scale, residuals };
 }
 
-interface Row { id: string; date: string; week: string; lnPace: number; hr: number; lnDur: number; climb: number | null; temp: number | null; t: number }
+interface Row { id: string; date: string; week: string; lnPace: number; hr: number; lnDur: number; climb: number | null; temp: number | null; t: number; streamed?: boolean; parentHr?: number }
 
 const unavailableTrend = (reasons: string[], extra: Partial<AerobicTrendEvidence> = {}): AerobicTrendEvidence => ({
   version: AEROBIC_TREND_POLICY.version, status: "unavailable", reasons, flags: [], window: null, runs: 0, weeks: 0, treadmillOrUnknownSurface: 0,
@@ -131,6 +133,13 @@ export interface AerobicTrendInput {
   /** Optional warm-up-trimmed HR summaries keyed by workout id (offline/bounded hydration only). */
   streamSummaries?: Readonly<Record<string, HrStreamSummary>>;
   vo2Entries?: readonly Vo2Entry[];
+  /**
+   * "v1" (default, unchanged): a usable stream's trimmed HR replaces the parent average where one exists, the rest keep the parent average.
+   * "calibrated" (hybrid v1.1): additionally (a) runs whose stream shows an interval-like structure are excluded from this STEADY-state
+   * regression, and (b) runs without a stream are shifted by the median (trimmed − parent) offset measured on the streamed runs, so that
+   * hydrating only a subset of runs cannot create or hide a trend (trimmed HR is systematically higher than whole-workout HR).
+   */
+  streamPolicy?: "v1" | "calibrated";
 }
 
 function fitRows(rows: Row[], useClimb: boolean, useTemp: boolean): Fit | null {
@@ -145,7 +154,8 @@ export function computeAerobicTrend(input: AerobicTrendInput): AerobicTrendEvide
   const end = shiftPerformanceDate(input.asOfDate, -1), start = shiftPerformanceDate(end, -(P.windowDays - 1));
   const vo2 = assessVo2(input.vo2Entries, input.asOfDate);
   const asOfMs = Date.parse(input.asOf);
-  let treadmillOrUnknown = 0, streamUsed = 0, withHr = 0;
+  const calibrated = input.streamPolicy === "calibrated";
+  let treadmillOrUnknown = 0, streamUsed = 0, withHr = 0, intervalExcluded = 0;
   const base: Row[] = [];
   for (const r of input.runs) {
     const w = r.workout;
@@ -154,13 +164,22 @@ export function computeAerobicTrend(input: AerobicTrendInput): AerobicTrendEvide
     if (w.durationSeconds < P.minimumDurationSeconds || w.durationSeconds > P.maximumDurationSeconds
       || r.paceSecondsPerMile < P.minimumPaceSecondsPerMile || r.paceSecondsPerMile > P.maximumPaceSecondsPerMile || w.distanceMiles > P.maximumDistanceMiles) continue;
     const stream = input.streamSummaries?.[w.workoutId];
+    if (calibrated && stream && stream.quality !== "unusable" && stream.intervalLike) { intervalExcluded++; continue; }
     const streamHr = stream && stream.quality !== "unusable" && stream.trimmedAvgHr !== null ? stream.trimmedAvgHr : null;
     const hr = streamHr ?? w.avgHeartRate;
     if (!finite(hr) || hr < P.validHrMin || hr > P.validHrMax) continue;
     withHr++; if (streamHr !== null) streamUsed++;
     const wx = w.weather, wxOk = wx && isPerformanceInstant(wx.fetchedAt) && Date.parse(wx.fetchedAt) <= asOfMs && finite(wx.tempF);
     base.push({ id: w.workoutId, date: r.date, week: monday(r.date), lnPace: Math.log(r.paceSecondsPerMile), hr, lnDur: Math.log(w.durationSeconds / 2700),
-      climb: finite(w.elevationGainM) && w.distanceMiles > 0 ? w.elevationGainM / w.distanceMiles : null, temp: wxOk ? wx.tempF : null, t: dayDiff(end, r.date) / 28 });
+      climb: finite(w.elevationGainM) && w.distanceMiles > 0 ? w.elevationGainM / w.distanceMiles : null, temp: wxOk ? wx.tempF : null, t: dayDiff(end, r.date) / 28,
+      streamed: streamHr !== null, parentHr: finite(w.avgHeartRate) ? w.avgHeartRate : undefined });
+  }
+  let streamsExtra: Partial<AerobicTrendEvidence> = {};
+  if (calibrated) {
+    const deltas = base.filter(r => r.streamed && r.parentHr !== undefined).map(r => r.hr - r.parentHr!);
+    const offset = deltas.length >= P.calibrationMinimumStreams ? median(deltas) : null;
+    if (offset !== null) for (const r of base) if (!r.streamed) r.hr += offset;
+    streamsExtra = { streams: { used: streamUsed, eligible: withHr + intervalExcluded, excludedIntervalLike: intervalExcluded, calibrationOffsetBpm: offset } };
   }
   base.sort((a, b) => a.date.localeCompare(b.date) || a.id.localeCompare(b.id)); // order-independent float accumulation
   const flags: string[] = [];
@@ -168,7 +187,7 @@ export function computeAerobicTrend(input: AerobicTrendInput): AerobicTrendEvide
   const hrSource: AerobicTrendEvidence["hrSource"] = streamUsed === 0 ? "parent_average" : streamUsed >= withHr ? "stream_trimmed" : "stream_trimmed_mixed";
   if (hrSource !== "parent_average" && streamUsed / Math.max(1, withHr) < P.streamUseShare) flags.push("stream_hr_partial");
   const window = { start, end };
-  const window0 = { window, treadmillOrUnknownSurface: treadmillOrUnknown, hrSource, vo2, flags };
+  const window0 = { window, treadmillOrUnknownSurface: treadmillOrUnknown, hrSource, vo2, flags, ...streamsExtra };
   if (base.length < P.minimumRuns) return unavailableTrend([`Only ${base.length} eligible steady outdoor runs with heart rate in the last ${P.windowDays} days; at least ${P.minimumRuns} are needed.`], { ...window0, runs: base.length, weeks: new Set(base.map(r => r.week)).size });
 
   // Covariate availability: never assume weather or terrain that was not observed.
@@ -239,5 +258,5 @@ export function computeAerobicTrend(input: AerobicTrendInput): AerobicTrendEvide
   return { version: P.version, status: "available", reasons: [], flags: [...new Set(flags)], window, runs: rows.length, weeks, treadmillOrUnknownSurface: treadmillOrUnknown,
     slopePer28d: g, standardError: se, tStatistic: t, leaveOneWeekOutRange: range, weatherAdjustment,
     covariates: { hrSlopePerBpm: fit.beta[hrIdx], tempPerF: useTemp ? fit.beta[tempIndex] : null, climbPerMeterPerMile: useClimb ? fit.beta[3] : null },
-    hrSource, classification, vo2, vo2Corroboration, interpretation: { observed, plausible, notSupported } };
+    hrSource, classification, vo2, vo2Corroboration, interpretation: { observed, plausible, notSupported }, ...streamsExtra };
 }
