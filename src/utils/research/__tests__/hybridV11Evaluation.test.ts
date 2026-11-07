@@ -22,7 +22,10 @@ describe("research evaluation of v1.1 versus v1, v2 and HR-enhanced", () => {
     expect(r.dayToDay!.maxStepFraction).toBeLessThan(0.01);
     expect(r.rows.every(x => x.asOfDate <= x.asOf.slice(0, 10))).toBe(true);
     expect(Object.keys(r.v11Status).length).toBeGreaterThan(0);
-  });
+    // Timeout: 28 instants × (official v2 + HR-enhanced + hybrid v1 + hybrid v1.1) is ≈ 1.0 s in isolation (measured: 1.02 s, 3 runs ±0.05; 2.2 s inside the full local suite) but the
+    // CI quality gate runs 245 files in parallel on a shared runner (243 s of test time in a 156 s wall clock) and it exceeded the 5 s default
+    // there once. 30 s keeps real regressions (an order-of-magnitude slowdown) visible without flaking under contention; the replay itself is unchanged.
+  }, 30_000);
   it("leave-one-run-out and leave-one-week-out shifts are small and cause no availability flips here", () => {
     const l = leaveOneOutV11(a), w = leaveOneWeekOutV11(a);
     expect(l.runsTested).toBeGreaterThan(10); expect(l.maxShiftFraction!).toBeLessThan(0.02); expect(l.availabilityFlips).toBe(0);

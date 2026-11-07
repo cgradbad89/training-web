@@ -30,6 +30,7 @@ import {
 } from "@/utils/efficiencyScore";
 import {
   backfillRouteClusterIds,
+  checkBestEffortsRouteGrowth,
   computeAndStoreBestEfforts,
   hasAttemptedBestEfforts,
   fetchHealthWorkout,
@@ -41,7 +42,7 @@ import {
   saveWeatherForWorkoutIfAbsent,
   type RunDetailCacheWrites,
 } from "@/services/healthWorkouts";
-import { BEST_EFFORTS_VERIFICATION, shouldRecomputeBestEfforts } from "@/utils/bestEfforts";
+import { assessBestEffortsCache, BEST_EFFORTS_VERIFICATION } from "@/utils/bestEfforts";
 import { type RoutePoint } from "@/services/routes";
 import { evictRoute, getRoutePoints, isRouteCached } from "@/utils/routeCache";
 import { hydrateFastFinishSplits } from "@/services/fastFinishSplits";
@@ -515,9 +516,16 @@ export default function RunDetailPage() {
       // Cache-integrity decision (missing / stale version / partial-now-complete / invalid / truncated-looking records, with bounded
       // retries), and never twice in one session against the same unchanged record.
       const routeFacts = { distanceMiles: w.distanceMiles, durationSeconds: w.durationSeconds };
-      const bestEffortsNeedRecompute =
-        shouldRecomputeBestEfforts(w.bestEfforts, routeIsComplete, routeFacts) &&
-        !hasAttemptedBestEfforts(uid, workoutId, w.bestEfforts);
+      const assessment = assessBestEffortsCache(w.bestEfforts, routeIsComplete, routeFacts);
+      const attempted = hasAttemptedBestEfforts(uid, workoutId, w.bestEfforts);
+      // A record that exhausted its retries is re-opened only by INDEPENDENT evidence that its route has since grown (a cheap
+      // aggregate count of the route documents); a genuinely sparse or corrupt route has the same count and stays bounded.
+      let routeGrew = false;
+      if (!assessment.recompute && assessment.state === "unavailable_confirmed" && !attempted && !basisOverride) {
+        routeGrew = await checkBestEffortsRouteGrowth(uid, workoutId, w.bestEfforts, { isCurrent });
+        if (!isCurrent()) return;
+      }
+      const bestEffortsNeedRecompute = !attempted && (assessment.recompute || routeGrew);
 
       // ── Route-fetch gate. Skip the big `route` read only when every
       //    route-derived cache the page renders is present & fresh AND there is
@@ -605,7 +613,7 @@ export default function RunDetailPage() {
       if (isRoutePresent(points.length)) {
         // Natural new-run hook: best efforts computed here (route already read).
         if (bestEffortsNeedRecompute) {
-          computeAndStoreBestEfforts(uid, workoutId, points, routeIsComplete, { isCurrent, facts: routeFacts, existing: w.bestEfforts })
+          computeAndStoreBestEfforts(uid, workoutId, points, routeIsComplete, { isCurrent, facts: routeFacts, existing: w.bestEfforts, routeGrew })
             .then((bestEfforts) => {
               if (isCurrent()) {
                 setWorkout((current) =>

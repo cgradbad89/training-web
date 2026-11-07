@@ -33,6 +33,7 @@
 import {
   collection,
   doc,
+  getCountFromServer,
   getDocs,
   getDoc,
   setDoc,
@@ -451,6 +452,27 @@ export function hasAttemptedBestEfforts(uid: string, workoutId: string, existing
 export function resetBestEffortsRecoveryState(): void {
   bestEffortsInFlight.clear();
   bestEffortsAttempted.clear();
+  routeGrowthChecks.clear();
+}
+
+// ── Late route growth: independent, cheap evidence that a route has more points than the stored record was computed from ──
+// An aggregate COUNT of the route subcollection (≈ 1 billed read per 1,000 points; same read permission as the route itself).
+// Used only for a record that exhausted its bounded retries: a sparse or corrupt route has the SAME count as before and stays
+// bounded; a route that was still uploading has MORE points and earns a fresh set of attempts. Memoized per session and record.
+const routeGrowthChecks = new Map<string, Promise<boolean>>();
+export async function checkBestEffortsRouteGrowth(uid: string, workoutId: string, existing: BestEffortsMap | undefined, options: { isCurrent?: () => boolean } = {}): Promise<boolean> {
+  if (!existing || typeof existing.computedFromPointCount !== "number") return false;
+  const key = JSON.stringify([uid, workoutId, bestEffortsSignature(existing)]);
+  const known = routeGrowthChecks.get(key);
+  if (known) return known;
+  const stored = existing.computedFromPointCount;
+  const promise = (async () => {
+    if (options.isCurrent?.() === false) return false;
+    const count = (await getCountFromServer(collection(db, "users", uid, "healthWorkouts", workoutId, "route"))).data().count;
+    return Number.isFinite(count) && count > stored;
+  })().catch(() => false);
+  routeGrowthChecks.set(key, promise);
+  return promise;
 }
 
 export async function computeAndStoreBestEfforts(
@@ -458,7 +480,7 @@ export async function computeAndStoreBestEfforts(
   workoutId: string,
   points: RoutePoint[],
   routeComplete: boolean,
-  options: { isCurrent?: () => boolean; facts?: WorkoutRouteFacts; existing?: BestEffortsMap } = {}
+  options: { isCurrent?: () => boolean; facts?: WorkoutRouteFacts; existing?: BestEffortsMap; routeGrew?: boolean } = {}
 ): Promise<BestEffortsMap> {
   const key = bestEffortsKey(uid, workoutId);
   const running = bestEffortsInFlight.get(key);
@@ -467,23 +489,27 @@ export async function computeAndStoreBestEfforts(
     const ref = doc(db, "users", uid, "healthWorkouts", workoutId);
     const attemptedAgainst = bestEffortsSignature(options.existing);
     const computed = computeBestEfforts(points);
-    const base = withBestEffortsFreshness(computed, routeComplete, points.length, { routeDistanceMeters: routeDistanceMeters(points) });
+    const distance = routeDistanceMeters(points);
+    const base = withBestEffortsFreshness(computed, routeComplete, points.length, { routeDistanceMeters: distance });
     if (options.isCurrent?.() === false) return base;
     // Marked BEFORE any I/O: a failed read/write must not turn into a route re-read on every visit within this session.
     bestEffortsAttempted.set(key, attemptedAgainst);
-    const snap = await getDoc(ref);
-    const existing = snap.exists()
-      ? parseBestEfforts((snap.data() as Record<string, unknown>).bestEfforts)
-      : undefined;
-    // The attempt counter advances only while the result still looks implausible against the workout (bounded retries).
-    const attempts = nextVerificationAttempts(existing, base, options.facts);
-    const fresh = withBestEffortsFreshness(computed, routeComplete, points.length, { routeDistanceMeters: routeDistanceMeters(points), verificationAttempts: attempts });
-    if (options.isCurrent?.() === false) return fresh;
-    if (bestEffortsEqual(existing, fresh)) return existing ?? fresh;
-    // Never overwrite a better-grounded record with a partial calculation; report the authoritative one.
-    if (!shouldReplaceBestEfforts(existing, fresh)) return existing ?? fresh;
-    await setDoc(ref, stripUndefined({ bestEfforts: fresh }), { merge: true });
-    return fresh;
+    // Read-decide-write is ATOMIC. Two sessions/devices can recover the same workout at once (one with a stale cached partial route);
+    // a transaction makes the loser retry against the winner's record, so a newer or more complete result is never overwritten.
+    // The callback may run more than once, so it is free of side effects.
+    const result = await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      const existing = snap.exists() ? parseBestEfforts((snap.data() as Record<string, unknown>).bestEfforts) : undefined;
+      // The attempt counter advances only while the result still looks implausible; a route observed to have GROWN starts a fresh budget.
+      const attempts = nextVerificationAttempts(options.routeGrew ? undefined : existing, base, options.facts);
+      const fresh = withBestEffortsFreshness(computed, routeComplete, points.length, { routeDistanceMeters: distance, verificationAttempts: attempts });
+      if (options.isCurrent?.() === false || bestEffortsEqual(existing, fresh)) return { value: existing ?? fresh, wrote: false };
+      // Never overwrite a better-grounded record with a partial calculation; report the authoritative one.
+      if (!shouldReplaceBestEfforts(existing, fresh)) return { value: existing ?? fresh, wrote: false };
+      tx.set(ref, stripUndefined({ bestEfforts: fresh }), { merge: true });
+      return { value: fresh, wrote: true };
+    });
+    return result.value;
   })().finally(() => { if (bestEffortsInFlight.get(key) === promise) bestEffortsInFlight.delete(key); });
   bestEffortsInFlight.set(key, promise);
   return promise;

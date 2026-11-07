@@ -5,6 +5,7 @@ import {
   computeAndStoreBestEfforts,
   fetchHealthWorkout,
   fetchHealthWorkoutsInRange,
+  checkBestEffortsRouteGrowth,
   hasAttemptedBestEfforts,
 } from "@/services/healthWorkouts";
 import { evictRoute, getRoutePoints, isRouteCached } from "@/utils/routeCache";
@@ -76,6 +77,7 @@ vi.mock("@/services/healthWorkouts", () => ({
   backfillRouteClusterIds: vi.fn().mockResolvedValue(undefined),
   computeAndStoreBestEfforts: vi.fn().mockResolvedValue(undefined),
   hasAttemptedBestEfforts: vi.fn().mockReturnValue(false),
+  checkBestEffortsRouteGrowth: vi.fn().mockResolvedValue(false),
   saveRouteClusterId: vi.fn().mockResolvedValue(undefined),
   saveRunDetailCaches: vi.fn().mockResolvedValue(undefined),
   saveWeatherForWorkoutIfAbsent: vi.fn().mockResolvedValue("saved"),
@@ -542,6 +544,7 @@ describe("RunDetailPage GAP/elevation sublabels", () => {
       vi.mocked(getRoutePoints).mockResolvedValue(FULL_ROUTE as never);
       vi.mocked(hasAttemptedBestEfforts).mockReturnValue(false);
       vi.mocked(isRouteCached).mockReturnValue(false);
+      vi.mocked(checkBestEffortsRouteGrowth).mockResolvedValue(false);
     });
 
     it("recovers a v2 'complete' all-null record computed from a truncated route: reads the route once and passes the workout facts", async () => {
@@ -579,6 +582,29 @@ describe("RunDetailPage GAP/elevation sublabels", () => {
       vi.mocked(fetchHealthWorkout).mockResolvedValue(small({ ...TRUNC, verificationAttempts: 2 }) as never);
       await renderSettled();
       expect(getRoutePoints).not.toHaveBeenCalled(); expect(computeAndStoreBestEfforts).not.toHaveBeenCalled();
+    });
+
+    it("re-opens an exhausted record only when independent evidence shows its route has grown", async () => {
+      vi.mocked(checkBestEffortsRouteGrowth).mockResolvedValue(true);
+      vi.mocked(fetchHealthWorkout).mockResolvedValue(small({ ...TRUNC, verificationAttempts: 2 }) as never);
+      await renderSettled();
+      expect(checkBestEffortsRouteGrowth).toHaveBeenCalledTimes(1);
+      expect(getRoutePoints).toHaveBeenCalledTimes(1);
+      expect(computeAndStoreBestEfforts).toHaveBeenCalledWith("u1", "workout_123", expect.any(Array), true, expect.objectContaining({ routeGrew: true }));
+    });
+
+    it("keeps a sparse route bounded: an unchanged route count triggers no route read and no recompute", async () => {
+      vi.mocked(checkBestEffortsRouteGrowth).mockResolvedValue(false);
+      vi.mocked(fetchHealthWorkout).mockResolvedValue(small({ ...TRUNC, verificationAttempts: 2 }) as never);
+      await renderSettled();
+      expect(checkBestEffortsRouteGrowth).toHaveBeenCalledTimes(1);
+      expect(getRoutePoints).not.toHaveBeenCalled(); expect(computeAndStoreBestEfforts).not.toHaveBeenCalled();
+    });
+
+    it("never runs the growth check for a record that still has retries or is valid (no extra count read on normal visits)", async () => {
+      vi.mocked(fetchHealthWorkout).mockResolvedValue(small({ "1mi": 540, "5k": null, "10k": null, "10mi": null, half: null, computedFromRouteComplete: true, computedFromPointCount: 1700, computationVersion: BEST_EFFORTS_COMPUTATION_VERSION }) as never);
+      await renderSettled();
+      expect(checkBestEffortsRouteGrowth).not.toHaveBeenCalled();
     });
 
     it("waits (no route read) while a partial-route record's route is still incomplete", async () => {
