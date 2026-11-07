@@ -191,6 +191,8 @@ export interface AerobicTrendEvidence {
   vo2Corroboration: "agrees" | "disagrees" | "inconclusive" | "unavailable";
   /** Plain-language separation of what was observed, what is plausible and what is NOT supported. */
   interpretation: { observed: string[]; plausible: string[]; notSupported: string[] };
+  /** Present only under the "calibrated" stream policy (hybrid v1.1). */
+  streams?: { used: number; eligible: number; excludedIntervalLike: number; calibrationOffsetBpm: number | null };
 }
 
 // ─── 3S: endurance readiness and hybrid ─────────────────────────────────────
@@ -289,7 +291,8 @@ export interface ForecastScenario {
 }
 
 export interface RaceDayForecast {
-  version: "experimental-raceday-forecast-v1";
+  /** v1 starts from hybrid v1; v2 starts from hybrid v1.1 (see `hybridPerformanceV11.ts`). Stored v1 forecasts are never reinterpreted as v2. */
+  version: "experimental-raceday-forecast-v1" | "experimental-raceday-forecast-v2";
   researchStatus: "experimental_provisional";
   validated: false;
   asOf: string;
@@ -302,6 +305,8 @@ export interface RaceDayForecast {
   /** Current capability input: separate from, and never replaced by, the forecast. */
   currentCapabilitySeconds: number | null;
   currentCapabilityStatus: HybridStatus;
+  /** Which hybrid produced `currentCapabilitySeconds` (the forecast has no other performance anchor). */
+  currentCapabilityModel: "experimental-hybrid-hm-v1" | "experimental-hybrid-hm-v1.1";
   /** Central provisional race-day value; null when withheld. */
   seconds: number | null;
   minutes: number | null;

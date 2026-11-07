@@ -1,5 +1,7 @@
 # Hybrid performance model — Phases 3Q–3T
 
+> **Superseded for display by [Hybrid Performance Model v1.1](hybrid-performance-model-v1.1.md)** (evidence-weighted weighting, VO₂/HR-stream integration, forecast v2). This document describes `experimental-hybrid-hm-v1` / `experimental-raceday-forecast-v1`, which remain unchanged, reproducible and available as the rollback.
+
 **Status:** experimental, provisional, **not independently validated**. The official estimate (`experimental-current-hm-v2`) and the HR-enhanced estimate (`experimental-hr-enhanced-hm-v1`) are unchanged and remain operational beside it. Nothing here populates a validated contract (`RacePerformanceResult.currentCapability` / `raceDayForecast` stay `unavailable`), a saved race, an immutable checkpoint, an enrollment or a capture schedule. No Firestore rule, index, collection, migration, iOS change or new service was needed or made.
 
 Evidence labels used below: *Published* = stated in a source I read (see §7). *Engineering assumption* = a bounded safeguard chosen here, not fitted to the owner's data and not a physiological constant. *Observed* = measured on the owner's data by the read-only evaluation (`docs/investigations/phase-3q-3t-evaluation.md`).

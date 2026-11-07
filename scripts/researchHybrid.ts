@@ -44,7 +44,7 @@ export interface HybridLoaded {
   vo2: Vo2Entry[]; streams: Record<string, HrSample[]>; truncated: boolean;
 }
 
-function serviceAccount(): Record<string, unknown> {
+export function serviceAccount(): Record<string, unknown> {
   const line = readFileSync(".env.local", "utf8").split("\n").find(l => l.startsWith("FIREBASE_SERVICE_ACCOUNT_JSON="));
   if (!line) throw new Error("FIREBASE_SERVICE_ACCOUNT_JSON not found in .env.local");
   let v = line.slice("FIREBASE_SERVICE_ACCOUNT_JSON=".length).trim();

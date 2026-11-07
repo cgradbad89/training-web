@@ -62,9 +62,9 @@ export function extrapolationReliability(sourceMeters: number, targetMeters: num
 export function recencyWeight(ageDays: number): number { return Math.pow(0.5, Math.max(0, ageDays) / CAPACITY_POLICY.halfLifeDays); }
 
 /** Exponent applied to sources shorter than the target. Longer sources already demonstrate the endurance. */
-function exponentFor(source: number, target: number, exponent: number): number { return target / source > 1.05 ? exponent : CAPACITY_POLICY.defaultExponent; }
+export function exponentFor(source: number, target: number, exponent: number): number { return target / source > 1.05 ? exponent : CAPACITY_POLICY.defaultExponent; }
 
-function equivalentOf(item: PerformanceEvidenceItem, target: number, exponent: number) {
+export function equivalentOf(item: Pick<PerformanceEvidenceItem, "seconds" | "distanceMeters">, target: number, exponent: number) {
   const seconds = researchRiegelSeconds(item.seconds, item.distanceMeters, target, exponentFor(item.distanceMeters, target, exponent));
   if (seconds === null) return null;
   const speed = target / seconds, range = CAPACITY_POLICY.plausibleSpeedMetersPerSecond;

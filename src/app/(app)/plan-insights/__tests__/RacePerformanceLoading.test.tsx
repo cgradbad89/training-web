@@ -26,6 +26,9 @@ vi.mock("@/services/fastFinishSplits", () => ({ hydrateFastFinishSplits: h.hydra
 vi.mock("@/utils/racePrediction", () => ({ predictRaceTime: h.predict, buildPredictionTrend: h.trend }));
 vi.mock("@/utils/predictionTrend", () => ({ buildAnchoredPredictionProjection: h.projection }));
 vi.mock("@/utils/bestEffortExtraction", () => ({ buildBestEffortSegments: h.segments }));
+// The hybrid v1.1 physiological hydration (VO₂ / HR streams) is an additional, independently tested asynchronous source (HybridV11Panel.test.tsx).
+// These lifecycle tests are about the workout/override/race/plan sources, so the fetchers settle immediately with no data.
+vi.mock("@/services/physiologyEvidenceFirestore", () => ({ fetchVo2EvidenceWindow: async () => ({ entries: [], docsRead: 0 }), fetchHrStreamBounded: async () => ({ samples: [], chunks: 0 }) }));
 
 import PlanInsightsPage from "../page";
 import { AppDataProvider, useAppData } from "@/contexts/AppDataContext";
