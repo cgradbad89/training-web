@@ -21,7 +21,7 @@
 //      Efficiency builds a per-run, self-excluding baseline to fix this.
 
 import { weekStart } from '@/utils/dates'
-import { computeHRReserve } from '@/utils/hrReserve'
+import { computeHRReserve, hasValidHrAnchors } from '@/utils/hrReserve'
 
 // ─── Tuning constants ────────────────────────────────────────────────────────
 // NOTE (product-owner confirmation needed): every value below is a tuning
@@ -209,6 +209,9 @@ export function buildEfficiencyBaseline(
 ): EfficiencyBaseline {
   const asOfMs = asOfDate.getTime()
   if (!isFinite(asOfMs)) return EMPTY_BASELINE
+  // An invalid HR-anchor pair (maxHr ≤ restingHr) has no reserve: %HRR would be
+  // NaN or sign-flipped. Same contract as Training Load V2 — no baseline.
+  if (!hasValidHrAnchors(restingHr, maxHr)) return EMPTY_BASELINE
   const cutoffMs = asOfMs - windowDays * 86400000
 
   const efValues: number[] = []
@@ -287,6 +290,7 @@ export function computeEfficiencyScore(
     inputs
 
   // Step 1 — usable baseline + valid run inputs, else building.
+  if (!hasValidHrAnchors(restingHr, maxHr)) return BUILDING
   if (baseline.runCount < MIN_BASELINE_RUNS) return BUILDING
   if (!isPositiveFinite(avgPaceSecPerMile) || !isPositiveFinite(avgHeartRate)) {
     return BUILDING

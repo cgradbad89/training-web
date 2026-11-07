@@ -87,6 +87,19 @@ describe("extracted chart components render with minimal valid props", () => {
     );
   });
 
+  it("Vo2TrendChart renders a gap-aware median series and a data-derived reference level", () => {
+    expectRenders(
+      <Vo2TrendChart
+        referenceLevel={44.4}
+        data={[
+          { date: "Jan 1", value: 44.1, trend: null },
+          { date: "Jan 8", value: 44.6, trend: null },
+          { date: "Jan 15", value: 44.4, trend: 44.4 },
+        ]}
+      />,
+    );
+  });
+
   it("PaceTrendChart renders", () => {
     expectRenders(
       <PaceTrendChart

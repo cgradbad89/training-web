@@ -21,9 +21,18 @@ import {
 export interface Vo2TrendDatum {
   date: string;
   value: number;
+  /** Trailing 28-day median (null where fewer than 3 readings — never interpolated). */
+  trend?: number | null;
 }
 
-export function Vo2TrendChart({ data }: { data: Vo2TrendDatum[] }) {
+export function Vo2TrendChart({
+  data,
+  referenceLevel,
+}: {
+  data: Vo2TrendDatum[];
+  /** Median of the readings shown. Omitted → no reference line (was a fixed 41.0). */
+  referenceLevel?: number | null;
+}) {
   return (
     <ResponsiveContainer width="100%" height={160}>
       <LineChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: 8 }}>
@@ -44,7 +53,10 @@ export function Vo2TrendChart({ data }: { data: Vo2TrendDatum[] }) {
           width={36}
         />
         <Tooltip
-          formatter={(v) => [`${Number(v).toFixed(1)} ml/kg·min`, 'VO₂ max']}
+          formatter={(v, name) => [
+            `${Number(v).toFixed(1)} ml/kg·min`,
+            name === 'trend' ? '28-day median' : 'VO₂ max (estimate)',
+          ]}
           contentStyle={{
             fontSize: 12,
             backgroundColor: 'var(--color-chart-tooltip-bg)',
@@ -55,18 +67,20 @@ export function Vo2TrendChart({ data }: { data: Vo2TrendDatum[] }) {
           labelStyle={{ color: 'var(--color-textSecondary)' }}
           itemStyle={{ color: 'var(--color-textPrimary)' }}
         />
-        <ReferenceLine
-          y={41.0}
-          stroke="#639922"
-          strokeDasharray="4 4"
-          strokeOpacity={0.5}
-          label={{
-            value: 'avg',
-            position: 'right',
-            fill: '#639922',
-            fontSize: 10,
-          }}
-        />
+        {referenceLevel != null && Number.isFinite(referenceLevel) && (
+          <ReferenceLine
+            y={referenceLevel}
+            stroke="#639922"
+            strokeDasharray="4 4"
+            strokeOpacity={0.5}
+            label={{
+              value: 'median',
+              position: 'right',
+              fill: '#639922',
+              fontSize: 10,
+            }}
+          />
+        )}
         <Line
           type="monotone"
           dataKey="value"
@@ -74,6 +88,17 @@ export function Vo2TrendChart({ data }: { data: Vo2TrendDatum[] }) {
           strokeWidth={2}
           dot={{ r: 3 }}
           name="value"
+        />
+        <Line
+          type="monotone"
+          dataKey="trend"
+          stroke="var(--color-chart-secondary)"
+          strokeWidth={2}
+          strokeDasharray="5 3"
+          dot={false}
+          connectNulls={false}
+          name="trend"
+          isAnimationActive={false}
         />
       </LineChart>
     </ResponsiveContainer>
