@@ -3,6 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HealthWorkout } from "@/types/healthWorkout";
 import type { RoutePoint } from "@/services/routes";
+import { improvingNine } from "@/utils/__tests__/fixtures/currentImpactFixture";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const h = vi.hoisted(() => ({
@@ -16,7 +17,15 @@ const h = vi.hoisted(() => ({
 vi.mock("next/navigation", () => ({ useParams: () => ({ id: "synthetic-run" }), usePathname: () => h.path, useRouter: () => ({ back: vi.fn() }) }));
 vi.mock("next/dynamic", () => ({ default: () => () => null }));
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ user: { uid: "synthetic-owner" }, sessionEpoch: h.epoch, isSessionCurrent: h.sessionGuard }) }));
-vi.mock("@/contexts/AppDataContext", () => ({ useAppData: () => ({ workouts: [], overrides: {}, patchOverrides: vi.fn() }) }));
+// Stable identities, as the real provider publishes them (the page derives from them in memos).
+const appData = vi.hoisted(() => ({
+  value: {
+    workouts: [] as unknown[], races: [] as unknown[], overrides: {} as Record<string, unknown>, patchOverrides: () => {},
+    sourceHasLoaded: { workouts: true, overrides: true, races: true, plans: true, settings: true },
+    workoutsResolution: "success", racesResolution: "success", overridesResolution: "success",
+  },
+}));
+vi.mock("@/contexts/AppDataContext", () => ({ useAppData: () => appData.value }));
 vi.mock("@/hooks/useUnsavedChanges", () => ({ useUnsavedChanges: vi.fn() }));
 vi.mock("@/lib/firebase", () => ({ db: {} }));
 vi.mock("firebase/firestore", () => ({ doc: vi.fn(), getDoc: async () => ({ exists: () => false }) }));
@@ -69,16 +78,43 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 describe("Run Detail operation ownership at page boundaries", () => {
-  it.each(["preview", "production"])("withholds prediction impact without best-effort hydration under the preview gate in %s", async deployment => {
+  it.each(["preview", "production"])("restores the current-estimate impact card, with no legacy prediction or hydration, under the gate in %s", async deployment => {
     vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", deployment === "production" ? undefined : "true");
     vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", deployment);
     h.fetchRaces.mockResolvedValue([{ id: "target", name: "Half", raceDate: "2027-03-20", raceDistance: "halfMarathon", isActive: true }]);
     await render();
     expect(h.hydrate).not.toHaveBeenCalled();
     expect(h.impact).not.toHaveBeenCalled();
-    expect(container.textContent).toContain("Numerical estimate unavailable");
+    expect(container.textContent).not.toContain("Numerical estimate unavailable");
+    expect(container.textContent).toContain("Current half-marathon estimate");
+    // Shared AppData holds no races here, so only the estimate tile reports why it is unavailable.
+    expect(container.querySelector('[data-testid="impact-state"]')?.textContent).toBe("No race result to anchor an estimate");
     // The unrelated visible map/splits flow still works.
     expect(h.routeRead).toHaveBeenCalledOnce();
+  });
+  it("computes the with/without-run estimate from shared AppData evidence and starts no extra reads", async () => {
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", undefined);
+    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "production");
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-10-26T16:00:00.000Z"));
+    try {
+      const fixture = improvingNine();
+      // The viewed run is one of the shared (full-history) evidence runs, exactly as in production.
+      appData.value = { ...appData.value, races: fixture.races as unknown[], overrides: {},
+        workouts: fixture.workouts.map(w => w.workoutId === "cur-3-1" ? { ...w, workoutId: "synthetic-run" } : w) };
+      h.fetchRaces.mockResolvedValue([]);
+      await render();
+      const text = container.textContent ?? "";
+      expect(text).toContain("Current half-marathon estimate");
+      expect(container.querySelector('[data-testid="impact-with"]')?.textContent).toBe("~2:11");
+      expect(container.querySelector('[data-testid="impact-delta"]')?.textContent).toBe("▼ 18 s");
+      expect(text).toContain("not a measured fitness gain");
+      // Legacy model never runs, and the card adds no telemetry/route reads of its own.
+      expect(h.hydrate).not.toHaveBeenCalled(); expect(h.impact).not.toHaveBeenCalled();
+      expect(h.routeRead).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+      appData.value = { ...appData.value, workouts: [], races: [], overrides: {} };
+    }
   });
   it("retains legacy hydration and impact calculation when the gate is off", async () => {
     vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", "false");
@@ -87,6 +123,7 @@ describe("Run Detail operation ownership at page boundaries", () => {
     expect(h.hydrate).toHaveBeenCalled();
     expect(h.impact).toHaveBeenCalled();
     expect(container.textContent).not.toContain("Numerical estimate unavailable");
+    expect(container.textContent).not.toContain("Current half-marathon estimate");
   });
   it("does not start a route query when a pending split read fails after unmount", async () => {
     const pending = deferred<never>(); h.splitRead.mockReturnValue(pending.promise);

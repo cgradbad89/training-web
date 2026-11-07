@@ -42,7 +42,9 @@ vi.mock("@/hooks/useAuth", () => ({
 const appData = vi.hoisted(() => ({
   patchOverrides: vi.fn(),
   workouts: [] as unknown[],
+  races: [] as unknown[],
   overrides: {} as Record<string, unknown>,
+  sourceHasLoaded: { workouts: true, overrides: true, races: true, plans: true, settings: true },
 }));
 
 // The page reads the shared workouts array for efficiency baselines and
@@ -52,6 +54,11 @@ vi.mock("@/contexts/AppDataContext", () => ({
     workouts: appData.workouts,
     overrides: appData.overrides,
     patchOverrides: appData.patchOverrides,
+    races: appData.races,
+    sourceHasLoaded: appData.sourceHasLoaded,
+    workoutsResolution: "success",
+    racesResolution: "success",
+    overridesResolution: "success",
   }),
 }));
 

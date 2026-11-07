@@ -156,7 +156,7 @@ function adjustmentReason(current: CurrentHalfEstimate): string {
 }
 
 /** Advance local-day policies even in an open tab. This clock does no data IO. */
-function useEstimateDay(fixed: boolean, timeZone: string): string | null {
+export function useEstimateDay(fixed: boolean, timeZone: string): string | null {
   const [day, setDay] = useState(() => fixed ? null : performanceLocalDate(new Date().toISOString(), timeZone));
   useEffect(() => {
     if (fixed) return;
