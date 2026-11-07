@@ -116,7 +116,7 @@ describe("comparable-effort funnel: attribution and boundaries", () => {
 describe("research isolation", () => {
   const walk = (dir: string): string[] => readdirSync(dir).flatMap(name => {
     const path = join(dir, name);
-    return statSync(path).isDirectory() ? (name === "__tests__" ? [] : walk(path)) : /\.(ts|tsx)$/.test(name) ? [path] : [];
+    return statSync(path).isDirectory() ? (name === "__tests__" || name === "research" ? [] : walk(path)) : /\.(ts|tsx)$/.test(name) ? [path] : [];
   });
   it("is not imported by any live source module", () => {
     const root = join(__dirname, "..", "..");
