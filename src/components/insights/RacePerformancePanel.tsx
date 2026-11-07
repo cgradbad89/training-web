@@ -11,7 +11,9 @@ import type { AppDataResolution } from "@/contexts/AppDataContext";
 import { evaluateRacePerformance, nominalRaceDistanceMeters } from "@/utils/racePerformance";
 import { buildRaceTrainingContext } from "@/utils/raceTrainingContext";
 import { formatRaceTime } from "@/utils/riegelFit";
-import { isExperimentalCurrentEstimateEnabled } from "@/lib/racePerformanceGate";
+import { isExperimentalCurrentEstimateEnabled, isExperimentalHrEnhancedEstimateEnabled } from "@/lib/racePerformanceGate";
+import { estimateHrEnhancedHalfMarathon } from "@/utils/hrEnhancedPerformance";
+import { HrEnhancedEstimateRow } from "./HrEnhancedEstimateRow";
 import { CURRENT_HALF_POLICY, estimateCurrentHalfMarathon, type CurrentHalfEstimate } from "@/utils/experimentalCurrentPerformance";
 import { performanceLocalDate, shiftPerformanceDate } from "@/utils/performanceEvidence";
 import { researchRaceCutoff, WORKOUT_RESEARCH_POLICY } from "@/utils/workoutRaceResearch";
@@ -253,6 +255,11 @@ export function RacePerformancePanel(props: RacePerformancePanelProps) {
   const current = useMemo(() => currentEnabled && performanceReady ? estimateCurrentHalfMarathon({
     races, workouts, overrides, asOf: asOfIso, timeZone,
   }) : null, [currentEnabled, performanceReady, races, workouts, overrides, asOfIso, timeZone]);
+  // Same official result is reused (never recomputed differently) so both rows share anchor, cutoff and inputs.
+  const hrEnabled = currentEnabled && isExperimentalHrEnhancedEstimateEnabled();
+  const hrEnhanced = useMemo(() => hrEnabled && current && current.finishMinutes !== null
+    ? estimateHrEnhancedHalfMarathon({ races, workouts, overrides, asOf: asOfIso, timeZone }, { official: current }) : null,
+  [hrEnabled, current, races, workouts, overrides, asOfIso, timeZone]);
   const benchmark = performance?.latestBenchmark ?? null;
   const displayedAnchor = current?.historicalAnchor ?? benchmark;
   const lifecycle = current ? anchorLifecycle(current) : null;
@@ -285,6 +292,7 @@ export function RacePerformancePanel(props: RacePerformancePanelProps) {
             {current && <p className="text-sm text-textSecondary" data-testid="estimate-unavailable-reason">{current.reason}</p>}
             {displayedAnchor && <p className="text-sm text-textSecondary" data-testid="estimate-basis">Historical race: {displayedAnchor.finishSeconds != null ? formatRaceTime(displayedAnchor.finishSeconds) : "time unavailable"} · {dateLabel(displayedAnchor.raceDate)} · {STATUS_LABEL[displayedAnchor.status]}</p>}
           </>}
+          {hrEnhanced && <HrEnhancedEstimateRow estimate={hrEnhanced} />}
           {lifecycle && <p className="text-sm text-textSecondary" data-testid="anchor-lifecycle">{lifecycle}</p>}
           <dl className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-textSecondary">
             <div className="flex flex-wrap gap-x-1"><dt>Calculated as of:</dt><dd>{current ? dateLabel(performanceLocalDate(current.asOf, timeZone)) : "Unavailable"}</dd></div>
@@ -358,6 +366,8 @@ export function RacePerformancePanel(props: RacePerformancePanelProps) {
               <p>Unvalidated training adjustment. Finish time rounds to the nearest minute; pace derives from that time and rounds to five seconds per mile. The adjustment is applied before rounding the finish time. No confidence interval is supported. This estimate has not been validated for your individual accuracy.</p>
             </div>
             <details><summary className="cursor-pointer py-2 font-semibold text-primary rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">Model assumptions</summary><ul className="mt-2 space-y-1">{current.assumptions.map(a => <li key={a}>{a}</li>)}</ul></details>
+            {hrEnhanced && <div className="space-y-2" data-testid="hr-enhanced-methodology"><h4 className="font-semibold text-textPrimary">HR-enhanced estimate (experimental)</h4>
+              <HrEnhancedEstimateRow estimate={hrEnhanced} detailed /></div>}
             <p className="text-xs">Model {current.version} · Evidence quality: {current.evidenceQuality.replaceAll("_", " ")} · Calculation cutoff {current.asOf} · {timeZone}</p>
           </div> : <p>{currentEnabled ? "The experimental estimate could not be calculated from the loaded evidence." : "An experimental current estimate is not enabled in this build."}</p>}
           <div className="space-y-2"><h4 className="font-semibold text-textPrimary">How to strengthen the race evidence</h4>

@@ -9,6 +9,7 @@ import { formatRaceTime } from "@/utils/riegelFit";
 import { parseLocalDate } from "@/utils/dates";
 import { formatImpactDelta, type CurrentHalfRunImpact } from "@/utils/currentHalfRunImpact";
 import type { CurrentImpactCard } from "@/hooks/useCurrentHalfRunImpact";
+import type { HrImpactCard } from "@/hooks/useHrEnhancedRunImpact";
 
 interface RunImpactSectionProps {
   /** Race-prediction tile inputs; null hides the tile (no active race or no
@@ -25,6 +26,8 @@ interface RunImpactSectionProps {
   /** Current half-marathon estimate impact (experimental-current-hm-v2). When
    *  present it owns the prediction slot; the legacy tile is never rendered. */
   currentEstimate?: CurrentImpactCard | null;
+  /** Experimental HR-enhanced estimate impact (same-model with/without). Shown BESIDE, never merged into, the official tile. */
+  hrEnhancedEstimate?: HrImpactCard | null;
 }
 
 const MODEL_INFLUENCE_NOTE = "Shows how this run changes the current model estimate, not a measured fitness gain.";
@@ -124,6 +127,43 @@ function CurrentEstimateTile({ card }: { card: CurrentImpactCard }) {
   </>);
 }
 
+
+/** Separate, clearly experimental tile: HR-enhanced with/without comparison (never mixed with the official delta). */
+function HrEnhancedImpactTile({ card }: { card: HrImpactCard }) {
+  const shell = (children: React.ReactNode) => (
+    <div className="bg-surface rounded-xl p-4 flex flex-col gap-1.5 min-w-0" data-testid="hr-enhanced-impact">
+      <div className="flex items-start justify-between gap-2">
+        <span className="text-[10px] font-semibold text-textSecondary uppercase tracking-wide">HR-enhanced estimate</span>
+        <span className="shrink-0 rounded-md bg-card px-1.5 py-0.5 text-[10px] font-medium text-textSecondary">Experimental</span>
+      </div>
+      {children}
+      <span className="text-[10px] text-textSecondary">Experimental and not independently validated; the official estimate above is unaffected.</span>
+    </div>
+  );
+  if (card.state === "loading") return shell(<p role="status" className="text-xs text-textSecondary">Calculating&hellip;</p>);
+  if (card.state === "error") return shell(<p role="alert" className="text-xs text-textSecondary">{card.message}</p>);
+  const i = card.impact;
+  if (i.kind === "unavailable") return shell(<><span className="text-sm font-semibold text-textPrimary" data-testid="hr-impact-state">Not available</span><p className="text-xs text-textSecondary">{i.reason}</p></>);
+  if (i.kind === "not_evidence" || i.kind === "unsupported") return shell(<>
+    <span className="text-xl font-bold text-textPrimary tabular-nums" data-testid="hr-impact-with">{estimateLabel(i.withMinutes)}</span>
+    <span className="text-sm font-semibold text-textPrimary" data-testid="hr-impact-state">{i.kind === "unsupported" ? "Comparison not supported" : "Not a training input"}</span>
+    <p className="text-xs text-textSecondary">{i.reason}</p></>);
+  const tone = i.direction === "faster" ? "text-success" : i.direction === "slower" ? "text-warning" : "text-textSecondary";
+  const magnitude = Math.abs(i.deltaSeconds);
+  return shell(<>
+    <dl className="flex flex-wrap items-baseline gap-x-4 gap-y-1 tabular-nums">
+      <div className="flex flex-col"><dt className="text-[10px] text-textSecondary">Without this run</dt><dd className="text-sm text-textSecondary" data-testid="hr-impact-without">{estimateLabel(i.withoutMinutes)}</dd></div>
+      <div className="flex flex-col"><dt className="text-[10px] text-textSecondary">With this run</dt><dd className="text-xl font-bold text-textPrimary" data-testid="hr-impact-with">{estimateLabel(i.withMinutes)}</dd></div>
+      <div className="flex flex-col"><dt className="text-[10px] text-textSecondary">Difference</dt>
+        <dd className={`text-sm font-semibold ${tone}`} data-testid="hr-impact-delta">{i.direction === "unchanged" ? "None" : `${i.direction === "faster" ? "▼" : "▲"} ${formatImpactDelta(magnitude)}`}</dd></div>
+    </dl>
+    <span className={`text-xs font-semibold ${tone}`} data-testid="hr-impact-state">
+      {i.direction === "unchanged" ? "No change in the HR-enhanced estimate" : `${i.direction === "faster" ? "Faster" : "Slower"} by ${formatImpactDelta(magnitude)}`}
+    </span>
+    <span className="text-[10px] text-textSecondary">Same-model comparison (heart-rate evidence included). Estimates are rounded to the minute; the difference uses unrounded values.</span>
+  </>);
+}
+
 /** "31s" under a minute, else "1:31" (m:ss). Deltas are small by nature. */
 function deltaSecondsLabel(absSeconds: number): string {
   const s = Math.round(absSeconds);
@@ -145,7 +185,7 @@ function formatRaceDate(iso: string): string {
  * a run that worsens the prediction shows its unfavorable delta in the
  * negative color, never suppressed.
  */
-export function RunImpactSection({ prediction, ctl, predictionUnavailableReason, currentEstimate }: RunImpactSectionProps) {
+export function RunImpactSection({ prediction, ctl, predictionUnavailableReason, currentEstimate, hrEnhancedEstimate }: RunImpactSectionProps) {
   if (!prediction && !ctl && !predictionUnavailableReason && !currentEstimate) return null;
 
   return (
@@ -155,7 +195,10 @@ export function RunImpactSection({ prediction, ctl, predictionUnavailableReason,
       </h2>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {currentEstimate ? (
-          <CurrentEstimateTile card={currentEstimate} />
+          <>
+            <CurrentEstimateTile card={currentEstimate} />
+            {hrEnhancedEstimate && <HrEnhancedImpactTile card={hrEnhancedEstimate} />}
+          </>
         ) : predictionUnavailableReason ? (
           <div className="bg-surface rounded-xl p-4 flex flex-col gap-1.5">
             <span className="text-[10px] font-semibold text-textSecondary uppercase tracking-wide">
