@@ -14,7 +14,7 @@ import { formatRaceTime } from "@/utils/riegelFit";
 import { isExperimentalCurrentEstimateEnabled } from "@/lib/racePerformanceGate";
 import { CURRENT_HALF_POLICY, estimateCurrentHalfMarathon, type CurrentHalfEstimate } from "@/utils/experimentalCurrentPerformance";
 import { performanceLocalDate, shiftPerformanceDate } from "@/utils/performanceEvidence";
-import { researchRaceCutoff } from "@/utils/workoutRaceResearch";
+import { researchRaceCutoff, WORKOUT_RESEARCH_POLICY } from "@/utils/workoutRaceResearch";
 import { daysUntil, parseLocalDate } from "@/utils/dates";
 import { EstimateDetailsButton, InsightsDialog } from "./EstimateDetailsDialog";
 
@@ -120,7 +120,7 @@ const SUMMARY_REASON = {
 
 const MATCHED_REASON = {
   not_evaluated: "Comparable-effort matching was not evaluated.",
-  insufficient_pairs_or_weeks: "Too few qualifying comparable-effort pairs across separate weeks.",
+  insufficient_pairs_or_weeks: `Too few qualifying comparable-effort pairs across separate weeks. A pair needs one run before and one after the race with average heart rate within ${WORKOUT_RESEARCH_POLICY.maximumHeartRateDifference} bpm, duration within ${Math.round(WORKOUT_RESEARCH_POLICY.maximumDurationRatioDifference * 100)}%, and the same route, terrain and weather. Without enough pairs this evidence is not used, so it has no effect on the estimate.`,
   inconsistent_ratios: "Matched paces disagree beyond the permitted magnitude or spread.",
   insufficient_effective_pairs: "Too few effective pairs after the age weights to change the estimate.",
   supported: "Qualifying pairs contribute to the training adjustment.",
