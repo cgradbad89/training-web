@@ -1,6 +1,6 @@
 # Automatic future-race enrollment · Phase 3H
 
-Status: **implemented, tested and dormant.** Nothing in this phase changes production behavior until the owner sets `HM_CAPTURE_AUTO_ENROLL=true`. The pinned March 20, 2027 enrollment is untouched. No Firestore rule, index, IAM, bucket, schedule, estimator or model change is part of this phase.
+Status: **activated in Production on 2026-11-06 (owner-approved).** `HM_CAPTURE_AUTO_ENROLL=true` was set and production redeployed from main `9f04009f`; the authenticated preflight passed (see [section 8.1](#81-activation-record)). No race other than the pinned March 20, 2027 enrollment is eligible yet, so no new enrollment exists. The pinned enrollment is untouched. No Firestore rule, index, IAM, bucket, schedule, estimator or model change is part of this phase.
 
 ## 1. What "active race" means (verified, not assumed)
 
@@ -67,7 +67,7 @@ Audit statuses: `not_due`, `pending`, `verified`, `missed`, `unverified`, `unrea
 
 No recurring job, paid service, bucket or credential is added.
 
-## 8. Activation (requires owner approval; not done)
+## 8. Activation procedure
 
 Prerequisites: this PR deployed (done); March preflight shows `enrollment.pinned: "present"` (**confirmed 2026-11-06**, main `2eac31e8`, with `autoEnabled: false`). Then:
 
@@ -76,6 +76,27 @@ Prerequisites: this PR deployed (done); March preflight shows `enrollment.pinned
 3. Call `GET /api/half-marathon-capture?mode=preflight` with the cron bearer; expect `preflight_ok`, `enrollment.autoEnabled: true`, and `discovery.eligible` of 0 or 1.
 
 Rollback: unset `HM_CAPTURE_AUTO_ENROLL` and redeploy; behavior returns exactly to the pinned single-race collector and zero idle-day reads. Evidence already written is unaffected. There is no overlap risk with the pinned path because both run through the same handler and the pinned race is never enrolled twice.
+
+### 8.1 Activation record
+
+Owner approval: given in chat on 2026-11-06. Performed with the Vercel CLI and MCP; no IAM, bucket, retention, schedule, Firestore rule or index, race record, estimator or Admin key change.
+
+| Step | Result |
+| --- | --- |
+| Starting point | `origin/main` = `9f04009f`, already deployed to Production (`dpl_FH9aU4wC…`, Ready) |
+| Variable | `HM_CAPTURE_AUTO_ENROLL=true`, Production only, added as a non-sensitive (not write-only) variable; the CLI listing still shows its value as `Encrypted`, and its effect is proven by the preflight's `autoEnabled: true`. All 13 existing `HM_CAPTURE_*`/`CRON_SECRET` variables were present before and after and were not edited. `HM_CAPTURE_TIME_ZONE` left unset (default `America/New_York`) |
+| Redeploy | Redeploy of the same commit `9f04009f` as `dpl_Bixb7vaDdLaTkQHsCoHZdPSaEx6e`, Ready and aliased to `training-web-rho.vercel.app` (about 02:12 to 02:20 UTC on 2026-11-07). No new code, so the deployed implementation is exactly what was reviewed and tested in #65 |
+| Crons | `vercel.json` unchanged: `0 13`, `0 17` and `0 21` UTC on `/api/half-marathon-capture` |
+| Authenticated preflight (owner-run, about 02:30 UTC) | `{"status":"preflight_ok","checks":{"policy":true,"identities":true,"firestore":true,"enrollment":{"pinned":"present","autoEnabled":true,"discovery":{"candidates":1,"eligible":0,"notes":["none_eligible"]}}}}` |
+| Reading of the result | Discovery succeeded. One active race was returned; zero are eligible. That one is presumably the pinned March race, which discovery skips by id (inferred: the response carries no identifiers). March is therefore not enrolled twice and no second target exists. Keyless token exchange, bucket policy and the Firestore read still pass |
+| Runtime errors | None reported by Vercel for the project in the hour after the redeploy |
+| Runtime logs | No log lines for the new deployment in the 30 minutes after the preflight, so the preflight's read count could not be confirmed from logs |
+
+**Not verified.** (1) An authenticated idle (non-preflight) invocation: offered and skipped by the owner. The first scheduled run on the new deployment is the 13:00 UTC cron on 2026-11-07, and its log line will be gone after about an hour on the Hobby plan, so whoever wants that evidence should check the Vercel Cron Jobs tab or the runtime logs promptly after it fires. (2) Actual Firestore read counts (calculated in section 7, not measured). (3) Behavior with a real second active race: covered by tests and the 365-day simulation, not by production. (4) Whether `candidates: 1` is the March race: inferred from the pinned-skip rule and the fact that the owner has one active race.
+
+**Rollback** (unchanged): remove `HM_CAPTURE_AUTO_ENROLL` from Production (`vercel env rm HM_CAPTURE_AUTO_ENROLL production`) and redeploy. Behavior returns exactly to the pinned single-race collector with zero idle-day reads; evidence already written is unaffected.
+
+**What happens next.** When the owner saves and activates a half marathon (`isActive`), the next invocation tracks it with no per-race configuration, using only the checkpoints still due on or after that day. Two eligible active races other than March enroll neither (`notes:["conflict"]`).
 
 ## 9. Not included
 
