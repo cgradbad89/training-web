@@ -18,3 +18,14 @@ export function computeHRReserve(
 ): number {
   return Math.max(0, Math.min(1, (avgHeartRate - restingHr) / (maxHr - restingHr)));
 }
+
+/**
+ * True when the HR anchors can define a reserve: both finite and
+ * `maxHr > restingHr`. Training Load V2 already refuses to score otherwise
+ * (trainingLoad.ts: "guards divide-by-zero / negative reserve"); consumers of
+ * `computeHRReserve` must apply the same guard because that function alone
+ * returns NaN (0/0) or a sign-flipped value for an invalid pair.
+ */
+export function hasValidHrAnchors(restingHr: number, maxHr: number): boolean {
+  return Number.isFinite(restingHr) && Number.isFinite(maxHr) && maxHr > restingHr;
+}

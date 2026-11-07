@@ -40,6 +40,7 @@ import { type AggregatedStatsDoc } from "@/utils/aggregatedStats";
 import { formatPaceLabel } from "@/utils/pace";
 import {
   isDateOnlyWithinPastMonths,
+  toLocalIsoDate,
   weekStart as getWeekStart,
 } from "@/utils/dates";
 import {
@@ -70,6 +71,7 @@ import {
 } from "@/utils/trainingLoad";
 import { InfoTooltip } from "@/components/ui/InfoTooltip";
 import { type Vo2Entry } from "@/utils/vo2History";
+import { buildVo2TrendSeries, summarizeVo2Trend } from "@/utils/vo2Trend";
 import { isRacePerformanceDisplayEnabled, RACE_PERFORMANCE_UNAVAILABLE_REASON } from "@/lib/racePerformanceGate";
 
 // ─── Training Load KPI tooltip copy ───────────────────────────────────────────
@@ -853,13 +855,22 @@ function CardioFitnessCard({
   const currentVo2Date = formatVo2DateShort(latest.date);
   const band = ratingBand(currentVo2);
 
-  const recentHistory = history.filter(
-    (e) => isDateOnlyWithinPastMonths(e.date, 12),
+  // Descriptive only (Phase 3L): the 28-day median is computed over the FULL
+  // history so early chart points have their trailing window, and uses only
+  // readings dated on or before each point. Nothing is interpolated.
+  const trendSeries = buildVo2TrendSeries(history);
+  const recentPoints = trendSeries.points.filter(
+    (p) => isDateOnlyWithinPastMonths(p.date, 12),
   );
-  const chartData = recentHistory.map((h) => ({
-    date: formatVo2DateShort(h.date),
-    value: Number(h.value.toFixed(1)),
+  const chartData = recentPoints.map((p) => ({
+    date: formatVo2DateShort(p.date),
+    value: Number(p.value.toFixed(1)),
+    trend: p.median28 === null ? null : Number(p.median28.toFixed(1)),
   }));
+  const recentLevel = summarizeVo2Trend(
+    { ...trendSeries, points: recentPoints },
+    toLocalIsoDate(new Date()),
+  );
 
   return (
     <Card>
@@ -935,7 +946,7 @@ function CardioFitnessCard({
             No recent Cardio Fitness data — Apple Watch generates readings after outdoor workouts.
           </p>
         ) : (
-          <Vo2TrendChart data={chartData} />
+          <Vo2TrendChart data={chartData} referenceLevel={recentLevel.referenceMedian} />
         )}
         <div className="flex items-center justify-center gap-4 mt-2 text-[11px] text-textSecondary">
           <span className="inline-flex items-center gap-1.5">
@@ -950,9 +961,22 @@ function CardioFitnessCard({
               className="inline-block w-3 border-t border-dashed"
               style={{ borderColor: '#639922' }}
             />
-            Average threshold
+            Median of readings shown
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span
+              className="inline-block w-3 border-t-2 border-dashed"
+              style={{ borderColor: 'var(--color-chart-secondary)' }}
+            />
+            28-day median (3+ readings)
           </span>
         </div>
+        <p className="text-[11px] text-textSecondary text-center mt-2">
+          Apple Watch estimates, not a lab measurement. Descriptive only — not a race prediction.
+          {recentLevel.stale && recentLevel.daysSinceLatest !== null
+            ? ` Latest reading is ${recentLevel.daysSinceLatest} days old.`
+            : ''}
+        </p>
       </div>
     </Card>
   );
