@@ -137,7 +137,8 @@ import {
 } from "@/utils/mileSplitsCache";
 import { fetchWeatherForRun } from "@/lib/weather";
 import { selectEffectiveWorkouts } from "@/utils/selectActiveWorkouts";
-import { isRacePerformanceDisplayEnabled, RACE_PERFORMANCE_UNAVAILABLE_REASON } from "@/lib/racePerformanceGate";
+import { isRacePerformanceDisplayEnabled } from "@/lib/racePerformanceGate";
+import { useCurrentHalfRunImpact } from "@/hooks/useCurrentHalfRunImpact";
 
 const RunMap = dynamic(() => import("@/components/RunMap"), { ssr: false });
 
@@ -916,6 +917,17 @@ export default function RunDetailPage() {
     resolvedMaxHR,
     resolvedRestingHR,
   ]);
+
+  // Current half-marathon estimate impact (experimental-current-hm-v2). Derived
+  // synchronously from the shared AppData sources Plan Insights uses — never from
+  // the 56-day window above, which cannot hold the estimator's 180-day anchor and
+  // pre-race baseline evidence. No Firestore reads; the legacy prediction above is
+  // disabled whenever this is enabled.
+  const viewedIsRunLike = workout ? applyOverride(workout, override).isRunLike : false;
+  const currentEstimateImpact = useCurrentHalfRunImpact(
+    workoutId,
+    isRacePerformanceDisplayEnabled() && viewedIsRunLike
+  );
 
   // CTL impact — read from the cached aggregatedStats training-load series when
   // it is FRESH (isAggregatedStatsStale === false), subtracting this run's own
@@ -1721,9 +1733,9 @@ export default function RunDetailPage() {
       )}
 
       {/* ── This Run's Impact (independent of route matching) ── */}
-      {displayWorkout.isRunLike && (predictionImpact || ctlImpact || isRacePerformanceDisplayEnabled()) && (
+      {displayWorkout.isRunLike && (predictionImpact || ctlImpact || currentEstimateImpact) && (
         <RunImpactSection
-          predictionUnavailableReason={isRacePerformanceDisplayEnabled() ? RACE_PERFORMANCE_UNAVAILABLE_REASON : null}
+          currentEstimate={currentEstimateImpact}
           prediction={
             predictionImpact && activeRace
               ? {
