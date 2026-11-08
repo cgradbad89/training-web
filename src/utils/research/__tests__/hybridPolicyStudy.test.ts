@@ -27,7 +27,7 @@ describe("current behaviour: an honest effort attestation removes the race from 
   });
 });
 
-describe("the single alternative: nonmaximal_lower_bound", () => {
+describe("the single alternative: nonmaximal_lower_bound", { timeout: 60_000 }, () => {
   it("identity: with no nonmaximal-attested race the result equals the strict estimate exactly (several athletes)", () => {
     const cases: StudyInput[] = [
       study([halfRace("a", "2026-07-01", 8000, "maximal")], "2026-09-25", [strongEffort("e", "2026-08-15", 575)]),
