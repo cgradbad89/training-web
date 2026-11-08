@@ -22,7 +22,7 @@ import { PHYSIOLOGY_LIMITS } from "@/services/physiologyEvidenceStores";
 import { leaveOneOutV11, leaveOneWeekOutV11, sweepsV11 } from "@/utils/research/hybridV11Evaluation";
 import {
   buildAsOfState, evaluateCheckpoint, explainChange, holdoutAssessment, localInstant, predictionError,
-  type AsOfOptions, type BacktestSource, type CheckpointRow, type ReplayMode,
+  type AsOfOptions, type BacktestSource, type CheckpointRow, type OwnerConfirmationSpec, type ReplayMode,
 } from "@/utils/research/historicalBacktest";
 import { buildRaceEvidence } from "@/utils/racePerformance";
 import { performanceLocalDate, shiftPerformanceDate } from "@/utils/performanceEvidence";
@@ -38,16 +38,19 @@ const hms = (value: number | null) => {
 };
 const round = (n: number | null | undefined, k = 1) => n == null ? null : Math.round(n * 10 ** k) / 10 ** k;
 
-export type VariantId = "strict_historical" | "reconstruction_as_recorded" | "counterfactual_early_moving_time" | "counterfactual_early_elapsed_time" | "counterfactual_early_race_excluded"
-  | "hypothetical_best_efforts_current" | "hypothetical_best_efforts_current_early_moving_time";
-export const VARIANTS: { id: VariantId; mode: ReplayMode; label: string; options: (earlyRaceId: string | null) => AsOfOptions }[] = [
-  { id: "strict_historical", mode: "strict_historical", label: "Strict historical replay (production rules, timestamps must prove availability)", options: () => ({}) },
-  { id: "reconstruction_as_recorded", mode: "retrospective_reconstruction", label: "Retrospective reconstruction, records exactly as saved (early race rejected by production integrity rules if inconsistent)", options: () => ({}) },
-  { id: "counterfactual_early_moving_time", mode: "retrospective_reconstruction", label: "COUNTERFACTUAL (research only): early race clocks forced to agree at the recorded moving time", options: id => id ? { raceClock: { raceId: id, basis: "moving_time" } } : {} },
-  { id: "counterfactual_early_elapsed_time", mode: "retrospective_reconstruction", label: "COUNTERFACTUAL (research only): early race clocks forced to agree at the watch elapsed time", options: id => id ? { raceClock: { raceId: id, basis: "elapsed_time" } } : {} },
+export type VariantId = "strict_historical" | "reconstruction_as_recorded" | "owner_confirmed_strict" | "owner_confirmed_retro_effort_unattested" | "owner_confirmed_retro"
+  | "counterfactual_early_moving_time" | "counterfactual_early_race_excluded" | "hypothetical_best_efforts_current_owner_confirmed";
+/** Owner-attested early-race result without the effort attestation (the caller adds it per variant). */
+export type OwnerAttestation = Omit<OwnerConfirmationSpec, "effort">;
+export const VARIANTS: { id: VariantId; mode: ReplayMode; label: string; options: (earlyRaceId: string | null, owner: OwnerAttestation | null) => AsOfOptions }[] = [
+  { id: "strict_historical", mode: "strict_historical", label: "STRICT: records as saved (no confirmation exists in the database)", options: () => ({}) },
+  { id: "reconstruction_as_recorded", mode: "retrospective_reconstruction", label: "RECONSTRUCTION: records as saved (early race rejected by integrity rules)", options: () => ({}) },
+  { id: "owner_confirmed_strict", mode: "strict_historical", label: "STRICT with the owner-attested official result known only from its real confirmation instant", options: (_, o) => o ? { ownerConfirmation: { ...o, effort: "maximal" } } : {} },
+  { id: "owner_confirmed_retro_effort_unattested", mode: "retrospective_reconstruction", label: "RETROSPECTIVE (research only): official time attested, maximal effort NOT attested", options: (_, o) => o ? { ownerConfirmation: { ...o, effort: "unknown" } } : {} },
+  { id: "owner_confirmed_retro", mode: "retrospective_reconstruction", label: "RETROSPECTIVE (research only, PRIMARY): official 2:15:30 attested, maximal effort assumed", options: (_, o) => o ? { ownerConfirmation: { ...o, effort: "maximal" } } : {} },
+  { id: "counterfactual_early_moving_time", mode: "retrospective_reconstruction", label: "COUNTERFACTUAL (previous method): early race accepted via the recorded moving-time clock", options: id => id ? { raceClock: { raceId: id, basis: "moving_time" } } : {} },
   { id: "counterfactual_early_race_excluded", mode: "retrospective_reconstruction", label: "COUNTERFACTUAL (research only): early race outcome removed from evidence entirely", options: id => id ? { excludeRaceIds: [id] } : {} },
-  { id: "hypothetical_best_efforts_current", mode: "retrospective_reconstruction", label: "HYPOTHETICAL (research only): as saved, but stale-version best-effort summaries treated as current", options: () => ({ relabelBestEffortsCurrent: true }) },
-  { id: "hypothetical_best_efforts_current_early_moving_time", mode: "retrospective_reconstruction", label: "HYPOTHETICAL (research only): best-efforts treated as current AND early race clocks agree at the moving time", options: id => ({ relabelBestEffortsCurrent: true, ...(id ? { raceClock: { raceId: id, basis: "moving_time" as const } } : {}) }) },
+  { id: "hypothetical_best_efforts_current_owner_confirmed", mode: "retrospective_reconstruction", label: "HYPOTHETICAL (research only): owner-confirmed April AND stale best-effort summaries treated as current", options: (_, o) => ({ relabelBestEffortsCurrent: true, ...(o ? { ownerConfirmation: { ...o, effort: "maximal" as const } } : {}) }) },
 ];
 
 export interface Checkpoint { label: string; asOf: string; required: boolean }
@@ -55,14 +58,16 @@ export interface BacktestConfig {
   earlyRaceId: string | null;
   targetRaceId: string | null;
   /** Withheld outcome labels, seconds. Never visible to any prediction. */
-  outcomes: { early: { moving: number | null; elapsed: number | null }; target: number | null };
+  outcomes: { early: { official: number | null; moving: number | null; elapsed: number | null }; target: number | null };
+  /** Owner-attested official early-race result (research only). Null = none supplied. */
+  owner: OwnerAttestation | null;
   checkpoints: readonly Checkpoint[];
   /** Instant at which the early race's linked workout became available in the database (reconstruction anchor). */
   earlyRaceAvailableAt: string | null;
 }
 
 /** Required + weekly checkpoints, all as valid local instants. `localTime` defaults to a 06:00 prediction. */
-export function defaultCheckpoints(args: { preRaceInstant: string; earlyRaceDate: string; targetRaceDate: string; earlyAvailableAt: string | null; localTime?: string }): Checkpoint[] {
+export function defaultCheckpoints(args: { preRaceInstant: string; earlyRaceDate: string; targetRaceDate: string; earlyAvailableAt: string | null; localTime?: string; extraDates?: readonly string[] }): Checkpoint[] {
   const t = args.localTime ?? "06:00";
   const at = (date: string, label: string, required: boolean, time = t): Checkpoint => ({ label, asOf: localInstant(date, time, TZ), required });
   const list: Checkpoint[] = [
@@ -70,9 +75,10 @@ export function defaultCheckpoints(args: { preRaceInstant: string; earlyRaceDate
     at(args.earlyRaceDate, "immediately before the early race", true, "05:00"),
   ];
   if (args.earlyAvailableAt) list.push({ label: "after the early race became available", asOf: new Date(Date.parse(args.earlyAvailableAt) + 60_000).toISOString(), required: true });
-  const fixed: [string, string][] = [["2026-05-01", "May 1"], ["2026-06-01", "June 1"], ["2026-07-01", "July 1"], ["2026-08-01", "August 1"], ["2026-09-01", "September 1"], ["2026-09-13", "September 13"], ["2026-09-19", "September 19"]];
+  const fixed: [string, string][] = [["2026-05-01", "May 1"], ["2026-06-01", "June 1"], ["2026-07-01", "July 1"], ["2026-07-13", "July 13"], ["2026-07-20", "July 20"], ["2026-07-27", "July 27"], ["2026-08-01", "August 1"], ["2026-08-15", "August 15"], ["2026-09-01", "September 1"], ["2026-09-13", "September 13"], ["2026-09-19", "September 19"]];
   for (const [d, l] of fixed) list.push(at(d, l, true));
   for (let d = "2026-05-04"; d <= "2026-09-14"; d = shiftPerformanceDate(d, 7)) if (!fixed.some(([f]) => f === d)) list.push(at(d, `weekly ${d}`, false));
+  for (const d of args.extraDates ?? []) if (!list.some(c => c.asOf === localInstant(d, t, TZ))) list.push(at(d, `daily ${d}`, false));
   list.push({ label: "race morning (last valid pre-race instant)", asOf: args.preRaceInstant, required: true });
   return list.sort((a, b) => a.asOf.localeCompare(b.asOf));
 }
@@ -84,7 +90,7 @@ export function streamCandidateIds(source: BacktestSource, cfg: BacktestConfig):
   const ids = new Set<string>();
   for (const cp of cfg.checkpoints) for (const v of VARIANTS) {
     if (v.mode === "strict_historical") continue;
-    const state = buildAsOfState(source, cp.asOf, v.mode, v.options(cfg.earlyRaceId));
+    const state = buildAsOfState(source, cp.asOf, v.mode, v.options(cfg.earlyRaceId, cfg.owner));
     const { runs } = selectResearchRuns({ ...state.input, overrides: state.input.overrides, capturedAt: cp.asOf, source: "owner_parent_export",
       complete: { workouts: true, races: true, overrides: true }, allowSummaryPaceTransfer: false }, true);
     const sel = selectStreamCandidates({ runs, raceWorkoutIds: new Set(state.input.races.flatMap(r => r.actualRunId ? [r.actualRunId] : [])), asOfDate: performanceLocalDate(cp.asOf, TZ) });
@@ -106,7 +112,7 @@ export function buildBacktestReport({ source, streamSummaries }: BacktestInputs,
     const variants: Record<string, ReturnType<typeof lite>> = {};
     const raw: Partial<Record<VariantId, CheckpointRow>> = {};
     for (const v of VARIANTS) {
-      const state = buildAsOfState(source, cp.asOf, v.mode, v.options(cfg.earlyRaceId));
+      const state = buildAsOfState(source, cp.asOf, v.mode, v.options(cfg.earlyRaceId, cfg.owner));
       const row = evaluateCheckpoint(state, source, { streamSummaries, forecastRaceId: cfg.targetRaceId ?? undefined });
       raw[v.id] = row; variants[v.id] = lite(row);
     }
@@ -130,18 +136,17 @@ export function buildBacktestReport({ source, streamSummaries }: BacktestInputs,
   // Early-race independent test: the latest checkpoint strictly before the early race.
   const beforeEarly = early ? timeline.filter(t => t.asOf <= localInstant(early.raceDate, "05:30", TZ)).at(-1) : undefined;
   const earlyHoldout = early && beforeEarly ? Object.fromEntries(VARIANTS.map(v => [v.id, {
-    asOf: beforeEarly.asOf, errorVsMovingTime: errorsAt(beforeEarly.raw[v.id]!, cfg.outcomes.early.moving), errorVsElapsedTime: errorsAt(beforeEarly.raw[v.id]!, cfg.outcomes.early.elapsed) }])) : null;
+    asOf: beforeEarly.asOf, errorVsOfficial: errorsAt(beforeEarly.raw[v.id]!, cfg.outcomes.early.official) }])) : null;
 
   // Sensitivity: research-only scenarios at the last valid pre-race instant, on two bases. The production-as-saved base has no
   // available estimate when the early race is rejected, so each scenario is also run with that race accepted (labelled counterfactual).
   const bases: { id: string; label: string; opts: AsOfOptions }[] = [
     { id: "as_saved", label: "records as saved (production rules)", opts: {} },
-    ...(cfg.earlyRaceId ? [{ id: "early_race_moving_time", label: "COUNTERFACTUAL: early race accepted at the moving-time clock", opts: { raceClock: { raceId: cfg.earlyRaceId, basis: "moving_time" as const } } }] : []),
+    ...(cfg.owner ? [{ id: "owner_confirmed_retro", label: "RETROSPECTIVE (research only): owner-attested official result, maximal effort assumed", opts: { ownerConfirmation: { ...cfg.owner, effort: "maximal" as const } } }] : []),
   ];
   const scenarioDefs: { label: string; opts: AsOfOptions; extra?: { noVo2?: boolean; noStreams?: boolean; excludeKinds?: string[] } }[] = [
     { label: "baseline", opts: {} },
     { label: "early race excluded from evidence", opts: { excludeRaceIds: cfg.earlyRaceId ? [cfg.earlyRaceId] : [] } },
-    ...(cfg.earlyRaceId ? [{ label: "early race accepted — elapsed-time clock (counterfactual)", opts: { raceClock: { raceId: cfg.earlyRaceId, basis: "elapsed_time" as const } } }] : []),
     { label: "no recent performance evidence (race only)", opts: {}, extra: { excludeKinds: ["whole_run_effort", "sustained_segment", "labelled_race_run"] } },
     { label: "no sustained-segment evidence", opts: {}, extra: { excludeKinds: ["sustained_segment"] } },
     { label: "no HR-stream summaries (whole-workout HR only)", opts: {}, extra: { noStreams: true } },
@@ -150,6 +155,8 @@ export function buildBacktestReport({ source, streamSummaries }: BacktestInputs,
     { label: "no best-effort summaries", opts: { stripBestEfforts: true } },
     { label: "best-effort summaries treated as current (hypothetical)", opts: { relabelBestEffortsCurrent: true } },
     { label: "no overrides applied", opts: { dropAllOverrides: true } },
+    { label: "ordinary-run stop time ignored in the timing screen (hypothetical)", opts: { alignElapsedToMovingForOrdinaryRuns: true } },
+    { label: "…and weather stripped, so the heat screen cannot apply (hypothetical)", opts: { alignElapsedToMovingForOrdinaryRuns: true, stripWeather: true } },
   ];
   const evalScenario = (opts: AsOfOptions, extra: { noVo2?: boolean; noStreams?: boolean; excludeKinds?: string[] } = {}) => {
     const st = buildAsOfState(source, preRace.asOf, "retrospective_reconstruction", opts);
@@ -194,8 +201,18 @@ export function buildBacktestReport({ source, streamSummaries }: BacktestInputs,
       productionHistoricalRulesDayAfter: eve && { status: eve.status, availableAsOf: eve.availableAsOf, reasons: eve.reasons } }];
   });
 
+  // What the production (strict) rules say once the owner-attested result is actually known: available only from its real instant.
+  const strictAfterConfirmation = cfg.owner ? (["maximal", "unknown"] as const).map(effort => {
+    const st = buildAsOfState(source, generatedAt, "strict_historical", { ownerConfirmation: { ...cfg.owner!, effort } });
+    const row = evaluateCheckpoint(st, source, {});
+    return { effortAttested: effort, asOf: generatedAt, official: row.official.seconds, officialTime: hms(row.official.seconds), v1: hms(row.hybridV1.seconds), v11: hms(row.hybridV11.seconds), v11Cause: row.hybridV11.cause,
+      raceEvidence: row.raceEvidence.filter(e => e.raceDate === early?.raceDate) };
+  }) : [];
+
   const outcomes = [
-    ...(early ? [{ raceDate: early.raceDate, qualified: false, reasons: ["recorded clocks disagree (moving vs elapsed) and no official result or owner confirmation exists", "no maximal-effort or conditions confirmation"] }] : []),
+    ...(early ? [{ raceDate: early.raceDate, qualified: false, reasons: cfg.owner
+      ? ["the official time is an owner attestation only: no official-timing source was supplied or checked", "maximal effort and conditions are not attested", "the attestation was made after the race and after the whole evaluation period"]
+      : ["recorded clocks disagree (moving vs elapsed) and no official result or owner confirmation exists", "no maximal-effort or conditions confirmation"] }] : []),
     ...(target ? [{ raceDate: target.raceDate, qualified: false, reasons: ["no official result or owner confirmation exists", "maximal effort and conditions unconfirmed", "its pre-race evidence depends on an unqualified early race"] }] : []),
   ];
 
@@ -211,12 +228,12 @@ export function buildBacktestReport({ source, streamSummaries }: BacktestInputs,
     generatedAt, timeZone: TZ,
     labels: "Read-only historical case study. Rows labelled strict_historical use only timestamp-proven availability; rows labelled retrospective_reconstruction are NOT predictions that existed at the time; rows labelled counterfactual are hypothetical sensitivity scenarios. Nothing was written; no coefficient was fitted to any race outcome.",
     variants: VARIANTS.map(v => ({ id: v.id, mode: v.mode, label: v.label })),
-    outcomes: { early: { movingSeconds: cfg.outcomes.early.moving, elapsedSeconds: cfg.outcomes.early.elapsed }, target: { seconds: targetActual, time: hms(targetActual) }, convention: "prediction error = predicted − actual (positive = predicted slower)" },
+    outcomes: { early: { officialSeconds: cfg.outcomes.early.official, movingSeconds: cfg.outcomes.early.moving, elapsedSeconds: cfg.outcomes.early.elapsed }, target: { seconds: targetActual, time: hms(targetActual) }, convention: "prediction error = predicted − actual (positive = predicted slower)" },
     raceIntegrity: integrity,
     timeline: timeline.map(t => ({ label: t.label, required: t.required, asOf: t.asOf, asOfDate: t.asOfDate, variants: t.variants })),
     changeExplanations: explained,
     staleness: Object.fromEntries(VARIANTS.map(v => [v.id, stale(v.id)])),
-    earlyRaceHoldout: earlyHoldout, targetRaceHoldout: holdout, lastValidForecastBeforeTarget: lastForecast,
+    earlyRaceHoldout: earlyHoldout, targetRaceHoldout: holdout, lastValidForecastBeforeTarget: lastForecast, strictAfterConfirmation,
     sensitivity: sens,
     calibration: holdoutAssessment(outcomes),
     streams: { runsWithSummary: Object.keys(streamSummaries).length },
@@ -263,7 +280,7 @@ export function resolveRaces(races: readonly Race[], earlyDate: string, targetDa
   return { early, target };
 }
 
-export async function runBacktest(opts: { cachePath?: string; saveCache?: string; streamCache?: string; earlyDate: string; targetDate: string; generatedAt: string }) {
+export async function runBacktest(opts: { cachePath?: string; saveCache?: string; streamCache?: string; earlyDate: string; targetDate: string; generatedAt: string; earlyOfficialSeconds?: number; dailyDates?: readonly string[] }) {
   const data = opts.cachePath ? loadFromCache(opts.cachePath) : await loadLive(opts.saveCache, { workoutsFrom: "2025-06-01", vo2From: "2025-09-01", workoutLimit: 2000, vo2Limit: 600, skipStreams: true });
   const source = sourceOf(data);
   const { early, target } = resolveRaces(source.races, opts.earlyDate, opts.targetDate);
@@ -271,9 +288,15 @@ export async function runBacktest(opts: { cachePath?: string; saveCache?: string
   const ew = link(early), tw = link(target);
   const cfg: BacktestConfig = {
     earlyRaceId: early?.id ?? null, targetRaceId: target?.id ?? null,
-    outcomes: { early: { moving: ew ? ew.durationSeconds : null, elapsed: ew ? (ew.endDate.getTime() - ew.startDate.getTime()) / 1000 : null }, target: tw ? Math.round(tw.durationSeconds) : null },
+    outcomes: { early: { official: opts.earlyOfficialSeconds ?? null, moving: ew ? ew.durationSeconds : null, elapsed: ew ? (ew.endDate.getTime() - ew.startDate.getTime()) / 1000 : null }, target: tw ? Math.round(tw.durationSeconds) : null },
     earlyRaceAvailableAt: ew?.syncedAt.toISOString() ?? null,
-    checkpoints: defaultCheckpoints({ preRaceInstant: localInstant(opts.targetDate, "05:00", TZ), earlyRaceDate: opts.earlyDate, targetRaceDate: opts.targetDate, earlyAvailableAt: ew?.syncedAt.toISOString() ?? null }),
+    owner: early && ew && opts.earlyOfficialSeconds ? {
+      raceId: early.id, finishSeconds: opts.earlyOfficialSeconds, confirmedAt: opts.generatedAt, retrospectiveKnownAt: new Date(ew.syncedAt.getTime() + 60_000).toISOString(),
+      conditions: ew.weather ? `${ew.weather.conditionText}, ${Math.round(ew.weather.tempF)}°F, wind ${Math.round(ew.weather.windMph)} mph, humidity ${Math.round(ew.weather.humidity)}% (recorded snapshot; the owner has not attested conditions)` : null,
+      source: "owner attestation of the official finish time (no official-timing URL was supplied or checked)",
+      timingReconciliation: "The attested official finish equals the watch moving duration. The watch elapsed time is longer because the recording began before the timed start (route recording paused for roughly the first ten minutes; heart rate near standing levels).",
+    } : null,
+    checkpoints: defaultCheckpoints({ preRaceInstant: localInstant(opts.targetDate, "05:00", TZ), earlyRaceDate: opts.earlyDate, targetRaceDate: opts.targetDate, earlyAvailableAt: ew?.syncedAt.toISOString() ?? null, extraDates: opts.dailyDates }),
   };
   const ids = streamCandidateIds(source, cfg);
   const streams = await loadStreamSummaries(ids, opts.streamCache);

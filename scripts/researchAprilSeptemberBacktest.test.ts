@@ -21,7 +21,7 @@ function synthetic(): { source: BacktestSource; cfg: BacktestConfig } {
   const target = researchRace("dc", "2026-09-20", 7871, false);
   const source: BacktestSource = { races: [early, target.race], workouts: [...a.workouts.filter(w => w !== run), fixed, target.workout], overrides: {}, plans: [], vo2: [], timeZone: "America/New_York" };
   const { early: e, target: t } = resolveRaces(source.races, "2026-04-26", "2026-09-20");
-  const cfg: BacktestConfig = { earlyRaceId: e!.id, targetRaceId: t!.id, outcomes: { early: { moving: 8130, elapsed: 8759 }, target: 7871 },
+  const cfg: BacktestConfig = { earlyRaceId: e!.id, targetRaceId: t!.id, outcomes: { early: { official: 8130, moving: 8130, elapsed: 8759 }, target: 7871 }, owner: null,
     earlyRaceAvailableAt: fixed.syncedAt.toISOString(),
     checkpoints: defaultCheckpoints({ preRaceInstant: localInstant("2026-09-20", "05:00", "America/New_York"), earlyRaceDate: "2026-04-26", targetRaceDate: "2026-09-20", earlyAvailableAt: fixed.syncedAt.toISOString() }) };
   return { source, cfg };
@@ -68,7 +68,9 @@ it("synthetic: HR streams are requested only for runs production hydration would
 
 it.skipIf(!process.env.BACKTEST)("LIVE (read-only): April → September 2026 historical case study", async () => {
   const report = await runBacktest({ cachePath: process.env.BACKTEST_CACHE, saveCache: process.env.BACKTEST_SAVE_CACHE, streamCache: process.env.BACKTEST_STREAM_CACHE,
-    earlyDate: process.env.BACKTEST_EARLY_DATE ?? "2026-04-26", targetDate: process.env.BACKTEST_TARGET_DATE ?? "2026-09-20", generatedAt: process.env.BACKTEST_NOW ?? new Date().toISOString() });
+    earlyDate: process.env.BACKTEST_EARLY_DATE ?? "2026-04-26", targetDate: process.env.BACKTEST_TARGET_DATE ?? "2026-09-20", generatedAt: process.env.BACKTEST_NOW ?? new Date().toISOString(),
+    earlyOfficialSeconds: process.env.BACKTEST_EARLY_OFFICIAL ? Number(process.env.BACKTEST_EARLY_OFFICIAL) : undefined,
+    dailyDates: Array.from({ length: 14 }, (_, i) => `2026-07-${String(18 + i).padStart(2, "0")}`) });
   const text = JSON.stringify(report, null, 1);
   if (process.env.BACKTEST_OUT) { mkdirSync(dirname(process.env.BACKTEST_OUT), { recursive: true }); writeFileSync(process.env.BACKTEST_OUT, text); } else console.log("[backtest]", text);
 }, 900_000);

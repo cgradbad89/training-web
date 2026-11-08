@@ -29,7 +29,7 @@ import { estimateHybridHalfMarathon } from "../performance/hybridPerformance";
 import { estimateHybridHalfMarathonV11, type HybridV11Options } from "../performance/hybridPerformanceV11";
 import { estimateRaceDayForecast } from "../performance/raceDayForecast";
 import { performanceLocalDate } from "../performanceEvidence";
-import { buildRaceEvidence } from "../racePerformance";
+import { buildRaceEvidence, nominalRaceDistanceMeters } from "../racePerformance";
 import { BEST_EFFORTS_COMPUTATION_VERSION } from "../fastestMileSegment";
 
 export type ReplayMode = "strict_historical" | "retrospective_reconstruction";
@@ -44,12 +44,33 @@ export interface BacktestSource {
   timeZone: string;
 }
 
+/** RESEARCH-ONLY representation of an owner-attested official result through the existing legacy confirmation contract
+ * (`performanceEvidence`). Nothing is written anywhere; the original workout measurements are never edited. */
+export interface OwnerConfirmationSpec {
+  raceId: string;
+  finishSeconds: number;
+  /** When the owner actually supplied the result. Strict mode treats the confirmation as unknown before this instant. */
+  confirmedAt: string;
+  /** Retrospective mode only: the instant the result is assumed known (e.g. when the linked workout became available). Never a real publication time. */
+  retrospectiveKnownAt: string;
+  /** "unknown" represents an owner who supplied only the time and has not attested maximal effort. */
+  effort: "maximal" | "unknown";
+  conditions: string | null;
+  source: string;
+  timingReconciliation: string;
+}
+
 export interface AsOfOptions {
+  /** Research-only owner-attested official result (see `OwnerConfirmationSpec`). */
+  ownerConfirmation?: OwnerConfirmationSpec;
   /** Counterfactual: pretend one race's two recorded clocks agree (research only). */
   raceClock?: { raceId: string; basis: RaceClockBasis };
   /** Remove the outcome link from these races (the linked run stays an ordinary training run). */
   excludeRaceIds?: readonly string[];
   stripBestEfforts?: boolean;
+  /** HYPOTHETICAL: treat the recorded elapsed time of ordinary (non-race) runs as equal to their moving duration, i.e. ignore stop time
+   * when screening timing consistency. Race workouts are never touched. */
+  alignElapsedToMovingForOrdinaryRuns?: boolean;
   /** HYPOTHETICAL: treat stale-version best-effort summaries as current (the algorithm change between versions is not modelled). */
   relabelBestEffortsCurrent?: boolean;
   stripWeather?: boolean;
@@ -117,6 +138,7 @@ export function buildAsOfState(source: BacktestSource, asOf: string, mode: Repla
   const limitations: string[] = [];
   let notEnded = 0, notSynced = 0, assumed = 0, weatherDropped = 0;
 
+  const raceRunIds = new Set(source.races.flatMap(r => r.actualRunId ? [r.actualRunId] : []));
   const workouts: HealthWorkout[] = [];
   for (const w of source.workouts) {
     const end = ms(w.endDate), synced = ms(w.syncedAt);
@@ -127,6 +149,10 @@ export function buildAsOfState(source: BacktestSource, asOf: string, mode: Repla
     let next: HealthWorkout = !strict && synced !== availableAt ? { ...w, syncedAt: new Date(availableAt) } : w;
     if (next.weather && Date.parse(next.weather.fetchedAt) > cutoff && strict) { next = { ...next, weather: undefined }; weatherDropped++; }
     else if (next.weather && options.stripWeather) { next = { ...next, weather: undefined }; }
+    if (options.alignElapsedToMovingForOrdinaryRuns && next.isRunLike && !raceRunIds.has(next.workoutId)) {
+      const start = ms(next.startDate);
+      if (start !== null) next = { ...next, endDate: new Date(start + next.durationSeconds * 1000) };
+    }
     if (options.stripBestEfforts && next.bestEfforts) next = { ...next, bestEfforts: undefined };
     else if (options.relabelBestEffortsCurrent && next.bestEfforts?.computedFromRouteComplete === true && next.bestEfforts.computationVersion !== BEST_EFFORTS_COMPUTATION_VERSION) {
       next = { ...next, bestEfforts: { ...next.bestEfforts, computationVersion: BEST_EFFORTS_COMPUTATION_VERSION } };
@@ -161,7 +187,17 @@ export function buildAsOfState(source: BacktestSource, asOf: string, mode: Repla
     } else races.push(r);
   }
 
-  let counterfactual: string | null = options.relabelBestEffortsCurrent ? "hypothetical_research_only: stale-version best-effort summaries treated as current" : null;
+  const oc = options.ownerConfirmation;
+  const ownerNote = oc ? strict
+    ? "owner_confirmation: strict (the attested result is unknown before its real confirmation instant)"
+    : "retrospective_owner_confirmation_research_only: the attested result is assumed known when the linked workout became available — never a published April record" : null;
+  if (oc) races = races.map(r => {
+    const nominal = nominalRaceDistanceMeters(r);
+    if (r.id !== oc.raceId || r.raceDate > day || nominal === null || excluded.has(r.id)) return r;
+    return { ...r, performanceEvidence: { status: "owner_confirmed" as const, kind: "official_race" as const, knownAt: strict ? oc.confirmedAt : oc.retrospectiveKnownAt,
+      raceDate: r.raceDate, distanceMeters: nominal, finishSeconds: oc.finishSeconds, effort: oc.effort, conditions: oc.conditions, source: oc.source, timingReconciliation: oc.timingReconciliation } };
+  });
+  let counterfactual: string | null = ownerNote ?? (options.relabelBestEffortsCurrent ? "hypothetical_research_only: stale-version best-effort summaries treated as current" : null);
   const clock = options.raceClock;
   if (clock && !strict) {
     const race = races.find(r => r.id === clock.raceId && r.actualRunId);
@@ -225,7 +261,7 @@ export interface CheckpointRow {
     raceShare: number; recentShare: number; independentObservations: number; latestRaceAgeDays: number | null; raceDominance: string;
     displacementSeconds: number | null; raceOnlySeconds: number | null; recentOnlySeconds: number | null; evidenceBaseSeconds: number | null;
     physiologyAdjustmentSeconds: number; enduranceAdjustmentSeconds: number; readiness: number | null;
-    newerEvidenceDisplaced: boolean; provisional: boolean; evidence: EvidenceMix[]; missing: readonly string[]; trendClassification: string | null; trendSlopePctPer28d: number | null };
+    newerEvidenceDisplaced: boolean; provisional: boolean; trend: { status: string; runs: number | null; weeks: number | null; weatherAdjustment: unknown; flags: readonly string[]; firstReason: string | null }; readinessComponents: { longRun: number; volume: number; frequency: number } | null; readinessDetail: { longestRunMiles: number | null; weeklyMiles: number | null; runsPerWeek: number | null } | null; totalAdjustmentFraction: number; evidence: EvidenceMix[]; missing: readonly string[]; trendClassification: string | null; trendSlopePctPer28d: number | null };
   /** Aggregate-only evidence-qualification counts: why potentially informative runs did or did not become independent evidence. */
   diagnostics: { tierCounts: Record<string, number>; excludedByReason: Record<string, number>; informativeExcluded: Record<string, number>;
     segments: { candidates: number; qualified: number }; expiredEvidence: number; ignoredByReason: Record<string, number>; runLikeKnown: number; eligibleRunsOfficial: number };
@@ -271,6 +307,10 @@ export function evaluateCheckpoint(state: AsOfState, source: BacktestSource, opt
       evidenceBaseSeconds: round(c.baseSeconds), physiologyAdjustmentSeconds: round(i.physiologyAdjustmentSeconds, 2) ?? 0, enduranceAdjustmentSeconds: round(i.enduranceAdjustmentSeconds, 2) ?? 0,
       readiness: round(v11.readiness?.score, 2), newerEvidenceDisplaced: i.newerEvidenceDisplacedRace, provisional: i.provisional,
       evidence: c.items.map(x => ({ kind: x.kind, group: x.group, ageDays: x.ageDays, distanceKm: round(x.sourceDistanceMeters / 1000, 2) ?? 0, effectiveShare: round(x.effectiveShare, 3) ?? 0, flags: x.flags })),
+      trend: { status: v11.physiology?.status ?? "none", runs: v11.physiology?.runs ?? null, weeks: v11.physiology?.weeks ?? null, weatherAdjustment: v11.physiology?.weatherAdjustment ?? null, flags: v11.physiology?.flags ?? [], firstReason: v11.physiology?.reasons?.[0] ?? null },
+      readinessComponents: v11.readiness?.components ? { longRun: round(v11.readiness.components.longRun, 3) ?? 0, volume: round(v11.readiness.components.volume, 3) ?? 0, frequency: round(v11.readiness.components.frequency, 3) ?? 0 } : null,
+      readinessDetail: v11.readiness ? { longestRunMiles: round(v11.readiness.longestRunMiles), weeklyMiles: round(v11.readiness.weeklyMiles), runsPerWeek: round(v11.readiness.runsPerWeek) } : null,
+      totalAdjustmentFraction: round(v11.adjustmentFraction, 5) ?? 0,
       missing: v11.missing, trendClassification: v11.physiology?.classification ?? null,
       trendSlopePctPer28d: v11.physiology?.slopePer28d == null ? null : round(v11.physiology.slopePer28d * 100, 2) },
     diagnostics: { tierCounts: { ...v11.qualification.base.counts } as Record<string, number>, excludedByReason: { ...v11.qualification.base.excludedByReason }, informativeExcluded: { ...v11.qualification.informativeExcluded },
