@@ -33,7 +33,7 @@ vi.mock("@/services/healthWorkouts", () => ({
   fetchHealthWorkout: async () => h.workout,
   fetchHealthWorkoutsInRange: async () => [], fetchLatestWorkoutId: async () => null,
   fetchWorkoutsByRouteCluster: async () => [],
-  saveRunDetailCaches: h.cacheWrite, computeAndStoreBestEfforts: h.bestEfforts,
+  saveRunDetailCaches: h.cacheWrite, computeAndStoreBestEfforts: h.bestEfforts, hasAttemptedBestEfforts: () => false, checkBestEffortsRouteGrowth: async () => false,
   saveWeatherForWorkoutIfAbsent: h.weather, saveRouteClusterId: h.cluster, backfillRouteClusterIds: h.backfill,
 }));
 vi.mock("@/services/shoes", () => ({ fetchShoes: async () => [], fetchManualShoeAssignmentsMap: async () => ({}), saveManualAssignments: vi.fn() }));
@@ -43,9 +43,9 @@ vi.mock("@/services/races", () => ({ fetchRaces: h.fetchRaces }));
 vi.mock("@/services/plans", () => ({ fetchPlans: async () => [] }));
 vi.mock("@/services/fastFinishSplits", () => ({ hydrateFastFinishSplits: h.hydrate }));
 vi.mock("@/utils/runImpact", async importOriginal => ({ ...await importOriginal<typeof import("@/utils/runImpact")>(), computeRunImpact: h.impact }));
-vi.mock("@/utils/routeCache", () => ({ getRoutePoints: h.routeRead }));
+vi.mock("@/utils/routeCache", () => ({ getRoutePoints: h.routeRead, isRouteCached: () => false, evictRoute: vi.fn() }));
 vi.mock("@/utils/mileSplitsCache", () => ({ getMileSplits: h.splitRead, saveMileSplitCache: h.splitWrite }));
-vi.mock("@/utils/bestEfforts", async importOriginal => ({ ...await importOriginal<typeof import("@/utils/bestEfforts")>(), shouldRecomputeBestEfforts: () => false }));
+vi.mock("@/utils/bestEfforts", async importOriginal => ({ ...await importOriginal<typeof import("@/utils/bestEfforts")>(), shouldRecomputeBestEfforts: () => false, assessBestEffortsCache: () => ({ state: "valid_current", recompute: false, reasons: [] }) }));
 vi.mock("@/lib/weather", () => ({ fetchWeatherForRun: async () => null }));
 
 import RunDetailPage from "../page";

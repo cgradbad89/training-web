@@ -39,6 +39,13 @@ export function clearRouteCache(): void {
   startInFlight.clear();
 }
 
+/** Drops one cached route (e.g. a truncated mid-upload read) so the next read fetches the current route. UID-scoped; no-op if absent. */
+export function evictRoute(uid: string, workoutId: string): void {
+  const key = routeKey(uid, workoutId);
+  cache.delete(key);
+  inFlight.delete(key);
+}
+
 /** Called by the existing auth observer, before exposing the next identity.
  * Repeated observations of the same authorized UID retain navigation reuse;
  * a signed-out observation followed by that UID starts a fresh session. */

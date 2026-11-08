@@ -13,6 +13,7 @@ vi.mock("firebase/firestore", () => ({
   collection: (_db: unknown, ...parts: string[]) => parts.join("/"),
   doc: (_db: unknown, ...parts: string[]) => parts.join("/"),
   getDoc: h.getDoc, setDoc: h.setDoc,
+  runTransaction: async (_db: unknown, fn: (tx: unknown) => unknown) => { let pending = null as unknown[] | null; const out = await fn({ get: (ref: unknown) => h.getDoc(ref), set: (...args: unknown[]) => { pending = args; } }); if (pending) await h.setDoc(...pending); return out; },
   getDocs: vi.fn(), onSnapshot: vi.fn(), query: vi.fn(), where: vi.fn(),
   orderBy: vi.fn(), limit: vi.fn(), startAfter: vi.fn(), writeBatch: h.writeBatch,
 }));

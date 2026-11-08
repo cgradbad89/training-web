@@ -5,8 +5,10 @@ import {
   computeAndStoreBestEfforts,
   fetchHealthWorkout,
   fetchHealthWorkoutsInRange,
+  checkBestEffortsRouteGrowth,
+  hasAttemptedBestEfforts,
 } from "@/services/healthWorkouts";
-import { getRoutePoints } from "@/utils/routeCache";
+import { evictRoute, getRoutePoints, isRouteCached } from "@/utils/routeCache";
 import { getMileSplits } from "@/utils/mileSplitsCache";
 import { fetchWeatherForRun } from "@/lib/weather";
 import { BEST_EFFORTS_COMPUTATION_VERSION } from "@/utils/fastestMileSegment";
@@ -74,6 +76,8 @@ vi.mock("@/services/healthWorkouts", () => ({
   fetchWorkoutsByRouteCluster: vi.fn().mockResolvedValue([]),
   backfillRouteClusterIds: vi.fn().mockResolvedValue(undefined),
   computeAndStoreBestEfforts: vi.fn().mockResolvedValue(undefined),
+  hasAttemptedBestEfforts: vi.fn().mockReturnValue(false),
+  checkBestEffortsRouteGrowth: vi.fn().mockResolvedValue(false),
   saveRouteClusterId: vi.fn().mockResolvedValue(undefined),
   saveRunDetailCaches: vi.fn().mockResolvedValue(undefined),
   saveWeatherForWorkoutIfAbsent: vi.fn().mockResolvedValue("saved"),
@@ -116,6 +120,8 @@ vi.mock("@/services/fastFinishSplits", () => ({
 vi.mock("@/utils/routeCache", () => ({
   getRouteCacheEpoch: () => 0,
   getRoutePoints: vi.fn(),
+  isRouteCached: vi.fn().mockReturnValue(false),
+  evictRoute: vi.fn(),
 }));
 vi.mock("@/utils/mileSplitsCache", () => ({
   getMileSplits: vi.fn(),
@@ -525,6 +531,97 @@ describe("RunDetailPage GAP/elevation sublabels", () => {
       true,
       expect.objectContaining({ isCurrent: expect.any(Function) })
     );
+  });
+
+  describe("best-effort cache integrity on Run Detail", () => {
+    const FULL_ROUTE = Array.from({ length: 5412 }, (_, i) => ({ index: i, lat: i * 0.00001, lng: 0, timestamp: new Date(Date.UTC(2026, 10, 7, 14, 0, i)).toISOString() }));
+    const NULLS = { "1mi": null, "5k": null, "10k": null, "10mi": null, half: null };
+    const longRun = (bestEfforts: Record<string, unknown>) => cachedWorkout({
+      gapNetRiseM: 0, gapAggregateGradeFlat: true, distanceMiles: 9.18, durationSeconds: 5413, bestEfforts,
+    });
+    beforeEach(() => {
+      vi.mocked(getMileSplits).mockResolvedValue(CACHED_MILE_DOCS as never);
+      vi.mocked(getRoutePoints).mockResolvedValue(FULL_ROUTE as never);
+      vi.mocked(hasAttemptedBestEfforts).mockReturnValue(false);
+      vi.mocked(isRouteCached).mockReturnValue(false);
+      vi.mocked(checkBestEffortsRouteGrowth).mockResolvedValue(false);
+    });
+
+    it("recovers a v2 'complete' all-null record computed from a truncated route: reads the route once and passes the workout facts", async () => {
+      vi.mocked(fetchHealthWorkout).mockResolvedValue(longRun({ ...NULLS, computedFromRouteComplete: true, computedFromPointCount: 400, computationVersion: BEST_EFFORTS_COMPUTATION_VERSION }) as never);
+      await renderSettled();
+      expect(getRoutePoints).toHaveBeenCalledTimes(1);
+      expect(computeAndStoreBestEfforts).toHaveBeenCalledWith("u1", "workout_123", FULL_ROUTE, true,
+        expect.objectContaining({ facts: { distanceMiles: 9.18, durationSeconds: 5413 }, existing: expect.objectContaining({ computedFromPointCount: 400 }) }));
+    });
+
+    // The default fixture (3 mi, 30 min, every other route cache present) needs a route read ONLY for a best-effort reason.
+    const small = (bestEfforts: Record<string, unknown>) => cachedWorkout({ gapNetRiseM: 0, gapAggregateGradeFlat: true, bestEfforts });
+    const TRUNC = { ...NULLS, computedFromRouteComplete: true, computedFromPointCount: 100, computationVersion: BEST_EFFORTS_COMPUTATION_VERSION };
+
+    it("does not read the route or recompute for a valid, current record (idempotent revisit)", async () => {
+      vi.mocked(fetchHealthWorkout).mockResolvedValue(small({ "1mi": 540, "5k": null, "10k": null, "10mi": null, half: null, computedFromRouteComplete: true, computedFromPointCount: 1700, computationVersion: BEST_EFFORTS_COMPUTATION_VERSION }) as never);
+      await renderSettled();
+      expect(getRoutePoints).not.toHaveBeenCalled(); expect(computeAndStoreBestEfforts).not.toHaveBeenCalled();
+    });
+
+    it("a truncated-looking record on a fully cached run DOES force exactly one route read (the integrity reason alone)", async () => {
+      vi.mocked(fetchHealthWorkout).mockResolvedValue(small(TRUNC) as never);
+      await renderSettled();
+      expect(getRoutePoints).toHaveBeenCalledTimes(1); expect(computeAndStoreBestEfforts).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not retry in the same session against the same unchanged record", async () => {
+      vi.mocked(hasAttemptedBestEfforts).mockReturnValue(true);
+      vi.mocked(fetchHealthWorkout).mockResolvedValue(small(TRUNC) as never);
+      await renderSettled();
+      expect(getRoutePoints).not.toHaveBeenCalled(); expect(computeAndStoreBestEfforts).not.toHaveBeenCalled();
+    });
+
+    it("accepts a legitimately unavailable record after its bounded retries (no route read)", async () => {
+      vi.mocked(fetchHealthWorkout).mockResolvedValue(small({ ...TRUNC, verificationAttempts: 2 }) as never);
+      await renderSettled();
+      expect(getRoutePoints).not.toHaveBeenCalled(); expect(computeAndStoreBestEfforts).not.toHaveBeenCalled();
+    });
+
+    it("re-opens an exhausted record only when independent evidence shows its route has grown", async () => {
+      vi.mocked(checkBestEffortsRouteGrowth).mockResolvedValue(true);
+      vi.mocked(fetchHealthWorkout).mockResolvedValue(small({ ...TRUNC, verificationAttempts: 2 }) as never);
+      await renderSettled();
+      expect(checkBestEffortsRouteGrowth).toHaveBeenCalledTimes(1);
+      expect(getRoutePoints).toHaveBeenCalledTimes(1);
+      expect(computeAndStoreBestEfforts).toHaveBeenCalledWith("u1", "workout_123", expect.any(Array), true, expect.objectContaining({ routeGrew: true }));
+    });
+
+    it("keeps a sparse route bounded: an unchanged route count triggers no route read and no recompute", async () => {
+      vi.mocked(checkBestEffortsRouteGrowth).mockResolvedValue(false);
+      vi.mocked(fetchHealthWorkout).mockResolvedValue(small({ ...TRUNC, verificationAttempts: 2 }) as never);
+      await renderSettled();
+      expect(checkBestEffortsRouteGrowth).toHaveBeenCalledTimes(1);
+      expect(getRoutePoints).not.toHaveBeenCalled(); expect(computeAndStoreBestEfforts).not.toHaveBeenCalled();
+    });
+
+    it("never runs the growth check for a record that still has retries or is valid (no extra count read on normal visits)", async () => {
+      vi.mocked(fetchHealthWorkout).mockResolvedValue(small({ "1mi": 540, "5k": null, "10k": null, "10mi": null, half: null, computedFromRouteComplete: true, computedFromPointCount: 1700, computationVersion: BEST_EFFORTS_COMPUTATION_VERSION }) as never);
+      await renderSettled();
+      expect(checkBestEffortsRouteGrowth).not.toHaveBeenCalled();
+    });
+
+    it("waits (no route read) while a partial-route record's route is still incomplete", async () => {
+      vi.mocked(fetchHealthWorkout).mockResolvedValue(cachedWorkout({ gapNetRiseM: 0, gapAggregateGradeFlat: true, routeComplete: false,
+        bestEfforts: { ...NULLS, "1mi": 500, computedFromRouteComplete: false, computedFromPointCount: 300, computationVersion: BEST_EFFORTS_COMPUTATION_VERSION } }) as never);
+      await renderSettled();
+      expect(computeAndStoreBestEfforts).not.toHaveBeenCalled();
+    });
+
+    it("a route cached in memory while it was still uploading is evicted and re-read once before recovering", async () => {
+      vi.mocked(isRouteCached).mockReturnValue(true);
+      vi.mocked(getRoutePoints).mockResolvedValueOnce(FULL_ROUTE.slice(0, 400) as never).mockResolvedValue(FULL_ROUTE as never);
+      vi.mocked(fetchHealthWorkout).mockResolvedValue(longRun({ ...NULLS, computedFromRouteComplete: true, computedFromPointCount: 400, computationVersion: BEST_EFFORTS_COMPUTATION_VERSION }) as never);
+      await renderSettled();
+      expect(evictRoute).toHaveBeenCalledWith("u1", "workout_123"); expect(getRoutePoints).toHaveBeenCalledTimes(2);
+      expect(computeAndStoreBestEfforts).toHaveBeenCalledWith("u1", "workout_123", FULL_ROUTE, true, expect.any(Object));
+    });
   });
 
   it("falls back to the live GAP computation when the cached sublabel fields are absent", async () => {
