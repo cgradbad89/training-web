@@ -65,9 +65,21 @@ export function isExperimentalRaceDayForecastEnabled(): boolean {
   return isExperimentalHybridEstimateEnabled() && process.env.NEXT_PUBLIC_DISABLE_RACE_DAY_FORECAST !== "true";
 }
 
+/**
+ * TEMPORARY, explicit, owner-only Production enablement of the EXISTING race-confirmation editor. Off unless a Production build sets
+ * NEXT_PUBLIC_ENABLE_OWNER_RACE_CONFIRMATION to exactly "true". It only exposes the editor: every write still passes the existing
+ * verified-owner session check, refreshed-token check, server-timestamp receipt, optimistic concurrency and append-only history in
+ * `services/raceConfirmations.ts`, plus Firestore's own rules. It is independent of the demonstrated-race evidence policy, which stays on
+ * when this is switched off (unset the variable and redeploy once the confirmations are saved).
+ */
+export function isOwnerRaceConfirmationProductionEnabled(): boolean {
+  return process.env.NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV === "production"
+    && process.env.NEXT_PUBLIC_ENABLE_OWNER_RACE_CONFIRMATION === "true";
+}
+
 /** Editing/persistence must never inherit read-only display authorization. */
 export function isRaceConfirmationEnabled(): boolean {
-  return isPreviewRaceCapabilityEnabled();
+  return isPreviewRaceCapabilityEnabled() || isOwnerRaceConfirmationProductionEnabled();
 }
 
 /** The full Phase 3B.2 developer research interface remains Production-off. */

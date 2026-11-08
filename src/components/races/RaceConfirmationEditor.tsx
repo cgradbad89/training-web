@@ -1,6 +1,7 @@
 "use client";
 
-import { isRaceConfirmationEnabled } from "@/lib/racePerformanceGate";
+import { isOwnerRaceConfirmationProductionEnabled, isRaceConfirmationEnabled } from "@/lib/racePerformanceGate";
+import type { OwnerConfirmationPrefill } from "@/utils/ownerRaceConfirmationPrefill";
 import { useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import type { Race } from "@/types/race";
 import type { HealthWorkout } from "@/types/healthWorkout";
@@ -19,6 +20,8 @@ export interface RaceConfirmationEditorProps {
   onClose: () => void;
   timeZone?: string;
   submitLabel?: string;
+  /** Optional starting values (never submitted automatically; the owner reviews and saves). Ignored when a confirmation already exists. */
+  prefill?: OwnerConfirmationPrefill | null;
 }
 
 const inputClass = "w-full min-w-0 rounded-lg border border-border bg-card px-3 py-2 text-sm text-textPrimary focus:outline-primary";
@@ -30,21 +33,22 @@ export function RaceConfirmationEditor(props: RaceConfirmationEditorProps) {
   return <EnabledRaceConfirmationEditor {...props} />;
 }
 
-function EnabledRaceConfirmationEditor({ race, workout, override = null, onSave, onClose, timeZone = "America/New_York", submitLabel }: RaceConfirmationEditorProps) {
+function EnabledRaceConfirmationEditor({ race, workout, override = null, onSave, onClose, timeZone = "America/New_York", submitLabel, prefill = null }: RaceConfirmationEditorProps) {
   const prefix = useId();
   const revisions = Object.values(race.confirmationHistory?.revisions ?? {}).sort((a, b) => b.revisionNumber - a.revisionNumber);
   const current = race.confirmationHistory?.revisions[race.confirmationHistory.currentRevisionId];
+  const seed = current ? null : prefill;
   const [initial] = useState(() => ({
     officialEventName: current?.details.officialEventName ?? race.name,
     raceDate: current?.details.raceDate ?? race.raceDate,
     distanceMeters: String(current?.details.distanceMeters ?? nominalRaceDistanceMeters(race) ?? ""),
-    finish: current ? formatDuration(current.details.finishSeconds) : "",
-    timeBasis: current?.details.timeBasis ?? "chip" as RaceConfirmationDraft["timeBasis"],
-    status: current?.details.status ?? "owner_confirmed" as RaceConfirmationDraft["status"],
-    effort: current?.details.effort ?? "unknown" as RaceConfirmationDraft["effort"],
-    conditions: current?.details.conditions ?? "",
-    source: current?.details.source ?? "",
-    timingReconciliation: current?.details.timingReconciliation ?? "",
+    finish: current ? formatDuration(current.details.finishSeconds) : seed?.finish ?? "",
+    timeBasis: current?.details.timeBasis ?? seed?.timeBasis ?? "chip" as RaceConfirmationDraft["timeBasis"],
+    status: current?.details.status ?? seed?.status ?? "owner_confirmed" as RaceConfirmationDraft["status"],
+    effort: current?.details.effort ?? seed?.effort ?? "unknown" as RaceConfirmationDraft["effort"],
+    conditions: current?.details.conditions ?? seed?.conditions ?? "",
+    source: current?.details.source ?? seed?.source ?? "",
+    timingReconciliation: current?.details.timingReconciliation ?? seed?.timingReconciliation ?? "",
     correctionReason: "",
   }));
   const [form, setForm] = useState(initial);
@@ -84,10 +88,12 @@ function EnabledRaceConfirmationEditor({ race, workout, override = null, onSave,
 
   return <div className="space-y-6 text-textPrimary">
     <header className="space-y-2">
-      <p className="text-xs font-semibold uppercase tracking-widest text-primary">Development / preview only</p>
+      <p className="text-xs font-semibold uppercase tracking-widest text-primary">{isOwnerRaceConfirmationProductionEnabled() ? "Temporary owner confirmation" : "Development / preview only"}</p>
       <h2 className="text-xl font-semibold">Confirm race result</h2>
       <p className="text-sm text-textSecondary">Record the result and how you checked it. A plausible workout time does not verify an official result. Saving preserves the original observations and every earlier confirmation.</p>
     </header>
+
+    {seed ? <p role="status" data-testid="confirmation-prefill-notice" className="rounded-lg border border-border bg-surface p-3 text-sm">Starting values were filled in from your own description of this race. Review every field; nothing is saved until you press Save, and the effort percentage is a note, never a number the model uses.</p> : null}
 
     <section aria-label="Original observations" className="rounded-xl border border-border bg-surface p-4 space-y-3">
       <h3 className="font-semibold text-sm">Recorded observations · unverified</h3>

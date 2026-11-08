@@ -2,7 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import { RaceConfirmationEditor, type RaceConfirmationEditorProps } from "@/components/races/RaceConfirmationEditor";
-import { isRaceConfirmationEnabled } from "@/lib/racePerformanceGate";
+import { isOwnerRaceConfirmationProductionEnabled, isRaceConfirmationEnabled } from "@/lib/racePerformanceGate";
+import { isAuthorizedTrainingUser } from "@/lib/trainingAuthorization";
+import { ownerRaceConfirmationPrefill } from "@/utils/ownerRaceConfirmationPrefill";
 import { buildRaceConfirmationInput } from "@/utils/raceConfirmation";
 import type { RaceConfirmationDraft } from "@/types/raceConfirmation";
 import type { WorkoutOverride } from "@/types/workoutOverride";
@@ -966,7 +968,9 @@ export default function RacesPage() {
     overridesLoading,
     overridesResolution,
   } = useAppData();
-  const confirmationEnabled = isRaceConfirmationEnabled();
+  // Production exposure is owner-only in the UI as well (defence in depth: the save path independently requires the verified owner session).
+  const ownerProduction = isOwnerRaceConfirmationProductionEnabled();
+  const confirmationEnabled = isRaceConfirmationEnabled() && (!ownerProduction || isAuthorizedTrainingUser(user?.email, user?.emailVerified));
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [confirmation, setConfirmation] = useState<{
@@ -1244,7 +1248,7 @@ export default function RacesPage() {
 
       {/* Add/Edit modal */}
       {confirmation && confirmationEnabled ? (
-        <RaceConfirmationModal race={confirmation.race} workout={confirmation.workout} override={confirmation.override} timeZone={confirmation.timeZone} onSave={handleConfirmation} onClose={() => setConfirmation(null)} />
+        <RaceConfirmationModal race={confirmation.race} workout={confirmation.workout} override={confirmation.override} timeZone={confirmation.timeZone} prefill={ownerProduction ? ownerRaceConfirmationPrefill(confirmation.race) : null} onSave={handleConfirmation} onClose={() => setConfirmation(null)} />
       ) : null}
       {modalOpen && (
         <RaceModal

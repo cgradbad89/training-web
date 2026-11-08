@@ -173,3 +173,56 @@ describe("revision concurrency, idempotence and receipt resolution", () => {
     expect(h.records.get(workoutPath)).toEqual(workout);
   });
 });
+
+describe("temporary owner-only Production gate on the save path", () => {
+  const production = (flag: string | null = "true") => {
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", undefined);
+    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "production");
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_OWNER_RACE_CONFIRMATION", flag ?? undefined);
+  };
+  it("saves for the verified owner when the explicit Production flag is on: append-only nested revision with a server receipt", async () => {
+    production();
+    const saved = await saveRaceConfirmation("owner", input(race, { effort: "hard", status: "owner_confirmed", source: "Owner confirmation of the official chip finish time" }));
+    expect(h.updates).toHaveLength(1);
+    expect(Object.keys(h.updates[0].fields).every(k => k.startsWith("confirmationHistory."))).toBe(true);
+    const revision = h.updates[0].fields["confirmationHistory.revisions.request-one"] as { availableAt: unknown };
+    expect(revision.availableAt).toEqual({ serverReceipt: true });          // server timestamp, never a browser or backdated time
+    expect(saved.confirmationHistory?.revisions["request-one"].details.effort).toBe("hard");
+    expect(h.records.get(workoutPath)).toMatchObject({ durationSeconds: 7871 }); // workout untouched
+  });
+  it("without the flag, Production still performs no read, token refresh or write", async () => {
+    production(null);
+    await expect(saveRaceConfirmation("owner", input())).rejects.toThrow("disabled");
+    production("false");
+    await expect(saveRaceConfirmation("owner", input())).rejects.toThrow("disabled");
+    expect(h.reads).toEqual([]); expect(h.updates).toEqual([]); expect(h.token).not.toHaveBeenCalled();
+  });
+  it.each([
+    ["another account", { uid: "owner", email: "someone.else@example.com", emailVerified: true }],
+    ["an unverified owner email", { uid: "owner", email: "folstromjohn@gmail.com", emailVerified: false }],
+    ["no email", { uid: "owner", email: null, emailVerified: true }],
+    ["a different uid than the request", { uid: "intruder", email: "folstromjohn@gmail.com", emailVerified: true }],
+  ])("rejects %s even with the flag on, before any write", async (_label, user) => {
+    production();
+    h.user = user as unknown as User;
+    await expect(saveRaceConfirmation("owner", input())).rejects.toThrow(/verified owner/);
+    expect(h.updates).toEqual([]);
+  });
+  it("rejects a token whose claims are not the verified owner's, and no signed-in session at all", async () => {
+    production();
+    h.token.mockResolvedValue({ claims: { sub: "owner", email: "someone.else@example.com", email_verified: true } });
+    await expect(saveRaceConfirmation("owner", input())).rejects.toThrow(/refreshed verified owner token/);
+    h.user = null;
+    await expect(saveRaceConfirmation("owner", input())).rejects.toThrow(/verified owner/);
+    expect(h.updates).toEqual([]);
+  });
+  it("keeps idempotence and concurrent-update protection under the Production flag", async () => {
+    production();
+    await saveRaceConfirmation("owner", input(race, { effort: "nonmaximal", status: "owner_confirmed", source: "Owner attestation of the official time" }));
+    await saveRaceConfirmation("owner", input(race, { effort: "nonmaximal", status: "owner_confirmed", source: "Owner attestation of the official time" })); // same request: no new revision
+    expect(h.updates).toHaveLength(1);
+    vi.advanceTimersByTime(5_000);
+    await expect(saveRaceConfirmation("owner", input(race, { effort: "hard", status: "owner_confirmed", source: "Owner attestation of the official time" }, "request-two"))).rejects.toThrow(/Reload the race/);
+    expect(h.updates).toHaveLength(1);
+  });
+});
