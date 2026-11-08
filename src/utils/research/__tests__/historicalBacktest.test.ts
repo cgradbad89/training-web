@@ -11,7 +11,7 @@ import { estimateHybridHalfMarathon } from "../../performance/hybridPerformance"
 import { researchRace } from "../../__tests__/fixtures/workoutRaceResearchFixture";
 import { athleteV11 } from "../../__tests__/fixtures/hybridV11Fixture";
 import {
-  buildAsOfState, evaluateCheckpoint, explainChange, holdoutAssessment, localInstant, predictionError, type BacktestSource,
+  buildAsOfState, evaluateCheckpoint, explainChange, holdoutAssessment, localInstant, predictionError, type BacktestSource, type OwnerConfirmationSpec,
 } from "../historicalBacktest";
 
 /** Invented data only. Two races (an "early" one whose two clocks disagree, and a later "target"), a bulk back-fill import,
@@ -160,9 +160,68 @@ describe("early-race acceptance and rejection (clock counterfactuals)", () => {
     expect(state.input.races.find(r => r.id === id)!.actualRunId).toBeUndefined();
     expect(evaluateCheckpoint(state, src, {}).official.seconds).toBeNull();
   });
+  it("can align ordinary-run elapsed time to moving time without touching the race run", () => {
+    const withStops: BacktestSource = { ...src, workouts: src.workouts.map(w => w.workoutId.startsWith("ord-") ? { ...w, endDate: new Date(w.endDate.getTime() + 120_000) } : w) };
+    const plain = buildAsOfState(withStops, cp, "retrospective_reconstruction");
+    const aligned = buildAsOfState(withStops, cp, "retrospective_reconstruction", { alignElapsedToMovingForOrdinaryRuns: true });
+    const elapsed = (w: { startDate: Date; endDate: Date }) => (w.endDate.getTime() - w.startDate.getTime()) / 1000;
+    const ordinary = (st: typeof plain) => st.input.workouts.find(w => w.workoutId.startsWith("ord-"))!;
+    expect(elapsed(ordinary(plain)) - ordinary(plain).durationSeconds).toBeCloseTo(120, 0);
+    expect(elapsed(ordinary(aligned))).toBeCloseTo(ordinary(aligned).durationSeconds, 3);
+    const race = (st: typeof plain) => st.input.workouts.find(w => w.workoutId === "hm-run")!;
+    expect(elapsed(race(aligned))).toBe(elapsed(race(plain)));
+  });
   it("never lets a counterfactual run in strict mode", () => {
     const state = buildAsOfState(src, cp, "strict_historical", { raceClock: { raceId: id, basis: "moving_time" } });
     expect(state.provenance.counterfactual).toBeNull();
+  });
+});
+
+describe("owner-attested official result (research-only confirmation)", () => {
+  const src = source(), id = earlyRaceId(src);
+  const spec = (effort: "maximal" | "unknown" = "maximal"): OwnerConfirmationSpec => ({ raceId: id, finishSeconds: 8130, confirmedAt: "2026-05-20T12:00:00.000Z",
+    retrospectiveKnownAt: "2026-04-27T01:00:00.000Z", effort, conditions: "cool, overcast", source: "owner attestation (no official URL checked)",
+    timingReconciliation: "Recording began before the timed start; moving time equals the official finish." });
+  const row = (instant: string, mode: "strict_historical" | "retrospective_reconstruction", effort: "maximal" | "unknown" = "maximal") =>
+    evaluateCheckpoint(buildAsOfState(src, instant, mode, { ownerConfirmation: spec(effort) }), src, {});
+  it("resolves the clock discrepancy through the supported official-race reconciliation without editing the workout", () => {
+    const before = JSON.stringify(src.workouts.find(w => w.workoutId === "hm-run"));
+    const r = row(at("2026-06-01"), "retrospective_reconstruction");
+    const e = r.raceEvidence.find(x => x.raceDate === EARLY)!;
+    expect(e.status).toBe("owner_confirmed"); expect(e.timingAgreement).toBe("reconciled");
+    expect(e.finishSeconds).toBe(8130);
+    expect(e.durationSeconds).toBeCloseTo(8130, 0); expect(e.elapsedSeconds).toBeCloseTo(8759, 0);   // original measurements preserved
+    expect(r.official.seconds).not.toBeNull(); expect(r.provenance.counterfactual).toMatch(/retrospective_owner_confirmation_research_only/);
+    expect(JSON.stringify(src.workouts.find(w => w.workoutId === "hm-run"))).toBe(before);
+  });
+  it("is unknown before its real confirmation instant in strict mode and known afterwards", () => {
+    const early = row(at("2026-05-10"), "strict_historical");
+    expect(early.official.seconds).toBeNull();
+    expect(early.raceEvidence.find(x => x.raceDate === EARLY)!.reasons).toContain("confirmation_not_available_as_of");
+    const late = row(at("2026-06-01"), "strict_historical");
+    expect(late.official.seconds).not.toBeNull(); expect(late.provenance.counterfactual).toMatch(/^owner_confirmation: strict/);
+  });
+  it("is unknown before its assumed retrospective instant", () => {
+    expect(row(at("2026-04-26", "05:00"), "retrospective_reconstruction").official.seconds).toBeNull();
+  });
+  it("does not make an anchor from the finish time alone: effort must be attested", () => {
+    const r = row(at("2026-06-01"), "retrospective_reconstruction", "unknown");
+    expect(r.official.seconds).toBeNull();
+    expect(r.raceEvidence.find(x => x.raceDate === EARLY)!.reasons).toContain("maximal_effort_not_confirmed");
+  });
+  it("is overridden by an explicit exclusion and never applies to a future race", () => {
+    const state = buildAsOfState(src, at("2026-06-01"), "retrospective_reconstruction", { ownerConfirmation: spec(), excludeRaceIds: [id] });
+    expect(state.input.races.find(r => r.id === id)!.performanceEvidence).toBeUndefined();
+    const target = src.races.find(r => r.raceDate === TARGET)!;
+    const future = buildAsOfState(src, at("2026-06-01"), "retrospective_reconstruction", { ownerConfirmation: { ...spec(), raceId: target.id } });
+    expect(future.input.races.find(r => r.id === target.id)!.performanceEvidence).toBeUndefined();
+  });
+  it("leaves the official-time anchor and every later checkpoint independent of the September result", () => {
+    const b = source({ targetSeconds: 6500 });
+    const cp = at("2026-09-19");
+    const a = evaluateCheckpoint(buildAsOfState(src, cp, "retrospective_reconstruction", { ownerConfirmation: spec() }), src, {});
+    const c = evaluateCheckpoint(buildAsOfState(b, cp, "retrospective_reconstruction", { ownerConfirmation: spec() }), b, {});
+    expect(JSON.stringify({ ...c, provenance: undefined })).toBe(JSON.stringify({ ...a, provenance: undefined }));
   });
 });
 
