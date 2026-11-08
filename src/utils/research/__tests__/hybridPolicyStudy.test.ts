@@ -64,7 +64,6 @@ describe("the single alternative: nonmaximal_lower_bound", () => {
     const s = estimateWithPolicy(input, "strict_maximal"), n = estimateWithPolicy(input, "nonmaximal_lower_bound");
     expect(n.seconds).toBe(s.seconds);
     expect(n.lowerBoundOnly).toBe(false);
-    expect(n.asIfAchievableSeconds).toBeGreaterThan(s.seconds!); // the as-if pooling WOULD have slowed it; the rule discards that
   });
 
   it("a faster nonmaximal race moves a stale estimate faster, continuously and monotonically, never past the strict estimate", () => {

@@ -1,6 +1,6 @@
 # Keeping Hybrid v1.2 simple — policy study (research only, 2026-11-08)
 
-**Status: research. Nothing was implemented.** No production formula, constant, threshold, type, route, collection, rule or index changed (`git diff origin/main -- src/utils/performance src/utils/racePerformance.ts src/types` is empty). "Hybrid v1.2" does not exist in code; this study decides what, if anything, it should contain.
+**Status: research. Nothing was implemented in the study.** (Follow-up: the owner approved the policy evaluated in section 4 and it was implemented as described in `docs/hybrid-v1.1-demonstrated-race-policy.md`.) No production formula, constant, threshold, type, route, collection, rule or index changed (`git diff origin/main -- src/utils/performance src/utils/racePerformance.ts src/types` is empty). "Hybrid v1.2" does not exist in code; this study decides what, if anything, it should contain.
 **Historical case study — insufficient independent outcomes for scientific validation** (0 of the required 5 qualified outcomes). Synthetic scenarios only; aggregate figures from the already-committed case study; no workout identifiers, routes or private exports.
 
 ## 1. Owner direction and how this study honours it

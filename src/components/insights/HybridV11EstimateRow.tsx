@@ -77,6 +77,9 @@ export function HybridV11EstimateRow({ estimate: e, detailed = false }: { estima
             Assumption range {hms(e.sensitivityRange.fastSeconds)}–{hms(e.sensitivityRange.slowSeconds)} · not a statistical interval · confidence {e.confidence ?? "low"}.</p>}
         </>
       ) : <p className="text-sm font-semibold text-textPrimary" data-testid="hybrid-v11-value">Not available</p>}
+      {e.demonstrated.basis !== "maximal_or_recorded_evidence" && <p className="text-sm font-medium text-warning" data-testid="hybrid-v11-demonstrated">
+        {e.demonstrated.basis === "demonstrated_performance_only" ? "Demonstrated performance, not a maximal-performance prediction: " : "Includes demonstrated performance: "}
+        {e.demonstrated.note}</p>}
       <p className="text-sm text-textSecondary" data-testid="hybrid-v11-reason">{reasons.length ? reasons[0] : (e.fallbackReason ?? (e.unavailableCause ? CAUSE_TEXT[e.unavailableCause] : ""))}</p>
       {e.seconds !== null && inf.raceDominance === "dominant" && inf.latestRaceDate && <p className="text-xs text-textSecondary" data-testid="hybrid-v11-race-dependent">
         Still race-dependent: {pct(inf.raceShare)} rests on your {dateLabel(inf.latestRaceDate)} race ({inf.latestRaceAgeDays} days old); no newer qualifying effort has displaced it.</p>}

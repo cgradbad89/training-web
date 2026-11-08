@@ -40,6 +40,15 @@ export function isExperimentalHybridV11Enabled(): boolean {
 }
 
 /**
+ * Demonstrated-race evidence for hybrid v1.1: a confirmed race attested `hard` or `nonmaximal` may carry a LABELLED, provisional,
+ * low-confidence number (never a maximal-performance prediction, never projected by the race-day forecast). Independent rollback:
+ * set NEXT_PUBLIC_DISABLE_DEMONSTRATED_RACE_EVIDENCE=true and redeploy and v1.1 ignores such races again, bit for bit.
+ */
+export function isDemonstratedRaceEvidenceEnabled(): boolean {
+  return isExperimentalHybridV11Enabled() && process.env.NEXT_PUBLIC_DISABLE_DEMONSTRATED_RACE_EVIDENCE !== "true";
+}
+
+/**
  * Bounded, demand-driven Apple Health VO₂ max and warm-up-trimmed HR-stream hydration for the v1.1 physiological family.
  * Separate kill switch (NEXT_PUBLIC_DISABLE_PHYSIOLOGY_HYDRATION=true) removes the extra Firestore reads and falls back to
  * whole-workout average HR without VO₂ corroboration; the estimate is otherwise unaffected.

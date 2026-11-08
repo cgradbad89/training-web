@@ -29,16 +29,17 @@ import type { CurrentHalfEstimate } from "@/utils/experimentalCurrentPerformance
 import type { HrEnhancedEstimate } from "@/types/hrEnhancedPerformance";
 import type { AerobicTrendEvidence, EnduranceReadiness, HybridFamilyContribution, HybridUnavailableCause, HrStreamSummary } from "@/types/hybridPerformance";
 import type {
-  ConflictSignal, EvidenceCombination, HistoricalInfluence, HrStreamDisclosure, HybridV11Estimate, Vo2Disclosure,
+  ConflictSignal, DemonstratedRaceDisclosure, EvidenceCombination, HistoricalInfluence, HrStreamDisclosure, HybridV11Estimate, Vo2Disclosure,
 } from "@/types/hybridPerformanceV11";
 import type { RacePerformanceInput } from "@/types/racePerformance";
 import type { Vo2Entry } from "@/utils/vo2History";
-import { HALF_MARATHON_METERS } from "@/utils/racePerformance";
+import { buildRaceEvidence, HALF_MARATHON_METERS } from "@/utils/racePerformance";
 import { isPerformanceInstant } from "@/utils/performanceEvidence";
 import { selectResearchRuns } from "@/utils/workoutRaceResearch";
 import { AEROBIC_TREND_POLICY, computeAerobicTrend } from "./aerobicTrend";
 import { combineEvidence, COMBINATION_POLICY, type CombinationParams } from "./evidenceCombination";
 import { computeEnduranceReadiness } from "./enduranceReadiness";
+import { DEMONSTRATED_RACE_REASON, isDemonstratedRaceEvidence } from "./evidenceQualification";
 import { qualifyEvidenceV11 } from "./evidenceSegments";
 import { HYBRID_POLICY, type HybridOptions } from "./hybridPerformance";
 import type { HybridPerformanceEstimate } from "@/types/hybridPerformance";
@@ -63,6 +64,8 @@ export interface HybridV11Options extends HybridOptions {
   streamLoad?: LoadState;
   /** RESEARCH SWEEPS ONLY (never set by live code): alternative evidence-combination parameters for the primary calculation. */
   combinationParams?: CombinationParams;
+  /** Rollback / strict research replay: ignore confirmed hard/nonmaximal races entirely (the pre-policy v1.1 behaviour, bit for bit). */
+  strictMaximalOnly?: boolean;
 }
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
@@ -114,11 +117,49 @@ const emptyInfluence = (combination: EvidenceCombination, notes: string[], exclu
   independentObservations: combination.independentObservations, newerEvidenceDisplacedRace: false, displacementSeconds: null,
   physiologicalTrendApplied: false, physiologyAdjustmentSeconds: 0, enduranceAdjustmentSeconds: 0, provisional: true, provisionalReasons: notes, notes, excludedInformative: excluded });
 
+const NO_DEMONSTRATED: DemonstratedRaceDisclosure = { basis: "maximal_or_recorded_evidence", eligibleRaces: 0, usedRaces: 0, policyDisabled: false, note: null };
+
+/**
+ * The demonstrated-race policy (the only change to v1.1's evidence handling; every numerical term below is unchanged):
+ * a confirmed race that passed every integrity check but was attested `hard` or `nonmaximal` shows what was ACHIEVED, not maximal capability.
+ *   - strict estimate S = the unchanged v1.1 (confirmed-maximal, recorded, strong-effort and segment evidence only);
+ *   - A = the same estimator with those races admitted as `recorded_race`-class evidence (unverified-maximality class, 1.5 % σ);
+ *   - result = S unless A is available and S is unavailable or slower than A is faster: i.e. S when S ≤ A, so such a race can only make
+ *     the estimate faster, never slower; when A carries the number it is provisional, low confidence and labelled demonstrated performance.
+ * No effort percentage, coefficient or discount exists. The 180-day currency limit and all race-integrity checks apply unchanged.
+ */
 export function estimateHybridHalfMarathonV11(input: Input, options: HybridV11Options = {}): HybridV11Estimate {
+  const strict = estimateCore(input, options, false);
+  const eligible = buildRaceEvidence({ ...input, overrides: input.overrides ?? {} }).filter(isDemonstratedRaceEvidence).length;
+  const tag = (e: HybridV11Estimate, d: Partial<DemonstratedRaceDisclosure>): HybridV11Estimate => ({ ...e, demonstrated: { ...NO_DEMONSTRATED, eligibleRaces: eligible, ...d } });
+  if (options.strictMaximalOnly) return tag(strict, { policyDisabled: true, note: eligible ? "The demonstrated-race policy is switched off; confirmed hard or nonmaximal races are ignored." : null });
+  if (!eligible) return strict;
+  const alt = estimateCore(input, options, true);
+  const used = alt.qualification.independent.filter(i => i.reasons.includes(DEMONSTRATED_RACE_REASON)).length;
+  if (alt.seconds === null || !used) {
+    // Nothing numeric to add. If the only candidate has aged out, say so instead of "no evidence".
+    if (strict.seconds === null && alt.unavailableCause === "anchor_expired_no_contemporary_evidence")
+      return tag(alt, { note: "A confirmed hard or nonmaximal race exists but is older than the 180-day currency limit, so it carries no weight." });
+    return tag(strict, {});
+  }
+  if (strict.seconds !== null && strict.seconds <= alt.seconds)
+    return tag(strict, { note: "A confirmed hard or nonmaximal race exists but does not make the estimate faster, so the strict estimate is unchanged." });
+  const only = strict.seconds === null;
+  const message = only
+    ? "This number is demonstrated performance: it comes from a confirmed race that was not run at maximal effort, so it shows what you have already run, not your maximal-performance limit."
+    : "A confirmed race that was not run at maximal effort made this estimate faster than the maximal-effort evidence alone; it shows what you have already run, not your maximal-performance limit.";
+  return tag({ ...alt, status: "provisional", confidence: "low",
+    flags: [...new Set([...alt.flags, only ? "demonstrated_performance_only" : "demonstrated_performance_included"])],
+    influence: { ...alt.influence, provisional: true, provisionalReasons: [...new Set([...alt.influence.provisionalReasons, message])] },
+    caveats: [message, ...alt.caveats] },
+  { basis: only ? "demonstrated_performance_only" : "demonstrated_performance_included", usedRaces: used, note: message });
+}
+
+function estimateCore(input: Input, options: HybridV11Options, admitDemonstrated: boolean): HybridV11Estimate {
   if (!isPerformanceInstant(input.asOf)) throw new TypeError("A valid hybrid-estimate cutoff is required");
   const P = HYBRID_V11_POLICY, B = HYBRID_POLICY, target = options.targetDistanceMeters ?? HALF_MARATHON_METERS;
   const overrides = input.overrides ?? {};
-  const qualification = qualifyEvidenceV11(input);
+  const qualification = qualifyEvidenceV11(input, { admitDemonstratedRaces: admitDemonstrated });
   const asOfDate = qualification.asOfDate;
   const { runs } = selectResearchRuns({ ...input, overrides, capturedAt: input.asOf, source: "owner_parent_export",
     complete: { workouts: true, races: true, overrides: true }, allowSummaryPaceTransfer: false }, true);
@@ -154,7 +195,7 @@ export function estimateHybridHalfMarathonV11(input: Input, options: HybridV11Op
     seconds: null, minutes: null, paceSecondsPerMile: null, evidenceQuality: combination.quality, confidence: null, sensitivityRange: null,
     contributions: emptyContributions(reason), combination, qualification, physiology, readiness, adjustmentFraction: 0,
     influence: emptyInfluence(combination, [reason], qualification.informativeExcluded), conflicts: [], inputs: { vo2, hrStreams }, comparison: comparisonOf(null),
-    flags: [...new Set(flags)], missing, reasons: [reason], fallbackReason: reason, assumptions: ASSUMPTIONS, caveats, ...extra });
+    flags: [...new Set(flags)], missing, reasons: [reason], fallbackReason: reason, assumptions: ASSUMPTIONS, caveats, demonstrated: NO_DEMONSTRATED, ...extra });
 
   if (combination.status === "unavailable" || combination.baseSeconds === null) {
     const raw = combination.unavailableCause;

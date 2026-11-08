@@ -11,7 +11,7 @@ import type { AppDataResolution } from "@/contexts/AppDataContext";
 import { evaluateRacePerformance, nominalRaceDistanceMeters } from "@/utils/racePerformance";
 import { buildRaceTrainingContext } from "@/utils/raceTrainingContext";
 import { formatRaceTime } from "@/utils/riegelFit";
-import { isExperimentalCurrentEstimateEnabled, isExperimentalHrEnhancedEstimateEnabled, isExperimentalHybridEstimateEnabled, isExperimentalHybridV11Enabled, isExperimentalRaceDayForecastEnabled } from "@/lib/racePerformanceGate";
+import { isExperimentalCurrentEstimateEnabled, isExperimentalHrEnhancedEstimateEnabled, isExperimentalHybridEstimateEnabled, isExperimentalHybridV11Enabled, isDemonstratedRaceEvidenceEnabled, isExperimentalRaceDayForecastEnabled } from "@/lib/racePerformanceGate";
 import { estimateHrEnhancedHalfMarathon } from "@/utils/hrEnhancedPerformance";
 import { HrEnhancedEstimateRow } from "./HrEnhancedEstimateRow";
 import { HybridEstimateRow } from "./HybridEstimateRow";
@@ -274,6 +274,8 @@ export function RacePerformancePanel(props: RacePerformancePanelProps) {
   // Independent of v2 availability: the hybrid can answer when the race anchor has expired. Never edits v2/HR results.
   const hybridEnabled = currentEnabled && isExperimentalHybridEstimateEnabled();
   const v11Enabled = hybridEnabled && isExperimentalHybridV11Enabled();
+  // Rollback switch for the demonstrated-race policy: strictMaximalOnly restores the pre-policy v1.1 evidence exactly.
+  const strictMaximalOnly = !isDemonstratedRaceEvidenceEnabled();
   const physiology = props.physiology;
   const vo2Entries = physiology ? physiology.vo2.entries : props.vo2Entries;
   const vo2Load: LoadState = physiology ? (physiology.vo2.state === "loaded" || physiology.vo2.state === "failed" ? physiology.vo2.state : "not_requested") : props.vo2Entries ? "loaded" : "not_requested";
@@ -285,16 +287,16 @@ export function RacePerformancePanel(props: RacePerformancePanelProps) {
   [hybridEnabled, performanceReady, races, workouts, overrides, asOfIso, timeZone, current, hrEnhanced, props.vo2Entries]);
   // v1.1 reuses the same official/HR-enhanced results (never recomputed differently) and keeps v1 only for the comparison line.
   const hybridV11 = useMemo(() => v11Enabled && performanceReady ? estimateHybridHalfMarathonV11({ races, workouts, overrides, asOf: asOfIso, timeZone },
-    { official: current, hrEnhanced, vo2Entries, streamSummaries, vo2Load, streamLoad, hybridV1: hybrid, targetDistanceMeters: 21097.5 }) : null,
-  [v11Enabled, performanceReady, races, workouts, overrides, asOfIso, timeZone, current, hrEnhanced, vo2Entries, streamSummaries, vo2Load, streamLoad, hybrid]);
+    { official: current, hrEnhanced, vo2Entries, streamSummaries, vo2Load, streamLoad, hybridV1: hybrid, targetDistanceMeters: 21097.5, strictMaximalOnly }) : null,
+  [v11Enabled, performanceReady, races, workouts, overrides, asOfIso, timeZone, current, hrEnhanced, vo2Entries, streamSummaries, vo2Load, streamLoad, hybrid, strictMaximalOnly]);
   const forecastEnabled = hybridEnabled && isExperimentalRaceDayForecastEnabled() && Math.abs(targetDistanceMeters - 21097.5) < 25;
   // The forecast starts from whichever hybrid is displayed (v1.1 → forecast v2; rollback → v1 forecast), never from a separate race anchor.
   const forecast = useMemo(() => {
     if (!forecastEnabled || !planReady) return null;
     const input = { races, workouts, overrides, asOf: asOfIso, timeZone };
-    if (v11Enabled) return hybridV11 ? estimateRaceDayForecast(input, { raceDate: targetDate, plan, hybrid: hybridV11, official: current, hrEnhanced, vo2Entries, streamSummaries, vo2Load, streamLoad, hybridV1: hybrid }) : null;
+    if (v11Enabled) return hybridV11 ? estimateRaceDayForecast(input, { raceDate: targetDate, plan, hybrid: hybridV11, official: current, hrEnhanced, vo2Entries, streamSummaries, vo2Load, streamLoad, hybridV1: hybrid, strictMaximalOnly }) : null;
     return hybrid ? estimateRaceDayForecast(input, { raceDate: targetDate, plan, hybrid, official: current, hrEnhanced, vo2Entries: props.vo2Entries }) : null;
-  }, [forecastEnabled, v11Enabled, hybridV11, hybrid, planReady, races, workouts, overrides, asOfIso, timeZone, targetDate, plan, current, hrEnhanced, vo2Entries, streamSummaries, vo2Load, streamLoad, props.vo2Entries]);
+  }, [forecastEnabled, v11Enabled, strictMaximalOnly, hybridV11, hybrid, planReady, races, workouts, overrides, asOfIso, timeZone, targetDate, plan, current, hrEnhanced, vo2Entries, streamSummaries, vo2Load, streamLoad, props.vo2Entries]);
   const benchmark = performance?.latestBenchmark ?? null;
   const displayedAnchor = current?.historicalAnchor ?? benchmark;
   const lifecycle = current ? anchorLifecycle(current) : null;
