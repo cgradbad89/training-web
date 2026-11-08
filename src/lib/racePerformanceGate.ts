@@ -49,6 +49,15 @@ export function isDemonstratedRaceEvidenceEnabled(): boolean {
 }
 
 /**
+ * Owner-approved estimator-level assumption: confirmed `hard`/`nonmaximal` races are treated as maximal anchors for PREDICTION only
+ * (`treatConfirmedRacesAsMaximal`). Stored records and evidence reporting keep the true effort. Rollback: set
+ * NEXT_PUBLIC_DISABLE_CONFIRMED_RACE_MAXIMAL_ASSUMPTION=true and redeploy; hybrid v1.1 then falls back to the labelled demonstrated-race policy.
+ */
+export function isConfirmedRaceMaximalAssumptionEnabled(): boolean {
+  return isExperimentalCurrentEstimateEnabled() && process.env.NEXT_PUBLIC_DISABLE_CONFIRMED_RACE_MAXIMAL_ASSUMPTION !== "true";
+}
+
+/**
  * Bounded, demand-driven Apple Health VO₂ max and warm-up-trimmed HR-stream hydration for the v1.1 physiological family.
  * Separate kill switch (NEXT_PUBLIC_DISABLE_PHYSIOLOGY_HYDRATION=true) removes the extra Firestore reads and falls back to
  * whole-workout average HR without VO₂ corroboration; the estimate is otherwise unaffected.

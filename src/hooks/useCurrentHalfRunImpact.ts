@@ -2,6 +2,8 @@
 
 import { useMemo } from "react";
 import { useAppData } from "@/contexts/AppDataContext";
+import { isConfirmedRaceMaximalAssumptionEnabled } from "@/lib/racePerformanceGate";
+import { treatConfirmedRacesAsMaximal } from "@/utils/performance/confirmedRaceAssumption";
 import { computeCurrentHalfRunImpact, type CurrentHalfRunImpact } from "@/utils/currentHalfRunImpact";
 import { useEstimateDay } from "@/components/insights/RacePerformancePanel";
 
@@ -26,6 +28,7 @@ export function useCurrentHalfRunImpact(
   enabled: boolean,
   options: { asOf?: Date; timeZone?: string } = {},
 ): CurrentImpactCard | null {
+  const effortAssumption = isConfirmedRaceMaximalAssumptionEnabled();
   const { workouts, races, overrides, sourceHasLoaded, workoutsResolution, racesResolution, overridesResolution } = useAppData();
   const timeZone = options.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
   const day = useEstimateDay(options.asOf !== undefined, timeZone);
@@ -44,7 +47,7 @@ export function useCurrentHalfRunImpact(
         : { state: "loading" };
     }
     try {
-      const impact = computeCurrentHalfRunImpact({ races, workouts, overrides, asOf: asOfIso, timeZone, runId });
+      const impact = computeCurrentHalfRunImpact({ races: effortAssumption ? treatConfirmedRacesAsMaximal(races) : races, workouts, overrides, asOf: asOfIso, timeZone, runId });
       const stale = SOURCES.filter(source => resolution[source] === "error");
       return { state: "ready", impact, notice: stale.length
         ? `Showing previously loaded ${stale.map(source => LABEL[source]).join(", ")}. A refresh failed, so this may be out of date.` : null };
@@ -52,5 +55,5 @@ export function useCurrentHalfRunImpact(
       console.error("[currentHalfRunImpact]", error);
       return { state: "error", message: "The impact on the current estimate could not be calculated. Reload to retry." };
     }
-  }, [enabled, ready, sourceHasLoaded, workoutsResolution, overridesResolution, racesResolution, races, workouts, overrides, asOfIso, timeZone, runId]);
+  }, [enabled, ready, sourceHasLoaded, workoutsResolution, overridesResolution, racesResolution, effortAssumption, races, workouts, overrides, asOfIso, timeZone, runId]);
 }
