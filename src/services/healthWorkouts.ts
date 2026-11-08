@@ -123,6 +123,11 @@ function bestEffortsEqual(
   );
 }
 
+/** A Firestore number that is a positive safe integer, else undefined. */
+function positiveSafeInt(v: unknown): number | undefined {
+  return typeof v === "number" && Number.isSafeInteger(v) && v > 0 ? v : undefined;
+}
+
 export function docToHealthWorkout(
   id: string,
   data: Record<string, unknown>
@@ -148,6 +153,8 @@ export function docToHealthWorkout(
       typeof data.routeComplete === "boolean"
         ? (data.routeComplete as boolean)
         : undefined,
+    routePointCount: positiveSafeInt(data.routePointCount),
+    routeCacheBasisPointCount: positiveSafeInt(data.routeCacheBasisPointCount),
     sourceBundle: data.sourceBundle as string | undefined,
     calories: (data.calories as number) ?? 0,
     avgSpeedMPS: (data.avgSpeedMPS as number | null) ?? null,
@@ -933,6 +940,10 @@ export interface RunDetailCacheWrites {
   gapAggregateGradeFlat?: boolean;
   zoneBreakdown?: ZoneBreakdownCache;
   simplifiedPath?: SimplifiedPathPoint[];
+  /** Number of route points the parent route caches above were ALL computed
+   *  from. Written only when zones, GAP KPI and map path were recomputed
+   *  together in the same pass (see routeCacheFreshness.ts). */
+  routeCacheBasisPointCount?: number;
 }
 
 /**

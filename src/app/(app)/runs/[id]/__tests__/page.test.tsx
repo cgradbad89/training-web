@@ -199,7 +199,7 @@ describe("RunDetailPage Execution Structure", () => {
     // After core resolves: mileSplits is read, and because this uncached routed
     // run has no route-derived caches yet, the full route IS read.
     expect(getMileSplits).toHaveBeenCalledWith("u1", "workout_123");
-    expect(getRoutePoints).toHaveBeenCalledWith("u1", "workout_123");
+    expect(getRoutePoints).toHaveBeenCalledWith("u1", "workout_123", { expectedPointCount: null });
   });
 
   it("handles a routeless workout gracefully (empty splits) and does not fetch weather", async () => {
@@ -351,7 +351,7 @@ describe("RunDetailPage Execution Structure", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(getRoutePoints).toHaveBeenCalledWith("u1", "workout_123");
+    expect(getRoutePoints).toHaveBeenCalledWith("u1", "workout_123", { expectedPointCount: null });
     expect(fetchWeatherForRun).not.toHaveBeenCalled();
 
     // Resolve the route
@@ -648,7 +648,7 @@ describe("RunDetailPage GAP/elevation sublabels", () => {
     await renderSettled();
 
     // Cache was incomplete → the route read happened (self-heal path).
-    expect(getRoutePoints).toHaveBeenCalledWith("u1", "workout_123");
+    expect(getRoutePoints).toHaveBeenCalledWith("u1", "workout_123", { expectedPointCount: null });
     // Live-computed flat aggregate grade → GAP KPI labelled "flat".
     expect(container.textContent).toContain("flat");
   });

@@ -18,6 +18,7 @@
 
 import { getRouteCacheEpoch, getRoutePoints } from "@/utils/routeCache";
 import { getMileSplits } from "@/utils/mileSplitsCache";
+import { expectedRoutePointCount } from "@/utils/routeCacheFreshness";
 import { computeMileSplits, type MileSplit } from "@/utils/mileSplits";
 import {
   BEST_EFFORT_RECENCY_DAYS,
@@ -118,7 +119,9 @@ export async function hydrateFastFinishSplits(
         const hasHardMile = hrRows.some((r) => r.avgBpm >= prefilterBpm);
         if (!hasHardMile) return w;
 
-        const points = await getRoutePoints(uid, w.workoutId);
+        const points = await getRoutePoints(uid, w.workoutId, {
+          expectedPointCount: expectedRoutePointCount(w),
+        });
         routeFetches++;
         if (!isCurrent()) return w;
         if (points.length < 2) return w;

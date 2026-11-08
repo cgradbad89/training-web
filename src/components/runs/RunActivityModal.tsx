@@ -171,7 +171,9 @@ export function RunActivityModal({
     setRoutePoints([]);
     setPerMileHR({});
 
-    getRoutePoints(uid, workoutId)
+    getRoutePoints(uid, workoutId, {
+      expectedPointCount: matchedRun.routePointCount,
+    })
       .then((points) => {
         if (cancelled) return;
         setRoutePoints(points);

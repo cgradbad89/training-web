@@ -58,15 +58,25 @@ export function setRouteCacheSession(uid: string | null): void {
 /**
  * Get route points from cache or fetch them.
  * Deduplicates concurrent requests for the same UID/workout in this session.
+ *
+ * `expectedPointCount` is the parent workout's iOS-written `routePointCount`.
+ * A route cached in memory while iOS was still uploading it holds fewer points
+ * and would otherwise be reused for the rest of the tab session (and used to
+ * compute persisted caches). When the cached copy is smaller than the expected
+ * count it is dropped and the current route is fetched once.
  */
 export async function getRoutePoints(
   uid: string,
-  workoutId: string
+  workoutId: string,
+  options: { expectedPointCount?: number | null } = {}
 ): Promise<RoutePoint[]> {
   const key = routeKey(uid, workoutId);
   const epoch = sessionEpoch;
+  const expected = options.expectedPointCount;
   if (cache.has(key)) {
-    return cache.get(key)!;
+    const cached = cache.get(key)!;
+    if (expected == null || cached.length >= expected) return cached;
+    cache.delete(key);
   }
 
   if (inFlight.has(key)) {
