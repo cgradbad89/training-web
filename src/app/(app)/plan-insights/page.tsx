@@ -13,7 +13,6 @@ import { useAppData } from "@/contexts/AppDataContext";
 import { isPhysiologyHydrationEnabled, isRacePerformanceDisplayEnabled } from "@/lib/racePerformanceGate";
 import { RacePerformancePanel, useEstimateDay } from "@/components/insights/RacePerformancePanel";
 import { usePhysiologyEvidence } from "@/hooks/usePhysiologyEvidence";
-import { PerformanceEvidenceNotice, PerformanceEvidenceStatus } from "@/components/insights/PerformanceEvidenceStatus";
 import { selectEffectiveWorkouts } from "@/utils/selectActiveWorkouts";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { type RunningPlan, type PlanRunType, isRunningPlan } from "@/types/plan";
@@ -204,7 +203,6 @@ function CurrentPerformanceWithoutEstimate() {
   return <section className="min-w-0 space-y-3 rounded-2xl border border-border bg-card p-4 sm:p-5">
     <h2 className="text-lg font-bold text-textPrimary">Current Performance</h2>
     <p className="text-sm text-textSecondary">The experimental half-marathon estimate is unavailable.</p>
-    <PerformanceEvidenceNotice />
     <PlanPerformanceActions />
   </section>;
 }
@@ -1025,8 +1023,6 @@ export default function PlanInsightsPage() {
       {/* ── Race Predictions ─────────────────────────────── */}
       {racePerformanceEnabled ? (
         <RacePerformancePanel
-          evidenceNotice={<PerformanceEvidenceNotice />}
-          evidenceDetails={<PerformanceEvidenceStatus detailed />}
           renderActions={estimateDetails => <PlanPerformanceActions estimateDetails={estimateDetails} />}
           physiology={physiology}
           races={races}

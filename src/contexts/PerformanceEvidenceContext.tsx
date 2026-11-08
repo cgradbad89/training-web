@@ -1,3 +1,7 @@
+/**
+ * DORMANT (2026-11): the app shell no longer mounts this provider because its only consumers were the retired manual
+ * Performance Analysis surfaces. Mounting it again re-enables the one-document saved-analysis read on first consumer use.
+ */
 "use client";
 
 import React, { createContext, useContext, useEffect, useLayoutEffect, useMemo, useState, useSyncExternalStore } from "react";

@@ -165,7 +165,7 @@ describe("Plan Insights demand-gated fast-finish hydration", () => {
     // The adjustment rounds independently; subtracting the rounded finish times would incorrectly give −2.
     expect(dialog.querySelector('[data-testid="training-adjustment"]')?.textContent).toContain("−3 minEstimated faster");
     expect(dialog.querySelector('[data-testid="adjustment-reason"]')?.textContent).toContain("Sustained volume and frequency");
-    expect(dialog.textContent).toContain("Estimate methodology"); expect(dialog.textContent).toContain("Saved Performance Evidence");
+    expect(dialog.textContent).toContain("Estimate methodology"); expect(dialog.textContent).not.toContain("Saved Performance Evidence");
     expect(container.textContent).toContain("Race-day forecastWithheld");
     expect(h.hydrate).not.toHaveBeenCalled(); expect(h.rawRoute).not.toHaveBeenCalled(); expect(h.mileSplits).not.toHaveBeenCalled();
     expect(buildBestEffortSegments).not.toHaveBeenCalled();
