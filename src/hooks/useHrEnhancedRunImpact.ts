@@ -2,6 +2,8 @@
 
 import { useMemo } from "react";
 import { useAppData } from "@/contexts/AppDataContext";
+import { isConfirmedRaceMaximalAssumptionEnabled } from "@/lib/racePerformanceGate";
+import { treatConfirmedRacesAsMaximal } from "@/utils/performance/confirmedRaceAssumption";
 import { computeHrEnhancedRunImpact, type HrEnhancedRunImpact } from "@/utils/hrEnhancedRunImpact";
 import { useEstimateDay } from "@/components/insights/RacePerformancePanel";
 
@@ -21,6 +23,7 @@ export function useHrEnhancedRunImpact(
   enabled: boolean,
   options: { asOf?: Date; timeZone?: string } = {},
 ): HrImpactCard | null {
+  const effortAssumption = isConfirmedRaceMaximalAssumptionEnabled();
   const { workouts, races, overrides, sourceHasLoaded } = useAppData();
   const timeZone = options.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
   const day = useEstimateDay(options.asOf !== undefined, timeZone);
@@ -32,10 +35,10 @@ export function useHrEnhancedRunImpact(
     if (!enabled) return null;
     if (!ready) return { state: "loading" };
     try {
-      return { state: "ready", impact: computeHrEnhancedRunImpact({ races, workouts, overrides, asOf: asOfIso, timeZone, runId }) };
+      return { state: "ready", impact: computeHrEnhancedRunImpact({ races: effortAssumption ? treatConfirmedRacesAsMaximal(races) : races, workouts, overrides, asOf: asOfIso, timeZone, runId }) };
     } catch (error) {
       console.error("[hrEnhancedRunImpact]", error);
       return { state: "error", message: "The HR-enhanced impact could not be calculated." };
     }
-  }, [enabled, ready, races, workouts, overrides, asOfIso, timeZone, runId]);
+  }, [enabled, ready, effortAssumption, races, workouts, overrides, asOfIso, timeZone, runId]);
 }

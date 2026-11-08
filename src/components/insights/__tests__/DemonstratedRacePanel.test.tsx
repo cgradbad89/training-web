@@ -26,6 +26,8 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); container.remove(); vi.unstubAllEnvs(); vi.useRealTimers(); });
 const q = (id: string) => container.querySelector<HTMLElement>(`[data-testid="${id}"]`);
 
+const inDialog = (id: string) => document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+const openDetails = () => { const b = Array.from(container.querySelectorAll("button")).find(x => /Estimate Details/.test(x.textContent ?? "")); expect(b, "details button").toBeTruthy(); act(() => b!.click()); };
 function mountWithHardRace() {
   const f = confirmedRaceFixture({ id: "sep", date: "2026-09-20", seconds: 7871 });
   f.revision.details.effort = "hard"; f.workout.avgHeartRate = 168; f.workout.hasRoute = true;
@@ -34,7 +36,8 @@ function mountWithHardRace() {
     asOf={new Date(HYBRID_AS_OF)} timeZone="America/New_York" />));
 }
 
-describe("demonstrated-race policy in the Plan Insights panel", () => {
+describe("demonstrated-race policy in the Plan Insights panel (estimator-level maximal assumption switched off)", () => {
+  beforeEach(() => { vi.stubEnv("NEXT_PUBLIC_DISABLE_CONFIRMED_RACE_MAXIMAL_ASSUMPTION", "true"); });
   it("labels a demonstrated-only number and withholds the race-day forecast with its own cause", () => {
     mountWithHardRace();
     expect(q("hybrid-v11-estimate")?.getAttribute("data-status")).toBe("provisional");
@@ -43,7 +46,7 @@ describe("demonstrated-race policy in the Plan Insights panel", () => {
     expect(q("race-day-forecast")?.getAttribute("data-status")).toBe("withheld");
     expect(q("forecast-withheld-reason")?.textContent).toMatch(/not projected forward/);
   });
-  it("the kill switch restores the strict v1.1 behaviour exactly: no label, no number", () => {
+  it("the demonstrated-policy kill switch restores the strict v1.1 behaviour exactly: no label, no number", () => {
     vi.stubEnv("NEXT_PUBLIC_DISABLE_DEMONSTRATED_RACE_EVIDENCE", "true");
     expect(isDemonstratedRaceEvidenceEnabled()).toBe(false);
     mountWithHardRace();
@@ -55,5 +58,23 @@ describe("demonstrated-race policy in the Plan Insights panel", () => {
     for (const v of ["false", "1", "TRUE", ""]) { vi.stubEnv("NEXT_PUBLIC_DISABLE_DEMONSTRATED_RACE_EVIDENCE", v); expect(isDemonstratedRaceEvidenceEnabled()).toBe(true); }
     vi.stubEnv("NEXT_PUBLIC_DISABLE_HYBRID_V11", "true");
     expect(isDemonstratedRaceEvidenceEnabled()).toBe(false);
+  });
+});
+
+describe("owner-approved assumption: confirmed hard/nonmaximal races anchor the estimators as maximal (default)", () => {
+  it("uses the ordinary path: no demonstrated label, a number, and an available race-day forecast, with the one explanatory line", () => {
+    mountWithHardRace();
+    expect(q("hybrid-v11-demonstrated")).toBeNull();
+    expect(q("hybrid-v11-estimate")?.getAttribute("data-status")).not.toBe("unavailable");
+    expect(q("race-day-forecast")?.getAttribute("data-status")).toBe("provisional");
+    openDetails();
+    expect(inDialog("confirmed-effort-assumption")?.textContent).toBe("Confirmed race efforts are treated as maximal for prediction purposes.");
+  });
+  it("the rollback switch removes the line and returns to the labelled demonstrated-race behaviour", () => {
+    vi.stubEnv("NEXT_PUBLIC_DISABLE_CONFIRMED_RACE_MAXIMAL_ASSUMPTION", "true");
+    mountWithHardRace();
+    openDetails();
+    expect(inDialog("confirmed-effort-assumption")).toBeNull();
+    expect(q("hybrid-v11-demonstrated")).toBeTruthy();
   });
 });

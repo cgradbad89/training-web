@@ -11,7 +11,8 @@ import type { AppDataResolution } from "@/contexts/AppDataContext";
 import { evaluateRacePerformance, nominalRaceDistanceMeters } from "@/utils/racePerformance";
 import { buildRaceTrainingContext } from "@/utils/raceTrainingContext";
 import { formatRaceTime } from "@/utils/riegelFit";
-import { isExperimentalCurrentEstimateEnabled, isExperimentalHrEnhancedEstimateEnabled, isExperimentalHybridEstimateEnabled, isExperimentalHybridV11Enabled, isDemonstratedRaceEvidenceEnabled, isExperimentalRaceDayForecastEnabled } from "@/lib/racePerformanceGate";
+import { isExperimentalCurrentEstimateEnabled, isExperimentalHrEnhancedEstimateEnabled, isExperimentalHybridEstimateEnabled, isExperimentalHybridV11Enabled, isDemonstratedRaceEvidenceEnabled, isConfirmedRaceMaximalAssumptionEnabled, isExperimentalRaceDayForecastEnabled } from "@/lib/racePerformanceGate";
+import { assumedMaximalRaceCount, treatConfirmedRacesAsMaximal } from "@/utils/performance/confirmedRaceAssumption";
 import { estimateHrEnhancedHalfMarathon } from "@/utils/hrEnhancedPerformance";
 import { HrEnhancedEstimateRow } from "./HrEnhancedEstimateRow";
 import { HybridEstimateRow } from "./HybridEstimateRow";
@@ -263,14 +264,19 @@ export function RacePerformancePanel(props: RacePerformancePanelProps) {
     workouts, overrides, plan: planReady ? plan : null, asOf: new Date(asOfIso), targetRaceDate: targetDate, timeZone,
   }) : null, [trainingReady, planReady, workouts, overrides, plan, asOfIso, targetDate, timeZone]);
   const currentEnabled = isExperimentalCurrentEstimateEnabled();
+  // Owner-approved prediction-only assumption: confirmed hard/nonmaximal races anchor the estimators as maximal efforts. Applied to a COPY handed to
+  // the estimators; stored records and the dated race evidence (`performance`, above) keep the true classification.
+  const effortAssumption = isConfirmedRaceMaximalAssumptionEnabled();
+  const modelRaces = useMemo(() => effortAssumption ? treatConfirmedRacesAsMaximal(races) : races, [effortAssumption, races]);
+  const assumedRaces = useMemo(() => effortAssumption ? assumedMaximalRaceCount(races) : 0, [effortAssumption, races]);
   const current = useMemo(() => currentEnabled && performanceReady ? estimateCurrentHalfMarathon({
-    races, workouts, overrides, asOf: asOfIso, timeZone,
-  }) : null, [currentEnabled, performanceReady, races, workouts, overrides, asOfIso, timeZone]);
+    races: modelRaces, workouts, overrides, asOf: asOfIso, timeZone,
+  }) : null, [currentEnabled, performanceReady, modelRaces, workouts, overrides, asOfIso, timeZone]);
   // Same official result is reused (never recomputed differently) so both rows share anchor, cutoff and inputs.
   const hrEnabled = currentEnabled && isExperimentalHrEnhancedEstimateEnabled();
   const hrEnhanced = useMemo(() => hrEnabled && current && current.finishMinutes !== null
-    ? estimateHrEnhancedHalfMarathon({ races, workouts, overrides, asOf: asOfIso, timeZone }, { official: current }) : null,
-  [hrEnabled, current, races, workouts, overrides, asOfIso, timeZone]);
+    ? estimateHrEnhancedHalfMarathon({ races: modelRaces, workouts, overrides, asOf: asOfIso, timeZone }, { official: current }) : null,
+  [hrEnabled, current, modelRaces, workouts, overrides, asOfIso, timeZone]);
   // Independent of v2 availability: the hybrid can answer when the race anchor has expired. Never edits v2/HR results.
   const hybridEnabled = currentEnabled && isExperimentalHybridEstimateEnabled();
   const v11Enabled = hybridEnabled && isExperimentalHybridV11Enabled();
@@ -282,21 +288,21 @@ export function RacePerformancePanel(props: RacePerformancePanelProps) {
   const streamSummaries = physiology?.streams.summaries;
   const streamLoad: LoadState = physiology ? (physiology.streams.state === "loaded" || physiology.streams.state === "failed" ? physiology.streams.state : "not_requested") : "not_requested";
   const physiologyLoading = !!physiology && (physiology.vo2.state === "loading" || physiology.streams.state === "loading");
-  const hybrid = useMemo(() => hybridEnabled && performanceReady ? estimateHybridHalfMarathon({ races, workouts, overrides, asOf: asOfIso, timeZone },
+  const hybrid = useMemo(() => hybridEnabled && performanceReady ? estimateHybridHalfMarathon({ races: modelRaces, workouts, overrides, asOf: asOfIso, timeZone },
     { official: current, hrEnhanced, vo2Entries: props.vo2Entries, targetDistanceMeters: 21097.5 }) : null,
-  [hybridEnabled, performanceReady, races, workouts, overrides, asOfIso, timeZone, current, hrEnhanced, props.vo2Entries]);
+  [hybridEnabled, performanceReady, modelRaces, workouts, overrides, asOfIso, timeZone, current, hrEnhanced, props.vo2Entries]);
   // v1.1 reuses the same official/HR-enhanced results (never recomputed differently) and keeps v1 only for the comparison line.
-  const hybridV11 = useMemo(() => v11Enabled && performanceReady ? estimateHybridHalfMarathonV11({ races, workouts, overrides, asOf: asOfIso, timeZone },
+  const hybridV11 = useMemo(() => v11Enabled && performanceReady ? estimateHybridHalfMarathonV11({ races: modelRaces, workouts, overrides, asOf: asOfIso, timeZone },
     { official: current, hrEnhanced, vo2Entries, streamSummaries, vo2Load, streamLoad, hybridV1: hybrid, targetDistanceMeters: 21097.5, strictMaximalOnly }) : null,
-  [v11Enabled, performanceReady, races, workouts, overrides, asOfIso, timeZone, current, hrEnhanced, vo2Entries, streamSummaries, vo2Load, streamLoad, hybrid, strictMaximalOnly]);
+  [v11Enabled, performanceReady, modelRaces, workouts, overrides, asOfIso, timeZone, current, hrEnhanced, vo2Entries, streamSummaries, vo2Load, streamLoad, hybrid, strictMaximalOnly]);
   const forecastEnabled = hybridEnabled && isExperimentalRaceDayForecastEnabled() && Math.abs(targetDistanceMeters - 21097.5) < 25;
   // The forecast starts from whichever hybrid is displayed (v1.1 → forecast v2; rollback → v1 forecast), never from a separate race anchor.
   const forecast = useMemo(() => {
     if (!forecastEnabled || !planReady) return null;
-    const input = { races, workouts, overrides, asOf: asOfIso, timeZone };
+    const input = { races: modelRaces, workouts, overrides, asOf: asOfIso, timeZone };
     if (v11Enabled) return hybridV11 ? estimateRaceDayForecast(input, { raceDate: targetDate, plan, hybrid: hybridV11, official: current, hrEnhanced, vo2Entries, streamSummaries, vo2Load, streamLoad, hybridV1: hybrid, strictMaximalOnly }) : null;
     return hybrid ? estimateRaceDayForecast(input, { raceDate: targetDate, plan, hybrid, official: current, hrEnhanced, vo2Entries: props.vo2Entries }) : null;
-  }, [forecastEnabled, v11Enabled, strictMaximalOnly, hybridV11, hybrid, planReady, races, workouts, overrides, asOfIso, timeZone, targetDate, plan, current, hrEnhanced, vo2Entries, streamSummaries, vo2Load, streamLoad, props.vo2Entries]);
+  }, [forecastEnabled, v11Enabled, strictMaximalOnly, hybridV11, hybrid, planReady, modelRaces, workouts, overrides, asOfIso, timeZone, targetDate, plan, current, hrEnhanced, vo2Entries, streamSummaries, vo2Load, streamLoad, props.vo2Entries]);
   const benchmark = performance?.latestBenchmark ?? null;
   const displayedAnchor = current?.historicalAnchor ?? benchmark;
   const lifecycle = current ? anchorLifecycle(current) : null;
@@ -404,6 +410,7 @@ export function RacePerformancePanel(props: RacePerformancePanelProps) {
             <div className="space-y-1"><h4 className="font-semibold text-textPrimary">Experimental methodology</h4>
               <p>Unvalidated training adjustment. Finish time rounds to the nearest minute; pace derives from that time and rounds to five seconds per mile. The adjustment is applied before rounding the finish time. No confidence interval is supported. This estimate has not been validated for your individual accuracy.</p>
             </div>
+            {assumedRaces > 0 && <p className="text-xs" data-testid="confirmed-effort-assumption">Confirmed race efforts are treated as maximal for prediction purposes.</p>}
             <details><summary className="cursor-pointer py-2 font-semibold text-primary rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">Model assumptions</summary><ul className="mt-2 space-y-1">{current.assumptions.map(a => <li key={a}>{a}</li>)}</ul></details>
             {hrEnhanced && <div className="space-y-2" data-testid="hr-enhanced-methodology"><h4 className="font-semibold text-textPrimary">HR-enhanced estimate (experimental)</h4>
               <HrEnhancedEstimateRow estimate={hrEnhanced} detailed /></div>}
