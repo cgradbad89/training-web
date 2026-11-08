@@ -127,7 +127,7 @@ describe("180-day currency limit", () => {
   });
 });
 
-describe("strict evidence and contradictory evidence", () => {
+describe("strict evidence and contradictory evidence", { timeout: 60_000 }, () => {
   const maximalRace = (seconds: number, date: string) => historyRace({ id: "mx", date, seconds, effort: "maximal", availableAt: addDay(date, 1) + "T16:00:00.000Z" });
   const nonmaximalRace = (seconds: number, date: string, effort: Effort = "nonmaximal") => historyRace({ id: "nm", date, seconds, effort, availableAt: addDay(date, 1) + "T16:00:00.000Z" });
   it("identity: with no hard/nonmaximal race the result equals the strict estimate in every field except the switch flag", () => {

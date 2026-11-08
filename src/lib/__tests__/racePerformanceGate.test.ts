@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { isExperimentalCurrentEstimateEnabled, isRacePerformanceDisplayEnabled, isRaceConfirmationEnabled, isRacePerformanceResearchEnabled } from "../racePerformanceGate";
+import { isExperimentalCurrentEstimateEnabled, isOwnerRaceConfirmationProductionEnabled, isRacePerformanceDisplayEnabled, isRaceConfirmationEnabled, isRacePerformanceResearchEnabled } from "../racePerformanceGate";
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -77,5 +77,42 @@ describe("experimental hybrid estimate and race-day forecast gates (independent 
     expect(g.isExperimentalHybridEstimateEnabled()).toBe(false); expect(g.isExperimentalRaceDayForecastEnabled()).toBe(false);
     vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "production");
     expect(g.isRaceConfirmationEnabled()).toBe(false); expect(g.isRacePerformanceResearchEnabled()).toBe(false);
+  });
+});
+
+describe("temporary owner-only Production confirmation gate", () => {
+  it("is off by default in Production, whatever the preview opt-in says", () => {
+    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "production");
+    for (const preview of [undefined, "true"]) {
+      vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", preview);
+      expect(isOwnerRaceConfirmationProductionEnabled()).toBe(false);
+      expect(isRaceConfirmationEnabled()).toBe(false);
+    }
+  });
+  it.each(["false", "1", "TRUE", "yes", ""])("only the exact string 'true' enables it (%s)", flag => {
+    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "production");
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_OWNER_RACE_CONFIRMATION", flag);
+    expect(isRaceConfirmationEnabled()).toBe(false);
+  });
+  it("enables ONLY the confirmation editor in Production, nothing else", () => {
+    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "production");
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_OWNER_RACE_CONFIRMATION", "true");
+    expect(isRaceConfirmationEnabled()).toBe(true);
+    expect(isRacePerformanceResearchEnabled()).toBe(false);
+  });
+  it("is inert outside Production (the variable alone grants nothing in a preview build)", () => {
+    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "preview");
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", "false");
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_OWNER_RACE_CONFIRMATION", "true");
+    expect(isOwnerRaceConfirmationProductionEnabled()).toBe(false);
+    expect(isRaceConfirmationEnabled()).toBe(false);
+  });
+  it("does not affect the demonstrated-race evidence policy, which has its own switch", async () => {
+    const { isDemonstratedRaceEvidenceEnabled } = await import("../racePerformanceGate");
+    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "production");
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_OWNER_RACE_CONFIRMATION", "true");
+    expect(isDemonstratedRaceEvidenceEnabled()).toBe(true);
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_OWNER_RACE_CONFIRMATION", "false");
+    expect(isDemonstratedRaceEvidenceEnabled()).toBe(true);
   });
 });
