@@ -146,7 +146,7 @@ describe("panel states for hybrid v1.1", () => {
     expect(text("race-day-forecast-summary")).toMatch(/provisional · experimental/);
     expect(container.textContent).toMatch(/experimental-raceday-forecast-v2/);
     expect(text("hybrid-v11-evidence-counts")).toMatch(/Evidence quality/);
-    expect(text("hybrid-v11-vs-v1")).toMatch(/Previous hybrid v1 \(kept for comparison\)/);
+    expect(q("hybrid-v11-vs-v1")).toBeNull();
   });
   it("race-dependent: says so on the primary card when an aging race carries the estimate", () => {
     panelOnly({ raceDate: OLD });
@@ -186,11 +186,13 @@ describe("panel states for hybrid v1.1", () => {
 });
 
 describe("rollback and gating", () => {
-  it("DISABLE_HYBRID_V11 restores the unchanged v1 display and the v1 forecast, independently of everything else", () => {
+  it("DISABLE_HYBRID_V11 keeps v1 in advanced comparisons and restores the v1 forecast", () => {
     vi.stubEnv("NEXT_PUBLIC_DISABLE_HYBRID_V11", "true");
     expect(isExperimentalHybridV11Enabled()).toBe(false); expect(isPhysiologyHydrationEnabled()).toBe(false);
     panelOnly({ raceDate: OLD, strong: improved });
-    expect(q("hybrid-v11-estimate")).toBeNull(); expect(q("hybrid-estimate")).toBeTruthy(); expect(q("estimate-values")).toBeTruthy();
+    expect(q("hybrid-v11-estimate")).toBeNull(); expect(q("hybrid-estimate")).toBeNull(); expect(q("estimate-values")).toBeTruthy();
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="view-estimate-details"]')!.click());
+    expect(document.querySelector('[data-testid="additional-model-comparisons"] [data-testid="hybrid-estimate"]')).toBeTruthy();
     expect(container.textContent).toMatch(/experimental-raceday-forecast-v1/); expect(container.textContent).not.toMatch(/experimental-raceday-forecast-v2/);
   });
   it("DISABLE_HYBRID_ESTIMATE removes both hybrids; DISABLE_PHYSIOLOGY_HYDRATION removes only the extra reads", () => {

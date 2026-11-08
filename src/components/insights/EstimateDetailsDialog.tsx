@@ -42,8 +42,12 @@ export function InsightsDialog({ title, testId, onClose, returnFocusRef, dismiss
       }
       if (event.key !== "Tab" || !dialogRef.current) return;
       const focusable = [...dialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(element => {
-        const collapsed = element.closest("details:not([open])");
-        return !element.closest("[hidden], [inert]") && (!collapsed || collapsed.querySelector("summary")?.contains(element));
+        if (element.closest("[hidden], [inert]")) return false;
+        // An inner summary can itself be hidden by an outer collapsed comparison.
+        for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+          if (ancestor.matches("details:not([open])") && !ancestor.querySelector(":scope > summary")?.contains(element)) return false;
+        }
+        return true;
       });
       if (!focusable.length) { event.preventDefault(); return; }
       const first = focusable[0], last = focusable[focusable.length - 1];

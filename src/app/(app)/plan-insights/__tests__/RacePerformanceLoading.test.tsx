@@ -124,7 +124,7 @@ describe("Production Race Performance data lifecycle", () => {
       expect(estimate()).toBeNull();
       expect(text()).not.toContain("Performance by Run Type");
       expect(text()).not.toContain("Recent Trends");
-      expect(section("Current Performance")?.textContent).toContain("could not be loaded");
+      expect(section("Current Half-Marathon Performance")?.textContent).toContain("could not be loaded");
       expect(section("Historical Performance Timeline")?.textContent).not.toContain("No past race results");
       if (source === "races") expect(section("Training Progress")?.textContent).toContain("Recent 4 weeks");
       else expect(section("Training Progress")?.textContent).not.toContain("Recent 4 weeks0.0");
@@ -162,7 +162,7 @@ describe("Production Race Performance data lifecycle", () => {
     h.races.mockResolvedValue([{ ...input.races[0], id: "replacement-race", name: "Replacement race", isActive: true }]);
     await act(async () => appData.refreshRaces());
     expect(container.querySelector<HTMLSelectElement>("#race-picker")?.value).toBe("replacement-race");
-    expect(section("Race-Day Outlook")?.textContent).toContain("Replacement race");
+    expect(section("Race-Day Forecast")?.textContent).toContain("Replacement race");
     expect(estimate()).toBeTruthy();
   });
 
