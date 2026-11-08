@@ -44,6 +44,14 @@ export interface HealthWorkout {
    *  complete). Display-hint only — a partial route still renders its points;
    *  route availability is NEVER gated on this. */
   routeComplete?: boolean;
+  /** iOS-written number of GPS route documents for this workout (read-only on
+   *  the web). The freshness reference for every route-derived cache: a cache
+   *  computed from fewer points than this is stale. Absent on legacy docs. */
+  routePointCount?: number;
+  /** Web-written: the number of route points the parent-doc route caches
+   *  (zoneBreakdown, GAP KPI, simplifiedPath) were computed from. Absent on
+   *  caches written before the point-count contract. */
+  routeCacheBasisPointCount?: number;
   /** True when iOS wrote a per-sample HR stream subcollection (hrStream) for
    *  this workout. Drives the streamed-load path for non-route workouts.
    *  Absent/false ⇒ no stream (fall back to avg HR). */

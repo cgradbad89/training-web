@@ -35,6 +35,37 @@ beforeEach(() => {
 });
 afterEach(() => { clearRouteCache(); vi.useRealTimers(); });
 
+describe("stale in-memory route (iOS still uploading when it was cached)", () => {
+  const route = (n: number): RoutePoint[] =>
+    Array.from({ length: n }, (_, i) => ({ index: i, lat: 38, lng: -77, altitude: 0, timestamp: "", speed: null, hr: null }));
+
+  it("refetches once when the cached copy has fewer points than expected", async () => {
+    h.fetch.mockResolvedValueOnce(route(400)).mockResolvedValueOnce(route(5411));
+    expect((await getRoutePoints("A", "X")).length).toBe(400);
+    expect((await getRoutePoints("A", "X", { expectedPointCount: 5411 })).length).toBe(5411);
+    // The fresh, complete copy is now cached and reused.
+    expect((await getRoutePoints("A", "X", { expectedPointCount: 5411 })).length).toBe(5411);
+    expect(h.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps a complete (or larger) cached copy and ignores an unknown count", async () => {
+    h.fetch.mockResolvedValueOnce(route(5411));
+    await getRoutePoints("A", "X");
+    await getRoutePoints("A", "X", { expectedPointCount: 5411 });
+    await getRoutePoints("A", "X", { expectedPointCount: 100 });
+    await getRoutePoints("A", "X", { expectedPointCount: null });
+    expect(h.fetch).toHaveBeenCalledOnce();
+  });
+
+  it("does not loop when a still-uploading route is shorter than expected", async () => {
+    h.fetch.mockResolvedValue(route(400));
+    await getRoutePoints("A", "X", { expectedPointCount: 5411 });
+    await getRoutePoints("A", "X", { expectedPointCount: 5411 });
+    // One refetch per request while the upload is genuinely incomplete — never an unbounded loop within a call.
+    expect(h.fetch).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("GPS memory identity and session ownership", () => {
   it("reuses resolved GPS for the same UID/workout", async () => {
     h.fetch.mockResolvedValue(points(38));

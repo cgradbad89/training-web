@@ -21,11 +21,23 @@
  *    cached has an empty/short array → treated as incomplete)
  *  - mileSplits per-mile GAP (Mile Splits table)          — Phase 1
  *
+ * Point-count freshness (routeCacheFreshness.ts): when the parent reports an
+ * iOS `routePointCount`, a cache computed from FEWER points is stale and forces
+ * the route read, so a route that grew after the cache was written is recomputed
+ * even though the workout's distance never changed. The overlay compares its own
+ * `sourcePointCount`; zones/GAP KPI/map path compare `routeCacheBasisPointCount`
+ * (or, for unstamped legacy docs, the zone coverage of the workout's duration).
+ *
  * zoneBreakdown is settings-dependent, so it is only "fresh" when the maxHR and
  * threshold pace it was computed against still match the current values.
  */
 
 import { type HealthWorkout } from "@/types/healthWorkout";
+import {
+  basisBelowExpected,
+  expectedRoutePointCount,
+  parentRouteCachesStale,
+} from "@/utils/routeCacheFreshness";
 
 export interface RouteCacheGateOptions {
   /** Current resolved maxHR (must match the cached zone breakdown's basis). */
@@ -53,12 +65,20 @@ export function routeCachesComplete(
     | "zoneBreakdown"
     | "simplifiedPath"
     | "overlayChartCache"
-  >,
+  > &
+    Partial<
+      Pick<
+        HealthWorkout,
+        "routePointCount" | "routeCacheBasisPointCount" | "durationSeconds"
+      >
+    >,
   opts: RouteCacheGateOptions
 ): boolean {
+  const expectedPoints = expectedRoutePointCount(w);
   const overlay = w.overlayChartCache;
   const overlayOk =
     overlay !== undefined &&
+    !basisBelowExpected(overlay.sourcePointCount, expectedPoints) &&
     Array.isArray(overlay.gapSecPerMile) &&
     overlay.gapSecPerMile.length > 0 &&
     overlay.gapSecPerMile.length === overlay.distancesMiles.length;
@@ -81,5 +101,12 @@ export function routeCachesComplete(
   const pathOk =
     w.simplifiedPath !== undefined && w.simplifiedPath.length >= 2;
 
-  return overlayOk && zoneOk && gapKpiOk && pathOk && opts.splitsHaveGap;
+  return (
+    overlayOk &&
+    zoneOk &&
+    gapKpiOk &&
+    pathOk &&
+    opts.splitsHaveGap &&
+    !parentRouteCachesStale(w)
+  );
 }

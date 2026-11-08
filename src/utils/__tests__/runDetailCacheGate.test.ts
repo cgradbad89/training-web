@@ -168,3 +168,43 @@ describe("routeCachesComplete", () => {
     ).toBe(true);
   });
 });
+
+describe("routeCachesComplete — route point-count freshness", () => {
+  const parent = (n = 5411) => ({ routePointCount: n, durationSeconds: 5413 });
+
+  it("ignores freshness when the parent reports no point count (legacy)", () => {
+    expect(routeCachesComplete({ ...complete(), durationSeconds: 5413 }, OPTS)).toBe(true);
+  });
+
+  it("is false when the overlay was computed from fewer points than the parent has", () => {
+    // overlay() records sourcePointCount 1000.
+    expect(routeCachesComplete({ ...complete(), ...parent(5411) }, OPTS)).toBe(false);
+  });
+
+  it("is true when overlay and the stamped parent basis both meet the count", () => {
+    const w = {
+      ...complete(),
+      ...parent(1000),
+      routeCacheBasisPointCount: 1000,
+    };
+    expect(routeCachesComplete(w, OPTS)).toBe(true);
+  });
+
+  it("is false when the stamped parent basis is below the count (400 of 1000)", () => {
+    const w = { ...complete(), ...parent(1000), routeCacheBasisPointCount: 400 };
+    expect(routeCachesComplete(w, OPTS)).toBe(false);
+  });
+
+  it("is false for unstamped zones covering a sliver of the workout (Nov 7 shape)", () => {
+    const w = {
+      ...complete(),
+      ...parent(1000),
+      zoneBreakdown: {
+        ...zones(),
+        hrZones: [{ zone: 3, label: "z", seconds: 391, pct: 100 }] as never,
+        paceZones: [{ zone: 3, label: "z", secondsInZone: 399, percent: 100 }] as never,
+      },
+    };
+    expect(routeCachesComplete(w, OPTS)).toBe(false);
+  });
+});

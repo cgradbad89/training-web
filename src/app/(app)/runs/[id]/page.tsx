@@ -75,7 +75,17 @@ import {
   distanceBucket,
   driftLevel,
 } from "@/utils/metrics";
-import { computeMileSplits, type MileSplit } from "@/utils/mileSplits";
+import {
+  computeMileSplits,
+  MIN_ROUTE_COVERAGE,
+  routeDistanceCoverage,
+  type MileSplit,
+} from "@/utils/mileSplits";
+import {
+  expectedRoutePointCount,
+  parentRouteCachesStale,
+  routeReadIncomplete,
+} from "@/utils/routeCacheFreshness";
 import {
   computeRunGap,
   selectGapDisplay,
@@ -391,12 +401,16 @@ export default function RunDetailPage() {
     if (mileSplitDocs && displayWorkoutForSplits) {
       const cached = cachedGapPerMile(
         mileSplitDocs,
-        displayWorkoutForSplits.distanceMiles
+        displayWorkoutForSplits.distanceMiles,
+        {
+          routePointCount: workout?.routePointCount,
+          durationSeconds: workout?.durationSeconds,
+        }
       );
       if (cached) return cached;
     }
     return runGap.perMileGapSecPerMile;
-  }, [mileSplitDocs, displayWorkoutForSplits, runGap]);
+  }, [mileSplitDocs, displayWorkoutForSplits, runGap, workout]);
 
   // NET elevation (ft) for the elevation KPI's secondary line. Prefer the live
   // GAP computation (Total cumulative ascent and Net stay consistent); on the
@@ -510,8 +524,17 @@ export default function RunDetailPage() {
       // from the route regardless of what is cached.
       const basisOverride =
         o?.distanceMilesOverride != null || o?.durationSecondsOverride != null;
+      // Point-count freshness (routeCacheFreshness.ts): the parent's iOS-written
+      // routePointCount says how many route documents exist. A cache computed
+      // from fewer is stale even though the distance basis still matches.
+      const expectedPoints = expectedRoutePointCount(w);
+      const cacheFreshness = {
+        routePointCount: expectedPoints,
+        durationSeconds: w.durationSeconds,
+      };
       const splitsHaveGap =
-        splits != null && cachedGapPerMile(splits, authoritativeMiles) != null;
+        splits != null &&
+        cachedGapPerMile(splits, authoritativeMiles, cacheFreshness) != null;
       const routeIsComplete = w.routeComplete !== false;
       // Cache-integrity decision (missing / stale version / partial-now-complete / invalid / truncated-looking records, with bounded
       // retries), and never twice in one session against the same unchanged record.
@@ -538,7 +561,11 @@ export default function RunDetailPage() {
 
       if (!needsRoute) {
         if (splits) {
-          const cached = splitsFromCachedDocs(splits, authoritativeMiles);
+          const cached = splitsFromCachedDocs(
+            splits,
+            authoritativeMiles,
+            cacheFreshness
+          );
           if (cached) {
             setCachedSplits({ splits: cached, basisMiles: authoritativeMiles });
           }
@@ -555,7 +582,11 @@ export default function RunDetailPage() {
       let points: RoutePoint[] | null = null;
       try {
         const wasCached = isRouteCached(uid, workoutId);
-        points = await getRoutePoints(uid, workoutId);
+        // A copy cached in memory while iOS was still uploading holds fewer
+        // points than the parent reports; the cache drops it and refetches.
+        points = await getRoutePoints(uid, workoutId, {
+          expectedPointCount: expectedPoints,
+        });
         if (!isCurrent()) return;
         // A route cached in memory while it was still uploading would otherwise be reused for the rest of the session: when a
         // best-effort recovery is needed and the cached route is far shorter than the workout, fetch the current route once.
@@ -580,7 +611,11 @@ export default function RunDetailPage() {
 
       // Cached splits validation (distance/pace/HR) — unchanged.
       if (splits && isRoutePresent(points.length)) {
-        const cached = splitsFromCachedDocs(splits, authoritativeMiles);
+        const cached = splitsFromCachedDocs(
+          splits,
+          authoritativeMiles,
+          cacheFreshness
+        );
         if (cached) {
           setCachedSplits({ splits: cached, basisMiles: authoritativeMiles });
         }
@@ -651,7 +686,15 @@ export default function RunDetailPage() {
         //    values) and reused for the KPI, the overlay per-point series, and
         //    (via the mile-split cache effect) the per-mile column. Skipped for
         //    a still-syncing partial route (routeComplete === false).
-        if (w.routeComplete !== false) {
+        // Also skipped when the read holds fewer points than the parent reports
+        // (still uploading / truncated) or covers only a fraction of the run's
+        // distance: nothing computed from a partial route may be persisted as a
+        // cache — it would outlive the upload (distance never changes).
+        const routeCoverage = routeDistanceCoverage(points, w.distanceMiles);
+        const routeTrustworthy =
+          !routeReadIncomplete(points.length, expectedPoints) &&
+          (routeCoverage == null || routeCoverage >= MIN_ROUTE_COVERAGE);
+        if (w.routeComplete !== false && routeTrustworthy) {
           const rawGap = computeRunGap(
             points,
             w.distanceMiles,
@@ -681,10 +724,16 @@ export default function RunDetailPage() {
           // this branch never runs then anyway). gapNetRiseM may be null — a
           // valid cached value (stripUndefined keeps null), distinct from the
           // "never cached" undefined the gate treats as incomplete.
+          // A parent cache computed from fewer route points than now exist
+          // forces zones, GAP KPI and map path to be recomputed TOGETHER, so the
+          // basis stamp below is true of all three.
+          const parentStale = parentRouteCachesStale(w);
           const gapKpiCacheMissing =
+            parentStale ||
             w.gapSecPerMile === undefined ||
             w.gapNetRiseM === undefined ||
             w.gapAggregateGradeFlat === undefined;
+          let gapKpiRecomputed = false;
           if (
             gapKpiCacheMissing &&
             !basisOverride &&
@@ -693,10 +742,12 @@ export default function RunDetailPage() {
             updates.gapSecPerMile = rawGap.runGapSecPerMile;
             updates.gapNetRiseM = rawGap.netRiseM;
             updates.gapAggregateGradeFlat = rawGap.aggregateGradeFlat;
+            gapKpiRecomputed = true;
           }
 
           const zb = w.zoneBreakdown;
           const zoneStale =
+            parentStale ||
             zb === undefined ||
             zb.maxHr !== maxHr ||
             zb.thresholdPaceSecPerMile !== thresholdPace;
@@ -708,11 +759,18 @@ export default function RunDetailPage() {
             );
           }
 
-          if (w.simplifiedPath === undefined) {
+          const pathRecomputed = parentStale || w.simplifiedPath === undefined;
+          if (pathRecomputed) {
             updates.simplifiedPath = simplifyPolyline(
               points,
               SIMPLIFY_TOLERANCE_METERS
             );
+          }
+
+          // Stamp the basis only when every parent route cache was computed from
+          // THIS read; a partially-refreshed set must not claim freshness.
+          if (zoneStale && gapKpiRecomputed && pathRecomputed) {
+            updates.routeCacheBasisPointCount = points.length;
           }
 
           if (Object.keys(updates).length > 0) {
@@ -871,9 +929,29 @@ export default function RunDetailPage() {
     const basisMiles = displayWorkoutForSplits.distanceMiles;
     const splitsCached =
       cachedSplits && Math.abs(cachedSplits.basisMiles - basisMiles) <= 0.005;
-    const gapCached = cachedGapPerMile(mileSplitDocs, basisMiles) != null;
+    const gapCached =
+      cachedGapPerMile(mileSplitDocs, basisMiles, {
+        routePointCount: workout.routePointCount,
+        durationSeconds: workout.durationSeconds,
+      }) != null;
     if (splitsCached && gapCached) {
       return; // fully cached — nothing new to persist
+    }
+    // Never persist splits computed from a partial route: fewer points than the
+    // parent reports, or a route spanning only a fraction of the run. Distance
+    // never changes as iOS finishes uploading, so such a cache would never
+    // refresh.
+    if (routePoints.length >= 2) {
+      if (
+        routeReadIncomplete(
+          routePoints.length,
+          expectedRoutePointCount(workout)
+        )
+      ) {
+        return;
+      }
+      const coverage = routeDistanceCoverage(routePoints, basisMiles);
+      if (coverage != null && coverage < MIN_ROUTE_COVERAGE) return;
     }
     // Need a real GAP series to persist when it isn't cached yet.
     if (!gapCached && routePoints.length < 2) return;
@@ -883,7 +961,13 @@ export default function RunDetailPage() {
     saveMileSplitCache(
       uid,
       workoutId,
-      mileSplitCacheWrites(mileSplits, gapPerMile, mileSplitDocs, basisMiles)
+      mileSplitCacheWrites(
+        mileSplits,
+        gapPerMile,
+        mileSplitDocs,
+        basisMiles,
+        routePoints.length >= 2 ? routePoints.length : undefined
+      )
     ).catch(console.error);
   }, [
     uid,

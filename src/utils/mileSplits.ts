@@ -55,6 +55,46 @@ export function haversineMeters(
   return haversineMi(lat1, lng1, lat2, lng2) * METERS_PER_MILE;
 }
 
+// ─── Route coverage ───────────────────────────────────────────────────────────
+
+/**
+ * Smallest raw-route / authoritative-distance ratio at which the route is
+ * trusted to span the run. Real GPS lands within a few percent of the watch's
+ * distance; a route holding only part of the run (an upload still in progress,
+ * or a truncated copy) is far below this. Below it the distance axis is NOT
+ * stretched to the authoritative total — doing so turned a 0.66 mi partial route
+ * into 9.18 "miles" and 43 s/mi splits — and nothing derived from the route may
+ * be persisted as a cache.
+ */
+export const MIN_ROUTE_COVERAGE = 0.5;
+
+/**
+ * Raw 2D-haversine route distance ÷ authoritative total, or null when it cannot
+ * be judged (fewer than 2 points, or no positive authoritative total).
+ */
+export function routeDistanceCoverage(
+  points: RoutePoint[],
+  authoritativeTotalMiles: number | undefined | null
+): number | null {
+  if (
+    points.length < 2 ||
+    authoritativeTotalMiles == null ||
+    !(authoritativeTotalMiles > 0)
+  ) {
+    return null;
+  }
+  let raw = 0;
+  for (let i = 1; i < points.length; i++) {
+    raw += haversineMi(
+      points[i - 1].lat,
+      points[i - 1].lng,
+      points[i].lat,
+      points[i].lng
+    );
+  }
+  return raw / authoritativeTotalMiles;
+}
+
 // ─── Moving-time accumulation ─────────────────────────────────────────────────
 
 /**
@@ -161,7 +201,8 @@ export function computeMileSplits(
   const scaleFactor =
     authoritativeTotalMiles != null &&
     authoritativeTotalMiles > 0 &&
-    rawTotalMiles > 0
+    rawTotalMiles > 0 &&
+    rawTotalMiles / authoritativeTotalMiles >= MIN_ROUTE_COVERAGE
       ? authoritativeTotalMiles / rawTotalMiles
       : 1;
   if (scaleFactor !== 1) {

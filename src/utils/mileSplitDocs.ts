@@ -18,6 +18,11 @@
 
 import { type MileSplitDoc } from "@/utils/mileSplitsCache";
 import { type MileSplit } from "@/utils/mileSplits";
+import {
+  basisBelowExpected,
+  expectedRoutePointCount,
+  legacySplitsPlausible,
+} from "@/utils/routeCacheFreshness";
 
 /** Same reliability gate the run-detail page applies to iOS per-mile HR. */
 const MIN_HR_SAMPLE_COUNT = 2;
@@ -32,7 +37,49 @@ interface MergedMileRow {
   gapSecPerMile?: number;
   isPartial?: boolean;
   basisTotalMiles?: number;
+  /** Route points the cached values were computed from (absent = legacy). */
+  basisRoutePointCount?: number;
   avgBpm?: number;
+}
+
+/** What the caller knows about the parent workout, for the point-count
+ *  freshness contract (see routeCacheFreshness.ts). Omitted/unknown ⇒ the
+ *  cache is judged by the distance basis alone, exactly as before. */
+export interface SplitCacheFreshnessOptions {
+  /** The parent's iOS-written route document count. */
+  routePointCount?: number | null;
+  /** The workout's duration, for the legacy-cache plausibility check. */
+  durationSeconds?: number;
+}
+
+/**
+ * True when the cached rows were computed from fewer route points than the
+ * parent now reports. Stamped rows compare their recorded basis; unstamped
+ * (legacy) rows are checked for plausibility, because their route extent was
+ * never recorded.
+ */
+function rowsStaleForRoute(
+  rows: MergedMileRow[],
+  opts: SplitCacheFreshnessOptions | undefined
+): boolean {
+  const expected = expectedRoutePointCount(opts);
+  if (expected == null) return false;
+  let anyUnstamped = false;
+  for (const r of rows) {
+    if (r.basisRoutePointCount === undefined) {
+      anyUnstamped = true;
+    } else if (basisBelowExpected(r.basisRoutePointCount, expected)) {
+      return true;
+    }
+  }
+  if (!anyUnstamped) return false;
+  const splits = rows
+    .filter((r) => r.paceSecPerMile != null && r.distanceMiles != null)
+    .map((r) => ({
+      paceSecPerMile: r.paceSecPerMile as number,
+      segmentMiles: r.distanceMiles as number,
+    }));
+  return !legacySplitsPlausible(splits, opts?.durationSeconds);
 }
 
 function asFiniteNumber(v: unknown): number | undefined {
@@ -51,6 +98,8 @@ function mergeByMile(docs: MileSplitDoc[]): Map<number, MergedMileRow> {
     const pace = asFiniteNumber(d.paceSecPerMile);
     const gap = asFiniteNumber(d.gapSecPerMile);
     const basis = asFiniteNumber(d.basisTotalMiles);
+    const pointBasis = asFiniteNumber(d.basisRoutePointCount);
+    if (pointBasis != null) row.basisRoutePointCount = pointBasis;
     if (dist != null) row.distanceMiles = dist;
     if (pace != null) row.paceSecPerMile = pace;
     if (gap != null) row.gapSecPerMile = gap;
@@ -81,7 +130,8 @@ function mergeByMile(docs: MileSplitDoc[]): Map<number, MergedMileRow> {
  */
 export function splitsFromCachedDocs(
   docs: MileSplitDoc[],
-  currentTotalMiles: number
+  currentTotalMiles: number,
+  freshness?: SplitCacheFreshnessOptions
 ): MileSplit[] | null {
   const byMile = mergeByMile(docs);
   if (byMile.size === 0) return null;
@@ -113,6 +163,10 @@ export function splitsFromCachedDocs(
     });
   }
 
+  // Computed from fewer route points than the parent now has (or an
+  // implausible legacy cache): a cache miss, so the caller recomputes.
+  if (rowsStaleForRoute([...byMile.values()], freshness)) return null;
+
   return splits;
 }
 
@@ -129,7 +183,8 @@ export function splitsFromCachedDocs(
  */
 export function cachedGapPerMile(
   docs: MileSplitDoc[],
-  currentTotalMiles: number
+  currentTotalMiles: number,
+  freshness?: SplitCacheFreshnessOptions
 ): number[] | null {
   const byMile = mergeByMile(docs);
   if (byMile.size === 0) return null;
@@ -153,6 +208,7 @@ export function cachedGapPerMile(
     }
     gaps.push(row.gapSecPerMile);
   }
+  if (rowsStaleForRoute([...byMile.values()], freshness)) return null;
   return gaps;
 }
 
@@ -165,6 +221,8 @@ export interface MileSplitCacheWrite {
     gapSecPerMile: number;
     isPartial: boolean;
     basisTotalMiles: number;
+    /** Route points the values were computed from (stamped only when known). */
+    basisRoutePointCount?: number;
   };
 }
 
@@ -184,7 +242,8 @@ export function mileSplitCacheWrites(
   splits: MileSplit[],
   gapPerMile: number[],
   existingDocs: MileSplitDoc[],
-  authoritativeTotalMiles: number
+  authoritativeTotalMiles: number,
+  basisRoutePointCount?: number
 ): MileSplitCacheWrite[] {
   if (splits.length === 0) return [];
 
@@ -214,6 +273,11 @@ export function mileSplitCacheWrites(
           gapSecPerMile: Number.isFinite(g) && g >= 0 ? g : 0,
           isPartial: s.isPartial,
           basisTotalMiles: authoritativeTotalMiles,
+          ...(basisRoutePointCount != null &&
+          Number.isSafeInteger(basisRoutePointCount) &&
+          basisRoutePointCount > 0
+            ? { basisRoutePointCount }
+            : {}),
         },
       };
     });
