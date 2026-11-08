@@ -123,11 +123,13 @@ describe("shared Insights owner and presentation", () => {
     const fixture = currentFixture(); vi.setSystemTime(new Date(fixture.asOf));
     h.app = { ...h.app, workouts: [...fixture.workouts], overrides: fixture.overrides ?? {}, races: [...fixture.races] };
     await render("actual-plan");
-    const estimate = container.querySelector('[data-testid="experimental-current-estimate"]')?.textContent;
+    // Only the official estimator is under test. Independent physiology hydration
+    // may finish between these assertions and legitimately update hybrid disclosures.
+    const estimate = container.querySelector('[data-testid="official-v2-estimate"]')?.textContent;
     expect(estimate).toBeTruthy(); const calls = h.estimator.mock.calls.length;
     await act(async () => latest.receivePublication({ ...saved, revision: 2, snapshotId: "d".repeat(64) }, true));
     expect(h.estimator).toHaveBeenCalledTimes(calls);
-    expect(container.querySelector('[data-testid="experimental-current-estimate"]')?.textContent).toBe(estimate);
+    expect(container.querySelector('[data-testid="official-v2-estimate"]')?.textContent).toBe(estimate);
     expect(container.textContent).toContain("Race-day forecastWithheld");
   });
   it("publishes a successful manual update even after its panel navigates away", async () => {

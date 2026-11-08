@@ -20,7 +20,7 @@ export function RaceDayForecastRow({ forecast: f }: { forecast: RaceDayForecast 
   return (
     <div className="min-w-0 space-y-1.5 rounded-lg border border-border bg-surface p-3" data-testid="race-day-forecast" data-status={f.status}>
       <div className="flex items-start justify-between gap-3">
-        <h4 className="text-sm font-semibold text-textSecondary">Experimental race-day forecast</h4>
+        <h4 className="text-sm font-semibold text-textSecondary">Experimental race-day forecast · {f.version === "experimental-raceday-forecast-v2" ? "Forecast v2" : "Forecast v1"}</h4>
         <span className="shrink-0 rounded-md bg-card px-2 py-0.5 text-xs font-medium text-textSecondary">{f.status === "provisional" ? "Provisional" : "Withheld"}</span>
       </div>
       {f.status === "provisional" && f.minutes !== null && f.scenarioRange ? <>

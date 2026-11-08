@@ -81,9 +81,9 @@ describe("Plan Insights demand-gated fast-finish hydration", () => {
     vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", "true");
     vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", deployment);
     await mount();
-    expect(container.textContent).toContain("Current Performance");
+    expect(container.textContent).toContain("Current Half-Marathon Performance");
     expect(container.textContent).toContain("Training Progress");
-    expect(container.textContent).toContain("Race-Day Outlook");
+    expect(container.textContent).toContain("Race-Day Forecast");
     expect(container.textContent).toContain("Historical Performance Timeline");
     expect(container.textContent).not.toContain("Race Predictions");
     expect(container.textContent).not.toContain("Pace Readiness");
@@ -98,7 +98,7 @@ describe("Plan Insights demand-gated fast-finish hydration", () => {
     vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "production");
     await mount();
     expect(container.textContent).not.toContain("Race Predictions");
-    expect(container.textContent).toContain("Current Performance");
+    expect(container.textContent).toContain("Current Half-Marathon Performance");
     expect(h.hydrate).not.toHaveBeenCalled();
   });
   it("renders stored race evidence, canonical completed training and the goal without numerical forecasts in Production", async () => {
@@ -137,7 +137,7 @@ describe("Plan Insights demand-gated fast-finish hydration", () => {
     expect(text).toContain("PNC Half Marathon"); expect(text).toContain("Apr 26, 2026");
     expect(text).toContain("Recorded duration 2:15:30; elapsed 2:25:59");
     expect(text).toContain("DC Half Marathon"); expect(text).toContain("2:11:11");
-    expect(text).toContain("Recorded, unverified"); expect(text).toContain("Current half-marathon estimateExperimentalInsufficient evidence");
+    expect(text).toContain("Recorded, unverified"); expect(text).toContain("Official v2ExperimentalCurrent baseline estimateInsufficient evidence");
     expect(text).toContain("Race-day forecastWithheld"); expect(text).toContain("Rock and Roll Half Marathon");
     expect(text).toContain("Recent 4 weeks11.0"); expect(text).toContain("Completed sessions · 4 weeks2");
     expect(text).toContain("Longest recent run6.0 mi"); expect(text).toContain("Plan adherence: 1 of 1");

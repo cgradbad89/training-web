@@ -38,13 +38,20 @@ function panel(s: Scenario) {
   act(() => root.render(<RacePerformancePanel races={[...s.input.races]} workouts={[...s.input.workouts]} overrides={{}} plan={null}
     selectedRace={null} sources={sources} asOf={new Date(s.input.asOf)} timeZone={s.input.timeZone} />));
 }
-const row = () => container.querySelector('[data-testid="hr-enhanced-estimate"]');
+const row = () => {
+  if (!document.querySelector('[data-testid="estimate-details-dialog"]')) {
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="view-estimate-details"]')!.click());
+  }
+  const comparisons = document.querySelector<HTMLDetailsElement>('[data-testid="additional-model-comparisons"]');
+  if (comparisons) act(() => { comparisons.open = true; });
+  return document.querySelector('[data-testid="hr-enhanced-estimate"]');
+};
 beforeEach(() => { container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container); hrBox.current = null; offBox.current = null;
   vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "production"); });
 afterEach(() => { act(() => root.unmount()); container.remove(); vi.unstubAllEnvs(); });
 
 describe("Plan Insights HR-enhanced row", () => {
-  it("shows the official estimate as primary and the experimental estimate beside it, with the same numbers as the estimator", () => {
+  it("keeps the same HR comparison numbers in Estimate Details while official stays primary", () => {
     const s = hrScenario({ recentLevel: 0.92 });
     panel(s);
     const official = estimateCurrentHalfMarathon(s.input), hr = estimateHrEnhancedHalfMarathon(s.input, { official });
@@ -57,8 +64,9 @@ describe("Plan Insights HR-enhanced row", () => {
     expect(row()!.querySelector('[data-testid="hr-enhanced-difference"]')!.textContent).toMatch(/faster than the official estimate/);
     expect(row()!.textContent).toMatch(/improved by roughly/);
     expect(row()!.textContent).toMatch(/not independently validated/i);
-    // The row sits inside the same card, after the official values.
-    expect(card.contains(row())).toBe(true);
+    // The comparison is subordinate to the main current-performance card.
+    expect(card.contains(row())).toBe(false);
+    expect(document.querySelector('[data-testid="additional-model-comparisons"]')!.contains(row())).toBe(true);
   });
 
   it("explains the evidence behind the signal: runs, weeks, windows", () => {
@@ -126,7 +134,7 @@ describe("Plan Insights HR-enhanced row", () => {
 });
 
 describe("Run Detail parity and separation", () => {
-  it("the with-run value equals the Plan Insights HR-enhanced headline; the official tile is untouched", () => {
+  it("the with-run value equals the Plan Insights advanced HR comparison; the official tile is untouched", () => {
     const s = hrScenario({ recentLevel: 0.92 }); publish(s);
     act(() => root.render(<Probe s={s} runId="r3" />));
     const hr = estimateHrEnhancedHalfMarathon(s.input);

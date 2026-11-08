@@ -317,32 +317,34 @@ export function RacePerformancePanel(props: RacePerformancePanelProps) {
 
   return <div className="min-w-0 space-y-6" data-testid="race-performance-experience">
     <FreshnessNotice sources={sources} />
-    <Section title="Current Performance" compact>
+    <Section title="Current Half-Marathon Performance" compact>
       {performance ? <div className="min-w-0 space-y-3" data-testid={currentEnabled ? "experimental-current-estimate" : undefined}>
         {currentEnabled ? <>
-          <div className="flex items-start justify-between gap-3">
-            <h3 className="text-sm font-semibold text-textSecondary">Current half-marathon estimate</h3>
-            <span className="shrink-0 rounded-md bg-surface px-2 py-1 text-xs font-medium text-textSecondary">Experimental</span>
-          </div>
-          {current?.finishMinutes != null ? <>
-            <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 tabular-nums" data-testid="estimate-values">
-              <p className="text-4xl sm:text-5xl font-bold tracking-tight text-textPrimary">~{Math.floor(current.finishMinutes / 60)}:{String(current.finishMinutes % 60).padStart(2, "0")}</p>
-              <p className="text-lg font-semibold text-textSecondary">~{Math.floor(current.paceSecondsPerMile! / 60)}:{String(current.paceSecondsPerMile! % 60).padStart(2, "0")}<span className="text-sm font-normal">/mi</span></p>
+          <div className="min-w-0 space-y-3 rounded-lg border border-border p-3" data-testid="official-v2-estimate">
+            <div className="flex items-start justify-between gap-3">
+              <h3 className="text-sm font-semibold text-textSecondary">Official v2</h3>
+              <span className="shrink-0 rounded-md bg-surface px-2 py-1 text-xs font-medium text-textSecondary">Experimental</span>
             </div>
-            <p className="text-sm text-textSecondary" data-testid="estimate-basis">Based on your {dateLabel(current.anchor!.raceDate)} race ({current.anchor!.finishSeconds != null ? `${formatRaceTime(current.anchor!.finishSeconds)}, ` : ""}{STATUS_LABEL[current.anchor!.status].toLowerCase()}) and completed training{current.adjustmentSeconds !== 0 ? ` · ${adjustmentLabel(current.adjustmentSeconds)} training adjustment` : ""}.</p>
-          </> : <>
-            <p className="font-semibold">Insufficient evidence</p>
-            {current && <p className="text-sm text-textSecondary" data-testid="estimate-unavailable-reason">{current.reason}</p>}
-            {displayedAnchor && <p className="text-sm text-textSecondary" data-testid="estimate-basis">Historical race: {displayedAnchor.finishSeconds != null ? formatRaceTime(displayedAnchor.finishSeconds) : "time unavailable"} · {dateLabel(displayedAnchor.raceDate)} · {STATUS_LABEL[displayedAnchor.status]}</p>}
-          </>}
-          {hrEnhanced && <HrEnhancedEstimateRow estimate={hrEnhanced} />}
-          {v11Enabled ? hybridV11 && <HybridV11EstimateRow estimate={hybridV11} /> : hybrid && <HybridEstimateRow estimate={hybrid} />}
+            <p className="text-xs text-textSecondary">Current baseline estimate</p>
+            {current?.finishMinutes != null ? <>
+              <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 tabular-nums" data-testid="estimate-values">
+                <p className="text-4xl sm:text-5xl font-bold tracking-tight text-textPrimary">~{Math.floor(current.finishMinutes / 60)}:{String(current.finishMinutes % 60).padStart(2, "0")}</p>
+                <p className="text-lg font-semibold text-textSecondary">~{Math.floor(current.paceSecondsPerMile! / 60)}:{String(current.paceSecondsPerMile! % 60).padStart(2, "0")}<span className="text-sm font-normal">/mi</span></p>
+              </div>
+              <p className="text-sm text-textSecondary" data-testid="estimate-basis">Based on your {dateLabel(current.anchor!.raceDate)} race ({current.anchor!.finishSeconds != null ? `${formatRaceTime(current.anchor!.finishSeconds)}, ` : ""}{STATUS_LABEL[current.anchor!.status].toLowerCase()}) and completed training{current.adjustmentSeconds !== 0 ? ` · ${adjustmentLabel(current.adjustmentSeconds)} training adjustment` : ""}.</p>
+            </> : <>
+              <p className="font-semibold">Insufficient evidence</p>
+              {current && <p className="text-sm text-textSecondary" data-testid="estimate-unavailable-reason">{current.reason}</p>}
+              {displayedAnchor && <p className="text-sm text-textSecondary" data-testid="estimate-basis">Historical race: {displayedAnchor.finishSeconds != null ? formatRaceTime(displayedAnchor.finishSeconds) : "time unavailable"} · {dateLabel(displayedAnchor.raceDate)} · {STATUS_LABEL[displayedAnchor.status]}</p>}
+            </>}
+            {lifecycle && <p className="text-sm text-textSecondary" data-testid="anchor-lifecycle">{lifecycle}</p>}
+            <dl className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-textSecondary">
+              <div className="flex flex-wrap gap-x-1"><dt>Calculated as of:</dt><dd>{current ? dateLabel(performanceLocalDate(current.asOf, timeZone)) : "Unavailable"}</dd></div>
+              <div className="flex flex-wrap gap-x-1"><dt>Latest included run:</dt><dd>{current?.dataThrough ? dateLabel(current.dataThrough) : "Unavailable"}</dd></div>
+            </dl>
+          </div>
+          {v11Enabled && hybridV11 && <HybridV11EstimateRow estimate={hybridV11} />}
           {v11Enabled && physiologyLoading && <p role="status" className="text-xs text-textSecondary" data-testid="physiology-loading">Loading VO₂ max and heart-rate evidence; the estimate above uses whole-workout heart rate until it arrives.</p>}
-          {lifecycle && <p className="text-sm text-textSecondary" data-testid="anchor-lifecycle">{lifecycle}</p>}
-          <dl className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-textSecondary">
-            <div className="flex flex-wrap gap-x-1"><dt>Calculated as of:</dt><dd>{current ? dateLabel(performanceLocalDate(current.asOf, timeZone)) : "Unavailable"}</dd></div>
-            <div className="flex flex-wrap gap-x-1"><dt>Latest included run:</dt><dd>{current?.dataThrough ? dateLabel(current.dataThrough) : "Unavailable"}</dd></div>
-          </dl>
         </> : <>
           <h3 className="text-sm font-semibold text-textSecondary">Current capability estimate</h3>
           <p className="text-xl font-bold">Unavailable</p>
@@ -412,14 +414,18 @@ export function RacePerformancePanel(props: RacePerformancePanelProps) {
             </div>
             {assumedRaces > 0 && <p className="text-xs" data-testid="confirmed-effort-assumption">Confirmed race efforts are treated as maximal for prediction purposes.</p>}
             <details><summary className="cursor-pointer py-2 font-semibold text-primary rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">Model assumptions</summary><ul className="mt-2 space-y-1">{current.assumptions.map(a => <li key={a}>{a}</li>)}</ul></details>
-            {hrEnhanced && <div className="space-y-2" data-testid="hr-enhanced-methodology"><h4 className="font-semibold text-textPrimary">HR-enhanced estimate (experimental)</h4>
-              <HrEnhancedEstimateRow estimate={hrEnhanced} detailed /></div>}
-            {v11Enabled ? hybridV11 && <div className="space-y-2" data-testid="hybrid-methodology"><h4 className="font-semibold text-textPrimary">Hybrid Performance Model v1.1 (experimental)</h4>
-              <HybridV11EstimateRow estimate={hybridV11} detailed /></div>
-              : hybrid && <div className="space-y-2" data-testid="hybrid-methodology"><h4 className="font-semibold text-textPrimary">Hybrid Performance Model (experimental)</h4>
-              <HybridEstimateRow estimate={hybrid} detailed /></div>}
+            {v11Enabled && hybridV11 && <div className="space-y-2" data-testid="hybrid-methodology"><h4 className="font-semibold text-textPrimary">Hybrid Performance Model v1.1 (experimental)</h4>
+              <HybridV11EstimateRow estimate={hybridV11} detailed /></div>}
             <p className="text-xs">Model {current.version} · Evidence quality: {current.evidenceQuality.replaceAll("_", " ")} · Calculation cutoff {current.asOf} · {timeZone}</p>
           </div> : <p>{currentEnabled ? "The experimental estimate could not be calculated from the loaded evidence." : "An experimental current estimate is not enabled in this build."}</p>}
+          {(hrEnhanced || hybrid) && <details className="min-w-0 border-t border-border pt-3" data-testid="additional-model-comparisons">
+            <summary className="cursor-pointer py-2 font-semibold text-primary rounded focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">Additional Model Comparisons</summary>
+            <div className="space-y-3 pt-2">
+              <p>Experimental comparisons using the same loaded evidence and calculation cutoff.</p>
+              {hrEnhanced && <div data-testid="hr-enhanced-methodology"><HrEnhancedEstimateRow estimate={hrEnhanced} detailed /></div>}
+              {hybrid && <div data-testid="hybrid-v1-methodology"><h4 className="mb-2 font-semibold text-textPrimary">Legacy Hybrid v1</h4><HybridEstimateRow estimate={hybrid} detailed /></div>}
+            </div>
+          </details>}
           <div className="space-y-2"><h4 className="font-semibold text-textPrimary">How to strengthen the race evidence</h4>
             <p>Confirm the event, date, official distance, finish time, maximal effort and conditions. Reconcile any difference between recorded duration and elapsed time. Existing race links alone do not verify an official result.</p>
             <p>This read-only view displays the supplied records provisionally. No race record is changed by this view.</p>
@@ -474,10 +480,11 @@ export function RacePerformancePanel(props: RacePerformancePanelProps) {
       </> : <SourceUnavailable sources={sources} required={TRAINING_SOURCES} />}
     </Section>
 
-    <Section title="Race-Day Outlook">
+    <Section title="Race-Day Forecast">
       {sources.races.hasLoaded ? <>
       <p className="font-semibold">{targetRace?.name ?? "Rock and Roll Half Marathon"}</p>
       <p className="text-sm text-textSecondary">{dateLabel(targetDate)} · {!Number.isFinite(daysToTargetRace) ? "Date unavailable" : daysToTargetRace >= 0 ? `${daysToTargetRace} days away` : `${Math.abs(daysToTargetRace)} days ago`}{!targetRace ? " · Planned goal; no matching race record selected" : ""}</p>
+      <p className="text-sm text-textSecondary">A future race-date prediction, separate from current half-marathon performance.</p>
       <dl className="grid gap-4 md:grid-cols-3">
         <div><dt className="text-xs text-textSecondary">Owner’s target finish time</dt><dd className="font-semibold">{targetSeconds ? formatRaceTime(targetSeconds) : "Not set"}</dd></div>
         <div><dt className="text-xs text-textSecondary">Historical benchmark</dt><dd className="font-semibold">{benchmark ? `${formatRaceTime(benchmark.finishSeconds)} · ${dateLabel(benchmark.raceDate)} · ${STATUS_LABEL[benchmark.status]}` : "Unavailable"}</dd>{!performanceReady && <SourceUnavailable sources={sources} required={PERFORMANCE_SOURCES} />}</div>

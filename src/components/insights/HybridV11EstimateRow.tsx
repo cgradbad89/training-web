@@ -48,7 +48,7 @@ export function hybridV11Reasons(e: HybridV11Estimate): string[] {
 }
 
 /**
- * Compact row for the experimental hybrid v1.1 estimate, shown BESIDE the official and HR-enhanced estimates.
+ * Compact row for the experimental hybrid v1.1 current estimate, shown beside Official v2.
  * Always labelled experimental and provisional; the official estimate stays the primary prediction. The diagnostics live inside
  * the expandable "How this estimate is built" so the primary card is not cluttered.
  */
@@ -56,7 +56,6 @@ export function HybridV11EstimateRow({ estimate: e, detailed = false }: { estima
   const diff = e.comparison.differenceVsOfficialSeconds;
   const faster = diff !== null && diff < 0;
   const reasons = hybridV11Reasons(e), c = e.combination, inf = e.influence;
-  const v1d = e.comparison.differenceVsHybridV1Seconds;
   return (
     <div className="min-w-0 space-y-1.5 rounded-lg border border-border bg-surface p-3" data-testid="hybrid-v11-estimate" data-status={e.status}>
       <div className="flex items-start justify-between gap-3">
@@ -113,7 +112,6 @@ export function HybridV11EstimateRow({ estimate: e, detailed = false }: { estima
           <div data-testid="hybrid-v11-physiology" className="space-y-1"><p className="font-semibold text-textPrimary">Physiological inputs</p>
             <ul className="list-disc pl-5"><li>{e.inputs.vo2.note}</li><li>{e.inputs.hrStreams.note}</li>
               {e.physiology?.status === "available" && <li>{e.physiology.interpretation.observed[0]}</li>}</ul></div>
-          {e.comparison.hybridV1Seconds !== null && v1d !== null && <p data-testid="hybrid-v11-vs-v1">Previous hybrid v1 (kept for comparison): {hms(e.comparison.hybridV1Seconds)} · v1.1 is {Math.abs(v1d) < 1 ? "the same" : `${formatImpactDelta(Math.abs(v1d))} ${v1d < 0 ? "faster" : "slower"}`}.</p>}
           <p data-testid="hybrid-v11-evidence-counts">Evidence quality: {e.evidenceQuality}. Excluded or expired: {e.qualification.base.expired.length} older than 180 days; ordinary training runs counted but never used as maximal effort: {e.qualification.base.counts.ordinary_training}; sustained segments qualified: {e.qualification.segments.qualified}.</p>
           {e.missing.length > 0 && <div data-testid="hybrid-v11-missing"><p className="font-semibold text-textPrimary">Missing information</p><ul className="list-disc pl-5">{e.missing.map(m => <li key={m}>{m}</li>)}</ul></div>}
           {detailed && <ul className="list-disc space-y-1 pl-5">{e.assumptions.map(a => <li key={a}>{a}</li>)}</ul>}

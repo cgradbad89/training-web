@@ -21,7 +21,7 @@ const PLAN: RunningPlan = { id: "p", name: "Spring HM", startDate: "2026-11-09",
 
 let root: Root, container: HTMLDivElement;
 // These tests cover hybrid v1 (and forecast v1). Hybrid v1.1 is now the displayed hybrid by default, so v1 is exercised through its
-// independent rollback switch — which is also the proof that rollback restores the unchanged v1 display. v1.1 has its own suite.
+// independent rollback switch in advanced comparisons. Rollback calculations/forecast remain intact; v1 never returns to the headline.
 beforeEach(() => { container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container); vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "production"); vi.stubEnv("NEXT_PUBLIC_DISABLE_HYBRID_V11", "true"); });
 afterEach(() => { act(() => root.unmount()); container.remove(); vi.unstubAllEnvs(); });
 
@@ -29,14 +29,19 @@ function mount(o: AthleteOptions = {}, extra: Partial<RacePerformancePanelProps>
   const a = hybridAthlete({ longRunMiles: 8, ...o });
   act(() => root.render(<RacePerformancePanel races={a.races} workouts={a.workouts} overrides={a.overrides} plan={PLAN} selectedRace={null} sources={sources}
     asOf={new Date(a.asOf)} timeZone={a.timeZone} {...extra} />));
+  if (!document.querySelector('[data-testid="estimate-details-dialog"]')) {
+    act(() => container.querySelector<HTMLButtonElement>('[data-testid="view-estimate-details"]')?.click());
+  }
+  const comparisons = document.querySelector<HTMLDetailsElement>('[data-testid="additional-model-comparisons"]');
+  if (comparisons) act(() => { comparisons.open = true; });
   return a;
 }
-const q = (id: string) => container.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+const q = (id: string) => document.querySelector<HTMLElement>(`[data-testid="${id}"]`);
 const official = () => q("estimate-values")?.textContent;
 const strong = [{ date: "2026-10-10", miles: 6, pace: 560, hr: 172 }, { date: "2026-10-24", miles: 6.5, pace: 555, hr: 172 }];
 
 describe("hybrid estimate in Plan Insights", () => {
-  it("shows the hybrid estimate beside the official and HR-enhanced rows, labelled experimental", () => {
+  it("keeps legacy hybrid v1 in advanced comparisons, labelled experimental", () => {
     mount();
     const row = q("hybrid-estimate")!;
     expect(row).toBeTruthy();
@@ -44,7 +49,8 @@ describe("hybrid estimate in Plan Insights", () => {
     expect(row.textContent).toContain("Experimental and not independently validated");
     expect(row.textContent).toMatch(/~\d:\d{2}/); expect(row.textContent).toMatch(/\/mi/);
     expect(q("hybrid-range")?.textContent).toContain("not a statistical interval");
-    expect(q("experimental-current-estimate")!.contains(row)).toBe(true);
+    expect(q("experimental-current-estimate")!.contains(row)).toBe(false);
+    expect(q("additional-model-comparisons")!.contains(row)).toBe(true);
     expect(official()).toMatch(/~2:1\d/); // official v2 value is still shown, unchanged
     expect(q("hybrid-reason")?.textContent).toMatch(/Mainly/);
   });
@@ -91,9 +97,8 @@ describe("hybrid estimate in Plan Insights", () => {
   });
   it("the estimate-details dialog carries the hybrid methodology, families, missing information and assumptions", () => {
     mount();
-    act(() => container.querySelector<HTMLButtonElement>('[data-testid="view-estimate-details"]')!.click());
     const dialog = document.querySelector('[data-testid="estimate-details-dialog"]')!;
-    const method = dialog.querySelector('[data-testid="hybrid-methodology"]')!;
+    const method = dialog.querySelector('[data-testid="hybrid-v1-methodology"]')!;
     expect(method.textContent).toContain("Demonstrated performance"); expect(method.textContent).toContain("Physiological trend");
     expect(method.textContent).toContain("Race history"); expect(method.textContent).toContain("Endurance preparation");
     expect(method.querySelector('[data-testid="hybrid-missing"]')?.textContent).toMatch(/Weather|VO₂|heart-rate streams/);
