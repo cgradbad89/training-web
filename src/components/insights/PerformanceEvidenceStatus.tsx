@@ -1,3 +1,7 @@
+/**
+ * RETIRED FROM NAVIGATION (2026-11): these freshness/"update available" surfaces only served the manual Performance
+ * Analysis workflow and are no longer rendered. Preserved, unmounted, for reversibility.
+ */
 "use client";
 
 import Link from "next/link";

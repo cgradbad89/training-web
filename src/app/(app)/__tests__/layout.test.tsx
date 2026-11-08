@@ -36,8 +36,10 @@ vi.mock("@/components/layout/AuthGuard", () => ({
 vi.mock("@/components/layout/HubBanner", () => ({
   HubBanner: () => <div data-testid="hub-banner" />,
 }));
+// Retired with the manual Performance Analysis workflow: the shell must not mount the legacy provider
+// (it would otherwise keep a dormant saved-analysis owner and freshness computation alive on every route).
 vi.mock("@/contexts/PerformanceEvidenceContext", () => ({
-  PerformanceEvidenceProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  PerformanceEvidenceProvider: () => { throw new Error("The retired PerformanceEvidenceProvider must not be mounted by the app shell"); },
 }));
 vi.mock("@/components/layout/MobileTabBar", () => ({
   MobileTabBar: () => <div data-testid="mobile-tabs" />,

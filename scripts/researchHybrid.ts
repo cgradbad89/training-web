@@ -80,31 +80,39 @@ export function loadFromCache(path: string): HybridLoaded {
     overrides, plans: d.plans as RunningPlan[], vo2: d.vo2, streams: d.streams, truncated: false };
 }
 
-export async function loadLive(saveCache?: string): Promise<HybridLoaded> {
+/** Optional window overrides for historical studies; the defaults reproduce the Phase 3Q–3T bounds exactly. */
+export interface LiveLoadWindow { workoutsFrom?: string; vo2From?: string; workoutLimit?: number; vo2Limit?: number; skipStreams?: boolean }
+export interface LiveReadCounts { workouts: number; races: number; overrides: number; plans: number; healthMetrics: number; hrStreamChunks: number }
+export const lastLiveReads: LiveReadCounts = { workouts: 0, races: 0, overrides: 0, plans: 0, healthMetrics: 0, hrStreamChunks: 0 };
+
+export async function loadLive(saveCache?: string, range: LiveLoadWindow = {}): Promise<HybridLoaded> {
+  const from = range.workoutsFrom ?? FROM, vo2From = range.vo2From ?? VO2_FROM;
+  const workoutLimit = range.workoutLimit ?? LIMITS.workouts, vo2Limit = range.vo2Limit ?? LIMITS.vo2;
   if (!admin.apps.length) admin.initializeApp({ credential: admin.credential.cert(serviceAccount() as admin.ServiceAccount) });
   const db = admin.firestore();
   const probe = await db.collectionGroup("healthWorkouts").select().limit(1).get();
   if (probe.empty) throw new Error("No healthWorkouts found");
   const owner = db.collection("users").doc(probe.docs[0].ref.path.split("/")[1]);
   const [w, r, o, p, m] = await Promise.all([
-    owner.collection("healthWorkouts").where("startDate", ">=", new Date(`${FROM}T00:00:00Z`)).orderBy("startDate", "desc").select(...WORKOUT_FIELDS).limit(LIMITS.workouts + 1).get(),
+    owner.collection("healthWorkouts").where("startDate", ">=", new Date(`${from}T00:00:00Z`)).orderBy("startDate", "desc").select(...WORKOUT_FIELDS).limit(workoutLimit + 1).get(),
     owner.collection("halfMarathonRaces").select(...RACE_FIELDS).limit(LIMITS.races + 1).get(),
     owner.collection("workoutOverrides").limit(LIMITS.overrides + 1).get(),
     owner.collection("plans").limit(LIMITS.plans + 1).get(),
-    owner.collection("healthMetrics").where("date", ">=", VO2_FROM).orderBy("date", "asc").select("date", "vo2_max").limit(LIMITS.vo2 + 1).get(),
+    owner.collection("healthMetrics").where("date", ">=", vo2From).orderBy("date", "asc").select("date", "vo2_max").limit(vo2Limit + 1).get(),
   ]);
   const overrides: Record<string, WorkoutOverride> = {};
   for (const d of o.docs.slice(0, LIMITS.overrides)) overrides[d.id] = d.data() as WorkoutOverride;
-  const workoutDocs = w.docs.slice(0, LIMITS.workouts);
+  const workoutDocs = w.docs.slice(0, workoutLimit);
   const workouts = workoutDocs.map(d => workoutFrom(d.id, d.data() as Record<string, unknown>));
   const plans = p.docs.slice(0, LIMITS.plans).flatMap(d => { const x = d.data() as Record<string, unknown>;
     return (x.planType ?? "running") === "running" && Array.isArray(x.weeks) ? [{ ...x, id: d.id, startDate: toIso(x.startDate)?.slice(0, 10) ?? String(x.startDate) } as unknown as RunningPlan] : []; });
-  const vo2: Vo2Entry[] = m.docs.slice(0, LIMITS.vo2).flatMap(d => { const x = d.data() as { date?: string; vo2_max?: number }; return x.vo2_max && x.vo2_max > 0 ? [{ date: x.date ?? d.id, value: x.vo2_max }] : []; });
+  const vo2: Vo2Entry[] = m.docs.slice(0, vo2Limit).flatMap(d => { const x = d.data() as { date?: string; vo2_max?: number }; return x.vo2_max && x.vo2_max > 0 ? [{ date: x.date ?? d.id, value: x.vo2_max }] : []; });
   // Bounded HR-stream sample: the most recent steady outdoor runs that have a stream.
   const candidates = workouts.filter(x => x.isRunLike && x.hasRoute && x.hasHRStream && !/treadmill|indoor|tempo|interval|race|fartlek/i.test(x.displayType ?? "")
     && x.durationSeconds >= 1200 && x.durationSeconds <= 7200).sort((a, b) => b.startDate.getTime() - a.startDate.getTime()).slice(0, LIMITS.streamRuns);
   const streams: Record<string, HrSample[]> = {};
-  for (const x of candidates) {
+  Object.assign(lastLiveReads, { workouts: w.size, races: r.size, overrides: o.size, plans: p.size, healthMetrics: m.size, hrStreamChunks: 0 });
+  for (const x of range.skipStreams ? [] : candidates) {
     const snap = await owner.collection("healthWorkouts").doc(x.workoutId).collection("hrStream").orderBy("chunkIndex", "asc").limit(LIMITS.streamChunks).get();
     const samples: { t: number; bpm: number }[] = [];
     let t0: number | null = null;
@@ -112,10 +120,11 @@ export async function loadLive(saveCache?: string): Promise<HybridLoaded> {
       const ms = s.t?.toDate?.().getTime(); if (ms === undefined || typeof s.hr !== "number") continue;
       t0 ??= ms; samples.push({ t: (ms - t0) / 1000, bpm: s.hr });
     }
+    lastLiveReads.hrStreamChunks += snap.size;
     if (samples.length) streams[x.workoutId] = samples;
   }
   const loaded: HybridLoaded = { workouts, races: r.docs.slice(0, LIMITS.races).map(d => normalizeRaceDocument(d.id, d.data())), overrides, plans, vo2, streams,
-    truncated: w.size > LIMITS.workouts || r.size > LIMITS.races || o.size > LIMITS.overrides || m.size > LIMITS.vo2 };
+    truncated: w.size > workoutLimit || r.size > LIMITS.races || o.size > LIMITS.overrides || m.size > vo2Limit };
   if (saveCache) writeFileSync(saveCache, JSON.stringify({
     workouts: workoutDocs.map(d => ({ id: d.id, ...(stamp(d.data()) as object) })), races: r.docs.map(d => ({ id: d.id, ...(stamp(d.data()) as object) })),
     overrides: o.docs.map(d => ({ id: d.id, ...(stamp(d.data()) as object) })), plans: loaded.plans, vo2, streams }));

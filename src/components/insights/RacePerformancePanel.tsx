@@ -227,10 +227,9 @@ export interface RacePerformancePanelProps {
   /** Explicit clock and zone make previews/tests reproducible. */
   asOf?: Date;
   timeZone?: string;
-  /** Optional compact saved-evidence hint for the tile (supplied by the page). */
+  /** Retired with the manual Performance Analysis workflow: the page no longer supplies this, and nothing renders when absent. */
   evidenceNotice?: React.ReactNode;
-  /** Saved Performance Evidence section for the details modal. The panel never
-   * acquires evidence itself; the page passes the shared-provider view. */
+  /** Retired (see `evidenceNotice`). Optional legacy section for the details modal; the panel never acquires evidence itself. */
   evidenceDetails?: React.ReactNode;
   /** Optional, already-loaded VO₂ max readings for corroboration only. The panel never fetches them. */
   vo2Entries?: readonly Vo2Entry[];
@@ -418,10 +417,10 @@ export function RacePerformancePanel(props: RacePerformancePanelProps) {
             <Link href="/races" className="inline-block text-primary underline">Review existing race records</Link>
           </div>
         </section>
-        <section aria-labelledby={`${detailsId}-evidence`} className="min-w-0 space-y-3 border-t border-border pt-5" data-testid="estimate-saved-evidence">
+        {props.evidenceDetails && <section aria-labelledby={`${detailsId}-evidence`} className="min-w-0 space-y-3 border-t border-border pt-5" data-testid="estimate-saved-evidence">
           <h3 id={`${detailsId}-evidence`} className="text-base font-bold text-textPrimary">Saved Performance Evidence</h3>
-          {props.evidenceDetails ?? <p className="text-sm text-textSecondary">Saved performance evidence is not available in this view. Detailed manual measurements do not alter the experimental estimate.</p>}
-        </section>
+          {props.evidenceDetails}
+        </section>}
       </> : null)}
     </Section>
 

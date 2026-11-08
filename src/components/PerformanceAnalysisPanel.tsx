@@ -1,3 +1,9 @@
+/**
+ * RETIRED FROM NAVIGATION (2026-11). The manual Performance Analysis dialog/panel is no longer mounted anywhere;
+ * Hybrid Performance Model v1.1 and Race-Day Forecast v2 supersede it. This file, `services/manualPerformance.ts`,
+ * the saved documents and their tests are intentionally preserved so the retirement is reversible and the
+ * historical records stay interpretable. Do not import it from live routes without an explicit product decision.
+ */
 "use client";
 
 import { useEffect, useRef, useState } from "react";
