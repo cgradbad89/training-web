@@ -9,6 +9,7 @@ const WITHHELD: Record<NonNullable<RaceDayForecast["withheldCause"]>, string> = 
   race_date_invalid_or_past: "The race date is missing or not in the future.",
   horizon_too_long: "The race is too far away for current evidence to say anything useful about race-day condition.",
   insufficient_endurance_basis: "Current endurance preparation is too low to carry a half-marathon time.",
+  demonstrated_performance_only: "Current capability is only a demonstrated performance from a race that was not run at maximal effort, so it is not projected forward.",
 };
 
 /**

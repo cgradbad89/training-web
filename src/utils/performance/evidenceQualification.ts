@@ -21,7 +21,7 @@
  *
  * Every threshold here is an engineering safeguard, not a published physiological constant.
  */
-import type { RacePerformanceInput } from "@/types/racePerformance";
+import type { RacePerformanceEvidence, RacePerformanceInput } from "@/types/racePerformance";
 import type { HealthWorkout } from "@/types/healthWorkout";
 import type {
   EvidenceExclusion, EvidenceQualification, EvidenceTier, PerformanceCurvePoint, PerformanceEvidenceItem,
@@ -57,6 +57,26 @@ export const EVIDENCE_POLICY = Object.freeze({
 
 type Input = Pick<RacePerformanceInput, "races" | "workouts" | "overrides" | "asOf" | "timeZone">;
 const MILE = 1609.344;
+
+/** Reason carried by an item admitted under the demonstrated-race policy (see `isDemonstratedRaceEvidence`). */
+export const DEMONSTRATED_RACE_REASON = "nonmaximal_effort_demonstrated_performance";
+
+/**
+ * A confirmed race that passed EVERY integrity check a confirmed-maximal race must pass (valid confirmation available as of the
+ * cutoff, consistent identity/timing/distance, conditions stated) but whose attested effort is `hard` or `nonmaximal`. `hard` and
+ * `nonmaximal` are treated identically; `unknown` is never admitted (it may have been maximal and is not attested). A status of
+ * `verified`/`owner_confirmed` is only ever produced for a valid, available, consistent confirmation, so this adds no integrity logic.
+ * It shows what was ACHIEVED, not maximal capability, and is used only through the labelled demonstrated-race policy.
+ */
+export function isDemonstratedRaceEvidence(e: Pick<RacePerformanceEvidence, "status" | "effort" | "conditions" | "finishSeconds" | "distanceMeters" | "availableAsOf">): boolean {
+  return (e.status === "verified" || e.status === "owner_confirmed") && e.availableAsOf && (e.effort === "hard" || e.effort === "nonmaximal")
+    && !!e.conditions?.trim() && positive(e.finishSeconds) && positive(e.distanceMeters);
+}
+
+export interface QualificationOptions {
+  /** Admit demonstrated (confirmed hard/nonmaximal) races as `recorded_race`-class evidence. Default false: the unchanged v1 behaviour. */
+  admitDemonstratedRaces?: boolean;
+}
 const finite = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n);
 const positive = (n: unknown): n is number => finite(n) && n > 0;
 const dayDiff = (a: string, b: string) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000);
@@ -79,7 +99,7 @@ export function timingConsistent(w: HealthWorkout): boolean {
   return Math.abs(elapsed - w.durationSeconds) <= Math.max(EVIDENCE_POLICY.timingToleranceSeconds, w.durationSeconds * EVIDENCE_POLICY.timingToleranceFraction);
 }
 
-export function qualifyPerformanceEvidence(input: Input): EvidenceQualification {
+export function qualifyPerformanceEvidence(input: Input, options: QualificationOptions = {}): EvidenceQualification {
   if (!isPerformanceInstant(input.asOf)) throw new TypeError("A valid performance-evidence cutoff is required");
   const P = EVIDENCE_POLICY;
   const asOfDate = performanceLocalDate(input.asOf, input.timeZone);
@@ -122,13 +142,14 @@ export function qualifyPerformanceEvidence(input: Input): EvidenceQualification 
     const confirmed = e.eligibleForEquivalence;
     const recorded = e.status === "recorded_unverified" && e.timingAgreement === "consistent"
       && e.timingBasis === "recorded_workout_duration" && !bad;
-    if (!confirmed && !recorded) { counts.unsuitable++; exclude(cluster, e.status === "inconsistent" ? "race_record_inconsistent" : "race_not_usable"); continue; }
+    const demonstrated = options.admitDemonstratedRaces === true && !confirmed && !recorded && isDemonstratedRaceEvidence(e);
+    if (!confirmed && !recorded && !demonstrated) { counts.unsuitable++; exclude(cluster, e.status === "inconsistent" ? "race_record_inconsistent" : "race_not_usable"); continue; }
     const item: PerformanceEvidenceItem = {
       clusterId: cluster, workoutId: e.workoutId, raceId: e.raceId, kind: confirmed ? "confirmed_race" : "recorded_race",
       tier: confirmed ? "confirmed_maximal" : "strong_unconfirmed", date: e.raceDate, ageDays: e.ageDays,
       distanceMeters: e.distanceMeters, seconds: e.finishSeconds, quality: confirmed ? P.quality.confirmed : P.quality.recordedRace,
       avgHeartRate: null, tempF: null,
-      reasons: confirmed ? [] : ["official_time_and_maximal_effort_unverified"],
+      reasons: confirmed ? [] : demonstrated ? [DEMONSTRATED_RACE_REASON] : ["official_time_and_maximal_effort_unverified"],
     };
     const linked = runs.find(r => r.workout.workoutId === e.workoutId)?.workout;
     if (linked) { item.avgHeartRate = positive(linked.avgHeartRate) ? linked.avgHeartRate : null; item.tempF = linked.weather?.tempF ?? null; }

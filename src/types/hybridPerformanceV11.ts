@@ -194,6 +194,25 @@ export interface HistoricalInfluence {
 
 export interface ConflictSignal { id: "recent_performance_vs_aerobic_trend" | "recent_speed_vs_endurance_preparation"; detail: string }
 
+/**
+ * What kind of evidence carries the number.
+ *  maximal_or_recorded_evidence       the unchanged v1.1 evidence (confirmed-maximal races, recorded races, strong efforts, segments)
+ *  demonstrated_performance_included  a confirmed hard/nonmaximal race made the estimate FASTER than the strict estimate
+ *  demonstrated_performance_only      nothing else qualified: the number is a time the athlete has DEMONSTRATED, not a maximal-performance prediction
+ */
+export type EvidenceBasis = "maximal_or_recorded_evidence" | "demonstrated_performance_included" | "demonstrated_performance_only";
+
+export interface DemonstratedRaceDisclosure {
+  basis: EvidenceBasis;
+  /** Confirmed hard/nonmaximal races that passed the race-integrity checks (any age). */
+  eligibleRaces: number;
+  /** Of those, how many carry the number (within the 180-day currency limit). */
+  usedRaces: number;
+  /** The policy was switched off (rollback): the strict v1.1 evidence only. */
+  policyDisabled: boolean;
+  note: string | null;
+}
+
 export interface HybridV11Estimate {
   version: "experimental-hybrid-hm-v1.1";
   researchStatus: "experimental_provisional";
@@ -227,6 +246,8 @@ export interface HybridV11Estimate {
   fallbackReason: string | null;
   assumptions: string[];
   caveats: string[];
+  /** Whether a confirmed hard/nonmaximal race carries the number. Always present; `maximal_or_recorded_evidence` is the unchanged v1.1. */
+  demonstrated: DemonstratedRaceDisclosure;
 }
 
 export interface HybridV11ComparisonInput { official: CurrentHalfEstimate | null; hrEnhanced: HrEnhancedEstimate | null }

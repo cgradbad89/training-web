@@ -14,6 +14,7 @@ import type { WorkoutOverride } from "@/types/workoutOverride";
 import { estimateHybridHalfMarathonV11 } from "../performance/hybridPerformanceV11";
 import type { HybridV11Estimate } from "@/types/hybridPerformanceV11";
 import { buildRaceEvidence } from "../racePerformance";
+import { isDemonstratedRaceEvidence } from "../performance/evidenceQualification";
 
 export interface StudyInput { races: Race[]; workouts: HealthWorkout[]; overrides: Record<string, WorkoutOverride>; asOf: string; timeZone: string }
 
@@ -27,30 +28,14 @@ export function dateRange(from: string, to: string): string[] {
   return out;
 }
 
-// ─── the one alternative policy ───────────────────────────────────────────────
+// ─── the one alternative policy (now the production policy; kept here as the comparison harness) ───
 
 export type RacePolicy = "strict_maximal" | "nonmaximal_lower_bound";
 
-/**
- * Races whose confirmation attests `effort: "nonmaximal"` and that production otherwise accepts (valid, available, consistent after
- * reconciliation, same race identity). Only the CATEGORICAL attestation is read.
- */
+/** Races production now treats as demonstrated performance: confirmed hard/nonmaximal races that passed every integrity check. */
 export function nonmaximalRaceIds(input: StudyInput): string[] {
-  return buildRaceEvidence(input)
-    .filter(e => e.effort === "nonmaximal" && e.status !== "inconsistent" && e.status !== "insufficient_evidence" && e.availableAsOf && e.finishSeconds !== null && e.distanceMeters !== null)
-    .map(e => e.raceId);
-}
-
-/**
- * RESEARCH TRANSFORM: the same input with those races' effort attestation read as `maximal`. Nothing else (time, distance, conditions) changes.
- * Limitation: only the legacy `performanceEvidence` confirmation shape is rewritten; a race carrying a saved `confirmationHistory` revision is
- * left as is (so the alternative then equals the strict policy for it — it can never invent evidence).
- */
-export function readNonmaximalAsAchievable(input: StudyInput, ids: readonly string[]): StudyInput {
-  const set = new Set(ids);
-  return { ...input, races: input.races.map(r => set.has(r.id) && r.performanceEvidence && !r.confirmationHistory
-    ? { ...r, performanceEvidence: { ...r.performanceEvidence, effort: "maximal" as const } }
-    : r) };
+  const ids = new Set(buildRaceEvidence(input).filter(isDemonstratedRaceEvidence).map(e => e.raceId));
+  return [...ids];
 }
 
 export interface PolicyResult {
@@ -64,26 +49,19 @@ export interface PolicyResult {
   source: "strict_evidence" | "nonmaximal_race" | "none";
   nonmaximalRaces: number;
   strictSeconds: number | null;
-  asIfAchievableSeconds: number | null;
 }
 
 /**
- * The single alternative: a confirmed-nonmaximal race is evidence of what was ACHIEVED, i.e. an upper bound on the athlete's maximal time.
- *   - it is admitted exactly as the shipped model admits a confirmed race (same σ, same physiology/endurance terms) — no discount, no effort scaling;
- *   - it can only make the estimate FASTER than the strict estimate, never slower: result = min(strict, with-race);
- *   - when nothing else qualifies it stands alone and the result is labelled `lowerBoundOnly`, provisional, confidence `low`.
- * With no nonmaximal-attested race the function returns the strict production estimate unchanged.
+ * `strict_maximal` runs the shipped v1.1 with the demonstrated-race policy switched off (`strictMaximalOnly`); `nonmaximal_lower_bound` runs the
+ * shipped default. With no hard/nonmaximal-attested race the two are identical. Neither reads an effort percentage.
  */
 export function estimateWithPolicy(input: StudyInput, policy: RacePolicy, options: Parameters<typeof estimateHybridHalfMarathonV11>[1] = {}): PolicyResult {
-  const strict = estimateHybridHalfMarathonV11(input, options);
-  const ids = policy === "strict_maximal" ? [] : nonmaximalRaceIds(input);
-  const base = { policy, nonmaximalRaces: ids.length, strictSeconds: round(strict.seconds) };
-  if (!ids.length) return { ...base, status: strict.status, seconds: round(strict.seconds), confidence: strict.confidence, lowerBoundOnly: false, source: strict.seconds === null ? "none" : "strict_evidence", asIfAchievableSeconds: null };
-  const asIf = estimateHybridHalfMarathonV11(readNonmaximalAsAchievable(input, ids), options);
-  const a = asIf.seconds, s = strict.seconds;
-  if (a === null) return { ...base, status: strict.status, seconds: round(s), confidence: strict.confidence, lowerBoundOnly: false, source: s === null ? "none" : "strict_evidence", asIfAchievableSeconds: null };
-  if (s !== null && s <= a) return { ...base, status: strict.status, seconds: round(s), confidence: strict.confidence, lowerBoundOnly: false, source: "strict_evidence", asIfAchievableSeconds: round(a) };
-  return { ...base, status: "provisional", seconds: round(a), confidence: "low", lowerBoundOnly: true, source: "nonmaximal_race", asIfAchievableSeconds: round(a) };
+  const strict = estimateHybridHalfMarathonV11(input, { ...options, strictMaximalOnly: true });
+  const ids = nonmaximalRaceIds(input);
+  const e = policy === "strict_maximal" ? strict : estimateHybridHalfMarathonV11(input, { ...options, strictMaximalOnly: false });
+  const used = e.demonstrated.basis !== "maximal_or_recorded_evidence";
+  return { policy, status: e.status, seconds: round(e.seconds), confidence: e.confidence, lowerBoundOnly: used, nonmaximalRaces: policy === "strict_maximal" ? 0 : ids.length,
+    source: e.seconds === null ? "none" : used ? "nonmaximal_race" : "strict_evidence", strictSeconds: round(strict.seconds) };
 }
 
 // ─── daily series and step profile (for the cliff studies) ───────────────────

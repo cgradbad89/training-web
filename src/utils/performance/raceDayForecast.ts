@@ -117,6 +117,11 @@ export function estimateRaceDayForecast(input: Input, options: ForecastOptions):
         : `Current capability is unavailable (${hybrid.fallbackReason ?? "insufficient evidence"}); a race-day forecast cannot be built on nothing.`);
   }
 
+  // A number that is only DEMONSTRATED performance (a confirmed race not run at maximal effort, nothing else qualifying) is a time already
+  // run, not a maximal-performance capability. It is never silently projected forward as if it were exact.
+  if ("demonstrated" in hybrid && hybrid.demonstrated.basis === "demonstrated_performance_only")
+    return withheld("demonstrated_performance_only", "Current capability rests only on a confirmed race that was not run at maximal effort. It shows what you have already run, so no race-day number is projected from it.");
+
   // The plan can only change endurance preparation. If that basis is unknown (fewer than four recent weeks recorded),
   // there is nothing defensible to project from, however much capacity evidence exists.
   if (hybrid.readiness?.score == null)
@@ -172,6 +177,7 @@ export function estimateRaceDayForecast(input: Input, options: ForecastOptions):
     `Plan adherence assumed ${(used * 100).toFixed(0)}%${historical === null ? " (no matched history; default)" : ` (your recent plan completion ${(historical * 100).toFixed(0)}%, capped at ${(P.maximumAdherence * 100).toFixed(0)}%)`}.`,
     "Weather and course are unknown; heat, hills and wind can each change a half marathon by minutes and are not modelled.",
     ...(hybrid.status === "provisional" ? ["Current capability is itself provisional (limited or contradictory evidence)."] : []),
+    ...("demonstrated" in hybrid && hybrid.demonstrated.basis === "demonstrated_performance_included" ? ["Current capability includes a confirmed race that was not run at maximal effort: it is demonstrated performance, not a maximal-performance limit."] : []),
   ];
   return { ...base, status: "provisional", withheldCause: null, seconds: central, minutes, paceSecondsPerMile: Math.round(minutes * 60 / (target / 1609.344) / 5) * 5,
     scenarioRange: { fastSeconds: Math.min(...candidates), slowSeconds: Math.max(...candidates),

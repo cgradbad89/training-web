@@ -275,7 +275,8 @@ export type ForecastWithheldCause =
   | "current_capability_unavailable"
   | "race_date_invalid_or_past"
   | "horizon_too_long"
-  | "insufficient_endurance_basis";
+  | "insufficient_endurance_basis"
+  | "demonstrated_performance_only";
 
 export type WeatherBasis = "unknown" | "climatology_unavailable" | "forecast_unavailable";
 

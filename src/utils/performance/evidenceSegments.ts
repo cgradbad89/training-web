@@ -27,7 +27,7 @@ import { BEST_EFFORTS_COMPUTATION_VERSION } from "@/utils/fastestMileSegment";
 import { performanceLocalDate, shiftPerformanceDate } from "@/utils/performanceEvidence";
 import { HALF_MARATHON_METERS, researchRiegelSeconds } from "@/utils/racePerformance";
 import { selectResearchRuns } from "@/utils/workoutRaceResearch";
-import { CURVE_DISTANCES_M, EVIDENCE_POLICY, quantile, qualifyPerformanceEvidence, timingConsistent } from "./evidenceQualification";
+import { CURVE_DISTANCES_M, EVIDENCE_POLICY, quantile, qualifyPerformanceEvidence, timingConsistent, type QualificationOptions } from "./evidenceQualification";
 
 export const SEGMENT_POLICY = Object.freeze({
   version: "performance-evidence-v1.1" as const,
@@ -58,9 +58,9 @@ const isRace = (i: EvidenceItemV11) => i.kind === "confirmed_race" || i.kind ===
 const rankOf = (i: EvidenceItemV11) => (isRace(i) ? 3 : i.kind === "whole_run_effort" || i.kind === "labelled_race_run" ? 2 : 1) * 1e9
   + (i.tier === "confirmed_maximal" ? 1e8 : 0) + i.distanceMeters;
 
-export function qualifyEvidenceV11(input: Input): EvidenceQualificationV11 {
+export function qualifyEvidenceV11(input: Input, options: QualificationOptions = {}): EvidenceQualificationV11 {
   const P = SEGMENT_POLICY, E = EVIDENCE_POLICY;
-  const base = qualifyPerformanceEvidence(input);
+  const base = qualifyPerformanceEvidence(input, options);
   const asOfDate = performanceLocalDate(input.asOf, input.timeZone);
   const overrides = input.overrides ?? {};
   const { runs } = selectResearchRuns({ ...input, overrides, capturedAt: input.asOf, source: "owner_parent_export",
