@@ -72,7 +72,10 @@ import {
 import { InfoTooltip } from "@/components/ui/InfoTooltip";
 import { type Vo2Entry } from "@/utils/vo2History";
 import { buildVo2TrendSeries, summarizeVo2Trend } from "@/utils/vo2Trend";
-import { isRacePerformanceDisplayEnabled, RACE_PERFORMANCE_UNAVAILABLE_REASON } from "@/lib/racePerformanceGate";
+import { isExperimentalHybridV11Enabled, isPhysiologyHydrationEnabled, isRacePerformanceDisplayEnabled, RACE_PERFORMANCE_UNAVAILABLE_REASON } from "@/lib/racePerformanceGate";
+import { CurrentFitnessEstimates } from "@/components/insights/CurrentFitnessTable";
+import { useEstimateDay } from "@/components/insights/RacePerformancePanel";
+import { usePhysiologyEvidence } from "@/hooks/usePhysiologyEvidence";
 
 // ─── Training Load KPI tooltip copy ───────────────────────────────────────────
 // Single source of truth so the four KPI cards and any future surfaces stay
@@ -1287,7 +1290,7 @@ function PerformanceTabScope({
 }
 
 export default function PersonalInsightsPage() {
-  const { user } = useAuth();
+  const { user, sessionEpoch, isSessionCurrent } = useAuth();
   const uid = user?.uid ?? null;
   const router = useRouter();
   const pathname = usePathname();
@@ -1352,6 +1355,7 @@ export default function PersonalInsightsPage() {
     settingsResolution,
     racesResolution,
     overridesResolution,
+    sourceHasLoaded,
   } = useAppData();
 
   // Apply overrides and drop excluded workouts — same processing the old
@@ -1395,6 +1399,18 @@ export default function PersonalInsightsPage() {
       overrides,
     }
   );
+  // Hybrid v1.1 current-fitness table (Race Readiness tab). Bounded, demand-driven VO₂ max and HR-stream evidence — the SAME session-scoped
+  // stores Plan Insights uses, so both pages show identical half-marathon numbers. Nothing is read unless the experiment is enabled, this
+  // tab is showing and the performance inputs have loaded.
+  const hybridV11 = isExperimentalHybridV11Enabled();
+  const physiologyTimeZone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone, []);
+  const physiologyDay = useEstimateDay(false, physiologyTimeZone);
+  const performanceInputsLoaded = sourceHasLoaded.workouts && sourceHasLoaded.overrides && sourceHasLoaded.races;
+  const physiology = usePhysiologyEvidence({
+    enabled: hybridV11 && activeTab === "performance" && pathname === "/personal-insights" && isPhysiologyHydrationEnabled(),
+    uid, sessionEpoch, isSessionCurrent, races, workouts: rawWorkouts, overrides, timeZone: physiologyTimeZone, day: physiologyDay,
+    ready: hybridV11 && performanceInputsLoaded,
+  });
   const initialLoadPending =
     activeTab === "workouts"
       ? workoutsLoading
@@ -1488,9 +1504,32 @@ export default function PersonalInsightsPage() {
           }) => (
         <>
       {/* ── Predicted Race Times ─────────────────────────── */}
-      <SectionHeader icon={Timer} title={isRacePerformanceDisplayEnabled() ? "Race Performance" : "Predicted Race Times"} />
+      <SectionHeader icon={Timer} title={isRacePerformanceDisplayEnabled() && !hybridV11 ? "Race Performance" : "Predicted Race Times"} />
 
-      {isRacePerformanceDisplayEnabled() ? (
+      {hybridV11 ? (
+        // One table of Hybrid v1.1 current-fitness estimates (5K, 10 miles, half marathon, marathon). Replaces the legacy Riegel presentation here;
+        // the Plan Insights official / HR-enhanced / race-day-forecast rows are separate and untouched.
+        <Card>
+          <CurrentFitnessEstimates
+            races={races}
+            workouts={rawWorkouts}
+            overrides={overrides}
+            sources={{ workouts: sourceHasLoaded.workouts, overrides: sourceHasLoaded.overrides, races: sourceHasLoaded.races }}
+            physiology={physiology}
+          />
+          <button
+            onClick={() => askCoach(
+              'Based on my current-fitness race estimates, how realistic is ' +
+              'my half marathon goal? What training would most ' +
+              'improve my race readiness?'
+            )}
+            className="text-xs text-primary hover:underline flex items-center gap-1 mt-4"
+          >
+            <BotMessageSquare className="w-3 h-3" />
+            Ask about my race predictions
+          </button>
+        </Card>
+      ) : isRacePerformanceDisplayEnabled() ? (
         <Card>
           <p className="font-semibold text-textPrimary">Numerical race predictions unavailable</p>
           <p className="text-sm text-textSecondary mt-2">{RACE_PERFORMANCE_UNAVAILABLE_REASON}</p>
