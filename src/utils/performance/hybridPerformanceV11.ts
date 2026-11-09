@@ -154,7 +154,7 @@ export function estimateHybridHalfMarathonV11(input: Input, options: HybridV11Op
   const message = only
     ? "This number is demonstrated performance: it comes from a confirmed race that was not run at maximal effort, so it shows what you have already run, not your maximal-performance limit."
     : "A confirmed race that was not run at maximal effort made this estimate faster than the maximal-effort evidence alone; it shows what you have already run, not your maximal-performance limit.";
-  return tag({ ...alt, status: "provisional", confidence: "low",
+  return tag({ ...alt, status: "provisional", confidence: "low", confidenceRestrictions: [...(alt.confidenceRestrictions ?? []), "demonstrated_performance"],
     flags: [...new Set([...alt.flags, only ? "demonstrated_performance_only" : "demonstrated_performance_included"])],
     influence: { ...alt.influence, provisional: true, provisionalReasons: [...new Set([...alt.influence.provisionalReasons, message])] },
     caveats: [message, ...alt.caveats] },
@@ -332,7 +332,7 @@ function estimateCore(input: Input, options: HybridV11Options, admitDemonstrated
   if (conflicts.length) provisionalReasons.push("Independent signals conflict.");
   if (contradictoryAdj) provisionalReasons.push("The physiological and endurance terms point in opposite directions.");
   if (readiness.score === null) provisionalReasons.push("Endurance readiness is unknown.");
-  if (combination.raceDominance === "dominant" && (combination.latestRaceAgeDays ?? 0) > 42) provisionalReasons.push("The estimate rests almost entirely on an aging race with no newer corroborating evidence.");
+  if (combination.raceDominance === "dominant" && (combination.latestRaceAgeDays ?? 0) > 42) provisionalReasons.push("The estimate is dominated by a race over 42 days old.");
   // Distance-specific evidence rules (profile only; the half marathon is unchanged).
   const directShare = profile?.directRatio ? rows.filter(r => r.extrapolationRatio <= profile.directRatio! && r.extrapolationRatio >= 1 / profile.directRatio!).reduce((s, r) => s + r.effectiveShare, 0) : null;
   const targetNotes: string[] = [];
@@ -350,6 +350,18 @@ function estimateCore(input: Input, options: HybridV11Options, admitDemonstrated
   const durabilityOk = dur ? demonstratedAtTarget || !provisionalReasons.some(x => /durability/.test(x)) : true;
   const provisional = provisionalReasons.length > 0;
   const confidence: HybridV11Estimate["confidence"] = !provisional && (readiness.score ?? 0) >= B.moderateReadiness && physiology.vo2Corroboration !== "disagrees" ? "moderate" : "low";
+  const confidenceRestrictions: NonNullable<HybridV11Estimate["confidenceRestrictions"]> = [];
+  if (combination.uncertaintyFraction !== null && combination.uncertaintyFraction > COMBINATION_POLICY.adequateUncertainty) confidenceRestrictions.push("limited_precision");
+  if (!rows.some(r => r.kind === "confirmed_race") && rows.length < COMBINATION_POLICY.minimumItemsWithoutConfirmed) confidenceRestrictions.push("limited_corroboration");
+  if (flags.includes("contradictory_evidence")) confidenceRestrictions.push("within_group_conflict");
+  if (conflicts.length) confidenceRestrictions.push("signal_conflict");
+  if (contradictoryAdj) confidenceRestrictions.push("opposing_adjustments");
+  if (readiness.score === null) confidenceRestrictions.push("readiness_unknown");
+  else if (readiness.score < B.moderateReadiness) confidenceRestrictions.push("readiness_low");
+  if (combination.raceDominance === "dominant" && (combination.latestRaceAgeDays ?? 0) > 42) confidenceRestrictions.push("race_age");
+  if (profile?.directRatio && directShare !== null && directShare < 0.5) confidenceRestrictions.push("distant_evidence");
+  if (!durabilityOk) confidenceRestrictions.push("marathon_durability");
+  if (physiology.vo2Corroboration === "disagrees") confidenceRestrictions.push("vo2_disagreement");
   const status: HybridV11Estimate["status"] = provisional ? "provisional" : "available";
   const miles = target / 1609.344;
   // Presentation rounding (HALF profile: nearest minute, identical to the pre-existing behaviour).
@@ -386,7 +398,7 @@ function estimateCore(input: Input, options: HybridV11Options, admitDemonstrated
       explanation: readiness.score === null ? "Readiness unknown (too few recent weeks recorded); no adjustment, confidence reduced."
         : `Readiness ${(readiness.score * 100).toFixed(0)}% (longest ${readiness.longestRunMiles?.toFixed(1)} mi, ${readiness.weeklyMiles?.toFixed(0)} mi/wk). Sets the extrapolation exponent${enduranceStatus === "used" ? `; change since the evidence (${readinessThen?.score == null ? "?" : (readinessThen.score * 100).toFixed(0) + "%"} → ${(readiness.score * 100).toFixed(0)}%) adjusts the base` : ""}.` },
   ];
-  return shell(status, null, "", { seconds, minutes, paceSecondsPerMile: Math.round(minutes * 60 / miles / 5) * 5, confidence, sensitivityRange, contributions,
+  return shell(status, null, "", { seconds, minutes, paceSecondsPerMile: Math.round(minutes * 60 / miles / 5) * 5, confidence, confidenceRestrictions, sensitivityRange, contributions,
     adjustmentFraction: total, influence, conflicts, flags: [...new Set(flags)], fallbackReason: null, reasons: combination.reasons, comparison: comparisonOf(seconds),
     ...(profile ? { target: targetDisclosure(profile, directShare, dur ? { longestRunMiles: readiness.longestRunMiles, longRunMeanMiles: longRunMean, weeklyMiles: readiness.weeklyMiles,
       demonstratedAtTarget, satisfied: durabilityOk } : null, targetNotes, increment) } : {}) });

@@ -26,6 +26,7 @@ import { estimateRaceDayForecast } from "@/utils/performance/raceDayForecast";
 import { summarizeHrStream } from "@/utils/performance/hrStreamQuality";
 import { evaluateModelsAsOf, hybridLeaveOneOut, plausibility, replay, scoreModelsAgainstOutcomes } from "@/utils/research/hybridEvaluation";
 import { performanceLocalDate, shiftPerformanceDate } from "@/utils/performanceEvidence";
+import { raceConfirmationInstant } from "@/utils/raceConfirmation";
 import { normalizeRaceDocument } from "@/utils/raceDocument";
 import { workoutModelSummary } from "@/utils/workoutModelSummary";
 import type { Vo2Entry } from "@/utils/vo2History";
@@ -62,14 +63,30 @@ function bestEfforts(raw: unknown): HealthWorkout["bestEfforts"] {
   if (typeof r.computationVersion === "number") out.computationVersion = r.computationVersion;
   return out as unknown as HealthWorkout["bestEfforts"];
 }
-function workoutFrom(id: string, data: Record<string, unknown>): HealthWorkout {
-  return { ...(workoutModelSummary(id, data) as unknown as HealthWorkout), routeComplete: typeof data.routeComplete === "boolean" ? data.routeComplete : undefined, bestEfforts: bestEfforts(data.bestEfforts) };
+export function workoutFrom(id: string, data: Record<string, unknown>): HealthWorkout {
+  const normalized = { ...data };
+  for (const key of ["startDate", "endDate", "syncedAt", "updatedAt"]) {
+    const value = data[key];
+    const raw = value && typeof value === "object" ? value as Record<string, unknown> : {};
+    const seconds = raw.seconds ?? raw._seconds, nanos = raw.nanoseconds ?? raw._nanoseconds;
+    // Match browser Timestamp.toMillis()/toDate() exactly, including floating-point
+    // precision near millisecond boundaries. Admin toDate() rounds instead.
+    if (typeof seconds === "number" && Number.isInteger(seconds) && typeof nanos === "number"
+      && Number.isInteger(nanos) && nanos >= 0 && nanos < 1e9) normalized[key] = new Date(seconds * 1000 + nanos / 1e6);
+    else {
+      const iso = raceConfirmationInstant(value);
+      if (iso) normalized[key] = new Date(iso);
+    }
+  }
+  return { ...(workoutModelSummary(id, normalized) as unknown as HealthWorkout), routeComplete: typeof data.routeComplete === "boolean" ? data.routeComplete : undefined, bestEfforts: bestEfforts(data.bestEfforts) };
 }
 
-/** Private-capture serialisation: Timestamps as `{__ts}`. Never committed. */
-const revive = (x: unknown): unknown => x && typeof x === "object" && "__ts" in (x as object) ? { toDate: () => new Date((x as { __ts: string }).__ts) }
+/** Private captures preserve SDK nanoseconds; legacy `{__ts}` captures remain readable. Never committed. */
+const revive = (x: unknown): unknown => x && typeof x === "object" && "__seconds" in x && "__nanos" in x ? { seconds: (x as { __seconds: number }).__seconds, nanoseconds: (x as { __nanos: number }).__nanos, toDate: () => new Date((x as { __seconds: number }).__seconds * 1000 + (x as { __nanos: number }).__nanos / 1e6) }
+  : x && typeof x === "object" && "__ts" in (x as object) ? { toDate: () => new Date((x as { __ts: string }).__ts) }
   : Array.isArray(x) ? x.map(revive) : x && typeof x === "object" ? Object.fromEntries(Object.entries(x).map(([k, v]) => [k, revive(v)])) : x;
-const stamp = (x: unknown): unknown => x && typeof x === "object" && "toDate" in (x as object) ? { __ts: (x as { toDate: () => Date }).toDate().toISOString() }
+export const stamp = (x: unknown): unknown => x && typeof x === "object" && "seconds" in x && "nanoseconds" in x && "toDate" in x ? { __seconds: x.seconds, __nanos: x.nanoseconds }
+  : x && typeof x === "object" && "toDate" in (x as object) ? { __ts: raceConfirmationInstant(x) }
   : Array.isArray(x) ? x.map(stamp) : x && typeof x === "object" ? Object.fromEntries(Object.entries(x).map(([k, v]) => [k, stamp(v)])) : x;
 
 export function loadFromCache(path: string): HybridLoaded {

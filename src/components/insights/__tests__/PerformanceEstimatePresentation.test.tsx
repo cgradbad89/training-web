@@ -119,7 +119,7 @@ describe("simplified performance estimates", () => {
   it("preserves provisional status, confidence, caveats and assumption range", () => {
     mount();
     expect(q("hybrid-v11-status")!.textContent).toBe("Provisional");
-    expect(q("hybrid-v11-range")!.textContent).toMatch(/confidence low/);
+    expect(q("hybrid-v11-range")!.textContent).toMatch(/evidence quality low/);
     expect(q("hybrid-v11-range")!.textContent).toContain("not a statistical interval");
     expect(q("hybrid-v11-estimate")!.textContent).toContain("not independently validated");
   });

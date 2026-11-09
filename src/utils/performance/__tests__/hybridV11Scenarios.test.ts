@@ -74,7 +74,8 @@ describe("Scenario C — old race, only easy running: no fabricated change, unce
     expect(e.combination.baseSeconds!).toBeCloseTo(RACE, 6); expect(e.combination.raceShare).toBe(1);
     expect(Math.abs(pct(e.seconds!, RACE))).toBeLessThan(0.7); expect(e.status).toBe("provisional"); expect(e.confidence).toBe("low");
     expect(e.influence.raceDominance).toBe("dominant"); expect(e.influence.newerEvidenceDisplacedRace).toBe(false);
-    expect(e.influence.provisionalReasons.join(" ")).toMatch(/aging race/);
+    expect(e.confidenceRestrictions).toContain("race_age");
+    expect(e.influence.provisionalReasons).toContain("The estimate is dominated by a race over 42 days old.");
   });
   it("a 20-day-old and a 150-day-old race give the same evidence base; only the uncertainty differs", () => {
     const young = est({ raceDate: "2026-10-18" }), old = est({ raceDate: "2026-06-10" });

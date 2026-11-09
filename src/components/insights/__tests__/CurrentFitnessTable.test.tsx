@@ -21,7 +21,7 @@ describe("CurrentFitnessTable (presentational)", () => {
   it("renders ONE table with the four distances in the specified order and the specified columns", () => {
     mount(<CurrentFitnessTable fitness={fit()} />);
     expect(container.querySelectorAll("table")).toHaveLength(1);
-    expect([...container.querySelectorAll("thead th")].map(th => th.textContent)).toEqual(["Distance", "Predicted time", "Pace/mile", "Confidence"]);
+    expect([...container.querySelectorAll("thead th")].map(th => th.textContent)).toEqual(["Distance", "Predicted time", "Pace/mile", "Evidence quality"]);
     expect([...container.querySelectorAll("tbody tr[data-testid^='current-fitness-row-']")].map(tr => tr.getAttribute("data-testid"))).toEqual(
       ["current-fitness-row-5k", "current-fitness-row-10mi", "current-fitness-row-half", "current-fitness-row-marathon"]);
     expect([...container.querySelectorAll("tbody th")].map(th => th.textContent)).toEqual(["5K", "10 miles", "Half marathon", "Marathon"]);
@@ -37,7 +37,27 @@ describe("CurrentFitnessTable (presentational)", () => {
     mount(<CurrentFitnessTable fitness={fit()} />);
     expect(container.textContent).toContain(CURRENT_FITNESS_TITLE);
     expect(CURRENT_FITNESS_TITLE).toBe("Experimental — Hybrid Performance Model v1.1");
-    expect(text("current-fitness-asof")).toBe("Current fitness as of Oct 30, 2026 — what you could reasonably race today, not a race-day forecast.");
+    expect(text("current-fitness-asof")).toBe("Current fitness as of Oct 30, 2026 — what you could reasonably race today, not a race-day forecast. Evidence quality reflects model rules, not a calibrated probability.");
+  });
+  it("shows simultaneous real restrictions without inventing a conflict", () => {
+    const fitness = fit({ asOfDate: "2026-11-10" });
+    const row = fitness.rows.find(r => r.id === "5k")!;
+    expect(row.estimate.confidenceRestrictions).toEqual(expect.arrayContaining(["race_age", "distant_evidence", "limited_precision"]));
+    mount(<CurrentFitnessTable fitness={fitness} />);
+    const note = text("current-fitness-note-5k");
+    expect(note).toContain("over 42 days old");
+    expect(note).toContain("converted from a distant race distance");
+    expect(note).toContain("not precise enough");
+    expect(note).not.toMatch(/conflict|disagree/);
+  });
+  it("explains low evidence quality even when status remains available", () => {
+    const fitness = computeCurrentFitness(world(), { readinessOverride: 0.1 });
+    const row = fitness.rows.find(r => r.id === "half")!;
+    expect(row.status).toBe("available");
+    expect(row.confidence).toBe("low");
+    mount(<CurrentFitnessTable fitness={fitness} />);
+    expect(text("current-fitness-note-half")).toContain("Endurance readiness is below the Moderate threshold.");
+    expect(text("current-fitness-note-half")).not.toMatch(/conflict|disagree/);
   });
   it("shows an unavailable row as an explicit insufficient-evidence state with a reason — never a number", () => {
     mount(<CurrentFitnessTable fitness={fit()} />);
@@ -50,7 +70,7 @@ describe("CurrentFitnessTable (presentational)", () => {
   it("shows a provisional row with its number AND a visible provisional note", () => {
     mount(<CurrentFitnessTable fitness={fit()} />);
     expect(q("current-fitness-row-5k").getAttribute("data-status")).toBe("provisional");
-    expect(text("current-fitness-note-5k")).toBe("Provisional: converted from longer-distance results.");
+    expect(text("current-fitness-note-5k")).toBe("Evidence is not precise enough for Moderate. Much of the estimate is converted from a distant race distance.");
     expect(text("current-fitness-time-5k")).toBe("28:30");
     expect(container.querySelector("[data-testid='current-fitness-note-half']")).toBeNull();   // a clean row carries no note
   });

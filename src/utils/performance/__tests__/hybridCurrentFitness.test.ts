@@ -173,7 +173,7 @@ describe("5 — limited shorter-distance evidence", () => {
     expect(r.status).toBe("provisional"); expect(r.confidence).toBe("low");
     expect(r.estimate.target!.directShare).toBe(0);
     expect(r.provisionalReasons.join(" ")).toMatch(/mostly converted from longer-distance evidence/);
-    expect(rowNote(r)).toBe("Provisional: converted from longer-distance results.");
+    expect(rowNote(r)).toBe("Evidence is not precise enough for Moderate. Much of the estimate is converted from a distant race distance.");
     // ordinary easy runs (any number of them) never become 5K evidence
     expect(r.estimate.combination.items.map(i => i.kind)).toEqual(["confirmed_race"]);
   });

@@ -28,6 +28,8 @@ describe("isolated acceptance runtime import contract", () => {
       aliases: { "next/link": "tools/race-performance-acceptance/link.tsx" },
     });
     expect(result.files).toContain("src/utils/racePerformance.ts");
+    expect(result.files).toContain("src/utils/performance/currentFitnessFormat.ts");
+    expect(result.files).not.toContain("src/utils/performance/hybridCurrentFitness.ts");
     expect(result.files).toContain("src/utils/raceTrainingContext.ts");
     expect(result.files.every(file => file === "src/lib/racePerformanceGate.ts" || !/src\/(lib|services|providers|hooks)\//.test(file))).toBe(true);
     expect(result.erasedTypeImportCount).toBeGreaterThan(0);
@@ -73,6 +75,20 @@ describe("isolated acceptance runtime import contract", () => {
       "src/services/healthWorkouts.ts": "export const load = () => [];",
     });
     expect(() => assertAcceptanceImportGraph({ repoRoot, entryPoints: [entry] })).toThrow(/outside the explicit/);
+  });
+
+  it.each([
+    "import '@/services/healthWorkouts';",
+    "import { getDocs } from 'firebase/firestore/lite';",
+    "setDoc(null, {});",
+    "import('@/services/healthWorkouts');",
+  ])("keeps the admitted formatter subject to transitive isolation checks: %s", source => {
+    const repoRoot = fixture({
+      [entry]: "import '@/utils/performance/currentFitnessFormat';",
+      "src/utils/performance/currentFitnessFormat.ts": source,
+      "src/services/healthWorkouts.ts": "export const load = () => [];",
+    });
+    expect(() => assertAcceptanceImportGraph({ repoRoot, entryPoints: [entry] })).toThrow(/isolation violation/);
   });
 
   it("allows only explicit Lite read exports in the private connection leaf", () => {

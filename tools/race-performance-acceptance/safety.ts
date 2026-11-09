@@ -47,6 +47,8 @@ const PURE_SOURCE_FILES = new Set([
   "src/utils/performance/evidenceSegments.ts",
   "src/utils/performance/evidenceCombination.ts",
   "src/utils/performance/hybridPerformanceV11.ts",
+  // Shared explanation formatter: type-only dependency, no acquisition or persistence.
+  "src/utils/performance/currentFitnessFormat.ts",
   // Owner-approved prediction-only assumption (confirmed hard/nonmaximal races read as maximal): one pure adapter, a single type-only import.
   "src/utils/performance/confirmedRaceAssumption.ts",
   "src/utils/workoutRaceResearchEvaluation.ts",

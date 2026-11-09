@@ -47,7 +47,7 @@ All values are engineering assumptions in the same sense as the rest of v1.1. Wh
 
 ## Output contract
 
-`CurrentFitness { version: "experimental-hybrid-v1.1-targets-1", asOf, asOfDate, rows[4], consistency }`. Each row: distance and label, status (`available` / `provisional` / `unavailable`), displayed finish seconds (rounded to the profile increment; exact value in `estimate.seconds`), pace per mile (5 s), confidence (`moderate` / `low` / none), evidence quality (`adequate` / `limited` / `insufficient`), as-of, the unavailable cause and a plain-language reason, provisional reasons, flags and the full v1.1 estimate. Existing v1.1 terminology is preserved. The UI maps `unavailable` → "Insufficient evidence", `provisional` → "Low" plus a one-line note, `available` + `moderate` → "Moderate".
+`CurrentFitness { version: "experimental-hybrid-v1.1-targets-1", asOf, asOfDate, rows[4], consistency }`. Each row: distance and label, status (`available` / `provisional` / `unavailable`), displayed finish seconds (rounded to the profile increment; exact value in `estimate.seconds`), pace per mile (5 s), confidence (`moderate` / `low` / none), evidence quality (`adequate` / `limited` / `insufficient`), as-of, the unavailable cause and a plain-language reason, provisional reasons, flags and the full v1.1 estimate. Existing v1.1 terminology is preserved. The UI maps `unavailable` → "Insufficient evidence", `provisional` → "Low" plus all applicable restriction explanations, `available` + `moderate` → "Moderate". The column is labelled **Evidence quality** (qualitative, not a calibrated probability). Low-quality `available` rows also explain their restrictions. Both Insights surfaces use structured restriction codes rather than inferring a conflict from low quality; simultaneous restrictions are retained.
 
 ## Cross-distance consistency (checked, never forced)
 
@@ -89,4 +89,6 @@ No new collection, field, rule, index or write. The table computes in memory fro
 ## Intentionally retained legacy behaviour
 
 * The standalone `fitRiegel` presentation remains only as the gate-off compatibility path (local development without the experiment); it is not rendered where the hybrid v1.1 gate is on.
-* Plan Insights rows, forecast v1/v2, official v2, HR-enhanced, hybrid v1 are untouched.
+* Plan Insights numerical results, forecast v1/v2, official v2, HR-enhanced and hybrid v1 are unchanged. Plan Insights v1.1 shares the corrected evidence-quality explanations.
+
+Recovery validation and browser/Admin timestamp parity are documented in [the v1.1 technical reference](hybrid-performance-model-v1.1.md#9-research-timestamp-parity-and-recovery-validation-2026-11-08). Historical observed evaluation values above remain audit findings, not a newly verified owner-data result.

@@ -148,6 +148,15 @@ describe("panel states for hybrid v1.1", () => {
     expect(text("hybrid-v11-evidence-counts")).toMatch(/Evidence quality/);
     expect(q("hybrid-v11-vs-v1")).toBeNull();
   });
+  it("explains all low-quality restrictions without claiming absent conflicts", () => {
+    panelOnly({ raceDate: OLD, strong: [] });
+    expect(text("hybrid-v11-restrictions")).toContain("over 42 days old");
+    expect(text("hybrid-v11-restrictions")).toContain("not precise enough");
+    expect(text("hybrid-v11-restrictions")).not.toMatch(/conflict|disagree/);
+    expect(q("hybrid-v11-conflict")).toBeNull();
+    expect(text("hybrid-v11-range")).toContain("not a calibrated probability");
+    expect(text("hybrid-v11-race-dependent")).not.toContain("no newer qualifying effort");
+  });
   it("race-dependent: says so on the primary card when an aging race carries the estimate", () => {
     panelOnly({ raceDate: OLD });
     expect(text("hybrid-v11-race-dependent")).toMatch(/Still race-dependent: 100% rests on your Jul 30, 2026 race \(100 days old\)/);
