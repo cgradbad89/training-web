@@ -21,7 +21,7 @@ export function CurrentFitnessTable({ fitness }: { fitness: CurrentFitness }) {
       <div className="mb-4">
         <p className="text-sm font-semibold text-textPrimary">{CURRENT_FITNESS_TITLE}</p>
         <p className="text-xs text-textSecondary mt-0.5" data-testid="current-fitness-asof">
-          Current fitness as of {formatAsOfDate(fitness.asOfDate)} — what you could reasonably race today, not a race-day forecast.
+          Current fitness as of {formatAsOfDate(fitness.asOfDate)} — what you could reasonably race today, not a race-day forecast. Evidence quality reflects model rules, not a calibrated probability.
         </p>
       </div>
       <div className="overflow-x-auto -mx-1 px-1">
@@ -34,7 +34,7 @@ export function CurrentFitnessTable({ fitness }: { fitness: CurrentFitness }) {
               <th scope="col" className="text-left py-2 pr-2 font-medium">Distance</th>
               <th scope="col" className="text-right py-2 px-2 font-medium">Predicted time</th>
               <th scope="col" className="text-right py-2 px-2 font-medium">Pace/mile</th>
-              <th scope="col" className="text-right py-2 pl-2 font-medium">Confidence</th>
+              <th scope="col" className="text-right py-2 pl-2 font-medium">Evidence quality</th>
             </tr>
           </thead>
           <tbody>

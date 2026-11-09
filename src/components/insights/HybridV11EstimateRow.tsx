@@ -1,5 +1,7 @@
 "use client";
 
+import { confidenceRestrictionMessages } from "@/utils/performance/currentFitnessFormat";
+
 import { formatImpactDelta } from "@/utils/currentHalfRunImpact";
 import type { HybridV11Estimate } from "@/types/hybridPerformanceV11";
 import type { CombinationItem } from "@/types/hybridPerformanceV11";
@@ -73,7 +75,7 @@ export function HybridV11EstimateRow({ estimate: e, detailed = false }: { estima
             </span>
           </p>
           {e.sensitivityRange && <p className="text-xs text-textSecondary" data-testid="hybrid-v11-range">
-            Assumption range {hms(e.sensitivityRange.fastSeconds)}–{hms(e.sensitivityRange.slowSeconds)} · not a statistical interval · confidence {e.confidence ?? "low"}.</p>}
+            Assumption range {hms(e.sensitivityRange.fastSeconds)}–{hms(e.sensitivityRange.slowSeconds)} · not a statistical interval · evidence quality {e.confidence ?? "low"} (not a calibrated probability).</p>}
         </>
       ) : <p className="text-sm font-semibold text-textPrimary" data-testid="hybrid-v11-value">Not available</p>}
       {e.demonstrated.basis !== "maximal_or_recorded_evidence" && <p className="text-sm font-medium text-warning" data-testid="hybrid-v11-demonstrated">
@@ -81,7 +83,8 @@ export function HybridV11EstimateRow({ estimate: e, detailed = false }: { estima
         {e.demonstrated.note}</p>}
       <p className="text-sm text-textSecondary" data-testid="hybrid-v11-reason">{reasons.length ? reasons[0] : (e.fallbackReason ?? (e.unavailableCause ? CAUSE_TEXT[e.unavailableCause] : ""))}</p>
       {e.seconds !== null && inf.raceDominance === "dominant" && inf.latestRaceDate && <p className="text-xs text-textSecondary" data-testid="hybrid-v11-race-dependent">
-        Still race-dependent: {pct(inf.raceShare)} rests on your {dateLabel(inf.latestRaceDate)} race ({inf.latestRaceAgeDays} days old); no newer qualifying effort has displaced it.</p>}
+        Still race-dependent: {pct(inf.raceShare)} rests on your {dateLabel(inf.latestRaceDate)} race ({inf.latestRaceAgeDays} days old); newer qualifying evidence may have limited influence.</p>}
+      {e.seconds !== null && e.confidence === "low" && e.confidenceRestrictions?.length ? <p className="text-xs text-textSecondary" data-testid="hybrid-v11-restrictions">{confidenceRestrictionMessages(e.confidenceRestrictions).join(" ")}</p> : null}
       {e.seconds !== null && e.conflicts.length > 0 && <p className="text-xs text-warning" data-testid="hybrid-v11-conflict">Signals disagree: {e.conflicts.map(x => x.detail).join(" ")} Reported, not averaged away; confidence is low.</p>}
       <p className="text-xs text-textSecondary">Experimental and provisional; not independently validated. The official estimate is unchanged and remains the primary prediction.</p>
       <details className="text-xs text-textSecondary" data-testid="hybrid-v11-details">

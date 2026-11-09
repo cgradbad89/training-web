@@ -226,6 +226,8 @@ export interface TargetDisclosure {
   notes: string[];
 }
 
+export type ConfidenceRestriction = "limited_precision" | "limited_corroboration" | "within_group_conflict" | "signal_conflict" | "opposing_adjustments" | "readiness_unknown" | "race_age" | "distant_evidence" | "marathon_durability" | "readiness_low" | "vo2_disagreement" | "demonstrated_performance";
+
 export interface HybridV11Estimate {
   version: "experimental-hybrid-hm-v1.1";
   researchStatus: "experimental_provisional";
@@ -241,6 +243,7 @@ export interface HybridV11Estimate {
   paceSecondsPerMile: number | null;
   evidenceQuality: "adequate" | "limited" | "insufficient";
   confidence: "low" | "moderate" | null;
+  confidenceRestrictions?: ConfidenceRestriction[];
   sensitivityRange: { fastSeconds: number; slowSeconds: number; basis: string } | null;
   contributions: HybridFamilyContribution[];
   combination: EvidenceCombination;

@@ -1,4 +1,5 @@
 /** Presentation helpers for the four-distance current-fitness table. Pure; no I/O. */
+import type { ConfidenceRestriction } from "@/types/hybridPerformanceV11";
 import type { CurrentFitnessRow } from "./hybridCurrentFitness";
 
 /** "28:30" under an hour, "2:11:00" otherwise. Seconds are rounded to whole seconds; non-positive / non-finite → an em dash. */
@@ -28,7 +29,7 @@ export function confidenceLabel(row: Pick<CurrentFitnessRow, "status" | "confide
   return row.confidence === "moderate" ? "Moderate" : "Low";
 }
 
-/** One short, plain-language line for a provisional or unavailable row ("" when the row needs none). */
+/** All applicable restrictions, including low-confidence available rows; empty when none apply. */
 export function rowNote(row: CurrentFitnessRow): string {
   if (row.status === "unavailable") {
     switch (row.unavailableCause) {
@@ -36,17 +37,31 @@ export function rowNote(row: CurrentFitnessRow): string {
       case "anchor_expired_no_contemporary_evidence": return "Latest race is over 180 days old.";
       case "insufficient_independent_evidence": return "Needs a recent race or two strong efforts.";
       case "insufficient_endurance_preparation":
-        return row.id === "marathon" ? "Needs recent long runs (12+ miles) before a marathon time is estimated." : "Recent long runs and volume are too low.";
+      return row.id === "marathon" ? "Needs recent long runs (12+ miles) before a marathon time is estimated." : "Recent long runs and volume are too low.";
       default: return "Not enough evidence.";
     }
   }
-  if (row.status !== "provisional") return "";
-  const text = row.provisionalReasons.join(" ");
-  if (/implausible distance-scaling/.test(text)) return "Provisional: inconsistent with the neighbouring distance.";
-  if (/mostly converted from longer-distance evidence/.test(text)) return "Provisional: converted from longer-distance results.";
-  if (/durability is not demonstrated/.test(text)) return "Provisional: long-run and volume evidence is below marathon-ready levels.";
-  if (/aging race/.test(text)) return "Provisional: rests mainly on an aging race.";
-  if (/not run at maximal effort|demonstrated performance/.test(text)) return "Provisional: demonstrated performance, not a maximal prediction.";
-  if (row.id === "marathon" && /Evidence quality is limited/.test(text)) return "Provisional: estimated from shorter-distance results; no marathon-distance performance yet.";
-  return "Provisional: limited or conflicting evidence.";
+  const notes: string[] = [];
+  if (row.flags.includes("inconsistent_with_adjacent_distance")) notes.push("Estimates are inconsistent with the neighbouring distance.");
+  notes.push(...confidenceRestrictionMessages(row.estimate.confidenceRestrictions ?? []));
+  return notes.join(" ");
+}
+
+const RESTRICTION_MESSAGES: Record<ConfidenceRestriction, string> = {
+  limited_corroboration: "Too few independent observations support the estimate.",
+  limited_precision: "Evidence is not precise enough for Moderate.",
+  within_group_conflict: "Some performance evidence disagrees.",
+  signal_conflict: "Independent signals disagree.",
+  opposing_adjustments: "Physiology and endurance adjustments point in opposite directions.",
+  readiness_unknown: "Endurance readiness is unknown.",
+  readiness_low: "Endurance readiness is below the Moderate threshold.",
+  race_age: "The estimate relies mainly on a race over 42 days old.",
+  distant_evidence: "Much of the estimate is converted from a distant race distance.",
+  marathon_durability: "Long-run and volume evidence is below marathon-ready levels.",
+  vo2_disagreement: "VO₂ evidence disagrees with the physiological trend.",
+  demonstrated_performance: "Based on demonstrated performance, not a maximal prediction.",
+};
+
+export function confidenceRestrictionMessages(restrictions: readonly ConfidenceRestriction[]): string[] {
+  return restrictions.map(reason => RESTRICTION_MESSAGES[reason]);
 }
