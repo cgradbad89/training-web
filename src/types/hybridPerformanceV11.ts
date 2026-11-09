@@ -213,6 +213,19 @@ export interface DemonstratedRaceDisclosure {
   note: string | null;
 }
 
+/** Distance-aware disclosure (present only when the estimate was produced through a target profile; see `hybridTargetProfiles.ts`). */
+export interface TargetDisclosure {
+  id: "5k" | "10mi" | "half" | "marathon";
+  label: string;
+  /** Share of the evidence base within the profile's directness ratio of the target distance (null when the rule is not applied). */
+  directShare: number | null;
+  /** Marathon only: the durability checks, each with the observed value. */
+  durability: { longestRunMiles: number | null; longRunMeanMiles: number | null; weeklyMiles: number | null; demonstratedAtTarget: boolean; satisfied: boolean } | null;
+  /** Finish-time rounding applied to the displayed `minutes` (seconds). The unrounded value is `seconds`. */
+  roundingSeconds: number;
+  notes: string[];
+}
+
 export interface HybridV11Estimate {
   version: "experimental-hybrid-hm-v1.1";
   researchStatus: "experimental_provisional";
@@ -248,6 +261,8 @@ export interface HybridV11Estimate {
   caveats: string[];
   /** Whether a confirmed hard/nonmaximal race carries the number. Always present; `maximal_or_recorded_evidence` is the unchanged v1.1. */
   demonstrated: DemonstratedRaceDisclosure;
+  /** Distance-aware disclosure; absent for estimates produced without a target profile (the pre-existing half-marathon-only entry). */
+  target?: TargetDisclosure;
 }
 
 export interface HybridV11ComparisonInput { official: CurrentHalfEstimate | null; hrEnhanced: HrEnhancedEstimate | null }

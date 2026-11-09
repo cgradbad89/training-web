@@ -66,6 +66,10 @@ export interface CombinationParams {
   /** Multiplies every measurement σ (1 = policy). */
   measurementScale?: number;
   slowerVarianceFactor?: number;
+  /** Distance-aware target profiles only (default: the policy constants, i.e. the half-marathon behaviour, bit for bit). */
+  extrapolationSigmaPerLn?: number; longerSourceSigmaPerLn?: number;
+  /** Exponent used when the source is LONGER than the target (default: the policy's fixed 1.06). */
+  longerSourceExponent?: number;
   /** Drop one kind of evidence (research sweeps). */
   excludeKinds?: readonly string[];
 }
@@ -107,10 +111,11 @@ export function combineEvidence(items: readonly EvidenceItemV11[], options: Comb
     if (item.seconds < CAPACITY_POLICY.minimumSourceDurationSeconds) { ignore(item, "source_too_short"); continue; }
     const reliability = extrapolationReliability(item.distanceMeters, target);
     if (reliability < CAPACITY_POLICY.minimumReliability) { ignore(item, "extrapolation_unreliable"); continue; }
-    const eq = equivalentOf(item, target, exponent);
+    const eq = equivalentOf(item, target, exponent, prm.longerSourceExponent);
     if (!eq) { ignore(item, "equivalent_implausible"); continue; }
     const ratio = target / item.distanceMeters, lnRatio = Math.abs(Math.log(ratio));
-    const ext = ratio > P.atTargetBand ? P.extrapolationSigmaPerLn * lnRatio : ratio < 0.8 ?P.longerSourceSigmaPerLn * lnRatio : 0;
+    const ext = ratio > P.atTargetBand ? (prm.extrapolationSigmaPerLn ?? P.extrapolationSigmaPerLn) * lnRatio
+      : ratio < 0.8 ? (prm.longerSourceSigmaPerLn ?? P.longerSourceSigmaPerLn) * lnRatio : 0;
     const meas = (P.measurementSigma[item.kind] ?? 0.03) * scale;
     const drf = drift * Math.sqrt(Math.max(0, item.ageDays) / 30);
     const flags: CombinationItemFlag[] = [];

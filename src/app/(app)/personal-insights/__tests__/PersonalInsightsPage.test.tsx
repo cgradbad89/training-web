@@ -33,6 +33,7 @@ const h = vi.hoisted(() => ({
     settingsLoading: false,
     racesLoading: false,
     overridesLoading: false,
+    sourceHasLoaded: { workouts: true, overrides: true, races: true, plans: true, settings: true },
   },
   riegelCalls: 0,
   loadScanCalls: 0,
@@ -60,6 +61,11 @@ vi.mock("next/dynamic", () => ({
 
 vi.mock("@/hooks/useAuth", () => ({
   useAuth: () => ({ user: { uid: "u1" }, loading: false }),
+}));
+
+vi.mock("@/hooks/usePhysiologyEvidence", () => ({
+  usePhysiologyEvidence: () => ({ vo2: { state: "not_requested", entries: undefined, docsRead: 0 },
+    streams: { state: "not_requested", summaries: undefined, report: null, eligible: 0, withStream: 0 } }),
 }));
 
 vi.mock("@/contexts/AppDataContext", () => ({
@@ -148,16 +154,28 @@ afterEach(() => {
 });
 
 describe("PersonalInsightsPage tabs", () => {
-  it.each(["preview", "production"])("replaces legacy race numbers and confidence without fitting hidden predictions in %s", deployment => {
+  it.each(["preview", "production"])("replaces the legacy Riegel presentation with ONE Hybrid v1.1 four-distance table without fitting hidden predictions in %s", deployment => {
     vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", deployment === "production" ? undefined : "true");
     vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", deployment);
     h.searchParams = new URLSearchParams("tab=performance");
     mount();
-    expect(hasText("Numerical race predictions unavailable")).toBe(true);
-    expect(hasText("Predicted Race Times")).toBe(false);
-    expect(hasText("Confidence")).toBe(false);
+    expect(hasText("Predicted Race Times")).toBe(true);
+    expect(hasText("Experimental — Hybrid Performance Model v1.1")).toBe(true);
+    expect(hasText("Numerical race predictions unavailable")).toBe(false);
+    expect(container.querySelectorAll("[data-testid='current-fitness-table']").length).toBe(1);
+    expect(["5k", "10mi", "half", "marathon"].map(id => !!container.querySelector(`[data-testid='current-fitness-row-${id}']`))).toEqual([true, true, true, true]);
+    expect(hasText("Based on last 8 weeks of training")).toBe(false);
     expect(h.riegelCalls).toBe(0);
     expect(hasText("Personal Records by Year")).toBe(true);
+  });
+  it("keeps the previous unavailable card when the hybrid v1.1 rollback switch is set in production", () => {
+    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", "production");
+    vi.stubEnv("NEXT_PUBLIC_DISABLE_HYBRID_V11", "true");
+    h.searchParams = new URLSearchParams("tab=performance");
+    mount();
+    expect(hasText("Numerical race predictions unavailable")).toBe(true);
+    expect(container.querySelector("[data-testid='current-fitness-table']")).toBeNull();
+    expect(h.riegelCalls).toBe(0);
   });
   it("defaults to the Fitness & Load tab when no ?tab= param is present", () => {
     mount();

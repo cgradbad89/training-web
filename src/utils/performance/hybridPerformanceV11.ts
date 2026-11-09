@@ -29,7 +29,7 @@ import type { CurrentHalfEstimate } from "@/utils/experimentalCurrentPerformance
 import type { HrEnhancedEstimate } from "@/types/hrEnhancedPerformance";
 import type { AerobicTrendEvidence, EnduranceReadiness, HybridFamilyContribution, HybridUnavailableCause, HrStreamSummary } from "@/types/hybridPerformance";
 import type {
-  ConflictSignal, DemonstratedRaceDisclosure, EvidenceCombination, HistoricalInfluence, HrStreamDisclosure, HybridV11Estimate, Vo2Disclosure,
+  ConflictSignal, DemonstratedRaceDisclosure, EvidenceCombination, HistoricalInfluence, HrStreamDisclosure, HybridV11Estimate, TargetDisclosure, Vo2Disclosure,
 } from "@/types/hybridPerformanceV11";
 import type { RacePerformanceInput } from "@/types/racePerformance";
 import type { Vo2Entry } from "@/utils/vo2History";
@@ -42,6 +42,7 @@ import { computeEnduranceReadiness } from "./enduranceReadiness";
 import { DEMONSTRATED_RACE_REASON, isDemonstratedRaceEvidence } from "./evidenceQualification";
 import { qualifyEvidenceV11 } from "./evidenceSegments";
 import { HYBRID_POLICY, type HybridOptions } from "./hybridPerformance";
+import type { TargetProfile } from "./hybridTargetProfiles";
 import type { HybridPerformanceEstimate } from "@/types/hybridPerformance";
 
 export const HYBRID_V11_VERSION = "experimental-hybrid-hm-v1.1" as const;
@@ -66,6 +67,11 @@ export interface HybridV11Options extends HybridOptions {
   combinationParams?: CombinationParams;
   /** Rollback / strict research replay: ignore confirmed hard/nonmaximal races entirely (the pre-policy v1.1 behaviour, bit for bit). */
   strictMaximalOnly?: boolean;
+  /**
+   * Distance-aware target profile (5K / 10 mi / half / marathon; see `hybridTargetProfiles.ts`). Absent = the pre-existing half-marathon-only
+   * behaviour, bit for bit. The half-marathon profile reproduces it exactly; the others change only distance-dependent parameters.
+   */
+  profile?: TargetProfile;
 }
 
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
@@ -157,7 +163,12 @@ export function estimateHybridHalfMarathonV11(input: Input, options: HybridV11Op
 
 function estimateCore(input: Input, options: HybridV11Options, admitDemonstrated: boolean): HybridV11Estimate {
   if (!isPerformanceInstant(input.asOf)) throw new TypeError("A valid hybrid-estimate cutoff is required");
-  const P = HYBRID_V11_POLICY, B = HYBRID_POLICY, target = options.targetDistanceMeters ?? HALF_MARATHON_METERS;
+  const P = HYBRID_V11_POLICY, B = HYBRID_POLICY, profile = options.profile ?? null;
+  const target = profile?.distanceMeters ?? options.targetDistanceMeters ?? HALF_MARATHON_METERS;
+  // Distance-dependent conversion parameters (undefined profile → the policy constants inside `combineEvidence`).
+  const conv: CombinationParams = profile ? { extrapolationSigmaPerLn: profile.extrapolationSigmaPerLn, longerSourceSigmaPerLn: profile.longerSourceSigmaPerLn,
+    longerSourceExponent: profile.longerSourceExponent } : {};
+  const physScale = profile?.physiologyScale ?? 1, endScale = profile?.enduranceScale ?? 1;
   const overrides = input.overrides ?? {};
   const qualification = qualifyEvidenceV11(input, { admitDemonstratedRaces: admitDemonstrated });
   const asOfDate = qualification.asOfDate;
@@ -170,9 +181,10 @@ function estimateCore(input: Input, options: HybridV11Options, admitDemonstrated
   const measured = computeEnduranceReadiness({ runs, raceWorkoutIds, asOfDate, targetDistanceMeters: target });
   const readiness: EnduranceReadiness = options.readinessOverride === undefined ? measured
     : { ...measured, score: clamp(options.readinessOverride, 0, 1), reasons: [...measured.reasons, "scenario_readiness_override"] };
-  const exponent = readiness.score === null ? B.baseExponent : B.baseExponent + (B.maximumExponent - B.baseExponent) * (1 - readiness.score);
+  const maxExponent = profile?.maximumExponent ?? B.maximumExponent;
+  const exponent = readiness.score === null ? B.baseExponent : B.baseExponent + (maxExponent - B.baseExponent) * (1 - readiness.score);
   const expired = qualification.base.expired.length;
-  const combination = combineEvidence(qualification.independent, { targetDistanceMeters: target, exponent, expiredItems: expired, params: options.combinationParams });
+  const combination = combineEvidence(qualification.independent, { targetDistanceMeters: target, exponent, expiredItems: expired, params: profile ? { ...conv, ...options.combinationParams } : options.combinationParams });
   const physiology = computeAerobicTrend({ runs, raceWorkoutIds, asOf: input.asOf, asOfDate, streamSummaries: options.streamSummaries as Readonly<Record<string, HrStreamSummary>> | undefined,
     vo2Entries: options.vo2Entries, streamPolicy: "calibrated" });
   const vo2 = vo2Disclosure(physiology, options.vo2Entries, vo2Load), hrStreams = streamDisclosure(physiology, streamLoad);
@@ -195,7 +207,8 @@ function estimateCore(input: Input, options: HybridV11Options, admitDemonstrated
     seconds: null, minutes: null, paceSecondsPerMile: null, evidenceQuality: combination.quality, confidence: null, sensitivityRange: null,
     contributions: emptyContributions(reason), combination, qualification, physiology, readiness, adjustmentFraction: 0,
     influence: emptyInfluence(combination, [reason], qualification.informativeExcluded), conflicts: [], inputs: { vo2, hrStreams }, comparison: comparisonOf(null),
-    flags: [...new Set(flags)], missing, reasons: [reason], fallbackReason: reason, assumptions: ASSUMPTIONS, caveats, demonstrated: NO_DEMONSTRATED, ...extra });
+    flags: [...new Set(flags)], missing, reasons: [reason], fallbackReason: reason, assumptions: profile ? [...ASSUMPTIONS, ...targetAssumptions(profile)] : ASSUMPTIONS, caveats, demonstrated: NO_DEMONSTRATED,
+    ...(profile ? { target: targetDisclosure(profile, null, null, [], null) } : {}), ...extra });
 
   if (combination.status === "unavailable" || combination.baseSeconds === null) {
     const raw = combination.unavailableCause;
@@ -206,11 +219,28 @@ function estimateCore(input: Input, options: HybridV11Options, admitDemonstrated
   const rows = combination.items, base = combination.baseSeconds;
   const atTarget = (r: { extrapolationRatio: number }) => r.extrapolationRatio <= B.atTargetRatio && r.extrapolationRatio >= 0.8;
   const atTargetShare = rows.filter(atTarget).reduce((s, r) => s + r.effectiveShare, 0);
-  const support = readiness.score === null ? null : Math.max(readiness.score, atTargetShare);
-  if (support !== null && support < B.minimumReadiness && target >= HALF_MARATHON_METERS - 25) {
+  // Support share: the at-target band (half marathon / marathon, unchanged); for 5K and 10 miles also any LONGER performance (it already demonstrates the endurance).
+  const supportShare = profile?.longerSourceDemonstratesEndurance ? rows.filter(r => r.extrapolationRatio <= B.atTargetRatio).reduce((s, r) => s + r.effectiveShare, 0) : atTargetShare;
+  const support = readiness.score === null ? null : Math.max(readiness.score, supportShare);
+  const minimumSupport = profile ? profile.minimumReadiness : target >= HALF_MARATHON_METERS - 25 ? B.minimumReadiness : null;
+  const noun = profile?.noun ?? "half-marathon";
+  if (support !== null && minimumSupport !== null && support < minimumSupport) {
     flags.push("endurance_unprepared");
     return shell("unavailable", "insufficient_endurance_preparation",
-      `Recent long-run, volume and frequency evidence (readiness ${(readiness.score! * 100).toFixed(0)}%) is too low, and no recent race-distance performance demonstrates the endurance, to carry a half-marathon time. Demonstrated speed is shown separately; endurance readiness is a different question.`);
+      `Recent long-run, volume and frequency evidence (readiness ${(readiness.score! * 100).toFixed(0)}%) is too low, and no recent race-distance performance demonstrates the endurance, to carry a ${noun} time. Demonstrated speed is shown separately; endurance readiness is a different question.`);
+  }
+  // Marathon durability: half-marathon ability is never read as proof of marathon readiness (waived only when marathon-distance performance carries the base).
+  const dur = profile?.durability ?? null;
+  const longRunMean = readiness.longRunFraction === null ? null : readiness.longRunFraction * (target / 1609.344);
+  const demonstratedAtTarget = dur ? atTargetShare >= dur.demonstratedShare : false;
+  if (dur && !demonstratedAtTarget) {
+    if (readiness.score === null || (readiness.longestRunMiles ?? 0) < dur.withholdBelowLongestRunMiles) {
+      flags.push("durability_unsupported");
+      return shell("unavailable", "insufficient_endurance_preparation", readiness.score === null
+        ? "Fewer than four recent weeks have recorded runs, so long-run and volume history is unknown. A marathon time is not estimated from half-marathon speed without evidence of endurance preparation."
+        : `The longest recent run is ${(readiness.longestRunMiles ?? 0).toFixed(1)} miles (under ${dur.withholdBelowLongestRunMiles}): there is not enough long-run evidence to carry a marathon time. Half-marathon ability is shown separately and is not proof of marathon durability.`,
+        { target: targetDisclosure(profile!, null, { longestRunMiles: readiness.longestRunMiles, longRunMeanMiles: longRunMean, weeklyMiles: readiness.weeklyMiles, demonstratedAtTarget, satisfied: false }, [], null) });
+    }
   }
   if (readiness.score === null) { flags.push("readiness_unknown"); missing.push("Endurance readiness (fewer than four recent weeks with recorded runs)"); }
 
@@ -236,14 +266,14 @@ function estimateCore(input: Input, options: HybridV11Options, admitDemonstrated
   if (physiology.flags.includes("weather_unadjusted")) missing.push("Weather for enough comparison runs (heat could explain part of any pace change; not assumed equal)");
   if (vo2.availability !== "available") missing.push(`Apple Health VO₂ max corroboration (${vo2.availability.replace("_", " ")}; optional)`);
   if (hrStreams.availability !== "used" && physiology.status === "available") missing.push(hrStreams.availability === "partial" ? "Warm-up-trimmed heart rate for every comparison run (partial hydration)" : "Warm-up-trimmed heart-rate streams (whole-workout average HR includes the warm-up)");
-  const phys = fPhysAt(B.transferFraction);
+  const phys = fPhysAt(B.transferFraction * physScale);
 
   let fE = 0, enduranceStatus: HybridFamilyContribution["status"] = "unavailable", readinessThen: EnduranceReadiness | null = null;
   if (readiness.score !== null) {
     readinessThen = computeEnduranceReadiness({ runs, raceWorkoutIds, asOfDate: refDate, targetDistanceMeters: target });
     if (readinessThen.score !== null && atTargetShare > 0) {
       const delta = clamp(readiness.score - readinessThen.score, -B.enduranceDeltaClamp, B.enduranceDeltaClamp);
-      fE = clamp(-B.enduranceCoefficient * delta * atTargetShare * B.enduranceInfluence, -B.maximumEnduranceFraction, B.maximumEnduranceFraction);
+      fE = clamp(-B.enduranceCoefficient * delta * atTargetShare * B.enduranceInfluence * endScale, -B.maximumEnduranceFraction * endScale, B.maximumEnduranceFraction * endScale);
       enduranceStatus = fE === 0 ? "no_effect" : "used";
     } else enduranceStatus = "no_effect";
   }
@@ -270,9 +300,14 @@ function estimateCore(input: Input, options: HybridV11Options, admitDemonstrated
   // ── Assumption-sensitivity range: alternative defensible parameters (not a statistical interval). ──
   const variants: number[] = [seconds];
   const S = P.sensitivity;
-  for (const exp of S.exponents) {
-    const alt = combineEvidence(qualification.independent, { targetDistanceMeters: target, exponent: exp, expiredItems: expired }).baseSeconds;
-    if (alt !== null) { variants.push(alt); for (const k of S.transfers) variants.push(alt * (1 + combine(fPhysAt(k).f, fE))); }
+  for (const exp of profile ? profile.sensitivityExponents : S.exponents) {
+    const alt = combineEvidence(qualification.independent, { targetDistanceMeters: target, exponent: exp, expiredItems: expired, ...(profile ? { params: conv } : {}) }).baseSeconds;
+    if (alt !== null) { variants.push(alt); for (const k of S.transfers) variants.push(alt * (1 + combine(fPhysAt(k * physScale).f, fE))); }
+  }
+  // Longer-source conversions (e.g. a half marathon → 5 K) have their own, disclosed exponent uncertainty.
+  for (const lexp of profile?.sensitivityLongerExponents ?? []) {
+    const alt = combineEvidence(qualification.independent, { targetDistanceMeters: target, exponent, expiredItems: expired, params: { ...conv, longerSourceExponent: lexp } }).baseSeconds;
+    if (alt !== null) variants.push(alt * (1 + total));
   }
   const alts: { [k: string]: Parameters<typeof combineEvidence>[1] } = {
     commonModeLow: { params: { commonModeRace: COMBINATION_POLICY.commonMode.race * S.commonModeScale[0], commonModeRecent: COMBINATION_POLICY.commonMode.recent_effort * S.commonModeScale[0] } },
@@ -282,11 +317,13 @@ function estimateCore(input: Input, options: HybridV11Options, admitDemonstrated
     noSegments: { params: { excludeKinds: ["sustained_segment"] } },
   };
   for (const o of Object.values(alts)) {
-    const alt = combineEvidence(qualification.independent, { targetDistanceMeters: target, exponent, expiredItems: expired, ...o }).baseSeconds;
+    const alt = combineEvidence(qualification.independent, { targetDistanceMeters: target, exponent, expiredItems: expired, ...(profile ? { params: { ...conv, ...(o?.params ?? {}) } } : o) }).baseSeconds;
     if (alt !== null) variants.push(alt * (1 + total));
   }
   const sensitivityRange = { fastSeconds: Math.min(...variants), slowSeconds: Math.max(...variants),
-    basis: "Alternative defensible assumptions (distance exponent 1.06 vs 1.10, 25–75 % physiological transfer, common-mode and age-drift terms halved/doubled, measurement uncertainty ±25 %, with and without sustained segments). Not a statistical interval." };
+    basis: profile && profile.id !== "half"
+      ? `Alternative defensible assumptions (distance exponent ${profile.sensitivityExponents[0]} vs ${profile.sensitivityExponents[1]}${profile.sensitivityLongerExponents ? `, ${profile.sensitivityLongerExponents[0]}–${profile.sensitivityLongerExponents[1]} for longer-distance evidence` : ""}, 25–75 % physiological transfer, common-mode and age-drift terms halved/doubled, measurement uncertainty ±25 %, with and without sustained segments). Not a statistical interval.`
+      : "Alternative defensible assumptions (distance exponent 1.06 vs 1.10, 25–75 % physiological transfer, common-mode and age-drift terms halved/doubled, measurement uncertainty ±25 %, with and without sustained segments). Not a statistical interval." };
 
   // ── Status, confidence, provisional reasons. ──
   const provisionalReasons: string[] = [];
@@ -296,10 +333,29 @@ function estimateCore(input: Input, options: HybridV11Options, admitDemonstrated
   if (contradictoryAdj) provisionalReasons.push("The physiological and endurance terms point in opposite directions.");
   if (readiness.score === null) provisionalReasons.push("Endurance readiness is unknown.");
   if (combination.raceDominance === "dominant" && (combination.latestRaceAgeDays ?? 0) > 42) provisionalReasons.push("The estimate rests almost entirely on an aging race with no newer corroborating evidence.");
+  // Distance-specific evidence rules (profile only; the half marathon is unchanged).
+  const directShare = profile?.directRatio ? rows.filter(r => r.extrapolationRatio <= profile.directRatio! && r.extrapolationRatio >= 1 / profile.directRatio!).reduce((s, r) => s + r.effectiveShare, 0) : null;
+  const targetNotes: string[] = [];
+  if (profile?.directRatio && directShare !== null && directShare < 0.5) {
+    const msg = profile.id === "5k"
+      ? "This 5K is mostly converted from longer-distance evidence (half marathon or beyond), which says little about short-race speed. Treat it as a rough estimate until a 5K or 10K effort is available."
+      : `This ${noun} estimate is mostly converted from evidence at a distant race distance.`;
+    provisionalReasons.push(msg); targetNotes.push(msg);
+  }
+  if (dur && !demonstratedAtTarget) {
+    if (longRunMean !== null && longRunMean < dur.provisionalBelowLongRunMiles) provisionalReasons.push(`Recent long runs average ${longRunMean.toFixed(1)} miles (the three longest weeks), under ${dur.provisionalBelowLongRunMiles}: marathon durability is not demonstrated.`);
+    if ((readiness.weeklyMiles ?? 0) < dur.provisionalBelowWeeklyMiles) provisionalReasons.push(`Typical weekly mileage (${(readiness.weeklyMiles ?? 0).toFixed(0)} mi) is under ${dur.provisionalBelowWeeklyMiles}: marathon durability is not demonstrated.`);
+    for (const r of provisionalReasons.filter(x => /durability/.test(x))) targetNotes.push(r);
+  }
+  const durabilityOk = dur ? demonstratedAtTarget || !provisionalReasons.some(x => /durability/.test(x)) : true;
   const provisional = provisionalReasons.length > 0;
   const confidence: HybridV11Estimate["confidence"] = !provisional && (readiness.score ?? 0) >= B.moderateReadiness && physiology.vo2Corroboration !== "disagrees" ? "moderate" : "low";
   const status: HybridV11Estimate["status"] = provisional ? "provisional" : "available";
-  const minutes = Math.round(seconds / 60), miles = target / 1609.344;
+  const miles = target / 1609.344;
+  // Presentation rounding (HALF profile: nearest minute, identical to the pre-existing behaviour).
+  const increment = profile?.roundingSeconds ?? 60;
+  const shownSeconds = Math.round(seconds / increment) * increment;
+  const minutes = increment === 60 ? Math.round(seconds / 60) : shownSeconds / 60;
 
   const notes: string[] = [];
   const ign = combination.ignored.filter(i => i.reason === "segment_slower_than_estimate").length;
@@ -331,5 +387,17 @@ function estimateCore(input: Input, options: HybridV11Options, admitDemonstrated
         : `Readiness ${(readiness.score * 100).toFixed(0)}% (longest ${readiness.longestRunMiles?.toFixed(1)} mi, ${readiness.weeklyMiles?.toFixed(0)} mi/wk). Sets the extrapolation exponent${enduranceStatus === "used" ? `; change since the evidence (${readinessThen?.score == null ? "?" : (readinessThen.score * 100).toFixed(0) + "%"} → ${(readiness.score * 100).toFixed(0)}%) adjusts the base` : ""}.` },
   ];
   return shell(status, null, "", { seconds, minutes, paceSecondsPerMile: Math.round(minutes * 60 / miles / 5) * 5, confidence, sensitivityRange, contributions,
-    adjustmentFraction: total, influence, conflicts, flags: [...new Set(flags)], fallbackReason: null, reasons: combination.reasons, comparison: comparisonOf(seconds) });
+    adjustmentFraction: total, influence, conflicts, flags: [...new Set(flags)], fallbackReason: null, reasons: combination.reasons, comparison: comparisonOf(seconds),
+    ...(profile ? { target: targetDisclosure(profile, directShare, dur ? { longestRunMiles: readiness.longestRunMiles, longRunMeanMiles: longRunMean, weeklyMiles: readiness.weeklyMiles,
+      demonstratedAtTarget, satisfied: durabilityOk } : null, targetNotes, increment) } : {}) });
+}
+
+function targetAssumptions(p: TargetProfile): string[] {
+  const out = [`Distance-aware target (${p.label}): conversion uncertainty ${p.extrapolationSigmaPerLn} per ln-distance for shorter sources and ${p.longerSourceSigmaPerLn} for longer sources; physiological-trend weight ×${p.physiologyScale}, endurance-change weight ×${p.enduranceScale}. These are engineering assumptions, not fitted to any outcome.`];
+  if (p.id === "5k") out.push("A half-marathon-or-longer result converts to a 5K with Riegel's exponent 1.06 and a wide uncertainty; speed-specific evidence (a 5K–10K race or sustained effort) is what makes a 5K estimate more than a rough one.");
+  if (p.id === "marathon") out.push("A marathon time is never read from half-marathon speed alone: recent long runs, weekly volume and endurance readiness must support it, and the shorter-source conversion exponent rises to 1.15 as readiness falls.");
+  return out;
+}
+function targetDisclosure(p: TargetProfile, directShare: number | null, durability: TargetDisclosure["durability"], notes: string[], rounding: number | null): TargetDisclosure {
+  return { id: p.id, label: p.label, directShare, durability, roundingSeconds: rounding ?? p.roundingSeconds, notes };
 }
