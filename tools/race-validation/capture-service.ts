@@ -112,7 +112,7 @@ class PlainHeaderAuth extends GoogleAuth {
  * firebase-admin's Firestore wrapper accepts only key or default credentials, so the keyless path uses the
  * underlying client with a workload-identity auth client that impersonates the reader service account.
  */
-async function defaultFirestore(settings: CaptureSettings, _request: Request, oidcToken: () => Promise<string>) {
+export async function defaultFirestore(settings: CaptureSettings, _request: Request, oidcToken: () => Promise<string>) {
   const authClient = ExternalAccountClient.fromJSON({
     type: "external_account", audience: settings.audience, subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
     token_url: "https://sts.googleapis.com/v1/token",
@@ -183,7 +183,7 @@ async function describeEnrollment(db: Firestore, settings: CaptureSettings) {
 
 const SEVERITY: CaptureResult["status"][] = ["failed", "missed", "captured", "abstained", "duplicate", "rejected", "idle", "unauthorized", "disabled"];
 
-function bearerMatches(header: string | null, secret: string) {
+export function bearerMatches(header: string | null, secret: string) {
   const hash = (value: string) => createHash("sha256").update(value).digest();
   return !!header && timingSafeEqual(hash(header), hash(`Bearer ${secret}`));
 }

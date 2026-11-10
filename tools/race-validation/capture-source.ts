@@ -10,16 +10,16 @@ import { instant, key } from "./evidence";
 import { ACTIVE_RACE_QUERY_LIMIT, type RaceMeta } from "./enrollment";
 import type { CaptureSlot } from "./scheduled-capture";
 
-const WORKOUT_FIELDS = [
+export const WORKOUT_FIELDS = [
   "workoutId", "startDate", "endDate", "entrySource", "updatedAt", "syncedAt", "activityType", "displayType",
   "durationSeconds", "distanceMiles", "distanceMeters", "sourceName", "isRunLike", "hasRoute", "hasHRStream",
   "avgHeartRate", "avgPaceSecPerMile", "elevationGainM", "weather", "routeClusterId",
 ];
-const RACE_FIELDS = [
+export const RACE_FIELDS = [
   "name", "raceDate", "raceDistance", "customDistanceMiles", "createdAt", "actualRunId", "actualRunDate",
   "actualRunDistanceMiles", "actualRunDurationSeconds", "result", "performanceEvidence", "confirmationHistory",
 ];
-const OVERRIDE_FIELDS = [
+export const OVERRIDE_FIELDS = [
   "workoutId", "userId", "isExcluded", "excludedAt", "excludedReason", "updatedAt",
   "distanceMilesOverride", "durationSecondsOverride", "runTypeOverride",
 ];

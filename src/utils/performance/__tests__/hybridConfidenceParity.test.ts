@@ -67,17 +67,15 @@ describe("numerical preservation against pristine 0a6c85f5 (before confidence/ti
     expect(COMBINATION_POLICY.minimumItemsWithoutConfirmed).toBe(3);
     expect(READINESS_POLICY.minimumObservedWeeks).toBe(4);
   });
-  it("emits a conflict restriction only when the corresponding signal actually conflicts", () => {
-    for (const make of Object.values(cases)) {
-      const c: { input: ReturnType<typeof prepared>; options?: HybridV11Options } = make();
-      for (const row of computeCurrentFitness(c.input, c.options).rows.filter(r => r.status !== "unavailable")) {
-        const e = row.estimate;
-        expect(e.confidenceRestrictions?.includes("within_group_conflict")).toBe(e.flags.includes("contradictory_evidence"));
-        expect(e.confidenceRestrictions?.includes("signal_conflict")).toBe(e.conflicts.length > 0);
-        expect(e.confidenceRestrictions?.includes("race_age")).toBe(e.combination.raceDominance === "dominant" && (e.combination.latestRaceAgeDays ?? 0) > 42);
-        if (e.confidence === "moderate") expect(e.confidenceRestrictions).toEqual([]);
-        if (e.confidence === "low") expect(e.confidenceRestrictions?.length).toBeGreaterThan(0);
-      }
+  for (const [name, make] of Object.entries(cases)) it(`${name}: emits a conflict restriction only when the corresponding signal actually conflicts`, () => {
+    const c: { input: ReturnType<typeof prepared>; options?: HybridV11Options } = make();
+    for (const row of computeCurrentFitness(c.input, c.options).rows.filter(r => r.status !== "unavailable")) {
+      const e = row.estimate;
+      expect(e.confidenceRestrictions?.includes("within_group_conflict")).toBe(e.flags.includes("contradictory_evidence"));
+      expect(e.confidenceRestrictions?.includes("signal_conflict")).toBe(e.conflicts.length > 0);
+      expect(e.confidenceRestrictions?.includes("race_age")).toBe(e.combination.raceDominance === "dominant" && (e.combination.latestRaceAgeDays ?? 0) > 42);
+      if (e.confidence === "moderate") expect(e.confidenceRestrictions).toEqual([]);
+      if (e.confidence === "low") expect(e.confidenceRestrictions?.length).toBeGreaterThan(0);
     }
   });
 });

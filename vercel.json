@@ -1,6 +1,7 @@
 {
   "crons": [
     { "path": "/api/half-marathon-capture", "schedule": "0 13 * * *" },
+    { "path": "/api/half-marathon-capture", "schedule": "0 14 * * *" },
     { "path": "/api/half-marathon-capture", "schedule": "0 17 * * *" },
     { "path": "/api/half-marathon-capture", "schedule": "0 21 * * *" }
   ]

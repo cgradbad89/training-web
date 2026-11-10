@@ -25,15 +25,16 @@ export const VERIFIER_PERMISSIONS = { required: ["storage.objects.get", "storage
   forbidden: ["storage.objects.create", "storage.objects.update", "storage.objects.delete", "storage.buckets.update", "storage.buckets.setIamPolicy", "storage.buckets.delete"] } as const;
 
 /** Dormant JSON API adapter. Callers must independently verify the actual IAM grants. */
-export function createPrivateCaptureStore(config: {
+export function createPrivateCaptureStore<T = import("./checkpoint").Checkpoint>(config: {
   bucket: string;
+  namespace?: "half-marathon" | "prediction-validation";
   minimumRetentionSeconds: number;
   retentionMode?: RetentionMode;
   /** Omit for a verifier-only store (post-race retrieval and audit). */
   writer?: Credential;
   verifier: Credential;
   request: typeof fetch;
-}): CaptureStore {
+}): Omit<CaptureStore, "create"> & { create(name: string, artifact: T): Promise<"created" | "exists"> } {
   if (!/^[a-z0-9][a-z0-9._-]{1,220}[a-z0-9]$/.test(config.bucket)
     || !Number.isSafeInteger(config.minimumRetentionSeconds) || config.minimumRetentionSeconds <= 0
     || !config.verifier.principal || (config.writer && (!config.writer.principal || config.writer.principal === config.verifier.principal))) {
@@ -43,7 +44,7 @@ export function createPrivateCaptureStore(config: {
   const metadataUrl = `https://storage.googleapis.com/storage/v1/b/${bucket}`;
   const uploadUrl = `https://storage.googleapis.com/upload/storage/v1/b/${bucket}/o`;
   const objectUrl = (name: string) => {
-    if (!/^half-marathon\/v1\/[a-f0-9]{64}\.json$/.test(name)) throw new TypeError("Unexpected capture object key");
+    if (!new RegExp(`^${config.namespace ?? "half-marathon"}/v1/[a-f0-9]{64}\\.json$`).test(name)) throw new TypeError("Unexpected capture object key");
     return `${metadataUrl}/o/${encodeURIComponent(name)}`;
   };
   const request = async (credential: Credential, url: string | URL, body?: string) => {

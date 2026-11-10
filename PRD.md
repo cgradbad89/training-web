@@ -106,6 +106,8 @@ The Plan Insights **Current Performance** tile keeps the experimental half-marat
 
 ## Section 3 — Data Model
 
+**Prospective validation storage (2026-11-10):** no new Firestore collections or writes. Compact append-only bundles and bounded attempt/failure receipts reuse the existing private retained capture bucket under `prediction-validation/v1/<sha256>.json`. Weekly and pre-race logical records share one hydrated evaluation. Model/feature-policy hashes, application SHA, intended/actual timestamps, classification, physiology/weather diagnostics and usage are preserved; no raw workouts/GPS/HR samples. See [operations and measured resources](docs/automated-prediction-validation.md).
+
 All user collections live under `users/{uid}/…`. Exception: `stravaActivities` is a legacy global collection.
 
 ### `stravaActivities/{activityId}`
@@ -442,6 +444,8 @@ Production Firestore rules are manually maintained in Firebase Console by the pr
 
 ## Section 6 — Known Sharp Edges
 
+**Prospective capture limitations (2026-11-10):** Hobby cron precision is an hour, so intended 09:00 Eastern is not an exact-minute guarantee. The extension is disabled until new server-only settings and authenticated hosted/write verification are complete. Read-only production measurement found existing confirmation-observation mismatches (`endDate`, `syncedAt`); existing model integrity rules return unavailable predictions. Never repair by rewriting confirmation history or backfilling old predictions. Missing pre-race invocations cannot be reconstructed after race deletion/rescheduling. See [verification report](docs/automated-prediction-validation.md).
+
 - **Confirmation chronology:** Phase 3B.1 stores server receipt timestamps but unchanged owner-writable rules cannot enforce immutable revision history. Historical predictor abstention is mandatory; never backdate newly entered results to event dates. Post-commit acknowledgement failure must retry the same request ID; altered or stale observations require reopening and reviewing the race. Existing rules/access must be verified in a separately authorized owner session, not inferred from the repository rules snapshot.
 
 - **Isolated owner acceptance (Phase 3A):** the normal shell mounts automatic writers and persistent Firestore caching, so it cannot satisfy a strict no-write acceptance session. `tools/race-performance-acceptance/` is a localhost-only developer harness using the actual panel, a unique Firebase app, in-memory Auth, cache-free Firestore Lite server reads, guarded storage/network access and a transitive import audit. It is excluded from Next Production builds. Required parent-source errors/caps withhold the panel and dispose the session; missing running distance/duration is not zero. A narrow developer-only exception permits the two explicitly diagnosed distance-absent historical parents only after proving they precede every reporting period and all selectable-plan matching influence, with no override or race/plan reference. Original invalid diagnostics remain and full-history completeness stays unproven. Owner-panel acceptance and full-shell integration are separate outcomes. See its README; no Production flag, rules, indexes or data changes are authorized by this workflow.
@@ -681,6 +685,8 @@ Production Firestore rules are manually maintained in Firebase Console by the pr
 
 ## Section 7 — Feature Backlog
 
+**Automated prospective Hybrid validation (2026-11-10):** implemented behind `PREDICTION_VALIDATION_ENABLED`; pending production activation/first-write verification. Reuses the existing capture route, keyless readers, private GCS writer/verifier and race-outcome qualification. Weekly Sundays and automatic saved-active-race day-before checkpoints target 09 Eastern; one added 14 UTC invocation complements existing 13 UTC across DST. Four distances, Plan Insights capability/forecast/v2/HR estimates, private reports and bounded two-attempt claims; formulas/UI/uploader unchanged. Exact-minute timing on Hobby, invalid historical confirmation observations and owner-hosted activation are outstanding.
+
 | Feature | Priority | Status | Notes |
 |---|---|---|---|
 | Shared performance evidence contract — Phase A | High | Done — PR #47 | Pure versioned projections preserve existing values/eligibility, identity, coverage and validation boundaries. Delivered separately at d95b6f5. The original phase introduced no runtime consumer or IO change. See `docs/shared-performance-evidence-phase-a.md`. |
@@ -736,6 +742,8 @@ Production Firestore rules are manually maintained in Firebase Console by the pr
 ---
 
 ## Section 8 — External Services & Keys
+
+**Prospective validation:** server-only `PREDICTION_VALIDATION_ENABLED=true` and `PREDICTION_VALIDATION_START_DATE=YYYY-MM-DD` enable the extension on `/api/half-marathon-capture`; existing `HM_CAPTURE_*` and `CRON_SECRET` are reused. Default off. No secret values or Firebase rule changes. See [activation, read-only modes, rollback, cost measurements](docs/automated-prediction-validation.md).
 
 | Service | Purpose | Credential(s) — env var names only |
 |---|---|---|
