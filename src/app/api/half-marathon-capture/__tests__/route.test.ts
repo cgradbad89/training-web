@@ -34,9 +34,9 @@ describe('half-marathon capture route', () => {
     fetchSpy.mockRestore()
   })
 
-  it('schedules three daily slots that stay inside the New York checkpoint day', () => {
+  it('preserves the legacy daily slots and adds the 09 EST UTC slot', () => {
     const { crons } = JSON.parse(readFileSync('vercel.json', 'utf8')) as { crons: { path: string; schedule: string }[] }
-    expect(crons.map(cron => cron.path)).toEqual(Array(3).fill('/api/half-marathon-capture'))
-    expect(crons.map(cron => cron.schedule)).toEqual(['0 13 * * *', '0 17 * * *', '0 21 * * *'])
+    expect(crons.map(cron => cron.path)).toEqual(Array(4).fill('/api/half-marathon-capture'))
+    expect(crons.map(cron => cron.schedule)).toEqual(['0 13 * * *', '0 14 * * *', '0 17 * * *', '0 21 * * *'])
   })
 })
