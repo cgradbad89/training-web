@@ -13,6 +13,7 @@
 import { type HealthWorkout } from "@/types/healthWorkout";
 import {
   applyOverride,
+  type OverridableWorkout,
   type WorkoutOverride,
 } from "@/types/workoutOverride";
 
@@ -29,10 +30,10 @@ export function selectActiveWorkouts(
  * then supported field overrides are layered onto each retained workout via the
  * single existing applyOverride implementation.
  */
-export function selectEffectiveWorkouts(
-  workouts: HealthWorkout[],
+export function selectEffectiveWorkouts<W extends OverridableWorkout = HealthWorkout>(
+  workouts: W[],
   overrides: Record<string, WorkoutOverride> | null | undefined
-): HealthWorkout[] {
+): W[] {
   const overrideMap = overrides ?? {};
   return workouts.flatMap((workout) => {
     const override = overrideMap[workout.workoutId] ?? null;

@@ -7,7 +7,7 @@ import {
 } from "@/utils/planMatching";
 import type { HealthWorkout } from "@/types/healthWorkout";
 import type { WorkoutOverride } from "@/types/workoutOverride";
-import { parseLocalDate } from "@/utils/dates";
+import { plannedSessionsForPlan } from "@/utils/plannedSessions";
 import { resolveActivityTitle } from "@/utils/resolveActivityTitle";
 import { resolveCalendarWorkoutAssociations } from "@/utils/workoutPlanMatching";
 
@@ -64,16 +64,6 @@ export interface BuildCalendarEventsOptions {
   includeActualOnly?: boolean;
 }
 
-const RUN_TYPE_LABELS: Record<string, string> = {
-  outdoor: "Outdoor", treadmill: "Treadmill", otf: "OTF", longRun: "Long Run",
-};
-
-function sessionDate(startDate: string, weekIndex: number, dayIndex: number): Date {
-  const date = parseLocalDate(startDate);
-  date.setDate(date.getDate() + weekIndex * 7 + dayIndex);
-  return date;
-}
-
 /** Planned events retain plan/entry order. Actual-only events follow in local-time order. */
 export function buildCalendarEvents(
   plans: (RunningPlan | WorkoutPlan)[],
@@ -87,54 +77,38 @@ export function buildCalendarEvents(
 
   for (const plan of plans) {
     if (plan.status !== "active") continue;
-    const counters = new Map<string, number>();
     if (plan.planType === "workout") {
       activeWorkoutPlans.push(plan);
-      for (const week of plan.weeks) {
-        for (const entry of week.entries) {
-          if (entry.type === "rest") continue;
-          const dayIndex = entry.weekday - 1;
-          const key = `${entry.weekIndex}-${entry.weekday}`;
-          const sessionIndex = counters.get(key) ?? 0;
-          counters.set(key, sessionIndex + 1);
-          events.push({
-            kind: "planned-workout",
-            date: sessionDate(plan.startDate, entry.weekIndex, dayIndex),
-            entryId: entry.id, planId: plan.id, planName: plan.name,
-            planType: "workout", weekIndex: entry.weekIndex, dayIndex,
-            weekday: entry.weekday, sessionIndex,
-            label: entry.label ?? "Workout", category: entry.category,
-            completed: entry.completed ?? false, isRestDay: false,
-          });
-        }
+      for (const session of plannedSessionsForPlan(plan)) {
+        events.push({
+          kind: "planned-workout",
+          date: session.date,
+          entryId: session.entryId, planId: session.planId, planName: session.planName,
+          planType: "workout", weekIndex: session.weekIndex, dayIndex: session.dayIndex,
+          weekday: session.weekday, sessionIndex: session.sessionIndex,
+          label: session.label, category: session.category,
+          completed: session.completed, isRestDay: false,
+        });
       }
     } else {
       const matchMap = matchPlanToActual(plan, actualWorkouts, overrides);
       for (const match of matchMap.values()) {
         if (match?.activity.workoutId) matchedRunIds.add(match.activity.workoutId);
       }
-      for (const week of plan.weeks) {
-        for (const entry of week.entries) {
-          if (entry.runType === "rest") continue;
-          const dayIndex = entry.weekday - 1;
-          const key = `${entry.weekIndex}-${entry.weekday}`;
-          const sessionIndex = counters.get(key) ?? 0;
-          counters.set(key, sessionIndex + 1);
-          const match = matchMap.get(entry.id) ?? null;
-          const status = statusForRunEntry(plan, entry, matchMap);
-          events.push({
-            kind: "planned-running",
-            date: sessionDate(plan.startDate, entry.weekIndex, dayIndex),
-            entryId: entry.id, planId: plan.id, planName: plan.name,
-            planType: "running", weekIndex: entry.weekIndex, dayIndex,
-            weekday: entry.weekday, sessionIndex,
-            label: entry.description ??
-              (entry.runType ? (RUN_TYPE_LABELS[entry.runType] ?? entry.runType) : "Run"),
-            distanceMiles: entry.distanceMiles,
-            completed: isPlanEntryCompleted(status), isRestDay: false,
-            status, activity: match?.activity ?? null,
-          });
-        }
+      for (const session of plannedSessionsForPlan(plan)) {
+        const match = matchMap.get(session.entryId) ?? null;
+        const status = statusForRunEntry(plan, session.entry, matchMap);
+        events.push({
+          kind: "planned-running",
+          date: session.date,
+          entryId: session.entryId, planId: session.planId, planName: session.planName,
+          planType: "running", weekIndex: session.weekIndex, dayIndex: session.dayIndex,
+          weekday: session.weekday, sessionIndex: session.sessionIndex,
+          label: session.label,
+          distanceMiles: session.distanceMiles,
+          completed: isPlanEntryCompleted(status), isRestDay: false,
+          status, activity: match?.activity ?? null,
+        });
       }
     }
   }
