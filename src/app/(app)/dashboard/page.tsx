@@ -68,6 +68,13 @@ import {
 import { resolveActivityTitle } from "@/utils/resolveActivityTitle";
 import { selectEffectiveWorkouts } from "@/utils/selectActiveWorkouts";
 import {
+  selectWeekRuns,
+  selectWeekNonRuns,
+  sumRunMiles,
+} from "@/utils/weekActivitySummary";
+import { plannedRunningWeek, workoutPlanSessions } from "@/utils/plannedWeekTotals";
+import { selectActiveRunningPlan, selectActiveWorkoutPlan } from "@/utils/activePlans";
+import {
   weekStart as getWeekStart,
   weekEnd as getWeekEnd,
   isSameWeek,
@@ -95,8 +102,6 @@ import {
   type WorkoutPlan,
   type PlannedRunEntry,
   type PlannedWorkoutEntry,
-  isRunningPlan,
-  isWorkoutPlan,
   isDurationOnlyEntry,
 } from "@/types/plan";
 import {
@@ -209,10 +214,8 @@ function RunningStatsCard({
   maxHr: number;
   restingHr: number;
 }) {
-  const runs = workouts.filter(
-    (w) => w.isRunLike && isInWeek(w, weekStart, weekEnd)
-  );
-  const totalMiles = runs.reduce((s, w) => s + w.distanceMiles, 0);
+  const runs = selectWeekRuns(workouts, weekStart, weekEnd);
+  const totalMiles = sumRunMiles(runs);
   const totalMovingTime = runs.reduce((s, w) => s + w.durationSeconds, 0);
   const avgPaceSecPerMile = totalMiles > 0 ? totalMovingTime / totalMiles : 0;
 
@@ -316,9 +319,7 @@ function WorkoutsStatsCard({
   maxHr: number;
   restingHr: number;
 }) {
-  const weekWorkouts = workouts.filter(
-    (w) => !w.isRunLike && isInWeek(w, weekStart, weekEnd)
-  );
+  const weekWorkouts = selectWeekNonRuns(workouts, weekStart, weekEnd);
 
   const qualifying = weekWorkouts.filter(
     (w) => w.durationSeconds >= MIN_WORKOUT_SECONDS_FOR_AVG
@@ -1675,11 +1676,11 @@ export default function DashboardPage() {
   // Active running / workout plan for the selected week's cards — derived from
   // the shared plans list (previously set inside a local fetchPlans effect).
   const activePlan = useMemo<RunningPlan | null>(
-    () => plans.filter(isRunningPlan).find((p) => p.status === "active") ?? null,
+    () => selectActiveRunningPlan(plans),
     [plans]
   );
   const activeWorkoutPlan = useMemo<WorkoutPlan | null>(
-    () => plans.filter(isWorkoutPlan).find((p) => p.status === "active") ?? null,
+    () => selectActiveWorkoutPlan(plans),
     [plans]
   );
 
@@ -1756,12 +1757,10 @@ export default function DashboardPage() {
     };
   }, [uid, sessionEpoch, isSessionCurrent, weekFromIso, weekToIso]);
 
-  const plannedMiles = useMemo(() => {
-    if (!activePlan) return 0;
-    const weekIndex = planWeekIndexFor(activePlan.startDate, selectedWeekStart);
-    if (weekIndex < 0 || weekIndex >= activePlan.weeks.length) return 0;
-    return activePlan.weeks[weekIndex].entries.reduce((s, e) => s + e.distanceMiles, 0);
-  }, [activePlan, selectedWeekStart]);
+  const plannedMiles = useMemo(
+    () => plannedRunningWeek(activePlan, selectedWeekStart).miles,
+    [activePlan, selectedWeekStart]
+  );
 
   // ── Week Score inputs ────────────────────────────────────────────────────
   // The Week Score is PRO-RATED against the plan scheduled THROUGH TODAY (not
@@ -1798,9 +1797,9 @@ export default function DashboardPage() {
 
   const actualMiles = useMemo(
     () =>
-      activeWorkouts
-        .filter((w) => w.isRunLike && isInWeek(w, selectedWeekStart, selectedWeekEnd))
-        .reduce((s, w) => s + w.distanceMiles, 0),
+      sumRunMiles(
+        selectWeekRuns(activeWorkouts, selectedWeekStart, selectedWeekEnd)
+      ),
     [activeWorkouts, selectedWeekStart, selectedWeekEnd]
   );
 
@@ -1837,26 +1836,10 @@ export default function DashboardPage() {
 
   // Workout-plan session counts for the selected week — mirrors the
   // derivation inside WorkoutPlanProgressCard.
-  const { sessionsCompleted, sessionsPlanned } = useMemo(() => {
-    if (!activeWorkoutPlan) {
-      return { sessionsCompleted: 0, sessionsPlanned: 0 };
-    }
-    const weekIndex = planWeekIndexFor(
-      activeWorkoutPlan.startDate,
-      selectedWeekStart
-    );
-    if (weekIndex < 0 || weekIndex >= activeWorkoutPlan.weeks.length) {
-      return { sessionsCompleted: 0, sessionsPlanned: 0 };
-    }
-    const sessionEntries = activeWorkoutPlan.weeks[weekIndex].entries.filter(
-      (e): e is PlannedWorkoutEntry => e.type === "workout"
-    );
-    return {
-      sessionsCompleted: sessionEntries.filter((e) => e.completed === true)
-        .length,
-      sessionsPlanned: sessionEntries.length,
-    };
-  }, [activeWorkoutPlan, selectedWeekStart]);
+  const { sessionsCompleted, sessionsPlanned } = useMemo(
+    () => workoutPlanSessions(activeWorkoutPlan, selectedWeekStart),
+    [activeWorkoutPlan, selectedWeekStart]
+  );
 
   // Workout sessions SCHEDULED THROUGH TODAY (pro-rated workout denominator),
   // plus the completed count among them. Same week-index derivation as the

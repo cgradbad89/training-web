@@ -26,17 +26,34 @@ export interface WorkoutOverride {
 }
 
 /**
+ * The HealthWorkout fields an override reads or rewrites. `applyOverride` and
+ * `selectEffectiveWorkouts` accept any record carrying them (type-level
+ * widening only — behavior is unchanged), so server code can project a slim
+ * workout without constructing a full browser-side HealthWorkout.
+ */
+export type OverridableWorkout = Pick<
+  HealthWorkout,
+  | "workoutId"
+  | "distanceMiles"
+  | "distanceMeters"
+  | "avgPaceSecPerMile"
+  | "durationSeconds"
+  | "displayType"
+  | "activityType"
+>;
+
+/**
  * Merge a WorkoutOverride onto a HealthWorkout for display.
  * Returns the workout with overrides applied.
  * Original workout object is not mutated.
  */
-export function applyOverride(
-  workout: HealthWorkout,
+export function applyOverride<W extends OverridableWorkout>(
+  workout: W,
   override: WorkoutOverride | null
-): HealthWorkout {
+): W {
   if (!override) return workout;
 
-  const overridden = { ...workout };
+  const overridden: OverridableWorkout = { ...workout };
 
   if (override.distanceMilesOverride != null) {
     overridden.distanceMiles = override.distanceMilesOverride;
@@ -64,5 +81,5 @@ export function applyOverride(
       .replace(" ", "_");
   }
 
-  return overridden;
+  return overridden as W;
 }

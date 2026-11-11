@@ -51,8 +51,7 @@ import {
   type Unsubscribe,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-import { workoutModelSummary } from "@/utils/workoutModelSummary";
-import { toDate } from "@/utils/dates";
+import { workoutModelSummary, manualWorkoutFields } from "@/utils/workoutModelSummary";
 import {
   type HealthWorkout,
   type TrainingLoadMethod,
@@ -132,21 +131,9 @@ export function docToHealthWorkout(
   id: string,
   data: Record<string, unknown>
 ): HealthWorkout {
-  const isManual = data.entrySource === "manual";
-
   return {
     ...workoutModelSummary(id, data),
-    entrySource: isManual ? "manual" : undefined,
-    customTitle:
-      isManual && typeof data.customTitle === "string" && data.customTitle.length > 0
-        ? data.customTitle
-        : undefined,
-    notes:
-      isManual && typeof data.notes === "string" && data.notes.length > 0
-        ? data.notes
-        : undefined,
-    createdAt: isManual && data.createdAt ? toDate(data.createdAt) : undefined,
-    updatedAt: isManual && data.updatedAt ? toDate(data.updatedAt) : undefined,
+    ...manualWorkoutFields(data),
     // Display-hint marker only (see HealthWorkout.routeComplete). Preserve the
     // tri-state: true / false / undefined (legacy absent → treated as complete).
     routeComplete:

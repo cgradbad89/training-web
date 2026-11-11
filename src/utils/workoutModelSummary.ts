@@ -68,3 +68,25 @@ export function workoutModelSummary(id: string, data: Record<string, unknown>) {
     routeClusterId: typeof data.routeClusterId === "string" && data.routeClusterId.length > 0 ? data.routeClusterId : undefined,
   };
 }
+
+/**
+ * Manual-entry display fields of a healthWorkouts document (pure). Shared by
+ * `docToHealthWorkout` (browser) and the Hub summary reader (server) so a
+ * manual activity's owner-entered title resolves identically in both.
+ */
+export function manualWorkoutFields(data: Record<string, unknown>) {
+  const isManual = data.entrySource === "manual";
+  return {
+    entrySource: isManual ? ("manual" as const) : undefined,
+    customTitle:
+      isManual && typeof data.customTitle === "string" && data.customTitle.length > 0
+        ? data.customTitle
+        : undefined,
+    notes:
+      isManual && typeof data.notes === "string" && data.notes.length > 0
+        ? data.notes
+        : undefined,
+    createdAt: isManual && data.createdAt ? toDate(data.createdAt) : undefined,
+    updatedAt: isManual && data.updatedAt ? toDate(data.updatedAt) : undefined,
+  };
+}

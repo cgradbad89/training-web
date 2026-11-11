@@ -14,10 +14,8 @@ import {
   type RunningPlan,
   isRunningPlan,
   isWorkoutPlan,
-  derivePlanStatus,
-  isActiveFromStatus,
 } from "@/types/plan";
-import { toDate } from "@/utils/dates";
+import { normalizePlanDocument } from "@/utils/planDocument";
 
 function stripUndefined<T extends object>(obj: T): T {
   return JSON.parse(JSON.stringify(obj)) as T;
@@ -27,43 +25,13 @@ const plansPath = (uid: string) => `users/${uid}/plans`;
 
 export async function fetchPlans(uid: string): Promise<Plan[]> {
   const snap = await getDocs(collection(db, plansPath(uid)));
-  return snap.docs.map((d) => {
-    const data = d.data();
-    // Backward compat: documents written before Phase 1 have no planType.
-    // Default to "running" so existing plans continue to work unchanged.
-    const planType = (data.planType as string | undefined) ?? "running";
-    // status is the in-app source of truth; legacy docs derive it from isActive.
-    // isActive is normalized from the resolved status so the in-memory object is
-    // internally consistent. NO write-back here — Firestore stays as-is until a
-    // normal edit re-saves the doc.
-    const status = derivePlanStatus(data);
-    return {
-      ...data,
-      id: d.id,
-      planType,
-      status,
-      isActive: isActiveFromStatus(status),
-      startDate: toDate(data.startDate).toISOString().split("T")[0],
-      createdAt: toDate(data.createdAt).toISOString(),
-    } as Plan;
-  });
+  return snap.docs.map((d) => normalizePlanDocument(d.id, d.data()));
 }
 
 export async function fetchPlan(uid: string, planId: string): Promise<Plan | null> {
   const snap = await getDoc(doc(db, plansPath(uid), planId));
   if (!snap.exists()) return null;
-  const data = snap.data();
-  const planType = (data.planType as string | undefined) ?? "running";
-  const status = derivePlanStatus(data);
-  return {
-    ...data,
-    id: snap.id,
-    planType,
-    status,
-    isActive: isActiveFromStatus(status),
-    startDate: toDate(data.startDate).toISOString().split("T")[0],
-    createdAt: toDate(data.createdAt).toISOString(),
-  } as Plan;
+  return normalizePlanDocument(snap.id, snap.data());
 }
 
 export async function savePlan(uid: string, plan: Plan): Promise<void> {
