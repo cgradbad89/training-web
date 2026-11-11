@@ -4,6 +4,7 @@ import { performance } from 'node:perf_hooks';
 import { initializeApp, cert, deleteApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
+import { Timestamp as BrowserTimestamp } from 'firebase/firestore';
 import { expect, it } from 'vitest';
 import { createValidationEvidenceReader, createValidationMetadataReader } from './prediction-source';
 import { calculateValidation, DEFAULT_VALIDATION_FLAGS } from './prediction-models';
@@ -67,8 +68,15 @@ it.skipIf(process.env.PREDICTION_VALIDATION_DIAGNOSE_PROD !== '1')('compares app
       if (!race.actualRunId || !race.confirmationHistory) continue;
       const [workout, override] = await db.getAll(owner.collection('healthWorkouts').doc(race.actualRunId), owner.collection('workoutOverrides').doc(race.actualRunId));
       if (!workout.exists) continue;
-      const appWorkout = docToHealthWorkout(workout.id, workout.data()!);
-      const collectorWorkout = validationWorkout(workout.id, workout.data()!);
+      const raw = workout.data()!;
+      const browserRaw = { ...raw };
+      for (const field of ['startDate', 'endDate', 'syncedAt', 'updatedAt']) {
+        const t = raw[field];
+        if (t && typeof t.seconds === 'number' && typeof t.nanoseconds === 'number')
+          browserRaw[field] = new BrowserTimestamp(t.seconds, t.nanoseconds);
+      }
+      const appWorkout = docToHealthWorkout(workout.id, browserRaw);
+      const collectorWorkout = validationWorkout(workout.id, raw);
       const ov = override.exists ? override.data() as never : null;
       const revision = race.confirmationHistory.revisions[race.confirmationHistory.currentRevisionId];
       const current = buildRaceConfirmationSnapshot(race, appWorkout, ov, revision.observations.timeZone);

@@ -29,6 +29,7 @@ import { performanceLocalDate, shiftPerformanceDate } from "@/utils/performanceE
 import { raceConfirmationInstant } from "@/utils/raceConfirmation";
 import { normalizeRaceDocument } from "@/utils/raceDocument";
 import { workoutModelSummary } from "@/utils/workoutModelSummary";
+import { browserTimestampDate } from "@/utils/firestoreTimestamp";
 import type { Vo2Entry } from "@/utils/vo2History";
 
 const WORKOUT_FIELDS = ["workoutId", "startDate", "endDate", "entrySource", "updatedAt", "syncedAt", "activityType", "displayType",
@@ -67,12 +68,8 @@ export function workoutFrom(id: string, data: Record<string, unknown>): HealthWo
   const normalized = { ...data };
   for (const key of ["startDate", "endDate", "syncedAt", "updatedAt"]) {
     const value = data[key];
-    const raw = value && typeof value === "object" ? value as Record<string, unknown> : {};
-    const seconds = raw.seconds ?? raw._seconds, nanos = raw.nanoseconds ?? raw._nanoseconds;
-    // Match browser Timestamp.toMillis()/toDate() exactly, including floating-point
-    // precision near millisecond boundaries. Admin toDate() rounds instead.
-    if (typeof seconds === "number" && Number.isInteger(seconds) && typeof nanos === "number"
-      && Number.isInteger(nanos) && nanos >= 0 && nanos < 1e9) normalized[key] = new Date(seconds * 1000 + nanos / 1e6);
+    const browserDate = browserTimestampDate(value);
+    if (browserDate instanceof Date) normalized[key] = browserDate;
     else {
       const iso = raceConfirmationInstant(value);
       if (iso) normalized[key] = new Date(iso);
