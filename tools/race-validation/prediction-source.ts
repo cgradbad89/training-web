@@ -3,6 +3,7 @@ import type { HealthWorkout } from '@/types/healthWorkout';
 import type { WorkoutOverride } from '@/types/workoutOverride';
 import { derivePlanStatus, isActiveFromStatus, type RunningPlan } from '@/types/plan';
 import { workoutModelSummary } from '@/utils/workoutModelSummary';
+import { browserTimestampDate } from '@/utils/firestoreTimestamp';
 import { parseStoredBestEfforts } from '@/utils/bestEfforts';
 import { toDate } from '@/utils/dates';
 import { normalizeRaceDocument } from '@/utils/raceDocument';
@@ -41,9 +42,11 @@ export function createValidationMetadataReader(db: Firestore, uid: string, proje
 
 /** Match the app's prediction-relevant parent normalization; never fetch route data. */
 export function validationWorkout(id: string, data: Record<string, unknown>): HealthWorkout {
-  return { ...workoutModelSummary(id, data),
+  const normalized = { ...data };
+  for (const field of ['startDate', 'endDate', 'syncedAt', 'updatedAt']) normalized[field] = browserTimestampDate(data[field]);
+  return { ...workoutModelSummary(id, normalized),
     entrySource: data.entrySource === 'manual' ? 'manual' : undefined,
-    updatedAt: data.entrySource === 'manual' && data.updatedAt ? toDate(data.updatedAt) : undefined,
+    updatedAt: data.entrySource === 'manual' && data.updatedAt ? toDate(normalized.updatedAt) : undefined,
     routeComplete: typeof data.routeComplete === 'boolean' ? data.routeComplete : undefined,
     bestEfforts: parseStoredBestEfforts(data.bestEfforts),
     calories: 0, avgSpeedMPS: null, hrDriftPct: null, cadenceSPM: null, efficiencyRaw: null, efficiencyScore: null };

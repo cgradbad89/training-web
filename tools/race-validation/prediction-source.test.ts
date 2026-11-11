@@ -6,6 +6,11 @@ import { athleteV11 } from '@/utils/__tests__/fixtures/hybridV11Fixture';
 import { computeCurrentFitness } from '@/utils/performance/hybridCurrentFitness';
 import { parseStoredBestEfforts } from '@/utils/bestEfforts';
 import type { Firestore } from 'firebase-admin/firestore';
+import { Timestamp as AdminTimestamp } from 'firebase-admin/firestore';
+import { Timestamp as BrowserTimestamp } from 'firebase/firestore';
+import { docToHealthWorkout } from '@/services/healthWorkouts';
+import { confirmedRaceFixture } from '@/utils/__tests__/fixtures/raceConfirmationFixture';
+import { evaluateRacePerformance } from '@/utils/racePerformance';
 const AT = '2026-11-15T14:00:00.000Z';
 /** Minimal query/transaction simulator, including field masks, bounds and a single server read time. No credentials or writes. */
 function fixtureDb(data: Record<string, Record<string, unknown>[]>) {
@@ -36,6 +41,30 @@ function fixtureDb(data: Record<string, Record<string, unknown>[]>) {
 }
 const root = 'users/owner';
 describe('single shared consistent hydration', () => {
+  it.each([0, 499_999, 500_000, 511_549_000, 916_793_000, 999_999_999])('matches real browser timestamp conversion at %i nanoseconds', nanos => {
+    const seconds = 1_789_910_818;
+    const admin = new AdminTimestamp(seconds, nanos);
+    const browser = new BrowserTimestamp(seconds, nanos);
+    for (const entrySource of [undefined, 'manual']) {
+      const raw = { startDate: admin, endDate: admin, syncedAt: admin, updatedAt: admin, entrySource };
+      const client = { startDate: browser, endDate: browser, syncedAt: browser, updatedAt: browser, entrySource };
+      const actual = validationWorkout('synthetic', raw), expected = docToHealthWorkout('synthetic', client);
+      expect([actual.startDate, actual.endDate, actual.syncedAt, actual.updatedAt]).toEqual([expected.startDate, expected.endDate, expected.syncedAt, expected.updatedAt]);
+    }
+  });
+  it.each(['endDate', 'syncedAt'] as const)('preserves confirmation integrity for browser-normalized %s while rejecting material changes', field => {
+    const f = confirmedRaceFixture();
+    const date = f.workout[field];
+    const timestamp = new AdminTimestamp(date.getTime() / 1000, 700_000);
+    const row = validationWorkout(f.workout.workoutId, { ...f.workout, [field]: timestamp });
+    const evaluate = (workout: typeof row) => evaluateRacePerformance({ races: [f.race], workouts: [workout],
+      asOf: '2026-10-25T16:00:00.000Z', timeZone: 'America/New_York' }).evidence[0];
+    expect(evaluate(row)).toMatchObject({ status: 'verified', finishSeconds: 7871 });
+    expect(evaluate({ ...row, durationSeconds: row.durationSeconds + 10 }).reasons).toContain('confirmation_observations_changed');
+    expect(evaluate({ ...row, endDate: new Date(row.endDate.getTime() + 1000) }).reasons).toContain('confirmation_observations_changed');
+    expect(evaluate({ ...row, syncedAt: new Date(row.syncedAt.getTime() + 1000) }).reasons).toContain('confirmation_observations_changed');
+    expect(f.revision.details.conditions).toBe('Flat, mild, no limitations');
+  });
   it('reads each parent collection once and reuses best-effort and weather inputs for all models', async () => {
     const a = athleteV11();
     const raw = a.workouts.map(w => ({ ...w, id: w.workoutId, bestEfforts: w.bestEfforts ? { ...w.bestEfforts, computedFromPointCount: 1000 } : undefined }));
