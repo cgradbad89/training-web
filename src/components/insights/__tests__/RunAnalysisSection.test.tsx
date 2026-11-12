@@ -128,17 +128,17 @@ describe("RunAnalysisSection", () => {
 
   it("renders the pace-only 'lower = faster' caption, distinct from other metrics", () => {
     render(weeklyRuns(12));
-    // Pace (reversed axis) → the pace-specific caption is present.
-    expect(container.textContent).toContain("Lower on chart = faster");
+    // The ordinary numeric pace scale puts less time per mile lower.
+    expect(container.textContent).toContain("Pace: lower on chart = faster (less time per mile); higher = slower");
 
-    // Pace is still selected alongside HR, and its axis is still reversed, so
+    // Pace is still selected alongside HR, so
     // the caption must STAY — it's keyed on pace being on either axis.
     clickButton("Heart rate");
     expect(container.textContent).toContain("Avg HR");
-    expect(container.textContent).toContain("Lower on chart = faster");
+    expect(container.textContent).toContain("Pace: lower on chart = faster");
 
     // Only once pace leaves the selection entirely does the caption drop.
     clickButton("Pace");
-    expect(container.textContent).not.toContain("Lower on chart = faster");
+    expect(container.textContent).not.toContain("Pace: lower on chart = faster");
   });
 });
