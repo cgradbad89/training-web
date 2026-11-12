@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React, { useId, useMemo } from "react";
 import type { HealthWorkout } from "@/types/healthWorkout";
 import type { Race } from "@/types/race";
 import type { WorkoutOverride } from "@/types/workoutOverride";
@@ -10,9 +10,42 @@ import { computeCurrentFitness, type CurrentFitness } from "@/utils/performance/
 import { confidenceLabel, formatAsOfDate, formatFinishTime, formatPacePerMile, rowNote } from "@/utils/performance/currentFitnessFormat";
 import type { LoadState } from "@/utils/performance/hybridPerformanceV11";
 import type { PhysiologyEvidence } from "@/hooks/usePhysiologyEvidence";
+import type { MarathonEquivalentSource, MarathonPerformanceEquivalent } from "@/utils/performance/marathonPerformanceEquivalent";
 import { useEstimateDay } from "./RacePerformancePanel";
 
 export const CURRENT_FITNESS_TITLE = "Experimental — Hybrid Performance Model v1.1";
+
+const sourceLabels: Record<MarathonEquivalentSource["kind"], string> = {
+  confirmed_race: "Confirmed race", recorded_race: "Recorded race", labelled_race_run: "Race-labelled run",
+  whole_run_effort: "Strong run", sustained_segment: "Sustained segment",
+};
+
+function MarathonEquivalent({ benchmark }: { benchmark: MarathonPerformanceEquivalent }) {
+  const headingId = useId();
+  const half = benchmark.sources.find(source => source.qualifyingHalf)!;
+  return (
+    <section aria-labelledby={headingId} className="mt-5 border-t border-border pt-5 min-w-0" data-testid="marathon-equivalent">
+      <h3 id={headingId} className="text-xs font-semibold text-textSecondary uppercase tracking-wide">Marathon equivalent — from race performance</h3>
+      <p className="mt-2 text-sm text-textPrimary">Estimated equivalent: <strong className="text-xl tabular-nums whitespace-nowrap" data-testid="marathon-equivalent-time">{formatFinishTime(benchmark.finishSeconds)}</strong></p>
+      <p className="mt-1 text-xs text-textSecondary">{formatPacePerMile(benchmark.paceSecondsPerMile)}/mi equivalent · As of {formatAsOfDate(benchmark.asOfDate)}</p>
+      <p className="mt-3 text-sm text-textSecondary">Based on qualified, weighted evidence, including your {formatAsOfDate(half.date)} half-marathon race.</p>
+      <p className="mt-2 text-xs font-semibold text-textPrimary">Low confidence · Performance extrapolation</p>
+      <p className="mt-2 text-sm text-textSecondary">This is a race-performance equivalent, not a prediction of your current marathon readiness. Your recent endurance training may not support this result.</p>
+      <details className="mt-3 text-xs text-textSecondary">
+        <summary className="cursor-pointer text-primary focus-visible:outline-2 focus-visible:outline-offset-2">Evidence and calculation assumptions</summary>
+        <ul className="mt-2 space-y-2" aria-label="Weighted benchmark sources">
+          {benchmark.sources.map(source => (
+            <li key={source.clusterId} className="break-words" data-testid="marathon-equivalent-source">
+              {source.qualifyingHalf ? "Confirmed half-marathon race" : sourceLabels[source.kind]} · {formatAsOfDate(source.date)} · {source.ageDays} days old · {formatFinishTime(source.seconds)} over {(source.distanceMeters / 1609.344).toFixed(2)} mi · {source.effectiveShare < 0.001 ? "<0.1" : (source.effectiveShare * 100).toFixed(1)}% weight
+            </li>
+          ))}
+        </ul>
+        <p className="mt-3">Reuses the model’s marathon-distance evidence base, weighted by recency and precision. Shorter performances use its readiness-dependent conversion (exponent {benchmark.exponent.toFixed(3)}; readiness {(benchmark.readinessScore * 100).toFixed(0)}%). Confirmed race efforts follow the model’s active evidence policy; no subjective effort adjustment is added.</p>
+        <p className="mt-2">Shown to the nearest minute before physiology or endurance-change adjustments and final readiness gates. No taper or future-training credit. These conversion assumptions are unvalidated; this is not a race-day forecast, goal, or statistical accuracy range.</p>
+      </details>
+    </section>
+  );
+}
 
 /** Presentational: one clean table, four distances in fixed order. Provisional and unavailable states are shown, never replaced by a number. */
 export function CurrentFitnessTable({ fitness }: { fitness: CurrentFitness }) {
@@ -69,6 +102,7 @@ export function CurrentFitnessTable({ fitness }: { fitness: CurrentFitness }) {
           </tbody>
         </table>
       </div>
+      {fitness.marathonEquivalent && <MarathonEquivalent benchmark={fitness.marathonEquivalent} />}
     </div>
   );
 }

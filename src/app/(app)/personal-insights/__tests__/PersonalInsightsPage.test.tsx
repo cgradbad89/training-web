@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { fitnessWorld, SEPTEMBER_RACE } from "@/utils/__tests__/fixtures/currentFitnessFixture";
 
 // React 19 requires this flag for act() to flush effects/microtasks in tests.
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -149,11 +150,26 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
+  vi.useRealTimers();
   act(() => root.unmount());
   container.remove();
 });
 
 describe("PersonalInsightsPage tabs", () => {
+  it.each(["enabled", "hybrid disabled", "v1.1 disabled", "display disabled"])("keeps the supplementary benchmark within the existing page gates: %s", gate => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-12T17:00:00.000Z"));
+    const input = fitnessWorld({ asOfDate: "2026-11-12", races: [SEPTEMBER_RACE()], adapted: false });
+    h.appData.workouts = input.workouts; h.appData.races = input.races;
+    vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", gate === "display disabled" ? "preview" : "production");
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", undefined);
+    if (gate === "hybrid disabled") vi.stubEnv("NEXT_PUBLIC_DISABLE_HYBRID_ESTIMATE", "true");
+    if (gate === "v1.1 disabled") vi.stubEnv("NEXT_PUBLIC_DISABLE_HYBRID_V11", "true");
+    h.searchParams = new URLSearchParams("tab=performance");
+    mount();
+    expect(!!container.querySelector("[data-testid='marathon-equivalent']")).toBe(gate === "enabled");
+    h.appData.workouts = [];
+  });
   it.each(["preview", "production"])("replaces the legacy Riegel presentation with ONE Hybrid v1.1 four-distance table without fitting hidden predictions in %s", deployment => {
     vi.stubEnv("NEXT_PUBLIC_ENABLE_RACE_PERFORMANCE", deployment === "production" ? undefined : "true");
     vi.stubEnv("NEXT_PUBLIC_RACE_PERFORMANCE_DEPLOYMENT_ENV", deployment);
