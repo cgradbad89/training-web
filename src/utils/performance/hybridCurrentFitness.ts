@@ -22,6 +22,7 @@ import { estimateHrEnhancedHalfMarathon } from "@/utils/hrEnhancedPerformance";
 import { treatConfirmedRacesAsMaximal } from "./confirmedRaceAssumption";
 import { estimateHybridHalfMarathonV11, type HybridV11Options } from "./hybridPerformanceV11";
 import { CROSS_DISTANCE_EXPONENT_BAND, HYBRID_TARGETS, HYBRID_TARGETS_VERSION, type HybridTargetId, type TargetProfile } from "./hybridTargetProfiles";
+import { marathonPerformanceEquivalent, type MarathonPerformanceEquivalent } from "./marathonPerformanceEquivalent";
 
 const MILE = 1609.344;
 type Input = Pick<RacePerformanceInput, "races" | "workouts" | "overrides" | "asOf" | "timeZone">;
@@ -60,6 +61,8 @@ export interface CurrentFitness {
   asOfDate: string;
   rows: CurrentFitnessRow[];
   consistency: CurrentFitnessConsistency;
+  /** Supplementary performance extrapolation; never replaces a row or participates in consistency checks. */
+  marathonEquivalent: MarathonPerformanceEquivalent | null;
 }
 
 export type CurrentFitnessOptions = Omit<HybridV11Options, "profile" | "targetDistanceMeters">;
@@ -101,7 +104,8 @@ export function estimateHybridCurrentFitness(input: Input, options: CurrentFitne
     }
   }
   const first = rows[0];
-  return { version: HYBRID_TARGETS_VERSION, asOf: first.asOf, asOfDate: first.asOfDate, rows, consistency: { pairs, consistent: pairs.every(p => p.plausible) } };
+  return { version: HYBRID_TARGETS_VERSION, asOf: first.asOf, asOfDate: first.asOfDate, rows, consistency: { pairs, consistent: pairs.every(p => p.plausible) },
+    marathonEquivalent: marathonPerformanceEquivalent(rows.find(row => row.id === "marathon")!.estimate) };
 }
 
 export interface CurrentFitnessPipelineInput extends Input {

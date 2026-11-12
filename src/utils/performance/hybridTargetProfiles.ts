@@ -72,7 +72,7 @@ export interface TargetProfile {
 }
 
 export const HYBRID_TARGET_POLICY_VERSION = "hybrid-targets-v1" as const;
-export const HYBRID_TARGETS_VERSION = "experimental-hybrid-v1.1-targets-1" as const;
+export const HYBRID_TARGETS_VERSION = "experimental-hybrid-v1.1-targets-2" as const;
 export const HALF_MARATHON_M = 21097.5;
 
 const FIVE_K: TargetProfile = {

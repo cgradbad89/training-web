@@ -1,9 +1,10 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SEPTEMBER_RACE, fitnessWorld, strongEffortWorld } from "../../../utils/__tests__/fixtures/currentFitnessFixture";
+import { SEPTEMBER_RACE, confirmedHalf, fitnessWorld, strongEffortWorld } from "../../../utils/__tests__/fixtures/currentFitnessFixture";
 import { computeCurrentFitness } from "../../../utils/performance/hybridCurrentFitness";
 import { CurrentFitnessEstimates, CurrentFitnessTable, CURRENT_FITNESS_TITLE } from "../CurrentFitnessTable";
+import { formatFinishTime, formatPacePerMile } from "@/utils/performance/currentFitnessFormat";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -119,6 +120,22 @@ describe("CurrentFitnessEstimates (container)", () => {
     expect(container.querySelectorAll("[data-testid^='current-fitness-row-']")).toHaveLength(4);
     expect(text("current-fitness-time-half")).toMatch(/^2:1\d:\d\d$/);
   });
+  it("refreshes the benchmark when its contributing race is removed or invalidated", () => {
+    const p = props();
+    mount(<CurrentFitnessEstimates {...p} />);
+    expect(q("marathon-equivalent")).not.toBeNull();
+    mount(<CurrentFitnessEstimates {...p} races={[]} />);
+    expect(container.querySelector("[data-testid='marathon-equivalent']")).toBeNull();
+    const races = structuredClone(p.races); races[0].result = "1:30:00";
+    mount(<CurrentFitnessEstimates {...p} races={races} />);
+    expect(container.querySelector("[data-testid='marathon-equivalent']")).toBeNull();
+  });
+  it("keeps the benchmark absent when the maximal assumption and demonstrated evidence are both disabled", () => {
+    vi.stubEnv("NEXT_PUBLIC_DISABLE_CONFIRMED_RACE_MAXIMAL_ASSUMPTION", "true");
+    vi.stubEnv("NEXT_PUBLIC_DISABLE_DEMONSTRATED_RACE_EVIDENCE", "true");
+    mount(<CurrentFitnessEstimates {...props()} />);
+    expect(container.querySelector("[data-testid='marathon-equivalent']")).toBeNull();
+  });
   it("applies the owner-approved prediction assumption by default and the rollback switch removes it", () => {
     mount(<CurrentFitnessEstimates {...props()} />);
     expect(text("current-fitness-time-half")).toBe("2:11:00");
@@ -141,5 +158,60 @@ describe("CurrentFitnessEstimates (container)", () => {
     const strong = strongEffortWorld(D, 520);
     mount(<CurrentFitnessEstimates {...props({ races: strong.races, workouts: strong.workouts })} />);
     expect(text("current-fitness-time-5k")).not.toBe(before);
+  });
+});
+
+describe("Marathon equivalent disclosure", () => {
+  const eligible = () => computeCurrentFitness(world({ asOfDate: "2026-11-12" }));
+  it("shows the shared formatted equivalent below the table while the marathon cell and message remain withheld", () => {
+    const fitness = eligible(), benchmark = fitness.marathonEquivalent!;
+    mount(<CurrentFitnessTable fitness={fitness} />);
+    expect(text("marathon-equivalent-time")).toBe(formatFinishTime(benchmark.finishSeconds));
+    expect(text("marathon-equivalent")).toContain(`${formatPacePerMile(benchmark.paceSecondsPerMile)}/mi equivalent`);
+    expect(q("current-fitness-table").compareDocumentPosition(q("marathon-equivalent")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(q("marathon-equivalent").closest("table")).toBeNull();
+    expect(text("current-fitness-time-marathon")).toBe("—");
+    expect(text("current-fitness-confidence-marathon")).toBe("Insufficient evidence");
+    expect(text("current-fitness-note-marathon")).toBe("Needs recent long runs (12+ miles) before a marathon time is estimated.");
+    expect(text("marathon-equivalent")).toContain("Low confidence · Performance extrapolation");
+    expect(text("marathon-equivalent")).toContain("This is a race-performance equivalent, not a prediction of your current marathon readiness.");
+    expect(text("marathon-equivalent")).toContain("Your recent endurance training may not support this result.");
+  });
+  it("attributes actual dates, ages, measured times and positive shares across mixed sources", () => {
+    const fitness = computeCurrentFitness(strongEffortWorld("2026-11-12"));
+    mount(<CurrentFitnessTable fitness={fitness} />);
+    expect(text("marathon-equivalent")).toContain("Based on qualified, weighted evidence, including your Sep 20, 2026 half-marathon race.");
+    const sources = [...container.querySelectorAll("[data-testid='marathon-equivalent-source']")];
+    expect(sources).toHaveLength(fitness.marathonEquivalent!.sources.length);
+    expect(sources[0].textContent).toContain("Sep 20, 2026 · 53 days old · 2:11:11");
+    expect(sources[0].textContent).not.toContain("100.0% weight");
+    expect(sources.some(source => source.textContent!.includes("Strong run"))).toBe(true);
+  });
+  it("uses another actual half date without hardcoding the September source", () => {
+    const fitness = computeCurrentFitness(world({ asOfDate: "2026-11-12", races: [confirmedHalf({ id: "october", date: "2026-10-01", seconds: 8000, effort: "maximal" })] }));
+    mount(<CurrentFitnessTable fitness={fitness} />);
+    expect(text("marathon-equivalent")).toContain("including your Oct 1, 2026 half-marathon race");
+    expect(text("marathon-equivalent-source")).toContain("Oct 1, 2026 · 42 days old");
+  });
+  it.each(["no race", "unknown readiness"])("omits the section with %s", reason => {
+    const input = world();
+    if (reason === "no race") input.races = [];
+    else input.workouts = input.workouts.filter(w => w.workoutId === input.races[0].actualRunId);
+    mount(<CurrentFitnessTable fitness={computeCurrentFitness(input)} />);
+    expect(container.querySelector("[data-testid='marathon-equivalent']")).toBeNull();
+  });
+  it.each([1280, 375])("provides a named section and keyboard-accessible assumptions at %s px", width => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+    mount(<CurrentFitnessTable fitness={eligible()} />);
+    const section = q("marathon-equivalent"), heading = document.getElementById(section.getAttribute("aria-labelledby")!);
+    expect(heading!.tagName).toBe("H3");
+    expect(heading!.textContent).toBe("Marathon equivalent — from race performance");
+    expect(section.className).toContain("min-w-0");
+    const details = section.querySelector("details")!;
+    expect(details.querySelector("summary")!.textContent).toBe("Evidence and calculation assumptions");
+    expect(section.querySelector("ul[aria-label='Weighted benchmark sources']")).not.toBeNull();
+    expect(details.textContent).toContain("readiness-dependent conversion");
+    expect(details.textContent).toContain("before physiology or endurance-change adjustments and final readiness gates");
+    expect(details.textContent).toContain("unvalidated");
   });
 });
