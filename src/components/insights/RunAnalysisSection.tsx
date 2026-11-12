@@ -182,7 +182,9 @@ function axisConfigFor(metric: RunAnalysisMetric): {
       : metric === "efficiencyScore"
         ? [0, 100]
         : ["auto", "auto"],
-    reversed: isPace,
+    // Pace is seconds per mile: smaller/faster values belong LOWER on this
+    // chart. Recharts' ordinary numeric y-scale already does that.
+    reversed: false,
     tickFormatter: isPace ? (v: number) => formatPaceLabel(v) : undefined,
     width: isPace ? 50 : 40,
   };
@@ -379,7 +381,7 @@ export function RunAnalysisSection({
   const isEmpty =
     summarize(points.map((p) => p.primaryValue)).count < MIN_POINTS_WITH_DATA;
 
-  // The reversed-axis caption applies if pace is on EITHER axis.
+  // The pace-direction caption applies if pace is on EITHER axis.
   const hasPace = selectedMetrics.includes("pace");
 
   const primaryAxis = axisConfigFor(selectedMetrics[0]);
@@ -661,9 +663,8 @@ export function RunAnalysisSection({
                 width={primaryAxis.width}
               />
               {/* Second metric's own scale, right-hand side — same yAxisId +
-                  orientation="right" pairing as RunOverlayChart. `reversed` is
-                  per-axis, so pace-on-the-right still reads faster = higher
-                  even when the left axis is a non-reversed metric.
+                  orientation="right" pairing as RunOverlayChart. Pace uses
+                  the ordinary numeric scale on either side: faster = lower.
                   Below md the tick labels would eat ~40px of a ~270px plot, so
                   they're dropped there and the axis width collapses with them —
                   the colored line plus its own headline stat still carry the
@@ -716,7 +717,7 @@ export function RunAnalysisSection({
           </ResponsiveContainer>
           <p className="text-xs text-textSecondary mt-3 text-center">
             {hasPace
-              ? "Lower on chart = faster · gaps are weeks/months with no qualifying runs"
+              ? "Pace: lower on chart = faster (less time per mile); higher = slower · gaps are weeks/months with no qualifying runs"
               : "Gaps are weeks/months with no qualifying runs"}
           </p>
 

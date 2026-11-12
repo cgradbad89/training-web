@@ -203,6 +203,23 @@ describe("5 — limited shorter-distance evidence", () => {
 });
 
 describe("6 — marathon durability: half-marathon ability is not proof of marathon readiness", () => {
+  it("November 12: a 53-day-old half remains weighted marathon evidence without counting as a recent training long run", () => {
+    const f = computeCurrentFitness(plain({ asOfDate: "2026-11-12", races: [SEPTEMBER_RACE()] }));
+    const m = row(f, "marathon"), h = row(f, "half");
+    const anchor = m.estimate.combination.items.find(i => i.kind === "confirmed_race")!;
+    expect(anchor).toBeDefined();
+    expect(anchor.date).toBe("2026-09-20");
+    expect(m.estimate.combination.latestRaceAgeDays).toBe(53);
+    expect(anchor.effectiveShare).toBeCloseTo(1);
+    expect(anchor.extrapolationRatio).toBeCloseTo(2);
+    expect(m.estimate.combination.baseSeconds).toBeGreaterThan(SEPTEMBER_SECONDS * 2);
+    expect(m.estimate.readiness.longestRunMiles).toBe(8); // excludes the linked 13.1-mile race, even inside eight weeks
+    expect(m.finishSeconds).toBeNull();
+    expect(h.finishSeconds).not.toBeNull();
+    expect(h.estimate.confidenceRestrictions).toContain("race_age");
+    expect(h.confidence).toBe("low");
+  });
+
   it("withholds the marathon (insufficient endurance preparation) when the longest recent run is under 12 miles, while the half still shows", () => {
     const f = computeCurrentFitness(plain({ asOfDate: D, races: [SEPTEMBER_RACE()] }));
     const m = row(f, "marathon");

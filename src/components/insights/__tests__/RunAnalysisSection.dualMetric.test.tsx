@@ -128,28 +128,29 @@ function yAxes(): Element[] {
  * ticks are read from the flat list and attributed to an axis by their VALUE
  * FORMAT and x position rather than by DOM ancestry.
  */
-function tickLabels(): Array<{ text: string; x: number }> {
+function tickLabels(): Array<{ text: string; x: number; y: number }> {
   return Array.from(
     container.querySelectorAll(".recharts-cartesian-axis-tick-value")
   ).map((t) => ({
     text: t.textContent ?? "",
     x: Number(t.getAttribute("x")),
+    y: Number(t.getAttribute("y")),
   }));
 }
 
 /** Y-axis ticks only — numeric ("168") or M:SS ("8:30"); drops the x-axis's
  *  date labels ("May 11"). */
-function yTicks(): Array<{ text: string; x: number }> {
+function yTicks(): ReturnType<typeof tickLabels> {
   return tickLabels().filter((t) => /^[\d:]+$/.test(t.text));
 }
 
 /** Y ticks rendered in pace's M:SS format. */
-function paceTicks(): Array<{ text: string; x: number }> {
+function paceTicks(): ReturnType<typeof tickLabels> {
   return yTicks().filter((t) => t.text.includes(":"));
 }
 
 /** Y ticks rendered as plain integers (cadence / HR / load / efficiency). */
-function plainTicks(): Array<{ text: string; x: number }> {
+function plainTicks(): ReturnType<typeof tickLabels> {
   return yTicks().filter((t) => !t.text.includes(":"));
 }
 
@@ -275,6 +276,56 @@ describe("RunAnalysisSection — dual-metric data merge", () => {
 });
 
 describe("RunAnalysisSection — dual axis rendering", () => {
+  // These exercise Recharts' real scales, ticks and plotted SVG coordinates.
+  // SVG y increases downwards: a faster (smaller) pace must have a larger cy.
+  it.each([true, false])("plots faster pace lower on either axis (desktop=%s)", (desktop) => {
+    isDesktop.mockReturnValue(desktop);
+    const runs = weeklyRuns(6).map((run, i) => ({
+      ...run,
+      avgPaceSecPerMile: 480 + i * 20,
+      durationSeconds: run.distanceMiles * (480 + i * 20),
+      cadenceSPM: 160 + i * 2,
+    }));
+    render(runs);
+
+    function expectFasterLower(color: string) {
+      const points = dots().filter(d => d.getAttribute("fill") === color);
+      expect(points).toHaveLength(6);
+      const byTime = [...points].sort((a, b) => Number(a.getAttribute("cx")) - Number(b.getAttribute("cx")));
+      // Oldest run is slowest, latest run fastest. Data values stay positive
+      // seconds per mile; both the plotted line and its ticks must agree.
+      for (let i = 1; i < byTime.length; i++) {
+        expect(Number(byTime[i].getAttribute("cy"))).toBeGreaterThan(Number(byTime[i - 1].getAttribute("cy")));
+      }
+      expect(container.textContent).toContain("Avg pace 8:50/mi · 1:40 faster vs start of range");
+      expect(container.textContent).toContain("Pace: lower on chart = faster (less time per mile); higher = slower");
+      const ticks = paceTicks().sort((a, b) => a.y - b.y);
+      if (ticks.length) {
+        expect(ticks.length).toBeGreaterThan(1);
+        const seconds = (text: string) => { const [m, s] = text.split(":").map(Number); return m * 60 + s; };
+        for (let i = 1; i < ticks.length; i++) expect(seconds(ticks[i].text)).toBeLessThan(seconds(ticks[i - 1].text));
+      }
+    }
+
+    expectFasterLower(PRIMARY_COLOR);  // pace only
+    clickButton("Cadence");
+    expectFasterLower(PRIMARY_COLOR);  // pace left, cadence right
+    clickButton("Pace");
+    clickButton("Pace");
+    expectFasterLower(SECONDARY_COLOR); // cadence left, pace right (ticks hidden on mobile)
+    if (!desktop) expect(paceTicks()).toHaveLength(0);
+  });
+
+  it.each(["Cadence", "Efficiency score", "Load", "Heart rate"])("keeps larger %s values higher", (metric) => {
+    render(weeklyRuns(12));
+    clickButton(metric);
+    clickButton("Pace");
+    const ticks = plainTicks().sort((a, b) => a.y - b.y);
+    expect(ticks.length).toBeGreaterThan(1);
+    for (let i = 1; i < ticks.length; i++) expect(Number(ticks[i].text)).toBeLessThan(Number(ticks[i - 1].text));
+    expect(container.textContent).not.toContain("lower on chart = faster");
+  });
+
   it("renders a single y-axis and a single line with one metric selected", () => {
     render(weeklyRuns(12));
     expect(yAxes()).toHaveLength(1);
