@@ -1,7 +1,7 @@
 import { type RunningPlan, type PlannedRunEntry } from "@/types/plan";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { applyOverride, type WorkoutOverride } from "@/types/workoutOverride";
-import { parseLocalDate } from "@/utils/dates";
+import { parseLocalDate, toLocalIsoDate, weeksBetweenMondays } from "@/utils/dates";
 
 export type MatchQuality = "full" | "partial";
 
@@ -76,13 +76,6 @@ export interface PlanMatch {
   quality: MatchQuality;
 }
 
-function toISODate(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
 function plannedEntryDate(plan: RunningPlan, entry: PlannedRunEntry): Date {
   const [year, month, day] = plan.startDate.split("-").map(Number);
   const start = new Date(year, month - 1, day);
@@ -95,13 +88,13 @@ function plannedEntryDate(plan: RunningPlan, entry: PlannedRunEntry): Date {
 /**
  * The workout's LOCAL calendar day key, "YYYY-MM-DD".
  *
- * This must agree with `plannedEntryDate`/`toISODate` above (planned dates are
+ * This must agree with `plannedEntryDate`/`toLocalIsoDate` above (planned dates are
  * built from LOCAL date components) and with every mileage/stat surface in the
  * app, all of which bucket a run by its local day — `weeklyLoad.ts`,
  * `trainingLoadSeries.ts`, `routePerformance.ts`, `MiniCalendar.tsx` each carry
  * their own identical `toLocalIsoDate`, and `services/autoMatch.ts` groups its
  * workout pool with the same `localISODate` (getFullYear/getMonth/getDate)
- * mechanism. `toISODate` here IS that mechanism — this is a reuse, not a
+ * mechanism. `toLocalIsoDate` here IS that mechanism — this is a reuse, not a
  * reimplementation.
  *
  * The bug this replaces (PRD §6): the key was `startDate.toISOString()`, i.e.
@@ -114,12 +107,12 @@ function plannedEntryDate(plan: RunningPlan, entry: PlannedRunEntry): Date {
  * Sunday-evening + Monday-morning pair had their two entries swapped outright.
  *
  * The ±1-day tolerance below is untouched and needed no adjustment: both
- * `differenceInCalendarDays` and `isoWeekNumber` operate on the "YYYY-MM-DD"
+ * `differenceInCalendarDays` and the week comparison operate on the "YYYY-MM-DD"
  * STRINGS, so they are agnostic to how a key was derived — this changes only
  * which day a run reports, not what "within one day" means.
  */
 function workoutDate(w: HealthWorkout): string {
-  return toISODate(w.startDate);
+  return toLocalIsoDate(w.startDate);
 }
 
 // A run is "full" completion once its actual mileage reaches 85% of planned;
@@ -149,16 +142,6 @@ function withinOneDay(aDate: string, eDate: string): boolean {
   return Math.abs(differenceInCalendarDays(aDate, eDate)) <= 1;
 }
 
-/** ISO week number (week containing Thursday, starts Monday) using UTC components */
-function isoWeekNumber(dateStr: string): number {
-  const [y, m, d] = dateStr.split("-").map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d));
-  const day = dt.getUTCDay() || 7;
-  dt.setUTCDate(dt.getUTCDate() + 4 - day);
-  const yearStart = new Date(Date.UTC(dt.getUTCFullYear(), 0, 1));
-  return Math.ceil(((dt.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
-}
-
 /**
  * When multiple entries compete for the same run within ±1 day,
  * pick the best candidate using tiebreaker rules:
@@ -175,10 +158,14 @@ function pickBestCandidate(
   if (candidates.length === 0) return null;
   if (candidates.length === 1) return candidates[0];
 
-  const runWeek = isoWeekNumber(runDateStr);
+  const runDate = parseLocalDate(runDateStr);
 
   // Rule 1: Prefer same/past week over future week
-  const sameOrPast = candidates.filter((c) => isoWeekNumber(c.eDate) <= runWeek);
+  // Entry week <= run week, compared as Monday-anchored week deltas (year-safe:
+  // bare ISO week numbers invert across 2026-W53 -> 2027-W01).
+  const sameOrPast = candidates.filter(
+    (c) => weeksBetweenMondays(runDate, parseLocalDate(c.eDate)) <= 0
+  );
   const pool = sameOrPast.length > 0 ? sameOrPast : candidates;
 
   // Rule 2: Prefer closest calendar day
@@ -236,7 +223,7 @@ export function matchPlanToActual(
   for (const week of plan.weeks) {
     for (const e of week.entries) {
       if (e.runType === "rest") continue;
-      allEntries.push({ entry: e, eDate: toISODate(plannedEntryDate(plan, e)) });
+      allEntries.push({ entry: e, eDate: toLocalIsoDate(plannedEntryDate(plan, e)) });
     }
   }
 
