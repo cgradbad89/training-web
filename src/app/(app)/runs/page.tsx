@@ -44,6 +44,8 @@ import {
 } from "@/utils/runPlanTitle";
 import { type RunningPlan } from "@/types/plan";
 import { weekStart as getWeekStart } from "@/utils/dates";
+import { weeklyAvgDenominator } from "@/utils/weeklyAvgDenominator";
+import { useCurrentLocalYear, useRollingSelectedYear } from "@/hooks/useCurrentLocalYear";
 import {
   classifyRun,
   RUN_TAG_STYLES,
@@ -828,8 +830,10 @@ export default function RunsPage() {
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
 
-  const currentYear = new Date().getFullYear();
-  const [selectedYear, setSelectedYear] = useState<number>(currentYear);
+  // Device-local year that follows the calendar: the year filter advances at
+  // local midnight Jan 1 only if it was on the old current year.
+  const currentYear = useCurrentLocalYear();
+  const [selectedYear, setSelectedYear] = useRollingSelectedYear(currentYear);
   // null = "All months"; otherwise 0-indexed month within selectedYear.
   // Resets when selectedYear changes (a chosen month may not exist in the
   // new year).
@@ -1002,28 +1006,8 @@ export default function RunsPage() {
     }, 0);
     if (totalLoad <= 0) return null;
 
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-
-    let windowStart: Date;
-    let windowEnd: Date;
-    if (selectedMonth !== null) {
-      windowStart = new Date(selectedYear, selectedMonth, 1);
-      windowEnd = new Date(selectedYear, selectedMonth + 1, 0);
-    } else {
-      windowStart = new Date(selectedYear, 0, 1);
-      windowEnd = new Date(selectedYear, 11, 31);
-    }
-    if (windowEnd > today) windowEnd = today;
-    if (windowStart > today) return null;
-
-    const startMonday = getWeekStart(windowStart);
-    const endMonday = getWeekStart(windowEnd);
-    const weeksSpanned =
-      Math.max(
-        0,
-        Math.round((endMonday.getTime() - startMonday.getTime()) / (7 * 86400 * 1000))
-      ) + 1;
+    // Shared Monday-anchored denominator (also used by the Workouts page).
+    const weeksSpanned = weeklyAvgDenominator(selectedYear, selectedMonth, new Date());
     if (weeksSpanned <= 0) return null;
 
     return totalLoad / weeksSpanned;
