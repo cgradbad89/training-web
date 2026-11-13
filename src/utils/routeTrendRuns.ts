@@ -10,6 +10,7 @@
  */
 
 import { type MatchedRunSummary } from "@/utils/routePerformance";
+import { addMonthsClamped, toLocalIsoDate } from "@/utils/dates";
 
 export const TREND_ALL_MAX = 30;
 export const TREND_SIX_MONTH_MAX = 20;
@@ -17,11 +18,8 @@ export const TREND_RECENT_COUNT = 10;
 
 /** ISO "YYYY-MM-DD" for the local date 6 calendar months before `now`. */
 function sixMonthsAgoIso(now: Date): string {
-  const d = new Date(now.getFullYear(), now.getMonth() - 6, now.getDate());
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+  // Day-clamped (Aug 31 → Feb 28/29), never overflowing into the next month.
+  return toLocalIsoDate(addMonthsClamped(now, -6));
 }
 
 export function selectRouteTrendRuns(

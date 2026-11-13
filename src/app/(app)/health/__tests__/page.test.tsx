@@ -34,7 +34,6 @@ vi.mock("@/services/healthMetrics", async () => {
   return {
     ...actual,
     fetchHealthMetrics: vi.fn(),
-    onHealthMetricsSnapshot: vi.fn(),
     fetchHourlyHeartRate: vi.fn(),
     fetchHealthGoals: vi.fn(),
     fetchAllHealthMetrics: vi.fn(),
@@ -157,7 +156,6 @@ describe("Health Dashboard Page", () => {
       start === healthMetricsService.healthMetricsCutoffISO(90) && end === localIsoDate(new Date())
         ? rangeData.rolling(uid, start, end) : rangeData.extension(uid, start, end)
     );
-    (healthMetricsService.onHealthMetricsSnapshot as any).mockReturnValue(vi.fn());
     window.localStorage.clear();
   });
 
@@ -168,15 +166,6 @@ describe("Health Dashboard Page", () => {
     container.remove();
     vi.useRealTimers();
     vi.restoreAllMocks();
-  });
-
-  it("does not create an onSnapshot subscription for healthMetrics", async () => {
-    await act(async () => {
-      root.render(<PageTree />);
-    });
-    await act(async () => { await flushPromises(); await flushPromises(); await flushPromises(); });
-    
-    expect(healthMetricsService.onHealthMetricsSnapshot).not.toHaveBeenCalled();
   });
 
   it("calls the inclusive bounded range once on mount", async () => {

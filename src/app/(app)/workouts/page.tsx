@@ -33,6 +33,8 @@ import {
 import { formatDuration } from "@/utils/pace";
 import { resolveActivityTitle } from "@/utils/resolveActivityTitle";
 import { weekStart } from "@/utils/dates";
+import { weeklyAvgDenominator } from "@/utils/weeklyAvgDenominator";
+import { useCurrentLocalYear, useRollingSelectedYear } from "@/hooks/useCurrentLocalYear";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { WorkoutDetailModal } from "@/components/WorkoutDetailModal";
 import { AddActivityButton } from "@/components/manualActivity/AddActivityButton";
@@ -167,15 +169,6 @@ function weekKey(date: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-function weeksElapsed(year: number): number {
-  const now = new Date();
-  if (year < now.getFullYear()) return 52;
-  const dayOfYear = Math.ceil(
-    (now.getTime() - new Date(year, 0, 1).getTime()) / 86400000
-  );
-  return Math.max(1, Math.ceil(dayOfYear / 7));
-}
-
 // ─── Year Summary Stats ───────────────────────────────────────────────────────
 
 /** Tile shape matches the runs page summary tile exactly — label / value /
@@ -219,7 +212,8 @@ function YearSummary({
   maxHr: number;
   restingHr: number;
 }) {
-  const elapsed = weeksElapsed(year);
+  // Monday-anchored weeks touched (shared with the Runs page).
+  const elapsed = weeklyAvgDenominator(year, null, new Date());
   const count = workouts.length;
 
   const avgDurationSec =
@@ -667,8 +661,9 @@ export default function WorkoutsPage() {
     return () => { document.body.style.overflow = ""; };
   }, [selectedWorkout]);
 
-  const currentYear = new Date().getFullYear();
-  const [selectedYear, setSelectedYear] = useState<number>(currentYear);
+  // Device-local year that follows the calendar (see useRollingSelectedYear).
+  const currentYear = useCurrentLocalYear();
+  const [selectedYear, setSelectedYear] = useRollingSelectedYear(currentYear);
 
   // Fetch dismissed pairs. Overrides now come from the shared AppDataContext
   // (see useAppData() above) instead of a page-local fetch, so excluding a

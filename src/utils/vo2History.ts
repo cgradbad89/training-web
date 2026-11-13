@@ -13,18 +13,20 @@
  * two-field composite index is required.
  */
 
+import { localDateCutoff } from "@/utils/dates";
+
 /** Trailing window (days) for the VO₂ max history chart. */
 export const VO2_HISTORY_DAYS = 180;
 
 /**
  * The inclusive lower-bound `date` string (YYYY-MM-DD) for the VO₂ history
- * query, `days` before `now`. Mirrors the cutoff derivation in
- * services/healthMetrics.ts (`toISOString().split('T')[0]`).
+ * query, `days` before `now`, as a LOCAL date. Same derivation as
+ * `healthMetricsCutoffISO` in services/healthMetrics.ts.
  */
 export function vo2HistoryCutoffISO(now: Date, days: number = VO2_HISTORY_DAYS): string {
-  const cutoff = new Date(now);
-  cutoff.setDate(cutoff.getDate() - days);
-  return cutoff.toISOString().split("T")[0];
+  // Local calendar date: `toISOString().split("T")[0]` is the UTC date, which is
+  // already tomorrow after 19:00 in US Eastern and shifted the cutoff a day.
+  return localDateCutoff(days, now);
 }
 
 export interface Vo2Entry {

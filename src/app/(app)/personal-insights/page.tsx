@@ -11,6 +11,8 @@ import {
   Activity,
   Heart,
   CloudSun,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 
@@ -36,7 +38,17 @@ import {
   useClientPagePerformance,
   useClientPerformanceMark,
 } from "@/hooks/useClientPerformanceMark";
-import { type AggregatedStatsDoc } from "@/utils/aggregatedStats";
+import {
+  type AggregatedStatsDoc,
+  buildFastestMileFromBestEfforts,
+  isStatsYearCurrent,
+} from "@/utils/aggregatedStats";
+import {
+  buildPersonalRecordsByYear,
+  buildPrYearOptions,
+  type PrYearOption,
+} from "@/utils/personalRecords";
+import { useCurrentLocalYear, useRollingSelectedYear } from "@/hooks/useCurrentLocalYear";
 import { formatPaceLabel } from "@/utils/pace";
 import {
   isDateOnlyWithinPastMonths,
@@ -1172,6 +1184,10 @@ interface PerformanceTabData {
   paceTrendData: AggregatedStatsDoc["paceTrends"];
   hasPaceTrend: boolean;
   fastestMileByYear: Record<number, AggregatedStatsDoc["fastestMileSegment"]>;
+  /** Years offered by the PR year selector (runs' years + current local year). */
+  prYearOptions: PrYearOption[];
+  /** True while the current-year cached PRs cannot yet be painted (stale statsYear). */
+  prsPending: boolean;
 }
 
 const PR_BUCKETS = ["1–3 mi", "3–6 mi", "6–7 mi", "7–10 mi", "10+ mi"];
@@ -1188,13 +1204,17 @@ function PerformanceTabScope({
   workouts,
   raceInputs,
   selectedYear,
+  currentYear,
   statsData,
+  statsFailed,
   children,
 }: {
   workouts: HealthWorkout[];
   raceInputs: { raceDate: Date | string; distanceMiles: number }[];
   selectedYear: number;
+  currentYear: number;
   statsData: AggregatedStatsDoc | null;
+  statsFailed: boolean;
   children: (data: PerformanceTabData) => React.ReactNode;
 }) {
   const racePerformanceEnabled = isRacePerformanceDisplayEnabled();
@@ -1254,6 +1274,37 @@ function PerformanceTabScope({
     [runs, selectedYear]
   );
 
+  const prYearOptions = useMemo(
+    () => buildPrYearOptions(runs, currentYear),
+    [runs, currentYear]
+  );
+  // Current-year records come from the cached aggregate, but ONLY once its
+  // statsYear matches the local year (a 2026 doc must never be painted under a
+  // 2027 label). Every other year — and the current year when the aggregate
+  // cannot be validated because it errored — is computed from live workouts
+  // with the same functions the aggregate uses. No extra Firestore reads.
+  const isCurrentYear = selectedYear === currentYear;
+  const statsYearFresh = isStatsYearCurrent(statsData, currentYear);
+  const prsPending = isCurrentYear && !statsYearFresh && !statsFailed;
+  const liveRecords = useMemo(
+    () =>
+      !isCurrentYear || (!statsYearFresh && statsFailed)
+        ? {
+            records: buildPersonalRecordsByYear(workouts, selectedYear),
+            fastestMile: buildFastestMileFromBestEfforts(workouts, selectedYear),
+          }
+        : null,
+    [isCurrentYear, statsYearFresh, statsFailed, workouts, selectedYear]
+  );
+  const yearRecords = prsPending
+    ? null
+    : liveRecords?.records ?? statsData?.personalRecordsByYear ?? null;
+  const yearFastestMile = prsPending
+    ? null
+    : liveRecords
+      ? liveRecords.fastestMile
+      : statsData?.fastestMileSegment ?? null;
+
   const confidence = overallConfidence(fit5k, fitHalf);
   const paceTrendData = statsData?.paceTrends ?? [];
   const t5k = fit5k ? predictSeconds(fit5k, 3.1069) : null;
@@ -1277,15 +1328,17 @@ function PerformanceTabScope({
     ],
     runAnalysisWorkouts,
     yearRuns,
-    prs: statsData?.personalRecordsByYear.prs ?? [],
-    specificPrs: statsData?.personalRecordsByYear.specificPrs ?? [],
+    prs: yearRecords?.prs ?? [],
+    specificPrs: yearRecords?.specificPrs ?? [],
     paceTrendData,
     hasPaceTrend: paceTrendData.some(
       (week) => week.short || week.medium || week.long
     ),
     fastestMileByYear: {
-      [selectedYear]: statsData?.fastestMileSegment ?? null,
+      [selectedYear]: yearFastestMile,
     },
+    prYearOptions,
+    prsPending,
   });
 }
 
@@ -1439,7 +1492,10 @@ export default function PersonalInsightsPage() {
     { detail: { cacheSource: "app-data" } }
   );
 
-  const selectedYear = new Date().getFullYear();
+  // Device-local year; advances at local midnight / on focus, and the PR year
+  // selector follows it unless the user picked an earlier year.
+  const currentYear = useCurrentLocalYear();
+  const [selectedYear, setSelectedYear] = useRollingSelectedYear(currentYear);
 
   if (showInitialSkeleton) {
     return <PersonalInsightsSkeleton />;
@@ -1484,7 +1540,9 @@ export default function PersonalInsightsPage() {
           workouts={workouts}
           raceInputs={raceInputs}
           selectedYear={selectedYear}
+          currentYear={currentYear}
           statsData={stats.data}
+          statsFailed={Boolean(stats.error)}
         >
           {({
             fit5k,
@@ -1501,6 +1559,8 @@ export default function PersonalInsightsPage() {
             paceTrendData,
             hasPaceTrend,
             fastestMileByYear,
+            prYearOptions,
+            prsPending,
           }) => (
         <>
       {/* ── Predicted Race Times ─────────────────────────── */}
@@ -1634,12 +1694,48 @@ export default function PersonalInsightsPage() {
       <SectionHeader icon={Trophy} title="Personal Records by Year" />
 
       <Card>
-        {/* Year selector (cached to current year) */}
-        <div className="flex items-center justify-center gap-4 mb-5">
-          <span className="text-lg font-bold text-textPrimary tabular-nums w-16 text-center">
-            {selectedYear}
-          </span>
-        </div>
+        {/* Year selector — same chevron navigator as the Runs page. Years are
+            newest-first: ← goes older (idx + 1), → goes newer (idx - 1). */}
+        {(() => {
+          const years = prYearOptions.map((o) => o.year);
+          const idx = years.indexOf(selectedYear);
+          return (
+            <div className="flex items-center justify-center gap-1 mb-5">
+              <button
+                onClick={() => { if (idx >= 0 && idx < years.length - 1) setSelectedYear(years[idx + 1]); }}
+                disabled={idx < 0 || idx >= years.length - 1}
+                className="p-1.5 rounded-lg hover:bg-surface text-textSecondary disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                aria-label="Previous year"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <span className="text-lg font-bold text-textPrimary tabular-nums w-16 text-center">
+                {selectedYear}
+              </span>
+              <button
+                onClick={() => { if (idx > 0) setSelectedYear(years[idx - 1]); }}
+                disabled={idx <= 0}
+                className="p-1.5 rounded-lg hover:bg-surface text-textSecondary disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                aria-label="Next year"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          );
+        })()}
+
+        {yearRuns.length === 0 ? (
+          <p className="text-sm text-textSecondary text-center py-8">
+            No runs logged in {selectedYear} yet.
+          </p>
+        ) : prsPending ? (
+          <div className="flex flex-col gap-3 py-2" aria-busy="true" aria-label="Loading personal records">
+            {Array.from({ length: 6 }, (_, i) => (
+              <div key={i} className="h-8 rounded-lg bg-surface animate-pulse" />
+            ))}
+          </div>
+        ) : (
+        <>
 
         {/* Unified PR table with two sections */}
         <div className="overflow-x-auto">
@@ -1761,6 +1857,8 @@ export default function PersonalInsightsPage() {
         <p className="text-xs text-textSecondary mt-3 text-center">
           {yearRuns.length} runs in {selectedYear}
         </p>
+        </>
+        )}
         <button
           onClick={() => askCoach(
             'What do my personal records across distances suggest ' +

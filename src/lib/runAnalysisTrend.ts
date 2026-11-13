@@ -55,7 +55,7 @@ export interface RunAnalysisWorkout {
 }
 
 export interface RunAnalysisPoint {
-  /** Exact label format from computePaceRangeTrend ("May 5" weekly, "May" monthly). */
+  /** Exact label format from computePaceRangeTrend ("May 5" weekly, "May '26" monthly). */
   bucketLabel: string;
   /** Local YYYY-MM-DD of the bucket's period start (Monday-start week or month-start). */
   bucketStartDate: string;

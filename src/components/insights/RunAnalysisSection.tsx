@@ -359,6 +359,12 @@ export function RunAnalysisSection({
     );
   }, [showTable, selectedBucketStartDate, workouts, window, minMiles, maxMiles]);
 
+  // The x-axis is keyed by the unique bucketStartDate; ticks display the label.
+  const labelByBucketStart = useMemo(
+    () => new Map(points.map((p) => [p.bucketStartDate, p.bucketLabel])),
+    [points]
+  );
+
   const selectedLabel =
     points.find((p) => p.bucketStartDate === selectedBucketStartDate)
       ?.bucketLabel ?? "";
@@ -645,7 +651,8 @@ export function RunAnalysisSection({
                 stroke="var(--color-border)"
               />
               <XAxis
-                dataKey="bucketLabel"
+                dataKey="bucketStartDate"
+                tickFormatter={(startDate: string) => labelByBucketStart.get(startDate) ?? startDate}
                 tick={{ fontSize: 10 }}
                 axisLine={false}
                 tickLine={false}

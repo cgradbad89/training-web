@@ -83,9 +83,84 @@ export function isDateOnlyWithinPastMonths(
   months: number,
   from: Date = new Date()
 ): boolean {
-  const cutoff = new Date(from.getFullYear(), from.getMonth(), from.getDate());
-  cutoff.setMonth(cutoff.getMonth() - months);
+  const today = new Date(from.getFullYear(), from.getMonth(), from.getDate());
+  // Clamped month math: 2028-02-29 − 12 months → 2027-02-28 (not Mar 1).
+  const cutoff = addMonthsClamped(today, -months);
   return parseLocalDate(isoDate) >= cutoff;
+}
+
+// ─── Year-rollover helpers (device-local time) ───────────────────────────────
+
+/** Local calendar year of a date (device-local). */
+export function localYearOf(date: Date): number {
+  return date.getFullYear();
+}
+
+/** Local midnight on Jan 1 of the given year. */
+export function startOfLocalYear(year: number): Date {
+  return new Date(year, 0, 1);
+}
+
+/**
+ * Local ISO date (YYYY-MM-DD) of the Monday starting this date's Mon–Sun week.
+ * Year-safe week key: unlike a bare ISO week NUMBER, keys never repeat across
+ * years, so 2026-W53 (Mon 2026-12-28) sorts before 2027-W01 (Mon 2027-01-04).
+ */
+export function mondayKey(date: Date): string {
+  return toLocalIsoDate(weekStart(date));
+}
+
+const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Signed whole-week difference: (Monday of b) − (Monday of a), in weeks.
+ * DST-safe: computed on local Y/M/D components via Date.UTC, never by dividing
+ * raw milliseconds. 2026-12-28 vs 2027-01-04 → 1; 2026-12-28 vs 2026-12-21 → -1.
+ */
+export function weeksBetweenMondays(a: Date, b: Date): number {
+  const ma = weekStart(a);
+  const mb = weekStart(b);
+  const ua = Date.UTC(ma.getFullYear(), ma.getMonth(), ma.getDate());
+  const ub = Date.UTC(mb.getFullYear(), mb.getMonth(), mb.getDate());
+  return Math.round((ub - ua) / MS_PER_WEEK);
+}
+
+/**
+ * Number of distinct Monday-anchored Mon–Sun weeks overlapped by [start, end],
+ * inclusive. Partial weeks count as 1. Returns 0 if end's local day is before
+ * start's local day.
+ */
+export function elapsedWeeksIn(start: Date, end: Date): number {
+  if (toLocalIsoDate(end) < toLocalIsoDate(start)) return 0;
+  return weeksBetweenMondays(start, end) + 1;
+}
+
+/** Local-date cutoff string (YYYY-MM-DD) for `daysAgo` days before `now`. */
+export function localDateCutoff(daysAgo: number, now: Date = new Date()): string {
+  return toLocalIsoDate(
+    new Date(now.getFullYear(), now.getMonth(), now.getDate() - daysAgo)
+  );
+}
+
+/**
+ * Add calendar months, clamping the day to the last valid day of the target
+ * month (no overflow into the next month). Time of day is preserved.
+ * 2028-02-29 + (-12) → 2027-02-28. 2027-01-31 + 1 → 2027-02-28.
+ */
+export function addMonthsClamped(date: Date, months: number): Date {
+  const day = date.getDate();
+  const target = new Date(
+    date.getFullYear(),
+    date.getMonth() + months,
+    1,
+    date.getHours(),
+    date.getMinutes(),
+    date.getSeconds(),
+    date.getMilliseconds()
+  );
+  const lastDay = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+  target.setDate(Math.min(day, lastDay));
+  return target;
 }
 
 /** Normalize a date to the Monday of its week (ISO string, local date) */

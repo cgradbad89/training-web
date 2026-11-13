@@ -387,7 +387,7 @@ describe("buildRunAnalysisTrend — window + granularity parity with paceRangeTr
 
     expect(ref.granularity).toBe("month");
     expect(pts.map((p) => p.bucketLabel)).toEqual(ref.points.map((p) => p.label));
-    expect(pts.map((p) => p.bucketLabel)).toEqual(["Mar", "Apr", "May"]);
+    expect(pts.map((p) => p.bucketLabel)).toEqual(["Mar '26", "Apr '26", "May '26"]);
   });
 
   it("excludes runs before the trailing-window start", () => {
@@ -421,7 +421,7 @@ describe("buildRunAnalysisTrend — misc", () => {
     const pts = buildRunAnalysisTrend(runs, "pace", 1, 10, "6m", RESTING_HR, MAX_HR, NOW);
     const starts = pts.map((p) => p.bucketStartDate);
     expect(starts).toEqual([...starts].sort());
-    expect(pts.map((p) => p.bucketLabel)).toEqual(["Mar", "Apr", "May"]);
+    expect(pts.map((p) => p.bucketLabel)).toEqual(["Mar '26", "Apr '26", "May '26"]);
   });
 });
 
