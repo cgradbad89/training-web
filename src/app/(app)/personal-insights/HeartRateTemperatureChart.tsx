@@ -12,6 +12,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { type TempScatterPoint } from "./PaceTemperatureChart";
+import { formatTempTick } from "./formatTempTick";
 
 /**
  * Heart-rate-vs-temperature scatter with an overlaid least-squares trend line.
@@ -33,12 +34,11 @@ export function HeartRateTemperatureChart({
           type="number"
           dataKey="x"
           name="Temperature"
-          unit="°F"
           domain={["dataMin - 3", "dataMax + 3"]}
           tick={{ fontSize: 10 }}
           axisLine={false}
           tickLine={false}
-          tickFormatter={(v: number) => `${Math.round(v)}°`}
+          tickFormatter={formatTempTick}
         />
         <YAxis
           type="number"
