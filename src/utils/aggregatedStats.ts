@@ -2,13 +2,14 @@ import { type MileSplitDoc } from "@/utils/mileSplitsCache";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { buildVo2History } from "./vo2History";
 import { buildPersonalRecordsByYear } from "./personalRecords";
+import { localYearOf } from "./dates";
 import { buildPaceTrendsByDistanceBucket } from "./paceTrends";
 import { buildHrZoneDistribution, type MileSplitSample } from "./hrZoneDistribution";
 import { findBestFastestMileAcrossRuns } from "./fastestMileSegment";
 import { buildDailyLoadMap, buildLoadEwmaSeries } from "./trainingLoadSeries";
 import { buildQualifyingEfforts, fitRiegel, predictSeconds, type RiegelFit } from "./riegelFit";
 
-export const AGGREGATED_STATS_VERSION = 3;
+export const AGGREGATED_STATS_VERSION = 4;
 
 export interface AggregatedStatsFreshnessFingerprint {
   latestWorkoutId: string | null;
@@ -171,6 +172,21 @@ export function isAggregatedStatsStale(
   );
 }
 
+/**
+ * True only when the doc's year-scoped fields (current-year PRs, fastest mile)
+ * belong to `currentYear`. A missing/legacy `statsYear` is stale by definition.
+ */
+export function isStatsYearCurrent(
+  doc: Pick<AggregatedStatsDoc, "statsYear"> | null | undefined,
+  currentYear: number
+): boolean {
+  return (
+    doc != null &&
+    typeof doc.statsYear === "number" &&
+    doc.statsYear === currentYear
+  );
+}
+
 export interface AggregatedStatsDoc {
   computationVersion: number;
   freshnessFingerprint: AggregatedStatsFreshnessFingerprint;
@@ -178,6 +194,13 @@ export interface AggregatedStatsDoc {
   /** Top-level bounded-check baseline; optional only for legacy cache reads. */
   latestVo2SampleDate?: string | null;
   computedAt: string; // ISO timestamp
+  /**
+   * Device-local calendar year the doc was computed in. `personalRecordsByYear`
+   * and `fastestMileSegment` are scoped to this year, so they may only be
+   * painted under that year's label. Absent on legacy (pre-v4) docs, which
+   * readers must treat as stale.
+   */
+  statsYear: number;
   latestWorkoutId: string;
   latestWorkoutStartDate: string; // ISO date
   trainingLoad: {
@@ -371,6 +394,7 @@ export function buildAggregatedStats(
       vo2FreshnessKey,
       latestVo2SampleDate: vo2FreshnessKey.latestVo2SampleDate,
       computedAt,
+      statsYear: localYearOf(now),
       latestWorkoutId: "",
       latestWorkoutStartDate: "",
       trainingLoad: { series: [] },
@@ -460,7 +484,7 @@ export function buildAggregatedStats(
   const modelFit = rawModelFit ? { n: rawModelFit.n, r2: rawModelFit.r2, k: rawModelFit.k } : null;
 
   // 4. Personal Records
-  const personalRecordsByYear = buildPersonalRecordsByYear(workouts, now.getFullYear());
+  const personalRecordsByYear = buildPersonalRecordsByYear(workouts, localYearOf(now));
 
   // 5. Pace Trends
   const paceTrends = buildPaceTrendsByDistanceBucket(workouts, 8, now);
@@ -507,6 +531,7 @@ export function buildAggregatedStats(
     vo2FreshnessKey,
     latestVo2SampleDate: vo2FreshnessKey.latestVo2SampleDate,
     computedAt,
+    statsYear: localYearOf(now),
     latestWorkoutId: latestWorkout.workoutId,
     latestWorkoutStartDate: latestWorkout.startDate.toISOString(),
     trainingLoad: { series },

@@ -58,3 +58,21 @@ export function useCurrentLocalYear(): number {
 
   return year;
 }
+
+/**
+ * Year-filter state that follows the calendar. Starts on `currentYear`; when
+ * `currentYear` changes (local midnight on Jan 1) the selection advances to the
+ * new year ONLY if it was sitting on the old current year — a user who picked
+ * an earlier year keeps their choice.
+ */
+export function useRollingSelectedYear(
+  currentYear: number
+): [number, (year: number) => void] {
+  const [selected, setSelected] = useState<number>(currentYear);
+  const [previousCurrent, setPreviousCurrent] = useState<number>(currentYear);
+  if (previousCurrent !== currentYear) {
+    setPreviousCurrent(currentYear);
+    if (selected === previousCurrent) setSelected(currentYear);
+  }
+  return [selected, setSelected];
+}

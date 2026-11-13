@@ -100,3 +100,48 @@ describe("useCurrentLocalYear", () => {
     root = createRoot(container);
   });
 });
+
+import { useRollingSelectedYear } from "@/hooks/useCurrentLocalYear";
+
+describe("useRollingSelectedYear", () => {
+  let api: { selected: number; set: (y: number) => void; current: number };
+
+  function mountRolling(initial: number) {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    function Probe({ current }: { current: number }) {
+      const [selected, set] = useRollingSelectedYear(current);
+      api = { selected, set, current };
+      return null;
+    }
+    act(() => {
+      root = createRoot(container);
+      root.render(React.createElement(Probe, { current: initial }));
+    });
+    return (current: number) =>
+      act(() => root.render(React.createElement(Probe, { current })));
+  }
+
+  it("defaults to the current year", () => {
+    mountRolling(2026);
+    expect(api.selected).toBe(2026);
+  });
+  it("advances to the new year when the selection sat on the old current year", () => {
+    const rerender = mountRolling(2026);
+    rerender(2027);
+    expect(api.selected).toBe(2027);
+  });
+  it("leaves a user-chosen earlier year alone when the current year rolls", () => {
+    const rerender = mountRolling(2026);
+    act(() => api.set(2025));
+    rerender(2027);
+    expect(api.selected).toBe(2025);
+  });
+  it("keeps a manual selection of the old current year → does not matter after it already advanced", () => {
+    const rerender = mountRolling(2026);
+    rerender(2027);
+    act(() => api.set(2026));
+    rerender(2027);
+    expect(api.selected).toBe(2026);
+  });
+});

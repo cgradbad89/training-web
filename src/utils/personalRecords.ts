@@ -79,3 +79,29 @@ export function buildPersonalRecordsByYear(
 
   return { prs, specificPrs };
 }
+
+export interface PrYearOption {
+  year: number;
+  runCount: number;
+}
+
+/**
+ * Years offered by the Personal Records year selector: every local calendar
+ * year with at least one run, plus the current local year (even when it has no
+ * runs yet, e.g. Jan 1), newest first. Pure; computed from already-loaded
+ * workouts (non-run workouts are ignored).
+ */
+export function buildPrYearOptions(
+  runs: HealthWorkout[],
+  currentYear: number
+): PrYearOption[] {
+  const counts = new Map<number, number>([[currentYear, 0]]);
+  for (const run of runs) {
+    if (!run.isRunLike) continue;
+    const year = run.startDate.getFullYear();
+    counts.set(year, (counts.get(year) ?? 0) + 1);
+  }
+  return Array.from(counts, ([year, runCount]) => ({ year, runCount })).sort(
+    (a, b) => b.year - a.year
+  );
+}
