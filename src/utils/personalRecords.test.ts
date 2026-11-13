@@ -52,7 +52,7 @@ describe("buildPersonalRecordsByYear", () => {
     expect(prs[1]?.miles).toBe(3.0); // 3-6 mi bucket is inclusive of 3.0
   });
 
-  it("regression test: produces identical output to previous inline logic", () => {
+  it("regression test: produces identical output to previous inline logic (10.0 mi now in 7–10)", () => {
     const workouts = [
       mockWorkout("2024-06-01T10:00:00Z", 2.0, 1200), // Pace 600
       mockWorkout("2024-06-05T10:00:00Z", 3.107, 1864), // Pace 600 (5K)
@@ -66,8 +66,9 @@ describe("buildPersonalRecordsByYear", () => {
       { pace: 600, miles: 2, date: new Date("2024-06-01T10:00:00Z") },
       { pace: 599.9356292243322, miles: 3.107, date: new Date("2024-06-05T10:00:00Z") },
       { pace: 599.9356292243322, miles: 6.214, date: new Date("2024-07-01T10:00:00Z") },
-      null, // 7-10 mi bucket
+      // 7–10 mi now ends at 10.0 inclusive (F6): a 10.0 mi run lands here, not in 10+.
       { pace: 600, miles: 10, date: new Date("2024-07-02T10:00:00Z") },
+      null, // 10+ mi bucket (strictly > 10.0)
     ]);
 
     expect(specificPrs).toEqual([
