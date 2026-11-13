@@ -1,4 +1,5 @@
 import { type HealthWorkout } from "@/types/healthWorkout";
+import { selectRuns } from "@/utils/runSelection";
 
 export interface PrResult {
   pace: number;
@@ -36,7 +37,9 @@ export function buildPersonalRecordsByYear(
   workouts: HealthWorkout[],
   selectedYear: number
 ): PersonalRecordsByYear {
-  const yearRuns = workouts.filter(
+  // Defense in depth: PRs are run-only. Callers may pass every workout (the
+  // live other-year path does); HIIT/OTF/cycling distance must never win a row.
+  const yearRuns = selectRuns(workouts).filter(
     (r) => r.startDate.getFullYear() === selectedYear
   );
 

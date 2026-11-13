@@ -78,8 +78,8 @@ describe("buildAggregatedStats statsYear", () => {
     expect(buildAggregatedStats({ ...base, workouts: [run("a", new Date(2026, 11, 30))], now }).statsYear).toBe(2027);
     expect(buildAggregatedStats({ ...base, workouts: [], now }).statsYear).toBe(2027);
   });
-  it("bumps the computation version to 4", () => {
-    expect(AGGREGATED_STATS_VERSION).toBe(4);
+  it("bumps the computation version to 5", () => {
+    expect(AGGREGATED_STATS_VERSION).toBe(5);
   });
 });
 

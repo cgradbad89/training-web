@@ -2,6 +2,7 @@ import { type MileSplitDoc } from "@/utils/mileSplitsCache";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { buildVo2History } from "./vo2History";
 import { buildPersonalRecordsByYear } from "./personalRecords";
+import { selectRuns } from "./runSelection";
 import { localYearOf, toLocalIsoDate } from "./dates";
 import { buildPaceTrendsByDistanceBucket } from "./paceTrends";
 import { buildHrZoneDistribution, type MileSplitSample } from "./hrZoneDistribution";
@@ -9,7 +10,13 @@ import { findBestFastestMileAcrossRuns } from "./fastestMileSegment";
 import { buildDailyLoadMap, buildLoadEwmaSeries } from "./trainingLoadSeries";
 import { buildQualifyingEfforts, fitRiegel, predictSeconds, type RiegelFit } from "./riegelFit";
 
-export const AGGREGATED_STATS_VERSION = 4;
+/**
+ * Bump when the persisted aggregate's inputs or semantics change so a cached
+ * doc (Firestore + IndexedDB) is discarded and recomputed.
+ *   5 — PRs, pace trends and race-prediction inputs narrowed to runs only
+ *       (`selectRuns`); v4 docs could carry HIIT/non-run distance in them.
+ */
+export const AGGREGATED_STATS_VERSION = 5;
 
 export interface AggregatedStatsFreshnessFingerprint {
   latestWorkoutId: string | null;
@@ -385,6 +392,10 @@ export function buildAggregatedStats(
   } = inputs;
 
   const computedAt = now.toISOString();
+  // Run-only metrics (PRs, pace trends, race-prediction inputs) take `runs`.
+  // Load / training-load / HR-zone inputs deliberately keep the FULL `workouts`
+  // list: HIIT/OTF/strength count toward load by design.
+  const runs = selectRuns(workouts);
   const vo2History = vo2HistoryOverride ?? buildVo2History(healthMetrics);
 
   if (workouts.length === 0) {
@@ -451,7 +462,7 @@ export function buildAggregatedStats(
     }));
 
   // 2. Race Predictions
-  const runInputs = workouts.map((r) => ({
+  const runInputs = runs.map((r) => ({
     workoutId: r.workoutId,
     distanceMiles: r.distanceMiles,
     durationSeconds: r.durationSeconds,
@@ -485,10 +496,10 @@ export function buildAggregatedStats(
   const modelFit = rawModelFit ? { n: rawModelFit.n, r2: rawModelFit.r2, k: rawModelFit.k } : null;
 
   // 4. Personal Records
-  const personalRecordsByYear = buildPersonalRecordsByYear(workouts, localYearOf(now));
+  const personalRecordsByYear = buildPersonalRecordsByYear(runs, localYearOf(now));
 
   // 5. Pace Trends
-  const paceTrends = buildPaceTrendsByDistanceBucket(workouts, 8, now);
+  const paceTrends = buildPaceTrendsByDistanceBucket(runs, 8, now);
 
   // 6. HR Zone Distribution
   const perRunMileSplits: MileSplitSample[][] = workouts.map((run) => {

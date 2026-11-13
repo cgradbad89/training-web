@@ -1,5 +1,6 @@
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { weekStart } from "@/utils/dates";
+import { selectRuns } from "@/utils/runSelection";
 
 export interface PaceTrendWeek {
   label: string;
@@ -14,6 +15,8 @@ export function buildPaceTrendsByDistanceBucket(
   asOf: Date = new Date()
 ): PaceTrendWeek[] {
   const currentMonday = weekStart(asOf);
+  // Defense in depth: pace trends are run-only (non-run distance never counts).
+  const runsOnly = selectRuns(workouts);
 
   return Array.from({ length: weeks }, (_, i) => {
     const weekDate = new Date(currentMonday);
@@ -22,7 +25,7 @@ export function buildPaceTrendsByDistanceBucket(
     weekEndDate.setDate(weekDate.getDate() + 6);
     weekEndDate.setHours(23, 59, 59, 999);
 
-    const weekRuns = workouts.filter(
+    const weekRuns = runsOnly.filter(
       (r) => r.startDate >= weekDate && r.startDate <= weekEndDate
     );
 
