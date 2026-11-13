@@ -191,6 +191,10 @@ function clickButtonByText(text: string) {
 }
 
 beforeEach(() => {
+  // The fixtures are dated 2026 and the page defaults its year filter to the
+  // current local year, so the test owns its clock instead of depending on today.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-11-12T12:00:00"));
   h.patchOverrides.mockClear();
   h.refreshWorkouts.mockClear();
   h.patchTrainingLoad.mockClear();
@@ -215,6 +219,7 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root?.unmount());
   container?.remove();
+  vi.useRealTimers();
 });
 
 describe("WorkoutsPage — shared overrides wiring", () => {
