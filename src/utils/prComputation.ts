@@ -11,6 +11,7 @@
  */
 
 import { type HealthWorkout } from "@/types/healthWorkout";
+import { toLocalIsoDate } from "@/utils/dates";
 
 export interface PRCategory {
   id: string;
@@ -118,7 +119,7 @@ export function computeAllPRs(runs: HealthWorkout[]): PRResult[] {
       distanceMiles: best.distanceMiles,
       durationSeconds: best.durationSeconds,
       derivedPace: pace,
-      date: best.startDate.toISOString().split('T')[0],
+      date: toLocalIsoDate(best.startDate),
     });
     results.push({
       categoryId: category.id,
@@ -145,7 +146,7 @@ export function computeAllPRs(runs: HealthWorkout[]): PRResult[] {
       distanceMiles: best.distanceMiles,
       durationSeconds: best.durationSeconds,
       derivedPace: pace,
-      date: best.startDate.toISOString().split('T')[0],
+      date: toLocalIsoDate(best.startDate),
     });
     results.push({
       categoryId: category.id,

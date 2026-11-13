@@ -123,7 +123,7 @@ describe("computePaceRangeTrend", () => {
     expect(res.granularity).toBe("month");
     expect(res.totalRunCount).toBe(1);
     expect(res.points).toHaveLength(1);
-    expect(res.points[0].label).toBe("Jan");
+    expect(res.points[0].label).toBe("Jan '26");
   });
 
   it("switches granularity: 3m -> week, 6m -> month", () => {

@@ -2,7 +2,7 @@ import { type MileSplitDoc } from "@/utils/mileSplitsCache";
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { buildVo2History } from "./vo2History";
 import { buildPersonalRecordsByYear } from "./personalRecords";
-import { localYearOf } from "./dates";
+import { localYearOf, toLocalIsoDate } from "./dates";
 import { buildPaceTrendsByDistanceBucket } from "./paceTrends";
 import { buildHrZoneDistribution, type MileSplitSample } from "./hrZoneDistribution";
 import { findBestFastestMileAcrossRuns } from "./fastestMileSegment";
@@ -438,7 +438,8 @@ export function buildAggregatedStats(
     ? seedFromHistory
     : seedFromSeedWindow;
 
-  const displayStartIso = displayStart.toISOString().split("T")[0];
+  // Local date key (series dates are local day keys; toISOString() would be the UTC date).
+  const displayStartIso = toLocalIsoDate(displayStart);
   const rawSeries = buildLoadEwmaSeries(dailyMap, seedStart, now);
   const series = rawSeries
     .filter((p) => p.date >= displayStartIso)

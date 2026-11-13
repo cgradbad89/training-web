@@ -12,7 +12,7 @@ import {
   type RacePredictionResult,
 } from '@/utils/racePrediction'
 import type { BestEffortSegment } from '@/utils/bestEffortExtraction'
-import { weekStart as getWeekStart, parseLocalDate, daysUntil } from '@/utils/dates'
+import { weekStart as getWeekStart, parseLocalDate, daysUntil, toLocalIsoDate } from '@/utils/dates'
 import { resolveActivityTitle } from '@/utils/resolveActivityTitle'
 import { buildRunTitleMap } from '@/utils/runPlanTitle'
 import { isRacePerformanceDisplayEnabled, RACE_PERFORMANCE_UNAVAILABLE_REASON } from '@/lib/racePerformanceGate'
@@ -109,7 +109,7 @@ export function buildCoachContext(
   recentRuns.forEach(r => {
     const d = new Date(r.startDate)
     const ws = getWeekStart(d)
-    const key = ws.toISOString().split('T')[0]
+    const key = toLocalIsoDate(ws)
     weeklyMap.set(key, (weeklyMap.get(key) ?? 0) + (r.distanceMiles ?? 0))
   })
   const weeklyValues = Array.from(weeklyMap.values())

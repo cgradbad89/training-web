@@ -10,10 +10,21 @@ import {
 import { db } from "@/lib/firebase";
 import { COLLECTIONS } from "@/lib/firestore";
 import { type RunningShoe, type ShoeAssignment, type ShoeAutoAssignmentRule } from "@/types";
-import { toDate } from "@/utils/dates";
+import { toDate, toLocalIsoDate } from "@/utils/dates";
 
 function stripUndefined<T extends object>(obj: T): T {
   return JSON.parse(JSON.stringify(obj)) as T;
+}
+
+/**
+ * `purchaseDate` is a date-only "YYYY-MM-DD" string when written by the shoe
+ * form; keep it verbatim (re-deriving it through a Date would shift it a day
+ * west of UTC). Timestamp/Date values are converted to their LOCAL calendar
+ * date, never the UTC date.
+ */
+export function normalizePurchaseDate(value: unknown): string {
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  return toLocalIsoDate(toDate(value));
 }
 
 // ─── Shoes ────────────────────────────────────────────────────────────────────
@@ -26,7 +37,7 @@ export async function fetchShoes(uid: string): Promise<RunningShoe[]> {
       ...data,
       id: d.id,
       purchaseDate: data.purchaseDate
-        ? toDate(data.purchaseDate).toISOString().split("T")[0]
+        ? normalizePurchaseDate(data.purchaseDate)
         : undefined,
       addedAt: toDate(data.addedAt).toISOString(),
     } as RunningShoe;

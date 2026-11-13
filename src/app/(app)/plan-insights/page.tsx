@@ -41,6 +41,7 @@ import {
 } from "@/utils/riegelFit";
 import { buildPlanAdherence } from "@/utils/planAdherence";
 import { planWeekIndexFor } from "@/utils/planMatching";
+import { resolvePlanStartDate } from "@/utils/planDateEdit";
 import {
   buildActualVsPlannedWeeks,
   distanceDelta,
@@ -669,26 +670,15 @@ export default function PlanInsightsPage() {
   // Trends KPIs share this single cutoff/label so they describe one window.
   // Resolution order:
   //   1) activePlan.startDate (ISO, Monday-normalized) — always present on a
-  //      linked RunningPlan, so this is the live path.
-  //   2) earliest scheduled week's startDateLabel — defensive only; the field
-  //      is not on the current PlanWeek type, so it's read via a cast and is
-  //      tolerated if future data carries it.
-  //   3) 30-day fallback (e.g. race with no linked plan), with a warning.
+  //      linked RunningPlan, so this is the live path. Parsed as LOCAL midnight.
+  //   2) 30-day fallback (e.g. race with no linked plan), with a warning.
+  // The old fallback that parsed a week label with the CURRENT year was removed:
+  // it produced the wrong year for a plan that started in December and was
+  // viewed in January. Plan entries have no dates of their own, so without a
+  // startDate there is nothing else to derive a window from.
   const planStartDate = useMemo<Date | null>(() => {
-    if (activePlan?.startDate) {
-      const d = parseLocalDate(activePlan.startDate);
-      if (!isNaN(d.getTime())) return d;
-    }
-    if (activePlan?.weeks?.length) {
-      const sorted = [...activePlan.weeks].sort(
-        (a, b) => a.weekNumber - b.weekNumber
-      );
-      const label = (sorted[0] as { startDateLabel?: string })?.startDateLabel;
-      if (label) {
-        const parsed = new Date(`${label} ${new Date().getFullYear()}`);
-        if (!isNaN(parsed.getTime())) return parsed;
-      }
-    }
+    const start = resolvePlanStartDate(activePlan);
+    if (start) return start;
     console.warn(
       "Plan Insights: could not resolve plan start date, falling back to 30-day window"
     );

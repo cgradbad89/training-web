@@ -83,8 +83,9 @@ export function isDateOnlyWithinPastMonths(
   months: number,
   from: Date = new Date()
 ): boolean {
-  const cutoff = new Date(from.getFullYear(), from.getMonth(), from.getDate());
-  cutoff.setMonth(cutoff.getMonth() - months);
+  const today = new Date(from.getFullYear(), from.getMonth(), from.getDate());
+  // Clamped month math: 2028-02-29 − 12 months → 2027-02-28 (not Mar 1).
+  const cutoff = addMonthsClamped(today, -months);
   return parseLocalDate(isoDate) >= cutoff;
 }
 

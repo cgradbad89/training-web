@@ -9,7 +9,7 @@
  * Phase 1 investigation).
  */
 
-import { weekStart } from "@/utils/dates";
+import { addMonthsClamped, weekStart } from "@/utils/dates";
 
 export type TrendWindow = "1m" | "2m" | "3m" | "6m" | "12m" | "ytd";
 export type TrendGranularity = "week" | "month";
@@ -78,9 +78,8 @@ export function windowStartDate(window: TrendWindow, now: Date): Date {
     "12m": 12,
   };
   const n = months[window];
-  const d = new Date(now);
-  d.setMonth(d.getMonth() - n);
-  return d;
+  // Clamp the day (2028-02-29 − 12m → 2027-02-28) instead of overflowing into March.
+  return addMonthsClamped(now, -n);
 }
 
 /** Month-start (local midnight) for the month containing `date`. */
@@ -105,7 +104,11 @@ export function labelFor(
       day: "numeric",
     });
   }
-  return periodStart.toLocaleDateString("en-US", { month: "short" });
+  // Monthly buckets carry the 2-digit year ("Jan '27") so a 12-month window that
+  // spans two Januaries (or any repeated month) never produces duplicate labels.
+  const month = periodStart.toLocaleDateString("en-US", { month: "short" });
+  const yy = String(periodStart.getFullYear() % 100).padStart(2, "0");
+  return `${month} '${yy}`;
 }
 
 interface BucketAccum {

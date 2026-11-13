@@ -114,3 +114,37 @@ describe("addMonthsClamped", () => {
     expect([d.getHours(), d.getMinutes()]).toEqual([8, 30]);
   });
 });
+
+import { isDateOnlyWithinPastMonths } from "@/utils/dates";
+import { selectRouteTrendRuns } from "@/utils/routeTrendRuns";
+import type { MatchedRunSummary } from "@/utils/routePerformance";
+
+describe("Feb 29, 2028 — isDateOnlyWithinPastMonths", () => {
+  const leapDay = new Date(2028, 1, 29, 15, 0);
+  it("12 months from 2028-02-29 includes 2027-02-28 and excludes 2027-02-27", () => {
+    expect(isDateOnlyWithinPastMonths("2027-02-28", 12, leapDay)).toBe(true);
+    expect(isDateOnlyWithinPastMonths("2027-02-27", 12, leapDay)).toBe(false);
+  });
+  it("12 months from 2027-01-01 (rollover) includes 2026-01-01 and excludes 2025-12-31", () => {
+    const jan1 = new Date(2027, 0, 1, 0, 30);
+    expect(isDateOnlyWithinPastMonths("2026-01-01", 12, jan1)).toBe(true);
+    expect(isDateOnlyWithinPastMonths("2025-12-31", 12, jan1)).toBe(false);
+  });
+});
+
+describe("Feb 29, 2028 / month-end — selectRouteTrendRuns 6-month cutoff", () => {
+  const run = (date: string): MatchedRunSummary => ({ runId: `r-${date}`, date, paceSeconds: 540, distanceMiles: 9, load: null });
+  // >30 runs total, ≤20 in the window → the 6-month branch is taken.
+  function many(extraRecent: string[]): MatchedRunSummary[] {
+    const old = Array.from({ length: 31 }, (_, i) => run(`2025-01-${String((i % 28) + 1).padStart(2, "0")}-x${i}`.slice(0, 10)));
+    return [...old.map((r, i) => ({ ...r, runId: `old-${i}` })), ...extraRecent.map(run)];
+  }
+  it("from 2028-02-29 the cutoff is 2027-08-29", () => {
+    const out = selectRouteTrendRuns(many(["2027-08-28", "2027-08-29", "2027-09-01"]), new Date(2028, 1, 29));
+    expect(out.map((r) => r.date)).toEqual(["2027-08-29", "2027-09-01"]);
+  });
+  it("from Aug 31 the cutoff clamps to Feb 28 (not the old Mar 3 overflow)", () => {
+    const out = selectRouteTrendRuns(many(["2026-02-27", "2026-02-28", "2026-03-02"]), new Date(2026, 7, 31));
+    expect(out.map((r) => r.date)).toEqual(["2026-02-28", "2026-03-02"]);
+  });
+});

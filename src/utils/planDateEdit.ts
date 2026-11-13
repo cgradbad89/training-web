@@ -80,6 +80,21 @@ export type NewPlanPayload =
  * Monday of the week containing `iso`, returned as ISO "YYYY-MM-DD". A Monday
  * returns itself; any other day snaps back to the Monday on/before it.
  */
+/**
+ * Local-midnight start Date of a plan from its stored "YYYY-MM-DD" `startDate`,
+ * or null when the plan is missing / has no valid start. Plan entries carry
+ * only (weekIndex, weekday) offsets from `startDate`, so there is no other
+ * source of a calendar date: no start means no date (never guessed from a
+ * label or the current year). Never throws.
+ */
+export function resolvePlanStartDate(
+  plan: { startDate?: string | null } | null | undefined
+): Date | null {
+  if (!plan?.startDate) return null;
+  const d = parseLocalDate(plan.startDate);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 export function snapToMonday(iso: string): string {
   const d = parseLocalDate(iso);
   const dow = d.getDay(); // 0=Sun, 1=Mon, … 6=Sat
