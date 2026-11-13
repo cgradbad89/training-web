@@ -1,4 +1,5 @@
 import { type HealthWorkout } from "@/types/healthWorkout";
+import { selectRuns } from "@/utils/runSelection";
 
 export interface PrResult {
   pace: number;
@@ -15,12 +16,49 @@ export interface PersonalRecordsByYear {
   specificPrs: (SpecificPrResult | null)[];
 }
 
-const prBuckets = [
-  { label: "1–3 mi", filter: (m: number) => m >= 1.0 && m < 3.0 },
-  { label: "3–6 mi", filter: (m: number) => m >= 3.0 && m < 6.0 },
-  { label: "6–7 mi", filter: (m: number) => m >= 6.0 && m < 7.0 },
-  { label: "7–10 mi", filter: (m: number) => m >= 7.0 && m < 10.0 },
-  { label: "10+ mi", filter: (m: number) => m >= 10.0 },
+export type PrBandId =
+  | "band_1_3"
+  | "band_3_6"
+  | "band_6_7"
+  | "band_7_10"
+  | "band_10p";
+
+export interface PrBandRange {
+  min: number;
+  max: number;
+  minInclusive: boolean;
+  maxInclusive: boolean;
+}
+
+/**
+ * The ONE definition of the distance-band PR ranges (miles). Personal Insights
+ * (`buildPersonalRecordsByYear`) and the run-list PR badges (`computeAllPRs` in
+ * prComputation.ts) both read it, so the two tables can never disagree.
+ *
+ * Lower bound inclusive / upper bound exclusive, except the 10-mile boundary:
+ * `7–10 mi` ends at 10.0 INCLUSIVE and `10+ mi` is strictly > 10.0.
+ */
+export const PR_BAND_RANGES: Record<PrBandId, PrBandRange> = {
+  band_1_3: { min: 1.0, max: 3.0, minInclusive: true, maxInclusive: false },
+  band_3_6: { min: 3.0, max: 6.0, minInclusive: true, maxInclusive: false },
+  band_6_7: { min: 6.0, max: 7.0, minInclusive: true, maxInclusive: false },
+  band_7_10: { min: 7.0, max: 10.0, minInclusive: true, maxInclusive: true },
+  band_10p: { min: 10.0, max: Infinity, minInclusive: false, maxInclusive: false },
+};
+
+export function distanceInPrBand(id: PrBandId, miles: number): boolean {
+  const r = PR_BAND_RANGES[id];
+  const aboveMin = r.minInclusive ? miles >= r.min : miles > r.min;
+  const belowMax = r.maxInclusive ? miles <= r.max : miles < r.max;
+  return aboveMin && belowMax;
+}
+
+const prBuckets: { label: string; id: PrBandId }[] = [
+  { label: "1–3 mi", id: "band_1_3" },
+  { label: "3–6 mi", id: "band_3_6" },
+  { label: "6–7 mi", id: "band_6_7" },
+  { label: "7–10 mi", id: "band_7_10" },
+  { label: "10+ mi", id: "band_10p" },
 ];
 
 const specificDistances = [
@@ -36,13 +74,15 @@ export function buildPersonalRecordsByYear(
   workouts: HealthWorkout[],
   selectedYear: number
 ): PersonalRecordsByYear {
-  const yearRuns = workouts.filter(
+  // Defense in depth: PRs are run-only. Callers may pass every workout (the
+  // live other-year path does); HIIT/OTF/cycling distance must never win a row.
+  const yearRuns = selectRuns(workouts).filter(
     (r) => r.startDate.getFullYear() === selectedYear
   );
 
   const prs = prBuckets.map((bucket) => {
     const qualifying = yearRuns
-      .filter((r) => r.distanceMiles > 0 && bucket.filter(r.distanceMiles))
+      .filter((r) => r.distanceMiles > 0 && distanceInPrBand(bucket.id, r.distanceMiles))
       .map((r) => {
         const pace = r.durationSeconds / r.distanceMiles;
         return { pace, miles: r.distanceMiles, date: r.startDate };

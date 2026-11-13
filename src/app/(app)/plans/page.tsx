@@ -22,6 +22,7 @@ import {
   snapToMonday,
 } from "@/utils/planDateEdit";
 import { selectEffectiveWorkouts } from "@/utils/selectActiveWorkouts";
+import { selectRuns } from "@/utils/runSelection";
 import {
   type Plan,
   type PlanType,
@@ -255,6 +256,9 @@ export default function PlansPage() {
     () => selectEffectiveWorkouts(rawWorkouts, overrides),
     [rawWorkouts, overrides]
   );
+  // Running goals (distance / time / run count) are run-only: HIIT/OTF/cycling
+  // distance must never count toward them. Narrow at the call site.
+  const goalRuns = useMemo(() => selectRuns(activities), [activities]);
 
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [selectedWeekIndex, setSelectedWeekIndex] = useState(0);
@@ -683,7 +687,7 @@ export default function PlansPage() {
           uid={user?.uid ?? null}
           goals={goals}
           loading={goalsLoading}
-          runs={activities}
+          runs={goalRuns}
           onChanged={refreshGoals}
         />
       ) : (

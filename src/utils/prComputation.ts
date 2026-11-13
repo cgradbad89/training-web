@@ -12,6 +12,7 @@
 
 import { type HealthWorkout } from "@/types/healthWorkout";
 import { toLocalIsoDate } from "@/utils/dates";
+import { distanceInPrBand, type PrBandId } from "@/utils/personalRecords";
 
 export interface PRCategory {
   id: string;
@@ -44,19 +45,19 @@ export const ALL_PR_CATEGORIES: PRCategory[] = [
   ...SPECIFIC_DISTANCE_CATEGORIES,
 ];
 
-/** Inclusive lower / exclusive upper mile bounds.
- *  band_7_10's upper bound is widened to 10.15 (vs Personal Insights' 10.0)
- *  so GPS-rounded "10 mile" runs that record as 10.01–10.14 still count
- *  toward the 7–10 mi PR band rather than competing in 10+ where an HM may
- *  hold a faster per-mile pace. band_10p is shifted up correspondingly. */
-export const BAND_RANGES: Record<string, [number, number]> = {
-  band_1mi:  [0.9,  1.1],
-  band_1_3:  [1.0,  3.0],
-  band_3_6:  [3.0,  6.0],
-  band_6_7:  [6.0,  7.0],
-  band_7_10: [7.0,  10.15],
-  band_10p:  [10.15, Infinity],
-};
+/** The 1 Mile band exists only on the run-list badges (Personal Insights has
+ *  no such row; its "1 Mile" comes from `bestEfforts`). Inclusive lower /
+ *  exclusive upper mile bounds. Every other band comes from the single shared
+ *  definition in personalRecords.ts (`PR_BAND_RANGES`): `7–10 mi` ends at 10.0
+ *  inclusive and `10+ mi` is strictly > 10.0. */
+const ONE_MILE_BAND: [number, number] = [0.9, 1.1];
+
+function inBand(categoryId: string, miles: number): boolean {
+  if (categoryId === "band_1mi") {
+    return miles >= ONE_MILE_BAND[0] && miles < ONE_MILE_BAND[1];
+  }
+  return distanceInPrBand(categoryId as PrBandId, miles);
+}
 
 /** Tolerances chosen to match Personal Insights so both pages agree. */
 export const SPECIFIC_TARGETS: Record<string, { miles: number; tol: number }> = {
@@ -104,10 +105,7 @@ export function computeAllPRs(runs: HealthWorkout[]): PRResult[] {
 
   // Distance bands
   for (const category of DISTANCE_BAND_CATEGORIES) {
-    const [min, max] = BAND_RANGES[category.id];
-    const candidates = eligible.filter(
-      (r) => r.distanceMiles >= min && r.distanceMiles < max
-    );
+    const candidates = eligible.filter((r) => inBand(category.id, r.distanceMiles));
     if (candidates.length === 0) continue;
     const best = candidates.reduce((a, b) =>
       (paceFor(a) ?? Infinity) < (paceFor(b) ?? Infinity) ? a : b

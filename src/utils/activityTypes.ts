@@ -1,14 +1,7 @@
 import { type ActivityType, RUN_TYPES, WORKOUT_TYPES } from "@/types";
 
-/** Activity types treated as runs for metric computations */
-export const RUN_LIKE_TYPES: ActivityType[] = ["Run", "TrailRun"];
-
 /** Activity types that are displayed in the Runs section */
 export const RUN_SECTION_TYPES: ActivityType[] = ["Run", "TrailRun", "Walk", "Hike"];
-
-export function isRunLike(type: ActivityType): boolean {
-  return RUN_LIKE_TYPES.includes(type);
-}
 
 export function isRunSection(type: ActivityType): boolean {
   return RUN_SECTION_TYPES.includes(type);

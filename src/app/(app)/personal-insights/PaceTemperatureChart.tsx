@@ -12,6 +12,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { formatPaceLabel } from "@/utils/pace";
+import { formatTempTick } from "./formatTempTick";
 
 /**
  * Pace-vs-temperature scatter with an overlaid least-squares trend line.
@@ -42,12 +43,11 @@ export function PaceTemperatureChart({
           type="number"
           dataKey="x"
           name="Temperature"
-          unit="°F"
           domain={["dataMin - 3", "dataMax + 3"]}
           tick={{ fontSize: 10 }}
           axisLine={false}
           tickLine={false}
-          tickFormatter={(v: number) => `${Math.round(v)}°`}
+          tickFormatter={formatTempTick}
         />
         <YAxis
           type="number"
