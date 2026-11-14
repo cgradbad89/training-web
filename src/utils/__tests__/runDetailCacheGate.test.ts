@@ -3,8 +3,10 @@ import { routeCachesComplete } from "@/utils/runDetailCacheGate";
 import { type OverlayChartCache } from "@/utils/overlayChartCache";
 import { type ZoneBreakdownCache } from "@/utils/zoneBreakdown";
 import { type HealthWorkout } from "@/types/healthWorkout";
+import { HR_ZONE_MODEL_VERSION } from "@/utils/zones";
 
 const MAX_HR = 190;
+const RESTING_HR = 62;
 const THRESHOLD = 480;
 
 function overlay(withGap: boolean): OverlayChartCache {
@@ -20,11 +22,18 @@ function overlay(withGap: boolean): OverlayChartCache {
   };
 }
 
-function zones(maxHr = MAX_HR, threshold: number | null = THRESHOLD): ZoneBreakdownCache {
+function zones(
+  maxHr = MAX_HR,
+  threshold: number | null = THRESHOLD,
+  restingHr = RESTING_HR,
+  hrZoneModelVersion: number = HR_ZONE_MODEL_VERSION
+): ZoneBreakdownCache {
   return {
     hrZones: [],
     paceZones: [],
     maxHr,
+    restingHr,
+    hrZoneModelVersion,
     thresholdPaceSecPerMile: threshold,
     computedAt: 1,
   };
@@ -54,7 +63,12 @@ function complete(): Pick<
   };
 }
 
-const OPTS = { maxHr: MAX_HR, thresholdPace: THRESHOLD, splitsHaveGap: true };
+const OPTS = {
+  maxHr: MAX_HR,
+  restingHr: RESTING_HR,
+  thresholdPace: THRESHOLD,
+  splitsHaveGap: true,
+};
 
 describe("routeCachesComplete", () => {
   it("is true when every cache is present and fresh", () => {
@@ -161,10 +175,48 @@ describe("routeCachesComplete", () => {
     ).toBe(false);
   });
 
+  it("treats a changed restingHr as stale (forces the route read)", () => {
+    expect(
+      routeCachesComplete(
+        { ...complete(), zoneBreakdown: zones(MAX_HR, THRESHOLD, 70) },
+        OPTS
+      )
+    ).toBe(false);
+  });
+
+  it("treats a legacy %-of-max cache (model version 1) as stale even when max/resting/threshold match", () => {
+    expect(
+      routeCachesComplete(
+        {
+          ...complete(),
+          zoneBreakdown: zones(MAX_HR, THRESHOLD, RESTING_HR, 1),
+        },
+        OPTS
+      )
+    ).toBe(false);
+  });
+
+  it("skips the route read when the cache matches the current HR model and anchors", () => {
+    expect(
+      routeCachesComplete(
+        {
+          ...complete(),
+          zoneBreakdown: zones(
+            MAX_HR,
+            THRESHOLD,
+            RESTING_HR,
+            HR_ZONE_MODEL_VERSION
+          ),
+        },
+        OPTS
+      )
+    ).toBe(true);
+  });
+
   it("matches a null threshold basis when threshold is unset", () => {
     const w = { ...complete(), zoneBreakdown: zones(MAX_HR, null) };
     expect(
-      routeCachesComplete(w, { maxHr: MAX_HR, thresholdPace: null, splitsHaveGap: true })
+      routeCachesComplete(w, { ...OPTS, thresholdPace: null })
     ).toBe(true);
   });
 });

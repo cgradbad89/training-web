@@ -82,6 +82,8 @@ function zones(hrSeconds: number, paceSeconds: number): ZoneBreakdownCache {
       { zone: 3, label: "Threshold", secondsInZone: paceSeconds, percent: 100 },
     ] as never,
     maxHr: 180,
+    restingHr: 65,
+    hrZoneModelVersion: 2,
     thresholdPaceSecPerMile: 600,
     computedAt: 1,
   };

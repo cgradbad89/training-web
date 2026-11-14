@@ -12,6 +12,7 @@ import {
 import {
   computeHrZonesFromPoints,
   computePaceZonesFromPoints,
+  zoneBreakdownMatchesHrModel,
   type ZoneBreakdownCache,
 } from "@/utils/zoneBreakdown";
 import { formatDuration, formatPace } from "@/utils/pace";
@@ -28,9 +29,11 @@ const ZONE_COLORS = [
 interface ZoneBreakdownProps {
   points: RoutePoint[];
   maxHR: number;
+  /** Resting HR; with maxHR it defines the HR-reserve zone cuts. */
+  restingHR: number;
   thresholdPaceSecPerMile?: number | null;
-  /** Cached zone breakdown. When present and its basis (maxHR / threshold pace)
-   *  still matches, its buckets are used verbatim so the component renders
+  /** Cached zone breakdown. When present and its basis (HR-zone model, maxHR,
+   *  restingHR / threshold pace) still matches, its buckets are used verbatim so the component renders
    *  without route points; otherwise the zones are computed from `points`. */
   cache?: ZoneBreakdownCache;
 }
@@ -53,6 +56,7 @@ function formatPaceRange(range: PaceZoneRange): string {
 export function ZoneBreakdown({
   points,
   maxHR,
+  restingHR,
   thresholdPaceSecPerMile,
   cache,
 }: ZoneBreakdownProps) {
@@ -60,9 +64,12 @@ export function ZoneBreakdown({
   // settings (so the component needs no route points); otherwise compute from
   // `points` via the SAME pure functions the cache was built with.
   const hrZones = useMemo(() => {
-    if (cache && cache.maxHr === maxHR) return cache.hrZones;
-    return computeHrZonesFromPoints(points, maxHR);
-  }, [cache, points, maxHR]);
+    const anchors = { maxHr: maxHR, restingHr: restingHR };
+    if (cache && zoneBreakdownMatchesHrModel(cache, anchors)) {
+      return cache.hrZones;
+    }
+    return computeHrZonesFromPoints(points, anchors);
+  }, [cache, points, maxHR, restingHR]);
 
   const paceZones = useMemo(() => {
     const threshold = thresholdPaceSecPerMile ?? null;
@@ -103,7 +110,8 @@ export function ZoneBreakdown({
               Heart Rate Zones
             </h3>
             <span className="text-[10px] text-textSecondary">
-              max HR {Math.round(maxHR)} bpm
+              max HR {Math.round(maxHR)} bpm, resting {Math.round(restingHR)} bpm,
+              % of HR reserve
             </span>
           </div>
           <ZoneBar zones={hrZones} />

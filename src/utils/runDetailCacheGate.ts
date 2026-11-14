@@ -28,11 +28,13 @@
  * `sourcePointCount`; zones/GAP KPI/map path compare `routeCacheBasisPointCount`
  * (or, for unstamped legacy docs, the zone coverage of the workout's duration).
  *
- * zoneBreakdown is settings-dependent, so it is only "fresh" when the maxHR and
+ * zoneBreakdown is settings-dependent, so it is only "fresh" when the maxHR,
+ * restingHR and HR-zone model version (zoneBreakdownMatchesHrModel) and the
  * threshold pace it was computed against still match the current values.
  */
 
 import { type HealthWorkout } from "@/types/healthWorkout";
+import { zoneBreakdownMatchesHrModel } from "@/utils/zoneBreakdown";
 import {
   basisBelowExpected,
   expectedRoutePointCount,
@@ -42,6 +44,9 @@ import {
 export interface RouteCacheGateOptions {
   /** Current resolved maxHR (must match the cached zone breakdown's basis). */
   maxHr: number;
+  /** Current resolved restingHR (must match the cached zone breakdown's basis;
+   *  with maxHr it forms the HR-zone anchors). */
+  restingHr: number;
   /** Current threshold pace, or null when unset (must match the cached basis). */
   thresholdPace: number | null;
   /** Whether every mile in the mileSplits subcollection carries a fresh
@@ -84,9 +89,15 @@ export function routeCachesComplete(
     overlay.gapSecPerMile.length === overlay.distancesMiles.length;
 
   const zone = w.zoneBreakdown;
+  // HR zones: present AND computed under the current HR-zone model + anchors
+  // (a legacy %-of-max cache, or a changed max/resting HR, is stale). Pace zones:
+  // computed against the current threshold pace.
   const zoneOk =
     zone !== undefined &&
-    zone.maxHr === opts.maxHr &&
+    zoneBreakdownMatchesHrModel(zone, {
+      maxHr: opts.maxHr,
+      restingHr: opts.restingHr,
+    }) &&
     zone.thresholdPaceSecPerMile === opts.thresholdPace;
 
   // All three GAP-KPI fields must be present: gapSecPerMile (the value) plus the
