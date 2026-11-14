@@ -41,7 +41,8 @@ describe("zone breakdown extraction (regression vs. the old inline logic)", () =
         hrSamples.push({ bpm: points[i].hr as number, seconds: dt });
       }
     }
-    const expected = computeHRZones(hrSamples, MAX_HR);
+    // TEMPORARY Phase 1 compile shim (anchors rewrite lands in Phase 2).
+    const expected = computeHRZones(hrSamples, { maxHr: MAX_HR, restingHr: 60 });
     expect(computeHrZonesFromPoints(points, MAX_HR)).toEqual(expected);
   });
 

@@ -20,6 +20,7 @@
 
 import { type RoutePoint } from "@/services/routes";
 import { mpsToSecPerMile } from "@/utils/pace";
+import { DEFAULT_RESTING_HR } from "@/utils/trainingLoad";
 import {
   computeHRZones,
   computePaceZones,
@@ -44,7 +45,8 @@ export function computeHrZonesFromPoints(
       hrSamples.push({ bpm: points[i].hr as number, seconds: dt });
     }
   }
-  return computeHRZones(hrSamples, maxHR);
+  // TEMPORARY (Phase 1 compile shim, replaced by anchors in Phase 2).
+  return computeHRZones(hrSamples, { maxHr: maxHR, restingHr: DEFAULT_RESTING_HR });
 }
 
 /** Pace zones (time-in-zone) from per-point route samples — the exact logic the

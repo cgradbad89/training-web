@@ -1,11 +1,14 @@
-import { DEFAULT_MAX_HR } from "@/utils/trainingLoad";
+import { hasValidHrAnchors } from "@/utils/hrReserve";
+import { DEFAULT_MAX_HR, DEFAULT_RESTING_HR } from "@/utils/trainingLoad";
 
 /**
  * Heart-rate and pace zone bucketing for a single run.
  *
- * HR zones are the standard 5-zone model as a percentage of max HR
- * (maxHR = 220 − age). Pace zones are based on the user's threshold pace:
- * the faster the pace relative to threshold, the higher the zone.
+ * HR zones are the standard 5-zone model applied to HEART-RATE RESERVE
+ * (Karvonen), not to max HR: a zone cut in bpm is
+ * `restingHr + fraction × (maxHr − restingHr)`. Pace zones are based on the
+ * user's threshold pace: the faster the pace relative to threshold, the higher
+ * the zone.
  */
 
 export interface ZoneBucket {
@@ -25,8 +28,44 @@ export interface ZoneBucket {
  */
 export const FALLBACK_MAX_HR = DEFAULT_MAX_HR;
 
-/** HR zone boundaries as fractions of max HR (standard 5-zone model). */
+/**
+ * HR zone boundaries as fractions of HR RESERVE (standard 5-zone model). The
+ * single source of the fractions: the Z2..Z5 cuts are `HR_ZONE_BOUNDS[1..4]`.
+ * (0.5 is the nominal Z1 floor and 1.0 the Z5 ceiling; neither is a cut — see
+ * `hrZoneIndex` for the out-of-range behaviour.)
+ */
 export const HR_ZONE_BOUNDS = [0.5, 0.6, 0.7, 0.8, 0.9, 1.0] as const;
+
+/** The HR anchors every HR-zone computation needs (bpm). */
+export interface HrZoneAnchors {
+  maxHr: number;
+  restingHr: number;
+}
+
+export type HrZoneIndex = 1 | 2 | 3 | 4 | 5;
+
+/**
+ * Version of the HR-zone model, stamped on persisted zone caches so a cache
+ * computed under an older model is treated as stale.
+ *   1 — legacy: % of max HR
+ *   2 — % of HR reserve (Karvonen)
+ */
+export const HR_ZONE_MODEL_VERSION = 2;
+
+/** One zone's bpm span. `lowBpm` is null for Z1 (open below); `highBpm` is null
+ *  for Z5 (open above). Values are the raw (unrounded) cut points. */
+export interface HrZoneRange {
+  zone: HrZoneIndex;
+  lowBpm: number | null;
+  highBpm: number | null;
+}
+
+/** Anchors used when the supplied pair cannot define a reserve. Mirrors the
+ *  app-wide fallbacks (DEFAULT_MAX_HR / DEFAULT_RESTING_HR). */
+const FALLBACK_HR_ZONE_ANCHORS: HrZoneAnchors = {
+  maxHr: DEFAULT_MAX_HR,
+  restingHr: DEFAULT_RESTING_HR,
+};
 
 const HR_ZONE_LABELS = [
   "Z1 50–60%",
@@ -86,14 +125,57 @@ export function maxHRForAge(age: number | null): number {
   return age && age > 0 ? 220 - age : FALLBACK_MAX_HR;
 }
 
-/** Map a bpm value to a 1..5 HR zone given max HR. */
-export function hrZoneIndex(bpm: number, maxHR: number): number {
-  const frac = bpm / maxHR;
-  if (frac < 0.6) return 1; // <60% (incl. <50% recovery) counts as Z1
-  if (frac < 0.7) return 2;
-  if (frac < 0.8) return 3;
-  if (frac < 0.9) return 4;
-  return 5;
+/**
+ * bpm cut points for Z2, Z3, Z4 and Z5 (fractions `HR_ZONE_BOUNDS[1..4]` of HR
+ * reserve): `restingHr + fraction × (maxHr − restingHr)`. Invalid anchors
+ * (`!hasValidHrAnchors(restingHr, maxHr)`: non-finite, or max ≤ resting) fall
+ * back to 185/60 so this never returns NaN or throws.
+ */
+export function hrZoneCutsBpm(
+  anchors: HrZoneAnchors
+): readonly [number, number, number, number] {
+  const { maxHr, restingHr } = hasValidHrAnchors(
+    anchors.restingHr,
+    anchors.maxHr
+  )
+    ? anchors
+    : FALLBACK_HR_ZONE_ANCHORS;
+  const reserve = maxHr - restingHr;
+  return [
+    restingHr + HR_ZONE_BOUNDS[1] * reserve,
+    restingHr + HR_ZONE_BOUNDS[2] * reserve,
+    restingHr + HR_ZONE_BOUNDS[3] * reserve,
+    restingHr + HR_ZONE_BOUNDS[4] * reserve,
+  ] as const;
+}
+
+/**
+ * Map a bpm value to a 1..5 HR zone by HR reserve. bpm is compared against the
+ * PRECOMPUTED bpm cuts (never divided and compared to 0.6/0.7/…, which is
+ * floating-point fragile); a bpm exactly on a cut belongs to the HIGHER zone.
+ * Out-of-range behaviour is unchanged from the %-of-max model: anything below
+ * the Z2 cut (including below the nominal 50% floor) is Z1, and anything at or
+ * above the Z5 cut (including above max HR) is Z5.
+ */
+export function hrZoneIndex(bpm: number, anchors: HrZoneAnchors): HrZoneIndex {
+  const [z2, z3, z4, z5] = hrZoneCutsBpm(anchors);
+  if (bpm >= z5) return 5;
+  if (bpm >= z4) return 4;
+  if (bpm >= z3) return 3;
+  if (bpm >= z2) return 2;
+  return 1;
+}
+
+/** Five zone spans for label rendering (raw bpm; callers round for display). */
+export function hrZoneRangesBpm(anchors: HrZoneAnchors): HrZoneRange[] {
+  const [z2, z3, z4, z5] = hrZoneCutsBpm(anchors);
+  return [
+    { zone: 1, lowBpm: null, highBpm: z2 },
+    { zone: 2, lowBpm: z2, highBpm: z3 },
+    { zone: 3, lowBpm: z3, highBpm: z4 },
+    { zone: 4, lowBpm: z4, highBpm: z5 },
+    { zone: 5, lowBpm: z5, highBpm: null },
+  ];
 }
 
 function finalizeBuckets(
@@ -116,13 +198,13 @@ function finalizeBuckets(
  */
 export function computeHRZones(
   samples: { bpm: number; seconds: number }[],
-  maxHR: number
+  anchors: HrZoneAnchors
 ): ZoneBucket[] {
   const secondsByZone = [0, 0, 0, 0, 0];
   for (const { bpm, seconds } of samples) {
     if (!isFinite(bpm) || bpm < 40 || bpm > 220) continue;
     if (!isFinite(seconds) || seconds <= 0) continue;
-    const z = hrZoneIndex(bpm, maxHR);
+    const z = hrZoneIndex(bpm, anchors);
     secondsByZone[z - 1] += seconds;
   }
   return finalizeBuckets(secondsByZone, HR_ZONE_LABELS);
