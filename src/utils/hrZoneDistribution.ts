@@ -1,4 +1,4 @@
-import { classifyHrZone, type HRZoneNumber } from "@/utils/trainingLoad";
+import { hrZoneIndex, type HrZoneAnchors, type HrZoneIndex } from "@/utils/zones";
 
 export interface MileSplitSample {
   mile: number;
@@ -7,16 +7,16 @@ export interface MileSplitSample {
 }
 
 export interface HrZoneDistribution {
-  zoneMiles: Record<HRZoneNumber, number>;
+  zoneMiles: Record<HrZoneIndex, number>;
   totalMiles: number;
   runsCounted: number;
 }
 
 export function buildHrZoneDistribution(
   runsMileSplits: MileSplitSample[][],
-  maxHr: number
+  anchors: HrZoneAnchors
 ): HrZoneDistribution {
-  const zoneMiles: Record<HRZoneNumber, number> = {
+  const zoneMiles: Record<HrZoneIndex, number> = {
     1: 0,
     2: 0,
     3: 0,
@@ -30,7 +30,7 @@ export function buildHrZoneDistribution(
     if (miles.length === 0) continue;
     runsCounted += 1;
     for (const m of miles) {
-      const z = classifyHrZone(m.bpm, maxHr);
+      const z = hrZoneIndex(m.bpm, anchors);
       zoneMiles[z] += m.distance;
       totalMiles += m.distance;
     }

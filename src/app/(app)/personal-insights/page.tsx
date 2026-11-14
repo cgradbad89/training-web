@@ -76,11 +76,15 @@ import {
 } from "@/utils/trainingLoadSeries";
 import {
   resolveDisplayLoad,
-  HR_ZONES,
   MIN_RUN_MILES_FOR_AVG,
   MIN_WORKOUT_SECONDS_FOR_AVG,
   type HRZoneNumber,
 } from "@/utils/trainingLoad";
+import {
+  formatHrZoneBpmLabel,
+  hrZoneRangesBpm,
+  type HrZoneAnchors,
+} from "@/utils/zones";
 import { InfoTooltip } from "@/components/ui/InfoTooltip";
 import { type Vo2Entry } from "@/utils/vo2History";
 import { buildVo2TrendSeries, summarizeVo2Trend } from "@/utils/vo2Trend";
@@ -287,11 +291,9 @@ const ZONE_STYLES: Record<
   5: { bg: "bg-red-500",    text: "text-red-500",    label: "Max"       },
 };
 
-function zoneBpmLabel(zone: HRZoneNumber, maxHr: number): string {
-  const z = HR_ZONES[zone - 1];
-  if (zone === 1) return `< ${Math.ceil(z.maxPct * maxHr)}`;
-  if (zone === 5) return `${Math.ceil(z.minPct * maxHr)}+`;
-  return `${Math.ceil(z.minPct * maxHr)}–${Math.floor(z.maxPct * maxHr)}`;
+function zoneBpmLabel(zone: HRZoneNumber, anchors: HrZoneAnchors): string {
+  // % of HR reserve: cuts come from the shared zone helper in utils/zones.
+  return formatHrZoneBpmLabel(hrZoneRangesBpm(anchors)[zone - 1]);
 }
 
 // ─── KPI context sub-components ─────────────────────────────────────────────
@@ -792,7 +794,7 @@ function TrainingLoadSection({
                         Z{z} {ZONE_STYLES[z].label}
                       </span>
                       <span className="text-textSecondary tabular-nums">
-                        {zoneBpmLabel(z, maxHr)} bpm
+                        {zoneBpmLabel(z, { maxHr, restingHr })} bpm
                       </span>
                     </div>
                     <span className="text-textPrimary font-semibold tabular-nums">

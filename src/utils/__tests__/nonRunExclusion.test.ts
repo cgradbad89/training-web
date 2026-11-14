@@ -112,8 +112,8 @@ describe("non-run workouts never reach run-only metrics", () => {
   });
   afterEach(() => vi.useRealTimers());
 
-  it("is on aggregate version 5", () => {
-    expect(AGGREGATED_STATS_VERSION).toBe(5);
+  it("is on aggregate version 5 or later (run-only metrics gate)", () => {
+    expect(AGGREGATED_STATS_VERSION).toBeGreaterThanOrEqual(5);
   });
 
   describe("personal records", () => {

@@ -91,7 +91,7 @@ function staleParent(): HealthWorkout {
     zoneBreakdown: {
       hrZones: [{ zone: 3, label: "Tempo", seconds: 40, pct: 100 }] as never,
       paceZones: [{ zone: 3, label: "Threshold", secondsInZone: 42, percent: 100 }] as never,
-      maxHr: 190, thresholdPaceSecPerMile: null, computedAt: 1,
+      maxHr: 190, restingHr: 60, hrZoneModelVersion: 2, thresholdPaceSecPerMile: null, computedAt: 1,
     },
   };
 }

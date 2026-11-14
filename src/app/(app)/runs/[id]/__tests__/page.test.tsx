@@ -529,15 +529,15 @@ describe("RunDetailPage GAP/elevation sublabels", () => {
     }));
 
     it("a current cache skips the route read and shows the reserve-based caption", async () => {
-      (fetchHealthWorkout as any).mockResolvedValue(
+      vi.mocked(fetchHealthWorkout).mockResolvedValue(
         cachedWorkout({
           gapNetRiseM: 0,
           gapAggregateGradeFlat: true,
           zoneBreakdown: currentZones,
-        })
+        }) as never
       );
-      (getMileSplits as any).mockResolvedValue(CACHED_MILE_DOCS);
-      (getRoutePoints as any).mockResolvedValue([]);
+      vi.mocked(getMileSplits).mockResolvedValue(CACHED_MILE_DOCS as never);
+      vi.mocked(getRoutePoints).mockResolvedValue([]);
 
       await renderSettled();
 
@@ -549,24 +549,24 @@ describe("RunDetailPage GAP/elevation sublabels", () => {
     });
 
     it("a legacy (%-of-max) cache forces exactly one route read, then overwrites its own zoneBreakdown with the new basis", async () => {
-      const { hrZoneModelVersion: _v, restingHr: _r, ...legacy } = currentZones;
-      void _v;
-      void _r;
-      (fetchHealthWorkout as any).mockResolvedValue(
+      const legacy: Record<string, unknown> = { ...currentZones };
+      delete legacy.hrZoneModelVersion;
+      delete legacy.restingHr;
+      vi.mocked(fetchHealthWorkout).mockResolvedValue(
         cachedWorkout({
           gapNetRiseM: 0,
           gapAggregateGradeFlat: true,
           zoneBreakdown: legacy,
-        })
+        }) as never
       );
-      (getMileSplits as any).mockResolvedValue(CACHED_MILE_DOCS);
-      (getRoutePoints as any).mockResolvedValue(ROUTE);
+      vi.mocked(getMileSplits).mockResolvedValue(CACHED_MILE_DOCS as never);
+      vi.mocked(getRoutePoints).mockResolvedValue(ROUTE as never);
 
       await renderSettled();
 
       expect(getRoutePoints).toHaveBeenCalledTimes(1);
       expect(saveRunDetailCaches).toHaveBeenCalledTimes(1);
-      const [uid, workoutId, updates] = (saveRunDetailCaches as any).mock.calls[0];
+      const [uid, workoutId, updates] = vi.mocked(saveRunDetailCaches).mock.calls[0];
       expect(uid).toBe("u1");
       expect(workoutId).toBe("workout_123");
       expect(updates.zoneBreakdown).toMatchObject({
@@ -575,7 +575,7 @@ describe("RunDetailPage GAP/elevation sublabels", () => {
         hrZoneModelVersion: 2,
       });
       // 150 bpm sits in Z3 under the reserve model at 185/60.
-      expect(updates.zoneBreakdown.hrZones[2].pct).toBeCloseTo(100, 5);
+      expect(updates.zoneBreakdown?.hrZones[2].pct).toBeCloseTo(100, 5);
     });
   });
 

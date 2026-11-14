@@ -15,8 +15,10 @@ import { buildQualifyingEfforts, fitRiegel, predictSeconds, type RiegelFit } fro
  * doc (Firestore + IndexedDB) is discarded and recomputed.
  *   5 — PRs, pace trends and race-prediction inputs narrowed to runs only
  *       (`selectRuns`); v4 docs could carry HIIT/non-run distance in them.
+ *   6 — `hrZoneDistribution` classifies per-mile HR by % of HR RESERVE (max and
+ *       resting HR) instead of % of max HR; v5 docs hold %-of-max zone miles.
  */
-export const AGGREGATED_STATS_VERSION = 5;
+export const AGGREGATED_STATS_VERSION = 6;
 
 export interface AggregatedStatsFreshnessFingerprint {
   latestWorkoutId: string | null;
@@ -529,7 +531,10 @@ export function buildAggregatedStats(
     });
     return miles;
   });
-  const hrZoneDistribution = buildHrZoneDistribution(perRunMileSplits, maxHr);
+  const hrZoneDistribution = buildHrZoneDistribution(perRunMileSplits, {
+    maxHr,
+    restingHr,
+  });
 
   // 7. Fastest Mile Segment — persisted parent-doc value, current year only.
   const fastestMileSegmentResult = buildFastestMileFromBestEfforts(

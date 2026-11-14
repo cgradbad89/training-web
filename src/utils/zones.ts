@@ -178,6 +178,25 @@ export function hrZoneRangesBpm(anchors: HrZoneAnchors): HrZoneRange[] {
   ];
 }
 
+/**
+ * Whole-bpm label for one zone span, for display. A bpm exactly on a cut belongs
+ * to the higher zone, so for integer bpm the inclusive lower edge is
+ * `ceil(lowBpm)` and the inclusive upper edge is `ceil(highBpm) − 1`:
+ *   Z1 → "< 134"   Z2 → "134–145"   Z5 → "169+"   (at 180/65)
+ */
+export function formatHrZoneBpmLabel(range: HrZoneRange): string {
+  if (range.lowBpm == null && range.highBpm != null) {
+    return `< ${Math.ceil(range.highBpm)}`;
+  }
+  if (range.highBpm == null && range.lowBpm != null) {
+    return `${Math.ceil(range.lowBpm)}+`;
+  }
+  if (range.lowBpm != null && range.highBpm != null) {
+    return `${Math.ceil(range.lowBpm)}–${Math.ceil(range.highBpm) - 1}`;
+  }
+  return "—";
+}
+
 function finalizeBuckets(
   seconds: number[],
   labels: string[]

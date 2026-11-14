@@ -4,6 +4,7 @@ import {
   computePaceZones,
   hrZoneCutsBpm,
   hrZoneIndex,
+  formatHrZoneBpmLabel,
   hrZoneRangesBpm,
   HR_ZONE_BOUNDS,
   HR_ZONE_MODEL_VERSION,
@@ -162,6 +163,28 @@ describe("hrZoneRangesBpm", () => {
     const r = hrZoneRangesBpm({ maxHr: 60, restingHr: 60 });
     expect(r[1].lowBpm).toBe(135);
     expect(r[4].lowBpm).toBe(172.5);
+  });
+});
+
+describe("formatHrZoneBpmLabel", () => {
+  it("renders whole-bpm labels at 180/65 matching how bpm are classified", () => {
+    const labels = hrZoneRangesBpm(A).map(formatHrZoneBpmLabel);
+    // Cuts 134 / 145.5 / 157 / 168.5; a bpm on a cut is the higher zone.
+    expect(labels).toEqual(["< 134", "134–145", "146–156", "157–168", "169+"]);
+  });
+
+  it("every whole bpm in a label classifies into that label's zone", () => {
+    const ranges = hrZoneRangesBpm(A);
+    expect(hrZoneIndex(145, A)).toBe(2);
+    expect(hrZoneIndex(146, A)).toBe(3);
+    expect(hrZoneIndex(156, A)).toBe(3);
+    expect(hrZoneIndex(168, A)).toBe(4);
+    expect(hrZoneIndex(169, A)).toBe(5);
+    expect(ranges).toHaveLength(5);
+  });
+
+  it("returns an em dash for a span with both edges open", () => {
+    expect(formatHrZoneBpmLabel({ zone: 3, lowBpm: null, highBpm: null })).toBe("—");
   });
 });
 
