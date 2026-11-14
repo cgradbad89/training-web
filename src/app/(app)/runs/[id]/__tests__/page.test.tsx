@@ -7,6 +7,7 @@ import {
   fetchHealthWorkoutsInRange,
   checkBestEffortsRouteGrowth,
   hasAttemptedBestEfforts,
+  saveRunDetailCaches,
 } from "@/services/healthWorkouts";
 import { evictRoute, getRoutePoints, isRouteCached } from "@/utils/routeCache";
 import { getMileSplits } from "@/utils/mileSplitsCache";
@@ -372,8 +373,9 @@ describe("RunDetailPage Execution Structure", () => {
 // gapSecPerMile was cached.
 
 // A workout whose route-derived caches are ALL present & fresh, so the route
-// read is skipped and everything renders from the doc. maxHr basis = 185
-// (DEFAULT_MAX_HR, since fetchUserSettings resolves null), thresholdPace = null.
+// read is skipped and everything renders from the doc. maxHr/restingHr basis = 185/60
+// (DEFAULT_MAX_HR/DEFAULT_RESTING_HR, since fetchUserSettings resolves null),
+// HR-zone model version 2, thresholdPace = null.
 function cachedWorkout(
   overrides: Record<string, unknown>
 ): Record<string, unknown> {
@@ -412,6 +414,8 @@ function cachedWorkout(
       hrZones: [],
       paceZones: [],
       maxHr: 185,
+      restingHr: 60, // DEFAULT_RESTING_HR (fetchUserSettings resolves null)
+      hrZoneModelVersion: 2, // HR_ZONE_MODEL_VERSION
       thresholdPaceSecPerMile: null,
       computedAt: 1,
     },
@@ -496,6 +500,83 @@ describe("RunDetailPage GAP/elevation sublabels", () => {
     expect(getRoutePoints).not.toHaveBeenCalled();
     expect(container.textContent).toContain("flat");
     expect(container.textContent).toContain("Net 0 ft");
+  });
+
+  describe("HR-zone model (% of HR reserve) cache", () => {
+    const HR_BUCKETS = [
+      { zone: 1, label: "Z1 50–60%", seconds: 0, pct: 0 },
+      { zone: 2, label: "Z2 60–70%", seconds: 0, pct: 0 },
+      { zone: 3, label: "Z3 70–80%", seconds: 600, pct: 100 },
+      { zone: 4, label: "Z4 80–90%", seconds: 0, pct: 0 },
+      { zone: 5, label: "Z5 90–100%", seconds: 0, pct: 0 },
+    ];
+    const currentZones = {
+      hrZones: HR_BUCKETS,
+      paceZones: [],
+      maxHr: 185,
+      restingHr: 60,
+      hrZoneModelVersion: 2,
+      thresholdPaceSecPerMile: null,
+      computedAt: 1,
+    };
+    const ROUTE = Array.from({ length: 12 }, (_, i) => ({
+      index: i,
+      lat: 0,
+      lng: i * 0.0042, // ≈3 mi in total, so route coverage passes the persist guard
+      timestamp: new Date(Date.UTC(2026, 0, 1, 12, 0, i * 30)).toISOString(),
+      speed: 3,
+      hr: 150, // 150 bpm at 185/60 → 72% of reserve → Z3
+    }));
+
+    it("a current cache skips the route read and shows the reserve-based caption", async () => {
+      vi.mocked(fetchHealthWorkout).mockResolvedValue(
+        cachedWorkout({
+          gapNetRiseM: 0,
+          gapAggregateGradeFlat: true,
+          zoneBreakdown: currentZones,
+        }) as never
+      );
+      vi.mocked(getMileSplits).mockResolvedValue(CACHED_MILE_DOCS as never);
+      vi.mocked(getRoutePoints).mockResolvedValue([]);
+
+      await renderSettled();
+
+      expect(getRoutePoints).not.toHaveBeenCalled();
+      expect(saveRunDetailCaches).not.toHaveBeenCalled();
+      expect(container.textContent).toContain(
+        "max HR 185 bpm, resting 60 bpm, % of HR reserve"
+      );
+    });
+
+    it("a legacy (%-of-max) cache forces exactly one route read, then overwrites its own zoneBreakdown with the new basis", async () => {
+      const legacy: Record<string, unknown> = { ...currentZones };
+      delete legacy.hrZoneModelVersion;
+      delete legacy.restingHr;
+      vi.mocked(fetchHealthWorkout).mockResolvedValue(
+        cachedWorkout({
+          gapNetRiseM: 0,
+          gapAggregateGradeFlat: true,
+          zoneBreakdown: legacy,
+        }) as never
+      );
+      vi.mocked(getMileSplits).mockResolvedValue(CACHED_MILE_DOCS as never);
+      vi.mocked(getRoutePoints).mockResolvedValue(ROUTE as never);
+
+      await renderSettled();
+
+      expect(getRoutePoints).toHaveBeenCalledTimes(1);
+      expect(saveRunDetailCaches).toHaveBeenCalledTimes(1);
+      const [uid, workoutId, updates] = vi.mocked(saveRunDetailCaches).mock.calls[0];
+      expect(uid).toBe("u1");
+      expect(workoutId).toBe("workout_123");
+      expect(updates.zoneBreakdown).toMatchObject({
+        maxHr: 185,
+        restingHr: 60,
+        hrZoneModelVersion: 2,
+      });
+      // 150 bpm sits in Z3 under the reserve model at 185/60.
+      expect(updates.zoneBreakdown?.hrZones[2].pct).toBeCloseTo(100, 5);
+    });
   });
 
   it("forces one route read when the best-effort computation version is stale", async () => {

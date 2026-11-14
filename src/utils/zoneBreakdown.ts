@@ -11,11 +11,13 @@
  * (per-point HR sample durations for HR zones; per-point pace + timestamps for
  * pace zones), so cached values match what the inline calculation produced.
  *
- * Both zone sets are settings-dependent (HR zones on maxHR, pace zones on the
- * user's threshold pace), so the cache records the basis it was computed
- * against. A reader/gate treats the cache as stale when the current maxHR or
- * threshold pace no longer matches — the same invalidation pattern the
- * mileSplits cache uses for a distance override.
+ * Both zone sets are settings-dependent (HR zones on maxHR + restingHR under a
+ * versioned zone model, pace zones on the user's threshold pace), so the cache
+ * records the basis it was computed against. A reader/gate treats the cache as
+ * stale when the current maxHR, restingHR, HR-zone model version or threshold
+ * pace no longer matches — the same invalidation pattern the mileSplits cache
+ * uses for a distance override. A stale cache is rebuilt lazily, one run at a
+ * time, the first time that run's detail page is opened (never in bulk).
  */
 
 import { type RoutePoint } from "@/services/routes";
@@ -23,6 +25,8 @@ import { mpsToSecPerMile } from "@/utils/pace";
 import {
   computeHRZones,
   computePaceZones,
+  HR_ZONE_MODEL_VERSION,
+  type HrZoneAnchors,
   type PaceZoneResult,
   type ZoneBucket,
 } from "@/utils/zones";
@@ -32,7 +36,7 @@ import {
  *  until the next point. */
 export function computeHrZonesFromPoints(
   points: RoutePoint[],
-  maxHR: number
+  anchors: HrZoneAnchors
 ): ZoneBucket[] {
   const hrSamples: { bpm: number; seconds: number }[] = [];
   for (let i = 0; i < points.length - 1; i++) {
@@ -44,7 +48,7 @@ export function computeHrZonesFromPoints(
       hrSamples.push({ bpm: points[i].hr as number, seconds: dt });
     }
   }
-  return computeHRZones(hrSamples, maxHR);
+  return computeHRZones(hrSamples, anchors);
 }
 
 /** Pace zones (time-in-zone) from per-point route samples — the exact logic the
@@ -73,6 +77,11 @@ export interface ZoneBreakdownCache {
   paceZones: PaceZoneResult[];
   /** maxHR the HR zones were bucketed against (staleness basis). */
   maxHr: number;
+  /** restingHR the HR zones were bucketed against (staleness basis). */
+  restingHr: number;
+  /** HR_ZONE_MODEL_VERSION the HR zones were computed under (staleness basis;
+   *  1 = legacy %-of-max, 2 = %-of-HR-reserve). */
+  hrZoneModelVersion: number;
   /** Threshold pace the pace zones were bucketed against, or null when unset
    *  (staleness basis). */
   thresholdPaceSecPerMile: number | null;
@@ -83,17 +92,38 @@ export interface ZoneBreakdownCache {
 /** Compute the full zone breakdown from route points, tagged with its basis. */
 export function computeZoneBreakdown(
   points: RoutePoint[],
-  maxHr: number,
+  anchors: HrZoneAnchors,
   thresholdPaceSecPerMile: number | null,
   now: number = Date.now()
 ): ZoneBreakdownCache {
   return {
-    hrZones: computeHrZonesFromPoints(points, maxHr),
+    hrZones: computeHrZonesFromPoints(points, anchors),
     paceZones: computePaceZonesFromPoints(points, thresholdPaceSecPerMile),
-    maxHr,
+    maxHr: anchors.maxHr,
+    restingHr: anchors.restingHr,
+    hrZoneModelVersion: HR_ZONE_MODEL_VERSION,
     thresholdPaceSecPerMile,
     computedAt: now,
   };
+}
+
+/**
+ * True only when the cached HR zones were computed under the CURRENT zone model
+ * and anchors: the cache exists, its `hrZoneModelVersion` is
+ * `HR_ZONE_MODEL_VERSION`, and its `maxHr` and `restingHr` equal `anchors`.
+ * Any other case (no cache, legacy %-of-max cache, changed max or resting HR)
+ * is stale and forces a one-time route read to recompute.
+ */
+export function zoneBreakdownMatchesHrModel(
+  cache: ZoneBreakdownCache | null | undefined,
+  anchors: HrZoneAnchors
+): boolean {
+  return (
+    cache != null &&
+    cache.hrZoneModelVersion === HR_ZONE_MODEL_VERSION &&
+    cache.maxHr === anchors.maxHr &&
+    cache.restingHr === anchors.restingHr
+  );
 }
 
 function isZoneBucketArray(v: unknown): v is ZoneBucket[] {
@@ -143,10 +173,22 @@ export function parseZoneBreakdown(
         ? null
         : undefined;
   if (threshold === undefined) return undefined;
+  // Legacy docs (written before the HR-reserve model) carry neither new field.
+  // They parse as version 1 with a 0 resting sentinel — never undefined/NaN, and
+  // never equal to a real anchor — so zoneBreakdownMatchesHrModel is false and
+  // the next view recomputes. A doc with only ONE of the two fields is treated
+  // as legacy too (no half-stamped basis is ever trusted).
+  const hasModelBasis =
+    typeof r.hrZoneModelVersion === "number" &&
+    Number.isFinite(r.hrZoneModelVersion) &&
+    typeof r.restingHr === "number" &&
+    Number.isFinite(r.restingHr);
   return {
     hrZones: r.hrZones,
     paceZones: r.paceZones,
     maxHr: r.maxHr,
+    restingHr: hasModelBasis ? (r.restingHr as number) : 0,
+    hrZoneModelVersion: hasModelBasis ? (r.hrZoneModelVersion as number) : 1,
     thresholdPaceSecPerMile: threshold,
     computedAt: r.computedAt,
   };

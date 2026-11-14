@@ -2,13 +2,20 @@ import { describe, it, expect } from "vitest";
 import {
   computeHRZones,
   computePaceZones,
+  hrZoneCutsBpm,
   hrZoneIndex,
+  formatHrZoneBpmLabel,
+  hrZoneRangesBpm,
+  HR_ZONE_BOUNDS,
+  HR_ZONE_MODEL_VERSION,
   maxHRForAge,
   FALLBACK_MAX_HR,
   paceZoneRanges,
+  type HrZoneAnchors,
 } from "../zones";
 import {
   resolveMaxHr,
+  resolveRestingHr,
   zoneBoundsBpmForActivity,
   WORKOUT_ZONES,
 } from "../trainingLoad";
@@ -27,28 +34,170 @@ describe("maxHRForAge", () => {
   });
 });
 
-describe("hrZoneIndex", () => {
-  it("buckets by % of max HR", () => {
-    const max = 200;
-    expect(hrZoneIndex(110, max)).toBe(1); // 55%
-    expect(hrZoneIndex(130, max)).toBe(2); // 65%
-    expect(hrZoneIndex(150, max)).toBe(3); // 75%
-    expect(hrZoneIndex(170, max)).toBe(4); // 85%
-    expect(hrZoneIndex(190, max)).toBe(5); // 95%
+// Reference anchors from the product owner: max 180, resting 65 → reserve 115.
+const A: HrZoneAnchors = { maxHr: 180, restingHr: 65 };
+
+describe("HR_ZONE_MODEL_VERSION / HR_ZONE_BOUNDS", () => {
+  it("model version is 2 (% of HR reserve)", () => {
+    expect(HR_ZONE_MODEL_VERSION).toBe(2);
+  });
+  it("HR_ZONE_BOUNDS is the single source of the 50/60/70/80/90/100 fractions", () => {
+    expect([...HR_ZONE_BOUNDS]).toEqual([0.5, 0.6, 0.7, 0.8, 0.9, 1.0]);
+  });
+});
+
+describe("hrZoneCutsBpm", () => {
+  it("at 180/65 the Z2..Z5 cuts are exactly 134, 145.5, 157, 168.5", () => {
+    expect([...hrZoneCutsBpm(A)]).toEqual([134, 145.5, 157, 168.5]);
+  });
+
+  it("changing only restingHr changes the cuts", () => {
+    const base = hrZoneCutsBpm({ maxHr: 180, restingHr: 65 });
+    const other = hrZoneCutsBpm({ maxHr: 180, restingHr: 60 });
+    expect([...other]).toEqual([132, 144, 156, 168]);
+    expect([...other]).not.toEqual([...base]);
+  });
+
+  it("changing only maxHr changes the cuts", () => {
+    expect([...hrZoneCutsBpm({ maxHr: 190, restingHr: 65 })]).toEqual([
+      140, 152.5, 165, 177.5,
+    ]);
+  });
+
+  it("resting equal to max falls back to 185/60 (cuts 135, 147.5, 160, 172.5)", () => {
+    const fallback = [135, 147.5, 160, 172.5];
+    expect([...hrZoneCutsBpm({ maxHr: 150, restingHr: 150 })]).toEqual(fallback);
+  });
+
+  it("resting above max falls back to 185/60", () => {
+    expect([...hrZoneCutsBpm({ maxHr: 150, restingHr: 170 })]).toEqual([
+      135, 147.5, 160, 172.5,
+    ]);
+  });
+
+  it("non-finite anchors fall back and never return NaN or throw", () => {
+    for (const anchors of [
+      { maxHr: NaN, restingHr: 60 },
+      { maxHr: 180, restingHr: NaN },
+      { maxHr: Infinity, restingHr: 60 },
+    ]) {
+      const cuts = hrZoneCutsBpm(anchors);
+      expect([...cuts]).toEqual([135, 147.5, 160, 172.5]);
+      expect(cuts.every(Number.isFinite)).toBe(true);
+    }
+  });
+});
+
+describe("hrZoneIndex (% of HR reserve)", () => {
+  it("156 bpm average at 180/65 is Z3 (79.1% of reserve)", () => {
+    expect(hrZoneIndex(156, A)).toBe(3);
+  });
+
+  it("157 bpm is Z4", () => {
+    expect(hrZoneIndex(157, A)).toBe(4);
+  });
+
+  it("a bpm exactly on a cut belongs to the higher zone", () => {
+    expect(hrZoneIndex(134, A)).toBe(2);
+    expect(hrZoneIndex(145.5, A)).toBe(3);
+    expect(hrZoneIndex(157, A)).toBe(4);
+    expect(hrZoneIndex(168.5, A)).toBe(5);
+  });
+
+  it("one step below each cut stays in the lower zone", () => {
+    expect(hrZoneIndex(133, A)).toBe(1);
+    expect(hrZoneIndex(145, A)).toBe(2);
+    expect(hrZoneIndex(156.9, A)).toBe(3);
+    expect(hrZoneIndex(168, A)).toBe(4);
+  });
+
+  it("168.5 is Z5", () => {
+    expect(hrZoneIndex(168.5, A)).toBe(5);
+  });
+
+  it("below the Z2 cut (including below the 50% floor of 122.5) is Z1", () => {
+    expect(hrZoneIndex(133.9, A)).toBe(1);
+    expect(hrZoneIndex(122, A)).toBe(1);
+    expect(hrZoneIndex(60, A)).toBe(1);
+    expect(hrZoneIndex(40, A)).toBe(1);
+  });
+
+  it("above max HR is Z5", () => {
+    expect(hrZoneIndex(181, A)).toBe(5);
+    expect(hrZoneIndex(220, A)).toBe(5);
+  });
+
+  it("the same bpm lands in a different zone when only restingHr changes", () => {
+    // 134 bpm: Z2 at resting 65 (cut 134), Z3 at resting 60 (Z3 cut 144 → no; Z2 cut 132)
+    expect(hrZoneIndex(133, { maxHr: 180, restingHr: 65 })).toBe(1);
+    expect(hrZoneIndex(133, { maxHr: 180, restingHr: 60 })).toBe(2);
+  });
+
+  it("the same bpm lands in a different zone than the legacy %-of-max model", () => {
+    // 156 bpm = 86.7% of max 180 (legacy Z4) but 79.1% of reserve (Z3).
+    expect(156 / 180).toBeGreaterThan(0.8);
+    expect(hrZoneIndex(156, A)).toBe(3);
+  });
+});
+
+describe("hrZoneRangesBpm", () => {
+  it("returns 5 zones with open outer edges", () => {
+    const r = hrZoneRangesBpm(A);
+    expect(r.map((x) => x.zone)).toEqual([1, 2, 3, 4, 5]);
+    expect(r[0].lowBpm).toBeNull();
+    expect(r[4].highBpm).toBeNull();
+  });
+
+  it("adjacent ranges share their cut and match hrZoneCutsBpm", () => {
+    const r = hrZoneRangesBpm(A);
+    expect(r.map((x) => [x.lowBpm, x.highBpm])).toEqual([
+      [null, 134],
+      [134, 145.5],
+      [145.5, 157],
+      [157, 168.5],
+      [168.5, null],
+    ]);
+  });
+
+  it("invalid anchors fall back to 185/60", () => {
+    const r = hrZoneRangesBpm({ maxHr: 60, restingHr: 60 });
+    expect(r[1].lowBpm).toBe(135);
+    expect(r[4].lowBpm).toBe(172.5);
+  });
+});
+
+describe("formatHrZoneBpmLabel", () => {
+  it("renders whole-bpm labels at 180/65 matching how bpm are classified", () => {
+    const labels = hrZoneRangesBpm(A).map(formatHrZoneBpmLabel);
+    // Cuts 134 / 145.5 / 157 / 168.5; a bpm on a cut is the higher zone.
+    expect(labels).toEqual(["< 134", "134–145", "146–156", "157–168", "169+"]);
+  });
+
+  it("every whole bpm in a label classifies into that label's zone", () => {
+    const ranges = hrZoneRangesBpm(A);
+    expect(hrZoneIndex(145, A)).toBe(2);
+    expect(hrZoneIndex(146, A)).toBe(3);
+    expect(hrZoneIndex(156, A)).toBe(3);
+    expect(hrZoneIndex(168, A)).toBe(4);
+    expect(hrZoneIndex(169, A)).toBe(5);
+    expect(ranges).toHaveLength(5);
+  });
+
+  it("returns an em dash for a span with both edges open", () => {
+    expect(formatHrZoneBpmLabel({ zone: 3, lowBpm: null, highBpm: null })).toBe("—");
   });
 });
 
 describe("computeHRZones", () => {
   it("accumulates time-in-zone and percentages sum to 100", () => {
-    const maxHR = 200;
     const zones = computeHRZones(
       [
         { bpm: 110, seconds: 60 }, // Z1
         { bpm: 150, seconds: 120 }, // Z3
-        { bpm: 190, seconds: 60 }, // Z5
+        { bpm: 175, seconds: 60 }, // Z5
         { bpm: 999, seconds: 30 }, // invalid, ignored
       ],
-      maxHR
+      A
     );
     expect(zones).toHaveLength(5);
     expect(zones[0].seconds).toBe(60);
@@ -58,9 +207,62 @@ describe("computeHRZones", () => {
     expect(totalPct).toBeCloseTo(100, 5);
   });
 
-  it("empty / no-valid input → []", () => {
-    expect(computeHRZones([], 190)).toEqual([]);
-    expect(computeHRZones([{ bpm: 10, seconds: 30 }], 190)).toEqual([]);
+  it("keeps the ZoneBucket shape and labels", () => {
+    const zones = computeHRZones([{ bpm: 150, seconds: 10 }], A);
+    expect(zones.map((z) => z.label)).toEqual([
+      "Z1 50–60%",
+      "Z2 60–70%",
+      "Z3 70–80%",
+      "Z4 80–90%",
+      "Z5 90–100%",
+    ]);
+    expect(zones.map((z) => z.zone)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it("a 156 bpm steady run is 100% Z3 at 180/65", () => {
+    const zones = computeHRZones([{ bpm: 156, seconds: 600 }], A);
+    expect(zones[2].pct).toBeCloseTo(100, 5);
+  });
+
+  it("samples below 40 or above 220 bpm are still skipped", () => {
+    const zones = computeHRZones(
+      [
+        { bpm: 39, seconds: 100 },
+        { bpm: 221, seconds: 100 },
+        { bpm: 140, seconds: 50 }, // Z2
+      ],
+      A
+    );
+    expect(zones[1].seconds).toBe(50);
+    expect(zones.reduce((a, z) => a + z.seconds, 0)).toBe(50);
+  });
+
+  it("skips non-finite bpm and non-positive / non-finite seconds", () => {
+    const zones = computeHRZones(
+      [
+        { bpm: NaN, seconds: 10 },
+        { bpm: 150, seconds: 0 },
+        { bpm: 150, seconds: -5 },
+        { bpm: 150, seconds: NaN },
+        { bpm: 150, seconds: 30 },
+      ],
+      A
+    );
+    expect(zones[2].seconds).toBe(30);
+  });
+
+  it("empty / zero-valid-sample input → []", () => {
+    expect(computeHRZones([], A)).toEqual([]);
+    expect(computeHRZones([{ bpm: 10, seconds: 30 }], A)).toEqual([]);
+  });
+
+  it("uses the fallback anchors when resting >= max (no NaN, still buckets)", () => {
+    const zones = computeHRZones([{ bpm: 150, seconds: 60 }], {
+      maxHr: 100,
+      restingHr: 120,
+    });
+    // fallback 185/60: Z3 cut 147.5, Z4 cut 160 → 150 is Z3
+    expect(zones[2].seconds).toBe(60);
   });
 });
 
@@ -164,39 +366,45 @@ describe("paceZoneRanges", () => {
 // The max HR set at /settings (users/{uid}/settings/prefs.maxHeartRate) is the
 // single source of truth for client-side HR-zone math: every consumer resolves
 // it via resolveMaxHr(settings) and passes it down — no hardcoded constants.
-describe("zone boundaries from a settings-provided max HR", () => {
-  it("hrZoneIndex boundaries scale with the settings max HR (172 bpm)", () => {
-    const maxHr = resolveMaxHr({ maxHeartRate: 172 } as UserSettings);
-    expect(maxHr).toBe(172);
-    // Bands at 60/70/80/90% of 172 = 103.2 / 120.4 / 137.6 / 154.8 bpm.
-    expect(hrZoneIndex(103, maxHr)).toBe(1);
-    expect(hrZoneIndex(104, maxHr)).toBe(2);
-    expect(hrZoneIndex(120, maxHr)).toBe(2);
-    expect(hrZoneIndex(121, maxHr)).toBe(3);
-    expect(hrZoneIndex(137, maxHr)).toBe(3);
-    expect(hrZoneIndex(138, maxHr)).toBe(4);
-    expect(hrZoneIndex(154, maxHr)).toBe(4);
-    expect(hrZoneIndex(155, maxHr)).toBe(5);
+describe("zone boundaries from settings-provided HR anchors", () => {
+  it("hrZoneIndex cuts scale with the settings max and resting HR (172/60)", () => {
+    const anchors = {
+      maxHr: resolveMaxHr({ maxHeartRate: 172 } as UserSettings),
+      restingHr: resolveRestingHr({ restingHeartRate: 60 } as UserSettings),
+    };
+    expect(anchors).toEqual({ maxHr: 172, restingHr: 60 });
+    // Reserve 112: cuts at 60 + 0.6/0.7/0.8/0.9 × 112 = 127.2 / 138.4 / 149.6 / 160.8.
+    expect(hrZoneIndex(127, anchors)).toBe(1);
+    expect(hrZoneIndex(128, anchors)).toBe(2);
+    expect(hrZoneIndex(138, anchors)).toBe(2);
+    expect(hrZoneIndex(139, anchors)).toBe(3);
+    expect(hrZoneIndex(149, anchors)).toBe(3);
+    expect(hrZoneIndex(150, anchors)).toBe(4);
+    expect(hrZoneIndex(160, anchors)).toBe(4);
+    expect(hrZoneIndex(161, anchors)).toBe(5);
   });
 
-  it("the same bpm lands in a different zone under the 185 default — settings value matters", () => {
-    const settingsMax = resolveMaxHr({ maxHeartRate: 172 } as UserSettings);
-    const defaultMax = resolveMaxHr(undefined);
-    expect(defaultMax).toBe(185);
-    // 160 bpm: 93% of 172 → Z5, but only 86% of 185 → Z4.
-    expect(hrZoneIndex(160, settingsMax)).toBe(5);
-    expect(hrZoneIndex(160, defaultMax)).toBe(4);
+  it("the same bpm lands in a different zone under the 185/60 defaults — settings value matters", () => {
+    const settings = { maxHr: 172, restingHr: 60 };
+    const defaults = {
+      maxHr: resolveMaxHr(undefined),
+      restingHr: resolveRestingHr(undefined),
+    };
+    expect(defaults).toEqual({ maxHr: 185, restingHr: 60 });
+    // 150 bpm: 80.4% of the 172/60 reserve → Z4, but 72.0% of the 185/60 reserve → Z3.
+    expect(hrZoneIndex(150, settings)).toBe(4);
+    expect(hrZoneIndex(150, defaults)).toBe(3);
   });
 
-  it("computeHRZones buckets time using the settings max HR", () => {
-    const maxHr = resolveMaxHr({ maxHeartRate: 172 } as UserSettings);
+  it("computeHRZones buckets time using the settings anchors", () => {
+    const anchors = { maxHr: 172, restingHr: 60 };
     const zones = computeHRZones(
       [
-        { bpm: 100, seconds: 60 }, // 58% → Z1
-        { bpm: 130, seconds: 60 }, // 76% → Z3
-        { bpm: 160, seconds: 60 }, // 93% → Z5
+        { bpm: 100, seconds: 60 }, // Z1
+        { bpm: 145, seconds: 60 }, // Z3
+        { bpm: 165, seconds: 60 }, // Z5
       ],
-      maxHr
+      anchors
     );
     const byZone = Object.fromEntries(zones.map((z) => [z.zone, z.seconds]));
     expect(byZone[1]).toBe(60);

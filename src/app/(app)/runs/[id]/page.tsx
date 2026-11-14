@@ -115,7 +115,11 @@ import {
   mileSplitCacheWrites,
 } from "@/utils/mileSplitDocs";
 import { simplifyPolyline } from "@/utils/simplifyPolyline";
-import { computeZoneBreakdown } from "@/utils/zoneBreakdown";
+import {
+  computeZoneBreakdown,
+  zoneBreakdownMatchesHrModel,
+} from "@/utils/zoneBreakdown";
+import { type HrZoneAnchors } from "@/utils/zones";
 import { routeCachesComplete } from "@/utils/runDetailCacheGate";
 import {
   computeRoutePerformance,
@@ -518,6 +522,9 @@ export default function RunDetailPage() {
       const authoritativeMiles =
         o?.distanceMilesOverride ?? w.distanceMiles ?? 0;
       const maxHr = resolveMaxHr(settings);
+      // HR zones are %-of-HR-reserve: they need resting HR as well as max HR.
+      const restingHr = resolveRestingHr(settings);
+      const hrZoneAnchors: HrZoneAnchors = { maxHr, restingHr };
       const thresholdPace = settings?.thresholdPaceSecPerMile ?? null;
       // A distance/duration override changes GAP + the mile basis; the KPI GAP
       // cache carries no basis, so any such override forces a live recompute
@@ -557,7 +564,12 @@ export default function RunDetailPage() {
       const needsRoute =
         basisOverride ||
         bestEffortsNeedRecompute ||
-        !routeCachesComplete(w, { maxHr, thresholdPace, splitsHaveGap });
+        !routeCachesComplete(w, {
+          maxHr,
+          restingHr,
+          thresholdPace,
+          splitsHaveGap,
+        });
 
       if (!needsRoute) {
         if (splits) {
@@ -746,15 +758,19 @@ export default function RunDetailPage() {
           }
 
           const zb = w.zoneBreakdown;
+          // A legacy (%-of-max) cache, or one computed against different max /
+          // resting HR, is rebuilt here from the route we just read and
+          // overwrites ONLY this run's own zoneBreakdown — lazy per-view
+          // self-heal, never a loop over workouts.
           const zoneStale =
             parentStale ||
             zb === undefined ||
-            zb.maxHr !== maxHr ||
+            !zoneBreakdownMatchesHrModel(zb, hrZoneAnchors) ||
             zb.thresholdPaceSecPerMile !== thresholdPace;
           if (zoneStale) {
             updates.zoneBreakdown = computeZoneBreakdown(
               points,
-              maxHr,
+              hrZoneAnchors,
               thresholdPace
             );
           }
@@ -1962,6 +1978,7 @@ export default function RunDetailPage() {
           <ZoneBreakdown
             points={routePoints}
             maxHR={resolvedMaxHR}
+            restingHR={resolvedRestingHR}
             thresholdPaceSecPerMile={userSettings?.thresholdPaceSecPerMile}
             cache={displayWorkout.zoneBreakdown}
           />

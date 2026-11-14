@@ -37,6 +37,26 @@ describe("aggregatedStats", () => {
     vi.useRealTimers();
   });
 
+  describe("version", () => {
+    it("AGGREGATED_STATS_VERSION is 6 (HR zones reclassified by % of HR reserve)", () => {
+      expect(AGGREGATED_STATS_VERSION).toBe(6);
+    });
+
+    it("a v5 cache (the %-of-max zone model) is stale against the current computation version", () => {
+      const cached = computeFreshnessFingerprint({
+        ...fingerprintInputs,
+        computationVersion: 5,
+      });
+      expect(isFingerprintStale(cached, fingerprint())).toBe(true);
+    });
+
+    it("the freshness fingerprint already carries max and resting HR (zone anchors)", () => {
+      const f = fingerprint();
+      expect(f.maxHr).toBe(185);
+      expect(f.restingHr).toBe(50);
+    });
+  });
+
   describe("freshness domains", () => {
     it("does not report stale for an unrelated rerender or object key order", () => {
       const cached = fingerprint();
@@ -318,6 +338,39 @@ describe("aggregatedStats", () => {
       expect(result.personalRecordsByYear.specificPrs.length).toBeGreaterThan(0);
       expect(result.racePredictions.modelFit).toBeNull(); // not enough for riegel fit
       expect(result.paceTrends).toBeDefined();
+    });
+  });
+
+  describe("buildAggregatedStats — HR zone distribution (reserve model)", () => {
+    it("classifies a 156 bpm mile at max 180 / resting 65 as Z3, not Z4", () => {
+      const now = new Date("2024-01-01T12:00:00Z");
+      const workout = {
+        workoutId: "w156",
+        startDate: new Date("2024-01-01T10:00:00Z"),
+        endDate: new Date("2024-01-01T10:10:00Z"),
+        distanceMiles: 1.0,
+        durationSeconds: 600,
+        activityType: "Running",
+        isRunLike: true,
+      } as unknown as HealthWorkout;
+
+      const result = buildAggregatedStats({
+        workouts: [workout],
+        mileSplitsByWorkoutId: {
+          w156: [{ mile: 1, avgBpm: 156, sampleCount: 100 }] as never,
+        },
+        healthMetrics: [],
+        maxHr: 180,
+        restingHr: 65,
+        now,
+        races: [],
+        freshnessFingerprint: fingerprint(),
+        vo2FreshnessKey: computeVo2FreshnessKey(null),
+      });
+
+      expect(result.hrZoneDistribution.runsCounted).toBe(1);
+      expect(result.hrZoneDistribution.zoneMiles[3]).toBe(1);
+      expect(result.hrZoneDistribution.zoneMiles[4]).toBe(0);
     });
   });
 
