@@ -34,6 +34,7 @@ import { type HealthWorkout } from "@/types/healthWorkout";
 import { matchPlanToActual, statusForRunEntry } from "@/utils/planMatching";
 import { formatPace, parsePaceString } from "@/utils/pace";
 import { deepCopyRunEntry } from "@/utils/planCopy";
+import { mergeEditedEntry, type PlannedRunEntryEdits } from "@/utils/planEntryEdit";
 import { formatCompletedAt } from "@/utils/planFormat";
 import { snapToMonday, upcomingMonday } from "@/utils/planDateEdit";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -86,13 +87,15 @@ function RunTypeBadge({ type }: { type: PlanRunType }) {
 
 interface EntryFormProps {
   initial: Partial<PlannedRunEntry>;
+  /** True for a brand-new entry; false when editing a stored one (merge, don't replace). */
+  isNew: boolean;
   weekday: number;
   weekIndex: number;
   onSave: (entry: PlannedRunEntry) => void;
   onCancel: () => void;
 }
 
-function EntryForm({ initial, weekday, weekIndex, onSave, onCancel }: EntryFormProps) {
+function EntryForm({ initial, isNew, weekday, weekIndex, onSave, onCancel }: EntryFormProps) {
   const initRunType =
     initial.runType && initial.runType !== "rest" ? initial.runType : "outdoor";
 
@@ -119,11 +122,7 @@ function EntryForm({ initial, weekday, weekIndex, onSave, onCancel }: EntryFormP
       ? formatPace(parsedPace)
       : paceInput.trim() || undefined;
 
-    onSave({
-      id: initial.id ?? crypto.randomUUID(),
-      weekIndex,
-      weekday,
-      dayOfWeek: weekday - 1,
+    const edits: PlannedRunEntryEdits = {
       distanceMiles: dist,
       runType,
       paceTarget,
@@ -131,6 +130,24 @@ function EntryForm({ initial, weekday, weekIndex, onSave, onCancel }: EntryFormP
       notes: notes.trim() || undefined,
       targetHeartRate: hr,
       scheduledTime: normalizeScheduledTime(scheduledTime),
+    };
+
+    // Editing a stored entry: merge ONLY the form's fields onto it so fields the
+    // form doesn't expose (workoutType, targetPaceSecondsPerMile, dayOfWeek, id,
+    // ...) survive the save. The previous wholesale rebuild dropped them.
+    if (!isNew && initial.id) {
+      onSave(mergeEditedEntry(initial as PlannedRunEntry, edits));
+      return;
+    }
+
+    // Brand-new entry: unchanged behavior.
+    onSave({
+      id: initial.id ?? crypto.randomUUID(),
+      weekIndex,
+      weekday,
+      dayOfWeek: weekday - 1,
+      ...edits,
+      distanceMiles: dist,
     });
   }
 
@@ -452,9 +469,10 @@ export function RunningPlanDetail({
         </div>
       );
     },
-    renderEntryEditor: ({ draft, onSave, onCancel }) => (
+    renderEntryEditor: ({ draft, isNew, onSave, onCancel }) => (
       <EntryForm
         initial={draft}
+        isNew={isNew}
         weekday={draft.weekday}
         weekIndex={draft.weekIndex}
         onSave={onSave}
