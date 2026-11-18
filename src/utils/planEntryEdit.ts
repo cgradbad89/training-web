@@ -40,10 +40,33 @@ export function extractLeadingPaceSeconds(paceText: string): number | null {
   return parsePaceString(match[1]);
 }
 
-/** Resolve a pace string to seconds/mile: strict m:ss first, else leading token. */
+/**
+ * Midpoint (seconds/mile) of a range "m:ss-m:ss" — the convention the stored
+ * range entries already use (e.g. "8:50-9:10" -> 540). Whitespace around the
+ * dash is allowed and the order of the two ends does not matter. Returns null
+ * for anything that is not exactly two valid m:ss values joined by a dash
+ * ("10:30+", "10:30+ / 9:30", "9:10", "race effort").
+ */
+export function parsePaceRangeMidpoint(paceText: string): number | null {
+  const match = paceText.trim().match(/^(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})$/);
+  if (!match) return null;
+  const a = parsePaceString(match[1]);
+  const b = parsePaceString(match[2]);
+  if (a == null || b == null) return null;
+  return Math.round((a + b) / 2);
+}
+
+/**
+ * Resolve a pace string to seconds/mile. Order: strict m:ss, then range
+ * midpoint, then leading m:ss token; null if none apply.
+ */
 function paceSecondsFor(paceText: string | undefined): number | null {
   if (!paceText) return null;
-  return parsePaceString(paceText) ?? extractLeadingPaceSeconds(paceText);
+  return (
+    parsePaceString(paceText) ??
+    parsePaceRangeMidpoint(paceText) ??
+    extractLeadingPaceSeconds(paceText)
+  );
 }
 
 /**
@@ -54,9 +77,9 @@ function paceSecondsFor(paceText: string | undefined): number | null {
  * Pace sync: `paceTarget` (text) and `targetPaceSecondsPerMile` (number) are a
  * companion pair and the number wins everywhere it is read. If `paceTarget` is
  * not edited or is unchanged, the stored seconds are kept. If it changed, the
- * seconds are re-derived with `parsePaceString`, falling back to the leading
- * m:ss token; if neither resolves, `targetPaceSecondsPerMile` is removed (never
- * left stale, never 0/NaN).
+ * seconds are re-derived with `parsePaceString`, then the range midpoint
+ * ("8:50-9:10" -> 540), then the leading m:ss token; if none resolves,
+ * `targetPaceSecondsPerMile` is removed (never left stale, never 0/NaN).
  *
  * Pure: returns a new object, never mutates `existing`.
  */

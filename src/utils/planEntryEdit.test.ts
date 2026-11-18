@@ -4,6 +4,7 @@ import { parsePaceString } from "@/utils/pace";
 import {
   extractLeadingPaceSeconds,
   mergeEditedEntry,
+  parsePaceRangeMidpoint,
 } from "@/utils/planEntryEdit";
 
 function entry(overrides: Partial<PlannedRunEntry> = {}): PlannedRunEntry {
@@ -43,9 +44,27 @@ describe("extractLeadingPaceSeconds", () => {
 });
 
 describe("parsePaceString precedent (documented behavior)", () => {
-  it("does not parse a range, so ranges fall to the leading token on edit", () => {
+  it("does not parse a range itself (the range midpoint step handles it)", () => {
     expect(parsePaceString("8:50-9:10")).toBeNull();
   });
+});
+
+describe("parsePaceRangeMidpoint", () => {
+  it("returns the midpoint of a range", () => {
+    expect(parsePaceRangeMidpoint("8:50-9:10")).toBe(540);
+  });
+  it("is order-independent", () => {
+    expect(parsePaceRangeMidpoint("9:10-8:50")).toBe(540);
+  });
+  it("tolerates spaces around the dash", () => {
+    expect(parsePaceRangeMidpoint("8:50 - 9:10")).toBe(540);
+  });
+  it.each(["10:30+", "10:30+ / 9:30", "9:10", "race effort", "", "8:50-9:75"])(
+    "returns null for non-range %j",
+    (text) => {
+      expect(parsePaceRangeMidpoint(text)).toBeNull();
+    }
+  );
 });
 
 describe("mergeEditedEntry", () => {
@@ -82,6 +101,11 @@ describe("mergeEditedEntry", () => {
     const merged = mergeEditedEntry(existing, { paceTarget: pace });
     expect(merged.paceTarget).toBe(pace);
     expect(merged.targetPaceSecondsPerMile).toBe(seconds);
+  });
+
+  it("stores the midpoint when paceTarget changes to a range", () => {
+    const merged = mergeEditedEntry(entry(), { paceTarget: "8:50-9:10" });
+    expect(merged.targetPaceSecondsPerMile).toBe(540);
   });
 
   it("unsets the seconds (no key, not 0/NaN) when the new pace is garbage", () => {
