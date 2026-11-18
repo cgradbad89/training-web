@@ -13,7 +13,9 @@
     "test": "vitest run",
     "validate": "npm run typecheck && npm run lint:ci && npm test && npm run build",
     "snapshot:export": "SNAPSHOT_EXPORT=1 vitest run scripts/exportFirestoreSnapshot.test.ts",
-    "snapshot:import": "SNAPSHOT_IMPORT=1 vitest run scripts/importFirestoreSnapshot.test.ts"
+    "snapshot:import": "SNAPSHOT_IMPORT=1 vitest run scripts/importFirestoreSnapshot.test.ts",
+    "plan:replace-rnr:dry": "RNR_REPLACE=dry vitest run scripts/replaceRnrPlanFrom20261118.test.ts",
+    "plan:replace-rnr:commit": "RNR_REPLACE=commit vitest run scripts/replaceRnrPlanFrom20261118.test.ts"
   },
   "dependencies": {
     "@google-cloud/firestore": "^7.11.6",
