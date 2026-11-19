@@ -22,11 +22,15 @@ const STREAM = [
 
 let container: HTMLDivElement;
 let root: Root;
-let latest: { samples: HrTimedSample[] | null; loading: boolean };
+/** Read the hook's latest return value back out of the DOM the probe renders. */
+function latest(): { samples: HrTimedSample[] | null; loading: boolean } {
+  const el = container.querySelector("output");
+  return JSON.parse(el?.textContent ?? "null");
+}
 
 function Probe({ id, enabled }: { id: string | null; enabled: boolean }) {
-  latest = useHrTimedSamples(id, enabled);
-  return null;
+  const value = useHrTimedSamples(id, enabled);
+  return <output>{JSON.stringify(value)}</output>;
 }
 
 async function render(id: string | null, enabled: boolean) {
@@ -51,7 +55,7 @@ describe("useHrTimedSamples", () => {
   it("does not fetch when disabled", async () => {
     await render("w1", false);
     expect(fetchHRStream).not.toHaveBeenCalled();
-    expect(latest).toEqual({ samples: null, loading: false });
+    expect(latest()).toEqual({ samples: null, loading: false });
   });
 
   it("does not fetch without a workout id", async () => {
@@ -63,8 +67,8 @@ describe("useHrTimedSamples", () => {
     await render("w1", true);
     expect(fetchHRStream).toHaveBeenCalledTimes(1);
     expect(fetchHRStream).toHaveBeenCalledWith("u1", "w1");
-    expect(latest.loading).toBe(false);
-    expect(latest.samples).toEqual([
+    expect(latest().loading).toBe(false);
+    expect(latest().samples).toEqual([
       { tSec: 0, bpm: 120 },
       { tSec: 10, bpm: 140 },
     ]);
@@ -74,10 +78,10 @@ describe("useHrTimedSamples", () => {
     let resolve!: (v: typeof STREAM) => void;
     vi.mocked(fetchHRStream).mockReturnValue(new Promise((r) => (resolve = r)));
     await render("w1", true);
-    expect(latest).toEqual({ samples: null, loading: true });
+    expect(latest()).toEqual({ samples: null, loading: true });
     await act(async () => resolve(STREAM));
-    expect(latest.loading).toBe(false);
-    expect(latest.samples).toHaveLength(2);
+    expect(latest().loading).toBe(false);
+    expect(latest().samples).toHaveLength(2);
   });
 
   it("does not refetch on re-render or when toggled off and on for the same id", async () => {
@@ -86,7 +90,7 @@ describe("useHrTimedSamples", () => {
     await render("w1", false);
     await render("w1", true);
     expect(fetchHRStream).toHaveBeenCalledTimes(1);
-    expect(latest.samples).toHaveLength(2);
+    expect(latest().samples).toHaveLength(2);
   });
 
   it("fetches again for a different workout id", async () => {
@@ -113,7 +117,7 @@ describe("useHrTimedSamples", () => {
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.mocked(fetchHRStream).mockRejectedValue(new Error("boom"));
     await render("w1", true);
-    expect(latest).toEqual({ samples: null, loading: false });
+    expect(latest()).toEqual({ samples: null, loading: false });
     errors.mockRestore();
   });
 });
