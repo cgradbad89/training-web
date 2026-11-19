@@ -2,12 +2,14 @@ import { describe, it, expect } from "vitest";
 import type { PlannedRunEntry, TargetHeartRate } from "@/types/plan";
 import {
   HR_TARGET_GRACE_BPM,
+  HR_TARGET_INPUT_ERROR,
   computeWeekHrCounters,
   evaluateHrTarget,
   formatHrTarget,
   isMileOverTarget,
   isValidHrTarget,
   parseHrTargetFromNotes,
+  parseHrTargetInputs,
   resolveHrTarget,
   toLegacyTargetHeartRate,
 } from "@/utils/hrTarget";
@@ -299,5 +301,27 @@ describe("toLegacyTargetHeartRate", () => {
     expect(toLegacyTargetHeartRate({ minBpm: 140, maxBpm: null })).toBeNull();
     expect(toLegacyTargetHeartRate(null)).toBeNull();
     expect(toLegacyTargetHeartRate(undefined)).toBeNull();
+  });
+});
+
+describe("parseHrTargetInputs", () => {
+  it("returns no target and no error when both are blank", () => {
+    expect(parseHrTargetInputs("", "")).toEqual({ target: null, error: null });
+    expect(parseHrTargetInputs("  ", " ")).toEqual({ target: null, error: null });
+  });
+  it("builds a cap, a floor and a range", () => {
+    expect(parseHrTargetInputs("", "135")).toEqual({ target: CAP_135, error: null });
+    expect(parseHrTargetInputs("140", "")).toEqual({
+      target: { minBpm: 140, maxBpm: null },
+      error: null,
+    });
+    expect(parseHrTargetInputs("146", "155")).toEqual({ target: RANGE_146_155, error: null });
+  });
+  it("errors on non-numeric, fractional, out-of-range and inverted input", () => {
+    for (const [a, b] of [["abc", "150"], ["", "135.5"], ["", "300"], ["", "10"], ["160", "150"]]) {
+      const r = parseHrTargetInputs(a, b);
+      expect(r.target).toBeNull();
+      expect(r.error).toBe(HR_TARGET_INPUT_ERROR);
+    }
   });
 });

@@ -128,3 +128,48 @@ describe("mergeEditedEntry", () => {
     expect(existing).toEqual(snapshot);
   });
 });
+
+describe("mergeEditedEntry — structured HR target (dual-write)", () => {
+  it("dual-writes the legacy cap when a cap targetHr is edited in", () => {
+    const merged = mergeEditedEntry(entry({ targetHeartRate: null }), {
+      targetHr: { minBpm: null, maxBpm: 135 },
+    });
+    expect(merged.targetHr).toEqual({ minBpm: null, maxBpm: 135 });
+    expect(merged.targetHeartRate).toBe(135);
+  });
+
+  it("sets the legacy field to null for a range edit", () => {
+    const merged = mergeEditedEntry(entry({ targetHeartRate: 135 }), {
+      targetHr: { minBpm: 146, maxBpm: 155 },
+    });
+    expect(merged.targetHr).toEqual({ minBpm: 146, maxBpm: 155 });
+    expect(merged.targetHeartRate).toBeNull();
+  });
+
+  it("clears both fields when targetHr is edited to null", () => {
+    const merged = mergeEditedEntry(
+      entry({ targetHeartRate: 135, targetHr: { minBpm: null, maxBpm: 135 } }),
+      { targetHr: null }
+    );
+    expect(merged.targetHr).toBeNull();
+    expect(merged.targetHeartRate).toBeNull();
+  });
+
+  it("preserves targetHr and the legacy field when HR is not part of the edit", () => {
+    const existing = entry({
+      targetHeartRate: null,
+      targetHr: { minBpm: 146, maxBpm: 155 },
+    });
+    const merged = mergeEditedEntry(existing, { description: "new text" });
+    expect(merged.targetHr).toEqual({ minBpm: 146, maxBpm: 155 });
+    expect(merged.targetHeartRate).toBeNull();
+    expect(merged.description).toBe("new text");
+  });
+
+  it("does not mutate the existing entry", () => {
+    const existing = entry({ targetHeartRate: 135 });
+    mergeEditedEntry(existing, { targetHr: { minBpm: 146, maxBpm: 155 } });
+    expect(existing.targetHeartRate).toBe(135);
+    expect(existing.targetHr).toBeUndefined();
+  });
+});

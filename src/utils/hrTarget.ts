@@ -251,3 +251,33 @@ export function toLegacyTargetHeartRate(
   if (!t) return null;
   return t.minBpm == null && t.maxBpm != null ? t.maxBpm : null;
 }
+
+export const HR_TARGET_INPUT_ERROR =
+  "Enter whole-number bpm between 40 and 220; min can't exceed max.";
+
+/**
+ * Parse the two EntryForm text inputs ("HR min", "HR max") into a target.
+ * Both blank → `{ target: null, error: null }` (no target). A blank min with a
+ * max is a cap; a blank max with a min is a floor; both is a range. Anything
+ * non-numeric, fractional or failing `isValidHrTarget` returns an `error`.
+ */
+export function parseHrTargetInputs(
+  minText: string,
+  maxText: string
+): { target: TargetHeartRate | null; error: string | null } {
+  const parse = (text: string): number | null | "bad" => {
+    const t = text.trim();
+    if (t === "") return null;
+    const n = Number(t);
+    return Number.isInteger(n) ? n : "bad";
+  };
+  const minBpm = parse(minText);
+  const maxBpm = parse(maxText);
+  if (minBpm === "bad" || maxBpm === "bad") {
+    return { target: null, error: HR_TARGET_INPUT_ERROR };
+  }
+  if (minBpm == null && maxBpm == null) return { target: null, error: null };
+  const target: TargetHeartRate = { minBpm, maxBpm };
+  if (!isValidHrTarget(target)) return { target: null, error: HR_TARGET_INPUT_ERROR };
+  return { target, error: null };
+}
