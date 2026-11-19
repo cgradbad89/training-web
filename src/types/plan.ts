@@ -33,6 +33,17 @@ export function isActiveFromStatus(status: PlanStatus): boolean {
 
 export type PlanRunType = "outdoor" | "treadmill" | "otf" | "longRun" | "rest";
 
+/**
+ * Machine-readable heart-rate target, in ABSOLUTE bpm (independent of HR zones).
+ * cap = { minBpm: null, maxBpm: 135 }; range = { minBpm: 146, maxBpm: 155 };
+ * floor = { minBpm: 140, maxBpm: null }. At least one bound is non-null.
+ * See src/utils/hrTarget.ts.
+ */
+export interface TargetHeartRate {
+  minBpm: number | null;
+  maxBpm: number | null;
+}
+
 export interface PlannedRunEntry {
   id: string;
   weekIndex: number;   // 0-based week index into the plan
@@ -45,7 +56,12 @@ export interface PlannedRunEntry {
   runType?: PlanRunType;
   description?: string;
   notes?: string;
+  /** LEGACY plain HR cap in bpm. Kept for older readers; read through
+   *  `resolveHrTarget` (src/utils/hrTarget.ts), which prefers `targetHr`. */
   targetHeartRate?: number | null;
+  /** Structured HR target (cap / range / floor). When the target is a plain cap
+   *  the legacy `targetHeartRate` is dual-written; for a range it stays null. */
+  targetHr?: TargetHeartRate | null;
   /** Optional time of day, 24h "HH:MM" (e.g. "07:00"). Used for calendar export. */
   scheduledTime?: string;
   workoutType?: "easy" | "tempo" | "long" | "race" | "rest" | "cross";
