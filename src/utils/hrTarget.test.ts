@@ -7,7 +7,12 @@ import {
   evaluateHrTarget,
   formatHrActualLabel,
   formatHrTarget,
+  HR_PAUSE_GAP_SECONDS,
+  hrTimedSamplesFromStream,
   isMileOverTarget,
+  isTimeAboveCapEligible,
+  percentTimeAbove,
+  type HrTimedSample,
   isValidHrTarget,
   parseHrTargetFromNotes,
   parseHrTargetInputs,
@@ -351,5 +356,125 @@ describe("formatHrActualLabel", () => {
   });
   it("uses the rounded average", () => {
     expect(label(CAP_135, 137.6)).toBe("Avg 138 · over by 3");
+  });
+});
+
+describe("percentTimeAbove", () => {
+  /** 1 Hz samples from a bpm list; the last sample only closes the final interval. */
+  const at1Hz = (bpms: number[]): HrTimedSample[] => bpms.map((bpm, i) => ({ tSec: i, bpm }));
+
+  it("is 0 when every interval is at or below the cap", () => {
+    expect(percentTimeAbove(at1Hz([120, 130, 135, 100, 120]), 135)).toBe(0);
+  });
+  it("is 100 when every interval is above the cap", () => {
+    expect(percentTimeAbove(at1Hz([140, 150, 160, 170, 150]), 135)).toBe(100);
+  });
+  it("applies the cap literally (equal to the cap is NOT above)", () => {
+    expect(percentTimeAbove(at1Hz([135, 135, 136, 135]), 135)).toBeCloseTo(100 / 3, 10);
+  });
+  it("returns the exact percentage for a mix", () => {
+    // intervals attributed to samples 0..3: 120,140,150,130 (last sample closes) → 2 of 4 above
+    expect(percentTimeAbove(at1Hz([120, 140, 150, 130, 100]), 135)).toBe(50);
+  });
+  it("weights by interval length", () => {
+    const samples: HrTimedSample[] = [
+      { tSec: 0, bpm: 120 }, // 10 s below
+      { tSec: 10, bpm: 150 }, // 5 s above
+      { tSec: 15, bpm: 120 },
+    ];
+    expect(percentTimeAbove(samples, 135)).toBeCloseTo((5 / 15) * 100, 10);
+  });
+  it("skips a 45 s gap", () => {
+    const samples: HrTimedSample[] = [
+      { tSec: 0, bpm: 150 }, // 45 s pause → skipped entirely
+      { tSec: 45, bpm: 120 }, // 5 s below
+      { tSec: 50, bpm: 120 },
+    ];
+    expect(percentTimeAbove(samples, 135)).toBe(0);
+  });
+  it("counts a gap of exactly 30 s (the boundary)", () => {
+    expect(HR_PAUSE_GAP_SECONDS).toBe(30);
+    const samples: HrTimedSample[] = [
+      { tSec: 0, bpm: 150 }, // exactly 30 s → counted, above
+      { tSec: 30, bpm: 120 },
+      { tSec: 40, bpm: 120 }, // 10 s below
+    ];
+    expect(percentTimeAbove(samples, 135)).toBe(75);
+  });
+  it("skips samples with an out-of-range bpm", () => {
+    const samples: HrTimedSample[] = [
+      { tSec: 0, bpm: 250 }, // skipped (would be above)
+      { tSec: 10, bpm: 30 }, // skipped (would be below)
+      { tSec: 20, bpm: 150 }, // 10 s above
+      { tSec: 30, bpm: 120 },
+    ];
+    expect(percentTimeAbove(samples, 135)).toBe(100);
+  });
+  it("returns null for empty input, a single sample, or no valid time", () => {
+    expect(percentTimeAbove([], 135)).toBeNull();
+    expect(percentTimeAbove([{ tSec: 0, bpm: 150 }], 135)).toBeNull();
+    expect(percentTimeAbove(at1Hz([300, 300, 300]), 135)).toBeNull();
+  });
+  it("skips intervals with dt <= 0", () => {
+    const samples: HrTimedSample[] = [
+      { tSec: 5, bpm: 150 },
+      { tSec: 5, bpm: 150 }, // dt = 0 skipped
+      { tSec: 4, bpm: 120 }, // dt < 0 skipped; then 6 s below
+      { tSec: 10, bpm: 120 }, // 6 s below
+      { tSec: 16, bpm: 120 },
+    ];
+    expect(percentTimeAbove(samples, 135)).toBe(0);
+  });
+  it("honors a custom max gap", () => {
+    const samples: HrTimedSample[] = [
+      { tSec: 0, bpm: 150 },
+      { tSec: 20, bpm: 120 },
+    ];
+    expect(percentTimeAbove(samples, 135, 10)).toBeNull();
+    expect(percentTimeAbove(samples, 135, 20)).toBe(100);
+  });
+});
+
+describe("hrTimedSamplesFromStream", () => {
+  it("maps the real hrStream shape to seconds since the first sample", () => {
+    const out = hrTimedSamplesFromStream([
+      { timestamp: "2026-11-18T12:00:00.000Z", hr: 120 },
+      { timestamp: "2026-11-18T12:00:05.000Z", hr: 130 },
+      { timestamp: "2026-11-18T12:01:00.500Z", hr: 140 },
+    ]);
+    expect(out).toEqual([
+      { tSec: 0, bpm: 120 },
+      { tSec: 5, bpm: 130 },
+      { tSec: 60.5, bpm: 140 },
+    ]);
+  });
+  it("drops samples with an unparseable timestamp and anchors on the first valid one", () => {
+    const out = hrTimedSamplesFromStream([
+      { timestamp: "", hr: 100 },
+      { timestamp: "2026-11-18T12:00:10.000Z", hr: 120 },
+      { timestamp: "2026-11-18T12:00:12.000Z", hr: 125 },
+    ]);
+    expect(out).toEqual([
+      { tSec: 0, bpm: 120 },
+      { tSec: 2, bpm: 125 },
+    ]);
+  });
+  it("returns [] for an empty stream", () => {
+    expect(hrTimedSamplesFromStream([])).toEqual([]);
+  });
+});
+
+describe("isTimeAboveCapEligible", () => {
+  it("is true for an easy or long run with a cap-only target", () => {
+    expect(isTimeAboveCapEligible({ workoutType: "easy" }, CAP_135)).toBe(true);
+    expect(isTimeAboveCapEligible({ workoutType: "long" }, CAP_135)).toBe(true);
+  });
+  it("is false for a tempo range, a race cap, a range on an easy run, or no target", () => {
+    expect(isTimeAboveCapEligible({ workoutType: "tempo" }, RANGE_146_155)).toBe(false);
+    expect(isTimeAboveCapEligible({ workoutType: "tempo" }, CAP_135)).toBe(false);
+    expect(isTimeAboveCapEligible({ workoutType: "race" }, { minBpm: null, maxBpm: 160 })).toBe(false);
+    expect(isTimeAboveCapEligible({ workoutType: "easy" }, RANGE_146_155)).toBe(false);
+    expect(isTimeAboveCapEligible({ workoutType: "easy" }, null)).toBe(false);
+    expect(isTimeAboveCapEligible({ workoutType: undefined }, CAP_135)).toBe(false);
   });
 });
