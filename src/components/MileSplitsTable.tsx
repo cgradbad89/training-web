@@ -3,6 +3,8 @@
 import React from "react";
 import { type MileSplit } from "@/utils/mileSplits";
 import { formatPace } from "@/utils/pace";
+import type { TargetHeartRate } from "@/types/plan";
+import { isMileOverTarget } from "@/utils/hrTarget";
 
 interface MileSplitsTableProps {
   splits: MileSplit[];
@@ -10,6 +12,9 @@ interface MileSplitsTableProps {
   hasRoute: boolean;
   /** Per-mile grade-adjusted pace, sec/mi; index = mile-1. Optional. */
   gapPerMile?: number[];
+  /** Resolved HR target of the matched plan entry. When set, a mile whose
+   *  average HR is over it (beyond the grace) is flagged. Omitted → unchanged. */
+  hrTarget?: TargetHeartRate | null;
 }
 
 export function MileSplitsTable({
@@ -17,6 +22,7 @@ export function MileSplitsTable({
   routeLoading,
   hasRoute,
   gapPerMile,
+  hrTarget,
 }: MileSplitsTableProps) {
 
   // No GPS route at all
@@ -107,7 +113,15 @@ export function MileSplitsTable({
                 </td>
                 <td className="py-2.5 pl-4 text-right text-textPrimary tabular-nums">
                   {split.avgBpm ? (
-                    <span>{Math.round(split.avgBpm)} bpm</span>
+                    hrTarget && isMileOverTarget(hrTarget, split.avgBpm) === true ? (
+                      <span className="text-warning" title="Over target">
+                        <span aria-hidden="true">{"\u25B2"} </span>
+                        {Math.round(split.avgBpm)} bpm
+                        <span className="sr-only"> (over target)</span>
+                      </span>
+                    ) : (
+                      <span>{Math.round(split.avgBpm)} bpm</span>
+                    )
                   ) : (
                     <span className="text-textSecondary">{"—"}</span>
                   )}
