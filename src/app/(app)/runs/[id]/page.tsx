@@ -68,7 +68,18 @@ import {
 } from "@/types/workoutOverride";
 import { formatPace, formatDuration } from "@/utils/pace";
 import { resolveActivityTitle } from "@/utils/resolveActivityTitle";
-import { buildRunTitleMap, findActiveRunningPlan } from "@/utils/runPlanTitle";
+import {
+  buildRunPlanMatchMap,
+  buildRunTitleMap,
+  findActiveRunningPlan,
+} from "@/utils/runPlanTitle";
+import {
+  isTimeAboveCapEligible,
+  percentTimeAbove,
+  resolveHrTarget,
+} from "@/utils/hrTarget";
+import { useHrTimedSamples } from "@/hooks/useHrTimedSamples";
+import { HrTargetCard } from "@/components/runs/HrTargetCard";
 import { fetchPlans } from "@/services/plans";
 import { type RunningPlan } from "@/types/plan";
 import {
@@ -1175,6 +1186,31 @@ export default function RunDetailPage() {
     [activeRunningPlan, effectivePlanWindowWorkouts]
   );
 
+  // HR target vs actual. The matched plan entry comes from the SAME plan +
+  // plan-window workouts the title map uses (no new reads). The hrStream read
+  // happens ONLY for an easy/long run with a cap-only target whose workout has
+  // an hrStream; everything else renders from data already loaded.
+  const runPlanMatchMap = useMemo(
+    () => buildRunPlanMatchMap(activeRunningPlan, effectivePlanWindowWorkouts),
+    [activeRunningPlan, effectivePlanWindowWorkouts]
+  );
+  const planMatch = runPlanMatchMap.get(workoutId) ?? null;
+  const hrTarget = planMatch ? resolveHrTarget(planMatch.entry) : null;
+  const timeAboveEligible =
+    planMatch != null && isTimeAboveCapEligible(planMatch.entry, hrTarget);
+  const { samples: hrTimedSamples, loading: hrSamplesLoading } =
+    useHrTimedSamples(
+      workoutId,
+      timeAboveEligible && workout?.hasHRStream === true
+    );
+  const timeAbove = useMemo(() => {
+    if (!timeAboveEligible || hrTarget?.maxBpm == null || !hrTimedSamples) {
+      return null;
+    }
+    const pct = percentTimeAbove(hrTimedSamples, hrTarget.maxBpm);
+    return pct == null ? null : { pct, capBpm: hrTarget.maxBpm };
+  }, [timeAboveEligible, hrTarget, hrTimedSamples]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -1851,6 +1887,17 @@ export default function RunDetailPage() {
         </div>
       </div>
 
+      {/* ── Heart rate vs target (only when the run matches a plan entry with a target) ── */}
+      {planMatch && hrTarget && (
+        <HrTargetCard
+          target={hrTarget}
+          avgHr={displayWorkout.avgHeartRate}
+          isWholeRunWorkout={planMatch.entry.workoutType === "tempo"}
+          timeAbove={timeAbove}
+          timeAboveLoading={hrSamplesLoading}
+        />
+      )}
+
       {/* ── PR Badges ───────────────────────────────────────── */}
       {displayWorkout.prBadges && displayWorkout.prBadges.length > 0 && (
         <div className="flex flex-wrap gap-2">
@@ -1949,6 +1996,7 @@ export default function RunDetailPage() {
         routeLoading={routeLoading}
         hasRoute={effectiveHasRoute}
         gapPerMile={gapPerMile}
+        hrTarget={hrTarget}
       />
 
       {/* ── Pace & HR Charts ───────────────────────────────── */}

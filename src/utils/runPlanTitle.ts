@@ -17,7 +17,7 @@ import {
   isRunningPlan,
 } from "@/types/plan";
 import { type HealthWorkout } from "@/types/healthWorkout";
-import { matchPlanToActual } from "@/utils/planMatching";
+import { matchPlanToActual, type MatchQuality } from "@/utils/planMatching";
 import { buildRunEntryLabel } from "@/utils/resolveActivityTitle";
 
 /** The plan-entry context a surface feeds into `resolveActivityTitle`. */
@@ -61,6 +61,38 @@ export function buildRunTitleMap(
       label: buildRunEntryLabel(entry),
       distanceMiles: entry.distanceMiles,
     });
+  }
+  return map;
+}
+
+/** The matched plan entry (and match quality) for a run. */
+export interface RunPlanMatchInfo {
+  entry: PlannedRunEntry;
+  quality: MatchQuality;
+}
+
+/**
+ * Map of workoutId → matched plan entry + quality (full OR partial) for an
+ * active running plan. Sibling of `buildRunTitleMap` (which drops the entry);
+ * same `matchPlanToActual` inversion, no extra reads. Empty map with no plan.
+ */
+export function buildRunPlanMatchMap(
+  plan: RunningPlan | null | undefined,
+  workouts: HealthWorkout[]
+): Map<string, RunPlanMatchInfo> {
+  const map = new Map<string, RunPlanMatchInfo>();
+  if (!plan) return map;
+
+  const entryById = new Map<string, PlannedRunEntry>();
+  for (const week of plan.weeks) {
+    for (const entry of week.entries) entryById.set(entry.id, entry);
+  }
+
+  for (const [entryId, match] of matchPlanToActual(plan, workouts)) {
+    if (!match) continue;
+    const entry = entryById.get(entryId);
+    if (!entry) continue;
+    map.set(match.activity.workoutId, { entry, quality: match.quality });
   }
   return map;
 }

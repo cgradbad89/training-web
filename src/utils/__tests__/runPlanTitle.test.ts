@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  buildRunPlanMatchMap,
   buildRunTitleMap,
   findActiveRunningPlan,
 } from "@/utils/runPlanTitle";
@@ -141,5 +142,43 @@ describe("findActiveRunningPlan", () => {
   it("returns null when no running plan is active", () => {
     expect(findActiveRunningPlan([workoutPlan, runningPlan([], "completed")])).toBeNull();
     expect(findActiveRunningPlan([])).toBeNull();
+  });
+});
+
+describe("buildRunPlanMatchMap", () => {
+  const entry = runEntry({ id: "e-easy", workoutType: "easy", distanceMiles: 8, targetHeartRate: 135 });
+
+  it("carries the matched entry and quality for a full match", () => {
+    const plan = runningPlan([entry]);
+    const map = buildRunPlanMatchMap(plan, [workout({ workoutId: "w1", distanceMiles: 8 })]);
+    expect(map.get("w1")).toEqual({ entry, quality: "full" });
+  });
+
+  it("carries the entry for a PARTIAL match too", () => {
+    const plan = runningPlan([entry]);
+    const map = buildRunPlanMatchMap(plan, [workout({ workoutId: "w1", distanceMiles: 3 })]);
+    expect(map.get("w1")?.quality).toBe("partial");
+    expect(map.get("w1")?.entry.id).toBe("e-easy");
+  });
+
+  it("omits unmatched runs", () => {
+    const plan = runningPlan([entry]);
+    const far = workout({ workoutId: "far", startDate: new Date("2026-06-20T12:00:00Z"), distanceMiles: 8 });
+    const map = buildRunPlanMatchMap(plan, [far]);
+    expect(map.has("far")).toBe(false);
+  });
+
+  it("is empty without a plan", () => {
+    expect(buildRunPlanMatchMap(null, [workout({ workoutId: "w1" })]).size).toBe(0);
+    expect(buildRunPlanMatchMap(undefined, []).size).toBe(0);
+  });
+
+  it("leaves buildRunTitleMap output unchanged and keyed the same", () => {
+    const plan = runningPlan([entry]);
+    const runs = [workout({ workoutId: "w1", distanceMiles: 8 })];
+    const titles = buildRunTitleMap(plan, runs);
+    const matches = buildRunPlanMatchMap(plan, runs);
+    expect([...titles.keys()]).toEqual([...matches.keys()]);
+    expect(Object.keys(titles.get("w1")!).sort()).toEqual(["distanceMiles", "label"]);
   });
 });

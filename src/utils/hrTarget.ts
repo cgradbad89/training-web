@@ -19,6 +19,7 @@
  */
 
 import type { PlannedRunEntry, TargetHeartRate } from "@/types/plan";
+import type { HRStreamSample } from "@/services/hrStream";
 
 /** bpm of slack past a bound before a run counts as off target. */
 export const HR_TARGET_GRACE_BPM = 2;
@@ -305,4 +306,70 @@ export function parseHrTargetInputs(
   const target: TargetHeartRate = { minBpm, maxBpm };
   if (!isValidHrTarget(target)) return { target: null, error: HR_TARGET_INPUT_ERROR };
   return { target, error: null };
+}
+
+// ─── Time above a cap (hrStream) ─────────────────────────────────────────────
+
+/** One HR sample positioned in seconds since the first valid sample. */
+export interface HrTimedSample {
+  tSec: number;
+  bpm: number;
+}
+
+/** An interval longer than this (seconds) is a pause, not running time. */
+export const HR_PAUSE_GAP_SECONDS = 30;
+
+/**
+ * Percent (0–100, unrounded) of valid time spent strictly ABOVE `bpm`. Each
+ * interval runs from sample i to sample i+1 and is attributed to sample i's bpm.
+ * Skipped: intervals with dt ≤ 0, non-finite dt, or dt > `maxGapSeconds` (a
+ * pause — a gap of exactly the maximum is COUNTED), and samples whose bpm is
+ * outside 40–220. Returns null when no valid time exists (never 0 for "no data").
+ * The cap is applied LITERALLY — no grace.
+ */
+export function percentTimeAbove(
+  samples: HrTimedSample[],
+  bpm: number,
+  maxGapSeconds: number = HR_PAUSE_GAP_SECONDS
+): number | null {
+  let total = 0;
+  let above = 0;
+  for (let i = 0; i < samples.length - 1; i++) {
+    const dt = samples[i + 1].tSec - samples[i].tSec;
+    if (!Number.isFinite(dt) || dt <= 0 || dt > maxGapSeconds) continue;
+    if (!isBound(samples[i].bpm)) continue;
+    total += dt;
+    if (samples[i].bpm > bpm) above += dt;
+  }
+  return total > 0 ? (above / total) * 100 : null;
+}
+
+/**
+ * Map hrStream samples ({ timestamp: ISO, hr }) to seconds-since-first-valid-
+ * sample. Samples with an unparseable timestamp or a non-finite hr are dropped.
+ */
+export function hrTimedSamplesFromStream(
+  stream: HRStreamSample[]
+): HrTimedSample[] {
+  const out: HrTimedSample[] = [];
+  let t0: number | null = null;
+  for (const s of stream) {
+    const ms = Date.parse(s.timestamp);
+    if (!Number.isFinite(ms) || !Number.isFinite(s.hr)) continue;
+    if (t0 == null) t0 = ms;
+    out.push({ tSec: (ms - t0) / 1000, bpm: s.hr });
+  }
+  return out;
+}
+
+/**
+ * Whether "% of time above cap" applies: workoutType easy|long AND a cap-only
+ * target (min null, max set). Never tempo/range, races or no target.
+ */
+export function isTimeAboveCapEligible(
+  entry: Pick<PlannedRunEntry, "workoutType">,
+  target: TargetHeartRate | null
+): boolean {
+  if (!target || target.minBpm != null || target.maxBpm == null) return false;
+  return entry.workoutType === "easy" || entry.workoutType === "long";
 }
