@@ -5,6 +5,7 @@ import {
   HR_TARGET_INPUT_ERROR,
   computeWeekHrCounters,
   evaluateHrTarget,
+  formatHrActualLabel,
   formatHrTarget,
   isMileOverTarget,
   isValidHrTarget,
@@ -323,5 +324,32 @@ describe("parseHrTargetInputs", () => {
       expect(r.target).toBeNull();
       expect(r.error).toBe(HR_TARGET_INPUT_ERROR);
     }
+  });
+});
+
+describe("formatHrActualLabel", () => {
+  const label = (t: TargetHeartRate, avg: number | null) => formatHrActualLabel(evaluateHrTarget(t, avg));
+
+  it("on target inside the bounds", () => {
+    expect(label(CAP_135, 133)).toBe("Avg 133 · on target");
+    expect(label(RANGE_146_155, 150)).toBe("Avg 150 · on target");
+  });
+  it("on target within grace shows the signed delta", () => {
+    expect(label(CAP_135, 137)).toBe("Avg 137 · on target (+2)");
+    expect(label(RANGE_146_155, 157)).toBe("Avg 157 · on target (+2)");
+    expect(label(RANGE_146_155, 144)).toBe("Avg 144 · on target (−2)");
+  });
+  it("over", () => {
+    expect(label(CAP_135, 138)).toBe("Avg 138 · over by 3");
+    expect(label(RANGE_146_155, 158)).toBe("Avg 158 · over by 3");
+  });
+  it("under-range", () => {
+    expect(label(RANGE_146_155, 143)).toBe("Avg 143 · under by 3");
+  });
+  it("is null for no-data", () => {
+    expect(label(CAP_135, null)).toBeNull();
+  });
+  it("uses the rounded average", () => {
+    expect(label(CAP_135, 137.6)).toBe("Avg 138 · over by 3");
   });
 });
