@@ -156,6 +156,31 @@ export function evaluateHrTarget(
 }
 
 /**
+ * Display label for a matched run's HR result, or null when there is no data:
+ *   on target, inside the bounds  → "Avg 133 · on target"
+ *   on target within grace        → "Avg 137 · on target (+2)" / "Avg 144 · on target (−2)"
+ *   over                          → "Avg 138 · over by 3"
+ *   under-range                   → "Avg 143 · under by 3"
+ * The words carry the meaning (never color alone).
+ */
+export function formatHrActualLabel(result: HrTargetResult): string | null {
+  if (result.status === "no-data" || result.avgBpm == null || result.deltaBpm == null) {
+    return null;
+  }
+  const avg = `Avg ${result.avgBpm}`;
+  const delta = result.deltaBpm;
+  switch (result.status) {
+    case "over":
+      return `${avg} · over by ${Math.abs(delta)}`;
+    case "under-range":
+      return `${avg} · under by ${Math.abs(delta)}`;
+    case "on-target":
+      if (delta === 0) return `${avg} · on target`;
+      return `${avg} · on target (${delta > 0 ? "+" : "−"}${Math.abs(delta)})`;
+  }
+}
+
+/**
  * Per-mile flag: true when the mile's (rounded) average HR is above the
  * target's max by more than the grace. A target without a max (floor) can never
  * be "over". null = no usable mile HR.
