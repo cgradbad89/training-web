@@ -15,7 +15,9 @@
     "snapshot:export": "SNAPSHOT_EXPORT=1 vitest run scripts/exportFirestoreSnapshot.test.ts",
     "snapshot:import": "SNAPSHOT_IMPORT=1 vitest run scripts/importFirestoreSnapshot.test.ts",
     "plan:replace-rnr:dry": "RNR_REPLACE=dry vitest run scripts/replaceRnrPlanFrom20261118.test.ts",
-    "plan:replace-rnr:commit": "RNR_REPLACE=commit vitest run scripts/replaceRnrPlanFrom20261118.test.ts"
+    "plan:replace-rnr:commit": "RNR_REPLACE=commit vitest run scripts/replaceRnrPlanFrom20261118.test.ts",
+    "plan:backfill-hr:dry": "HR_BACKFILL=dry vitest run scripts/backfillHrTargets20261118.test.ts",
+    "plan:backfill-hr:commit": "HR_BACKFILL=commit vitest run scripts/backfillHrTargets20261118.test.ts"
   },
   "dependencies": {
     "@google-cloud/firestore": "^7.11.6",
