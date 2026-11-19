@@ -1,9 +1,12 @@
 import { 
   type RunningPlan, 
+  type PlannedRunEntry,
   type WorkoutPlan,
   isExerciseItem,
   isSectionItem
 } from "@/types/plan";
+
+import { formatHrTarget, resolveHrTarget } from "@/utils/hrTarget";
 
 function escapeCsvField(field: string | number | null | undefined): string {
   if (field === null || field === undefined) return "";
@@ -23,6 +26,12 @@ function getFormattedDate(startDateStr: string, weekNumber: number, weekday: num
   const daysOffset = (weekNumber - 1) * 7 + (weekday - 1);
   date.setDate(date.getDate() + daysOffset);
   return `${date.getMonth() + 1}/${date.getDate()}`;
+}
+
+/** "≤ 135" / "146–155" / "≥ 140" from the resolved target, "" when none. */
+function hrTargetCell(entry: PlannedRunEntry): string {
+  const target = resolveHrTarget(entry);
+  return target ? formatHrTarget(target) : "";
 }
 
 export function generateRunningPlanCsv(plan: RunningPlan): string {
@@ -53,7 +62,7 @@ export function generateRunningPlanCsv(plan: RunningPlan): string {
         entry.runType ?? "",
         entry.distanceMiles > 0 ? String(entry.distanceMiles) : "",
         entry.paceTarget ?? "",
-        entry.targetHeartRate ? String(entry.targetHeartRate) : "",
+        hrTargetCell(entry),
         entry.scheduledTime ?? "",
         entry.description ?? "",
         entry.notes ?? ""

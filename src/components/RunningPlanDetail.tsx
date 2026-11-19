@@ -13,7 +13,7 @@
  * matchPlanToActual / statusForRunEntry the running view uses — no new logic.
  */
 
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { useUnsavedChanges } from "@/hooks/useUnsavedChanges";
 import { usePlanDraftEdit } from "@/hooks/usePlanDraftEdit";
 import {
@@ -35,6 +35,11 @@ import { matchPlanToActual, statusForRunEntry } from "@/utils/planMatching";
 import { formatPace, parsePaceString } from "@/utils/pace";
 import { deepCopyRunEntry } from "@/utils/planCopy";
 import { mergeEditedEntry, type PlannedRunEntryEdits } from "@/utils/planEntryEdit";
+import {
+  parseHrTargetInputs,
+  resolveHrTarget,
+  toLegacyTargetHeartRate,
+} from "@/utils/hrTarget";
 import { formatCompletedAt } from "@/utils/planFormat";
 import { snapToMonday, upcomingMonday } from "@/utils/planDateEdit";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -106,16 +111,25 @@ function EntryForm({ initial, isNew, weekday, weekIndex, onSave, onCancel }: Ent
     initial.distanceMiles ? String(initial.distanceMiles) : ""
   );
   const [paceInput, setPaceInput] = useState(initial.paceTarget ?? "");
-  const [targetHeartRate, setTargetHeartRate] = useState(
-    initial.targetHeartRate != null ? String(initial.targetHeartRate) : ""
+  // HR target: two inputs. Blank min + a max = a cap; both blank = no target.
+  // Prefilled from the resolved target (structured `targetHr`, else legacy cap).
+  const hrFieldId = useId();
+  const initialHrTarget = resolveHrTarget(initial);
+  const [hrMin, setHrMin] = useState(
+    initialHrTarget?.minBpm != null ? String(initialHrTarget.minBpm) : ""
   );
+  const [hrMax, setHrMax] = useState(
+    initialHrTarget?.maxBpm != null ? String(initialHrTarget.maxBpm) : ""
+  );
+  const hrParsed = parseHrTargetInputs(hrMin, hrMax);
   const [scheduledTime, setScheduledTime] = useState(initial.scheduledTime ?? "");
   const [notes, setNotes] = useState(initial.notes ?? "");
 
   function handleSave() {
     const dist = parseFloat(distanceMiles);
     if (isNaN(dist) || dist <= 0) return;
-    const hr = targetHeartRate ? parseInt(targetHeartRate, 10) : null;
+    if (hrParsed.error) return;
+    const targetHr = hrParsed.target;
 
     const parsedPace = parsePaceString(paceInput.trim());
     const paceTarget = parsedPace
@@ -128,7 +142,8 @@ function EntryForm({ initial, isNew, weekday, weekIndex, onSave, onCancel }: Ent
       paceTarget,
       description: description.trim() || undefined,
       notes: notes.trim() || undefined,
-      targetHeartRate: hr,
+      targetHr,
+      targetHeartRate: toLegacyTargetHeartRate(targetHr),
       scheduledTime: normalizeScheduledTime(scheduledTime),
     };
 
@@ -204,17 +219,55 @@ function EntryForm({ initial, isNew, weekday, weekIndex, onSave, onCancel }: Ent
           />
           <span className="text-sm text-textSecondary shrink-0">/mi</span>
         </div>
-        <div className="flex items-center gap-1">
-          <input
-            type="number"
-            value={targetHeartRate}
-            onChange={(e) => setTargetHeartRate(e.target.value)}
-            placeholder="HR"
-            min="0"
-            max="250"
-            className="flex-1 text-sm border border-border rounded-lg px-2 py-1.5 bg-card text-textPrimary placeholder:text-textSecondary"
-          />
-          <span className="text-sm text-textSecondary shrink-0">bpm</span>
+        <div className="md:col-span-2">
+          <div className="grid grid-cols-2 gap-2">
+            <div className="flex flex-col gap-0.5">
+              <label htmlFor={`${hrFieldId}-min`} className="text-xs text-textSecondary">
+                HR min (bpm)
+              </label>
+              <input
+                id={`${hrFieldId}-min`}
+                type="number"
+                inputMode="numeric"
+                value={hrMin}
+                onChange={(e) => setHrMin(e.target.value)}
+                placeholder="none"
+                min="40"
+                max="220"
+                step="1"
+                aria-invalid={hrParsed.error ? true : undefined}
+                aria-describedby={hrParsed.error ? `${hrFieldId}-error` : undefined}
+                className="w-full text-sm border border-border rounded-lg px-2 py-1.5 bg-card text-textPrimary placeholder:text-textSecondary"
+              />
+            </div>
+            <div className="flex flex-col gap-0.5">
+              <label htmlFor={`${hrFieldId}-max`} className="text-xs text-textSecondary">
+                HR max (bpm)
+              </label>
+              <input
+                id={`${hrFieldId}-max`}
+                type="number"
+                inputMode="numeric"
+                value={hrMax}
+                onChange={(e) => setHrMax(e.target.value)}
+                placeholder="e.g. 135"
+                min="40"
+                max="220"
+                step="1"
+                aria-invalid={hrParsed.error ? true : undefined}
+                aria-describedby={hrParsed.error ? `${hrFieldId}-error` : undefined}
+                className="w-full text-sm border border-border rounded-lg px-2 py-1.5 bg-card text-textPrimary placeholder:text-textSecondary"
+              />
+            </div>
+          </div>
+          <p className="mt-1 text-xs text-textSecondary">
+            Max only = a cap (e.g. ≤ 135). Min and max = a range.
+          </p>
+          {hrParsed.error && (
+            <p id={`${hrFieldId}-error`} role="alert" className="mt-1 text-xs text-danger">
+              {hrParsed.error}
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-1">
           <input
@@ -246,7 +299,8 @@ function EntryForm({ initial, isNew, weekday, weekIndex, onSave, onCancel }: Ent
         </button>
         <button
           onClick={handleSave}
-          className="flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-white bg-primary rounded-lg hover:bg-primary/90 transition-colors"
+          disabled={hrParsed.error != null}
+          className="flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-white bg-primary rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <Check className="w-3 h-3" /> Apply Entry
         </button>

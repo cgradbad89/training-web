@@ -13,6 +13,7 @@
 
 import type { PlannedRunEntry } from "@/types/plan";
 import { parsePaceString } from "@/utils/pace";
+import { toLegacyTargetHeartRate } from "@/utils/hrTarget";
 
 /** Fields `EntryForm` lets the user edit (exactly the form's inputs). */
 export type PlannedRunEntryEdits = Partial<
@@ -24,6 +25,7 @@ export type PlannedRunEntryEdits = Partial<
     | "description"
     | "notes"
     | "targetHeartRate"
+    | "targetHr"
     | "scheduledTime"
   >
 >;
@@ -81,6 +83,10 @@ function paceSecondsFor(paceText: string | undefined): number | null {
  * ("8:50-9:10" -> 540), then the leading m:ss token; if none resolves,
  * `targetPaceSecondsPerMile` is removed (never left stale, never 0/NaN).
  *
+ * HR dual-write: when `targetHr` is in `edits`, the legacy `targetHeartRate` is
+ * set from it too (`toLegacyTargetHeartRate`: the max for a cap, null for a
+ * range/floor/none) so older readers keep seeing a plain cap.
+ *
  * Pure: returns a new object, never mutates `existing`.
  */
 export function mergeEditedEntry(
@@ -91,6 +97,10 @@ export function mergeEditedEntry(
   for (const [key, value] of Object.entries(edits)) {
     if (value === undefined) delete merged[key];
     else merged[key] = value;
+  }
+
+  if ("targetHr" in edits) {
+    merged.targetHeartRate = toLegacyTargetHeartRate(edits.targetHr);
   }
 
   if ("paceTarget" in edits && edits.paceTarget !== existing.paceTarget) {
