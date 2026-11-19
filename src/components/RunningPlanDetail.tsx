@@ -36,10 +36,12 @@ import { formatPace, parsePaceString } from "@/utils/pace";
 import { deepCopyRunEntry } from "@/utils/planCopy";
 import { mergeEditedEntry, type PlannedRunEntryEdits } from "@/utils/planEntryEdit";
 import {
+  computeWeekHrCounters,
   parseHrTargetInputs,
   resolveHrTarget,
   toLegacyTargetHeartRate,
 } from "@/utils/hrTarget";
+import { HrTargetChips } from "@/components/plans/HrTargetChips";
 import { formatCompletedAt } from "@/utils/planFormat";
 import { snapToMonday, upcomingMonday } from "@/utils/planDateEdit";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -463,11 +465,11 @@ export function RunningPlanDetail({
             {entry.paceTarget && (
               <span className="text-sm text-textSecondary">@ {entry.paceTarget}/mi</span>
             )}
-            {entry.targetHeartRate && (
-              <span className="text-xs text-textSecondary">
-                HR: {entry.targetHeartRate} bpm
-              </span>
-            )}
+            <HrTargetChips
+              target={resolveHrTarget(entry)}
+              avgHr={match?.activity.avgHeartRate}
+              matched={match != null}
+            />
             {entry.notes && (
               <span className="text-xs text-textSecondary italic">{entry.notes}</span>
             )}
@@ -548,6 +550,14 @@ export function RunningPlanDetail({
           },
           (entry) => statusForRunEntry(editablePlan, entry, matchMap)
         );
+      const hr = computeWeekHrCounters(entries, (id) => {
+        const m = matchMap.get(id);
+        return m ? { avgHeartRate: m.activity.avgHeartRate } : null;
+      });
+      const hrCounters = [
+        { label: "Easy runs under cap", ...hr.easyUnderCap },
+        { label: "Workouts in range", ...hr.workoutsInRange },
+      ].filter((c) => c.total > 0);
       return (
         <div className="mt-4 p-3 rounded-xl bg-surface border border-border">
           <div className="flex items-center justify-between text-sm mb-2">
@@ -571,6 +581,25 @@ export function RunningPlanDetail({
               style={{ width: `${pct * 100}%` }}
             />
           </div>
+          {hrCounters.length > 0 && (
+            <div
+              data-testid="week-hr-counters"
+              className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-textSecondary"
+            >
+              {hrCounters.map((c) => (
+                <span key={c.label}>
+                  {c.label}{" "}
+                  <span
+                    className={`font-medium tabular-nums ${
+                      c.met === c.total ? "text-success" : "text-textPrimary"
+                    }`}
+                  >
+                    {c.met} of {c.total}
+                  </span>
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       );
     },
