@@ -8,7 +8,9 @@
  *   - workoutOverrides: `getAll` of the override docs whose ids are those
  *     workouts' ids;
  *   - plans: the whole collection (legacy docs lack `status`, so active plans
- *     are resolved in code exactly as the dashboard does).
+ *     are resolved in code exactly as the dashboard does);
+ *   - halfMarathonRaces: the whole collection, five fields only (for the race
+ *     countdown; the upcoming race is chosen in code).
  * Only the document fields the shared mappers read are selected, so large route/
  * chart caches on workout documents are never transferred.
  *
@@ -18,10 +20,12 @@
  */
 
 import type { Plan } from "@/types/plan";
+import type { Race } from "@/types/race";
 import type { WorkoutOverride } from "@/types/workoutOverride";
 import type { ZonedWeek } from "@/lib/hubWeek";
 import { toHubWorkout, type HubWorkout } from "@/lib/hubTrainingWeek";
 import { normalizePlanDocument } from "@/utils/planDocument";
+import { normalizeRaceDocument } from "@/utils/raceDocument";
 
 export type HubReadFailure = "permission" | "upstream";
 
@@ -46,10 +50,15 @@ const PLAN_FIELDS = [
   "name", "planType", "startDate", "weeks", "status", "isActive", "createdAt", "updatedAt",
 ] as const;
 
+const RACE_FIELDS = [
+  "name", "raceDate", "raceDistance", "customDistanceMiles", "isActive",
+] as const;
+
 export interface HubWeekRead {
   workouts: HubWorkout[];
   overrides: Record<string, WorkoutOverride>;
   plans: Plan[];
+  races: Race[];
   stagesMs: { workouts: number; overrides: number; plans: number };
   counts: { workouts: number; overrides: number; plans: number };
 }
@@ -94,7 +103,16 @@ export async function readHubWeek(
       return snap.docs.map((d) => normalizePlanDocument(d.id, d.data() as Record<string, unknown>));
     });
 
-    const [workoutsResult, plansResult] = await Promise.all([workoutsStage, plansStage]);
+    const racesStage = (async () => {
+      const snap = await userRef.collection("halfMarathonRaces").select(...RACE_FIELDS).get();
+      return snap.docs.map((d) => normalizeRaceDocument(d.id, d.data() as Record<string, unknown>));
+    })();
+
+    const [workoutsResult, plansResult, races] = await Promise.all([
+      workoutsStage,
+      plansStage,
+      racesStage,
+    ]);
     const workouts = workoutsResult.value;
 
     const overridesResult = await timed(async () => {
@@ -116,6 +134,7 @@ export async function readHubWeek(
       workouts,
       overrides: overridesResult.value,
       plans: plansResult.value,
+      races,
       stagesMs: { workouts: workoutsResult.ms, overrides: overridesResult.ms, plans: plansResult.ms },
       counts: {
         workouts: workouts.length,

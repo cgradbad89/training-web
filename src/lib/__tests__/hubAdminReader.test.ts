@@ -11,6 +11,8 @@ const h = vi.hoisted(() => {
   const state = {
     workoutDocs: [] as { id: string; data: Record<string, unknown> }[],
     planDocs: [] as { id: string; data: Record<string, unknown> }[],
+    raceDocs: [] as { id: string; data: Record<string, unknown> }[],
+    raceSelect: [] as unknown[],
     overrideDocs: {} as Record<string, Record<string, unknown>>,
     failWith: null as unknown,
     workoutWhere: [] as unknown[][],
@@ -26,17 +28,17 @@ const h = vi.hoisted(() => {
   function snapshot(docs: { id: string; data: Record<string, unknown> }[]) {
     return { docs: docs.map((d) => ({ id: d.id, data: () => d.data })) };
   }
-  function query(kind: "workouts" | "plans") {
+  function query(kind: "workouts" | "plans" | "races") {
     const q: Record<string, unknown> = {
       ...writeGuards,
       where: (...args: unknown[]) => { calls.push(`${kind}.where`); if (kind === "workouts") state.workoutWhere.push(args); return q; },
       orderBy: () => { calls.push(`${kind}.orderBy`); return q; },
-      select: () => { calls.push(`${kind}.select`); return q; },
+      select: (...fields: unknown[]) => { calls.push(`${kind}.select`); if (kind === "races") state.raceSelect = fields; return q; },
       limit: () => { calls.push(`${kind}.limit`); return q; },
       get: async () => {
         calls.push(`${kind}.get`);
         if (state.failWith) throw state.failWith;
-        return snapshot(kind === "workouts" ? state.workoutDocs : state.planDocs);
+        return snapshot(kind === "workouts" ? state.workoutDocs : kind === "plans" ? state.planDocs : state.raceDocs);
       },
     };
     return q;
@@ -53,6 +55,7 @@ const h = vi.hoisted(() => {
             collection: (sub: string) => {
               if (sub === "healthWorkouts") return query("workouts");
               if (sub === "plans") return query("plans");
+              if (sub === "halfMarathonRaces") return query("races");
               return { doc: (id: string) => ({ __override: id }) };
             },
           };
@@ -99,6 +102,8 @@ beforeEach(() => {
   h.calls.length = 0;
   h.state.workoutDocs = [];
   h.state.planDocs = [];
+  h.state.raceDocs = [];
+  h.state.raceSelect = [];
   h.state.overrideDocs = {};
   h.state.failWith = null;
   h.state.workoutWhere = [];
@@ -130,6 +135,18 @@ describe("readHubWeek", () => {
     expect(read.plans.map((p) => [p.id, p.status])).toEqual([["p1", "active"], ["p2", "active"]]);
     expect(read.stagesMs.workouts).toBeGreaterThanOrEqual(0);
     // Only read-shaped calls were made (write methods throw in the fake).
+    expect(h.calls.every((c) => /collection|where|orderBy|select|limit|get|getAll/.test(c))).toBe(true);
+  });
+
+  it("reads the uid's races with only the five countdown fields, normalized like fetchRaces", async () => {
+    h.state.raceDocs = [
+      { id: "r1", data: { name: "Half", raceDate: "2027-03-21", raceDistance: "halfMarathon", isActive: true } },
+    ];
+    const read = await readHubWeek("the-uid", week);
+    expect(h.state.raceSelect).toEqual(["name", "raceDate", "raceDistance", "customDistanceMiles", "isActive"]);
+    expect(read.races.map((r) => [r.id, r.name, r.raceDate, r.isActive])).toEqual([["r1", "Half", "2027-03-21", true]]);
+    // Additive: the existing counts shape (and its timing log) is unchanged.
+    expect(read.counts).toEqual({ workouts: 0, overrides: 0, plans: 0 });
     expect(h.calls.every((c) => /collection|where|orderBy|select|limit|get|getAll/.test(c))).toBe(true);
   });
 

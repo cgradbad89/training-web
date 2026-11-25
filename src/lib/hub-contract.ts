@@ -29,10 +29,31 @@ export interface TrainingData {
   days: SevenDays<{
     date: string;
     planned?: string;
+    /**
+     * Planned run miles for this day: sum of `distanceMiles` of the active
+     * running plan's non-rest entries dated this day. 0 when none. (Additive,
+     * for Hub Glance.)
+     */
+    targetMiles: number;
     completed: { type: string; miles?: number }[];
   }>;
   totals: { runs: number; miles: number; workouts: number };
   planned: { runs: number; miles: number; workouts: number };
+  /**
+   * The race being trained for: the goal race (`isActive`) when it is today or
+   * later, otherwise the soonest upcoming race; null when no race is upcoming.
+   * `daysRemaining` counts Eastern civil days (0 = race day). (Additive, for Hub Glance.)
+   */
+  race: HubRace | null;
+}
+
+export interface HubRace {
+  name: string;
+  /** Race day, "YYYY-MM-DD". */
+  date: string;
+  /** "5K", "10K", "Half Marathon", "Marathon", or "<n> mi" for a custom distance. */
+  distance: string;
+  daysRemaining: number;
 }
 
 /** Where the hub's Training tile links to. */

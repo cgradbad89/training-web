@@ -99,6 +99,15 @@ export function addDaysToKey(dateKey: string, days: number): string {
   return `${pad(shifted.getUTCFullYear(), 4)}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())}`;
 }
 
+/** Whole civil days from `fromKey` to `toKey` (negative when `toKey` is earlier). */
+export function daysBetweenKeys(fromKey: string, toKey: string): number {
+  const a = parseKey(fromKey);
+  const b = parseKey(toKey);
+  return Math.round(
+    (Date.UTC(b.y, b.m - 1, b.d) - Date.UTC(a.y, a.m - 1, a.d)) / MS_PER_DAY
+  );
+}
+
 /** Monday (Monday-start weeks, like `weekStart()`) of the week containing the civil date. */
 export function mondayOfKey(dateKey: string): string {
   const { y, m, d } = parseKey(dateKey);

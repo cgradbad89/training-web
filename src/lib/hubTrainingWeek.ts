@@ -23,8 +23,10 @@
 import type { Plan } from "@/types/plan";
 import type { WorkoutOverride, OverridableWorkout } from "@/types/workoutOverride";
 import type { HealthWorkout } from "@/types/healthWorkout";
-import type { TrainingData } from "@/lib/hub-contract";
-import { formatWeekLabel, zonedWeekFor } from "@/lib/hubWeek";
+import type { HubRace, TrainingData } from "@/lib/hub-contract";
+import type { Race } from "@/types/race";
+import { RACE_DISTANCE_LABELS } from "@/types/race";
+import { daysBetweenKeys, formatWeekLabel, todayInZone, zonedWeekFor } from "@/lib/hubWeek";
 import { parseLocalDate, toLocalIsoDate, weekEnd, weekStart } from "@/utils/dates";
 import { selectEffectiveWorkouts } from "@/utils/selectActiveWorkouts";
 import { groupByDay, summarizeWeekActivity } from "@/utils/weekActivitySummary";
@@ -51,6 +53,8 @@ export interface TrainingWeekInput {
   /** Raw workouts for the week (exclusions/overrides are applied here). */
   workouts: HubWorkout[];
   overrides: Record<string, WorkoutOverride> | null | undefined;
+  /** The user's races (`halfMarathonRaces`); omit or [] when none. */
+  races?: Race[];
   now: Date;
   /** IANA zone for the week and day buckets; omit for HOST-LOCAL (dashboard default). */
   timeZone?: string;
@@ -93,8 +97,42 @@ function resolveWeek(now: Date, timeZone: string | undefined): ResolvedWeek {
   };
 }
 
+const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
+
+function raceDistanceLabel(race: Race): string {
+  if (race.raceDistance === "custom") {
+    const miles = race.customDistanceMiles;
+    return typeof miles === "number" && Number.isFinite(miles) && miles > 0
+      ? `${Number(miles.toFixed(2))} mi`
+      : RACE_DISTANCE_LABELS.custom;
+  }
+  return RACE_DISTANCE_LABELS[race.raceDistance] ?? String(race.raceDistance);
+}
+
+/**
+ * The race being trained for, as of `todayKey`: the goal race (`isActive`)
+ * when its date is today or later, else the soonest upcoming race (ties by
+ * name), else null. Same "upcoming" rule as `daysUntil(raceDate) >= 0` on the
+ * Races / Coach pages, with the day count taken on civil dates.
+ */
+export function selectHubRace(races: Race[] | undefined, todayKey: string): HubRace | null {
+  const upcoming = (races ?? [])
+    .filter((r) => typeof r.raceDate === "string" && DATE_KEY.test(r.raceDate))
+    .map((r) => ({ race: r, days: daysBetweenKeys(todayKey, r.raceDate) }))
+    .filter((r) => r.days >= 0)
+    .sort((a, b) => a.days - b.days || (a.race.name ?? "").localeCompare(b.race.name ?? ""));
+  const chosen = upcoming.find((r) => r.race.isActive === true) ?? upcoming[0];
+  if (!chosen) return null;
+  return {
+    name: typeof chosen.race.name === "string" && chosen.race.name.trim() ? chosen.race.name : "Race",
+    date: chosen.race.raceDate,
+    distance: raceDistanceLabel(chosen.race),
+    daysRemaining: chosen.days,
+  };
+}
+
 export function deriveTrainingWeek(input: TrainingWeekInput): TrainingWeek {
-  const { plans, workouts, overrides, now, timeZone } = input;
+  const { plans, workouts, overrides, races, now, timeZone } = input;
   const week = resolveWeek(now, timeZone);
 
   const effective = selectEffectiveWorkouts(workouts, overrides);
@@ -113,6 +151,7 @@ export function deriveTrainingWeek(input: TrainingWeekInput): TrainingWeek {
   const { sessionsPlanned } = workoutPlanSessions(workoutPlan, monday);
 
   const plannedByDay = new Map<string, string[]>();
+  const targetMilesByDay = new Map<string, number>();
   const addPlanned = (date: Date, text: string) => {
     const key = toLocalIsoDate(date);
     const list = plannedByDay.get(key);
@@ -121,6 +160,9 @@ export function deriveTrainingWeek(input: TrainingWeekInput): TrainingWeek {
   };
   if (runningPlan) {
     for (const s of plannedSessionsForPlan(runningPlan)) {
+      const key = toLocalIsoDate(s.date);
+      const miles = Number.isFinite(s.distanceMiles) && s.distanceMiles > 0 ? s.distanceMiles : 0;
+      targetMilesByDay.set(key, (targetMilesByDay.get(key) ?? 0) + miles);
       addPlanned(
         s.date,
         s.distanceMiles > 0 ? `${s.distanceMiles.toFixed(1)} mi ${s.label}` : s.label
@@ -133,6 +175,7 @@ export function deriveTrainingWeek(input: TrainingWeekInput): TrainingWeek {
 
   const days = week.dayKeys.map((date) => {
     const planned = plannedByDay.get(date);
+    const targetMiles = targetMilesByDay.get(date) ?? 0;
     const completed = (byDay.get(date) ?? []).map((w) =>
       w.isRunLike
         ? { type: "run", miles: w.distanceMiles }
@@ -146,8 +189,8 @@ export function deriveTrainingWeek(input: TrainingWeekInput): TrainingWeek {
           }
     );
     return planned && planned.length > 0
-      ? { date, planned: planned.join(" · "), completed }
-      : { date, completed };
+      ? { date, planned: planned.join(" · "), targetMiles, completed }
+      : { date, targetMiles, completed };
   }) as TrainingData["days"];
 
   return {
@@ -160,6 +203,7 @@ export function deriveTrainingWeek(input: TrainingWeekInput): TrainingWeek {
         miles: plannedRuns.miles,
         workouts: sessionsPlanned,
       },
+      race: selectHubRace(races, timeZone ? todayInZone(now, timeZone) : toLocalIsoDate(now)),
     },
   };
 }
