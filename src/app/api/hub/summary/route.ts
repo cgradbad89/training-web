@@ -96,6 +96,7 @@ export async function GET(request: Request): Promise<Response> {
         plans: read.plans,
         workouts: read.workouts,
         overrides: read.overrides,
+        races: read.races,
         now,
         timeZone: HUB_TIME_ZONE,
       });

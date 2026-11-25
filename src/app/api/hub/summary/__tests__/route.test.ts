@@ -45,6 +45,9 @@ function okRead() {
     ],
     overrides: {},
     plans: [],
+    races: [
+      { id: "r1", name: "Spring Half", raceDate: "2026-12-06", raceDistance: "halfMarathon", isActive: true, createdAt: "2026-01-01T00:00:00.000Z" },
+    ],
     stagesMs: { workouts: 12, overrides: 3, plans: 7 },
     counts: { workouts: 2, overrides: 0, plans: 0 },
   };
@@ -64,6 +67,7 @@ function expectTrainingEnvelope(body: HubSummary<TrainingData>) {
     if (i > 0) expect(day.date > body.data.days[i - 1].date).toBe(true);
     expect(Array.isArray(day.completed)).toBe(true);
     if (day.planned !== undefined) expect(typeof day.planned).toBe("string");
+    expect(typeof day.targetMiles).toBe("number");
     for (const item of day.completed) {
       expect(typeof item.type).toBe("string");
       if (item.miles !== undefined) expect(typeof item.miles).toBe("number");
@@ -111,6 +115,11 @@ describe("GET /api/hub/summary", () => {
     expect(body.generatedAt).toBe(NOW.toISOString());
     expect(body.data.totals).toEqual({ runs: 1, miles: 4.25, workouts: 1 });
     expect(body.data.days.map((d) => d.date)[0]).toBe("2026-11-09");
+    // Additive Hub Glance fields: per-day numeric targets and the race countdown.
+    expect(body.data.days.map((d) => d.targetMiles)).toEqual([0, 0, 0, 0, 0, 0, 0]);
+    expect(body.data.race).toEqual({
+      name: "Spring Half", date: "2026-12-06", distance: "Half Marathon", daysRemaining: 25,
+    });
     // The reader is scoped to the verified uid and the exact Eastern week.
     const week = zonedWeekFor(NOW);
     expect(h.readHubWeek).toHaveBeenCalledTimes(1);

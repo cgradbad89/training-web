@@ -24,7 +24,8 @@
  */
 
 import { afterAll, describe, expect, it } from "vitest";
-import { deriveTrainingWeek, toHubWorkout, type HubWorkout } from "@/lib/hubTrainingWeek";
+import { deriveTrainingWeek, selectHubRace, toHubWorkout, type HubWorkout } from "@/lib/hubTrainingWeek";
+import type { Race } from "@/types/race";
 import { HUB_TIME_ZONE } from "@/lib/hubWeek";
 import {
   isRunningPlan,
@@ -569,6 +570,72 @@ describe.each(HOST_ZONES)("Eastern-pinned absolute expectations — host TZ %s",
       // Walk keeps no miles on the item and is not in totals.miles.
       expect(data.days[5].completed.find((c) => c.type === "Walk")).toEqual({ type: "Walk" });
     });
+  });
+});
+
+// Additive Hub Glance fields (targetMiles, race) — hand-derived, outside the frozen reference.
+describe.each(HOST_ZONES)("Hub Glance additions — host TZ %s", (hostZone) => {
+  it("targetMiles: per-day planned run miles, rest entries skipped, 0 on run-free days", () => {
+    withTZ(hostZone, () => {
+      const { data } = deriveTrainingWeek(sharedInput(scenarios()[0], HUB_TIME_ZONE));
+      // Mon 3 (Easy), Wed 5.5, Fri rest (2 mi, skipped like the calendar), Sun 8 (Long Run).
+      expect(data.days.map((d) => d.targetMiles)).toEqual([3, 0, 5.5, 0, 0, 0, 8]);
+      // planned.miles is unchanged and still includes the malformed rest entry's miles.
+      near(data.planned.miles, 18.5);
+    });
+  });
+
+  it("targetMiles is 0 every day and race is null with no plans or races", () => {
+    withTZ(hostZone, () => {
+      const s = { ...scenarios()[0], plans: [] };
+      const { data } = deriveTrainingWeek(sharedInput(s, HUB_TIME_ZONE));
+      expect(data.days.every((d) => d.targetMiles === 0)).toBe(true);
+      expect(data.race).toBeNull();
+    });
+  });
+
+  it("race: counts Eastern civil days, so late Sunday ET is still Sunday", () => {
+    withTZ(hostZone, () => {
+      const races = [
+        { id: "a", name: "Goal Half", raceDate: "2026-11-22", raceDistance: "halfMarathon", isActive: true },
+      ] as Race[];
+      // 2026-11-16T04:30Z is Sun Nov 15 23:30 ET (already Monday in UTC).
+      const { data } = deriveTrainingWeek({
+        ...sharedInput(scenarios()[0], HUB_TIME_ZONE),
+        races,
+        now: new Date("2026-11-16T04:30:00.000Z"),
+      });
+      expect(data.race).toEqual({ name: "Goal Half", date: "2026-11-22", distance: "Half Marathon", daysRemaining: 7 });
+    });
+  });
+});
+
+describe("selectHubRace", () => {
+  const race = (id: string, raceDate: string, extra: Partial<Race> = {}) =>
+    ({ id, name: id, raceDate, raceDistance: "10K", isActive: false, createdAt: "", ...extra }) as Race;
+
+  it("prefers the upcoming goal race over a sooner race", () => {
+    const r = selectHubRace([race("soon", "2026-11-20"), race("goal", "2027-03-01", { isActive: true })], "2026-11-12");
+    expect(r).toMatchObject({ name: "goal", daysRemaining: 109, distance: "10K" });
+  });
+
+  it("falls back to the soonest upcoming race when the goal race is past", () => {
+    const r = selectHubRace(
+      [race("goal", "2026-10-01", { isActive: true }), race("later", "2027-01-10"), race("next", "2026-12-01")],
+      "2026-11-12"
+    );
+    expect(r).toMatchObject({ name: "next", date: "2026-12-01", daysRemaining: 19 });
+  });
+
+  it("race day itself is 0 days remaining; past-only lists give null", () => {
+    expect(selectHubRace([race("today", "2026-11-12")], "2026-11-12")?.daysRemaining).toBe(0);
+    expect(selectHubRace([race("past", "2026-11-11")], "2026-11-12")).toBeNull();
+    expect(selectHubRace(undefined, "2026-11-12")).toBeNull();
+  });
+
+  it("labels custom distances in miles", () => {
+    const r = selectHubRace([race("c", "2026-12-01", { raceDistance: "custom", customDistanceMiles: 7.25 })], "2026-11-12");
+    expect(r?.distance).toBe("7.25 mi");
   });
 });
 
